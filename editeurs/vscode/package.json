@@ -1,31 +1,115 @@
 {
   "name": "kova",
   "displayName": "Kova",
-  "description": "Prise en charge du langage Kova : couleurs, raccourcis, et bientôt erreurs en direct.",
-  "version": "0.1.0",
+  "description": "Prise en charge du langage Kova : couleurs, raccourcis, boutons Run / Build / Test.",
+  "version": "0.2.0",
   "publisher": "thibault-savenkoff",
   "license": "UNLICENSED",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Programming Languages", "Snippets"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "main": "./extension.js",
   "contributes": {
     "languages": [
       {
         "id": "kova",
-        "aliases": ["Kova", "kova"],
-        "extensions": [".kova"],
+        "aliases": [
+          "Kova",
+          "kova"
+        ],
+        "extensions": [
+          ".kova"
+        ],
         "configuration": "./language-configuration.json",
-        "icon": { "light": "./icones/kova.svg", "dark": "./icones/kova.svg" }
+        "icon": {
+          "light": "./icones/kova.svg",
+          "dark": "./icones/kova.svg"
+        }
       }
     ],
     "grammars": [
-      { "language": "kova", "scopeName": "source.kova", "path": "./syntaxes/kova.tmLanguage.json" }
+      {
+        "language": "kova",
+        "scopeName": "source.kova",
+        "path": "./syntaxes/kova.tmLanguage.json"
+      }
     ],
     "snippets": [
-      { "language": "kova", "path": "./snippets/kova.json" }
-    ]
+      {
+        "language": "kova",
+        "path": "./snippets/kova.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "kova.run",
+        "title": "Lancer (kova run)",
+        "category": "Kova",
+        "icon": "$(play)"
+      },
+      {
+        "command": "kova.build",
+        "title": "Compiler et lancer (kova build)",
+        "category": "Kova",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "kova.test",
+        "title": "Lancer les tests (kova test)",
+        "category": "Kova",
+        "icon": "$(beaker)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "kova.run",
+          "when": "resourceLangId == kova",
+          "group": "navigation@0"
+        },
+        {
+          "command": "kova.build",
+          "when": "resourceLangId == kova",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kova.test",
+          "when": "resourceLangId == kova",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "kova.run",
+          "when": "editorLangId == kova"
+        },
+        {
+          "command": "kova.build",
+          "when": "editorLangId == kova"
+        },
+        {
+          "command": "kova.test",
+          "when": "editorLangId == kova"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Kova",
+      "properties": {
+        "kova.chemin": {
+          "type": "string",
+          "default": "kova",
+          "description": "Chemin de l'exécutable `kova` (par défaut : celui du PATH)."
+        }
+      }
+    }
   },
   "scripts": {
-    "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova'",
+    "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova' && node tests/commandes.test.js",
     "package": "vsce package --skip-license --allow-missing-repository"
   },
   "devDependencies": {
