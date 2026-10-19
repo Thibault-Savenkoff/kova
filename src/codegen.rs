@@ -48,6 +48,8 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
     let mut reglages = settings::builder();
     reglages.set("opt_level", "speed")?;
     reglages.set("is_pic", "true")?; // gcc de Fedora fabrique des exécutables « PIE »
+    // Une fonction qui renvoie beaucoup de valeurs (gros tuple) : Cranelift les range en mémoire.
+    reglages.set("enable_multi_ret_implicit_sret", "true")?;
     let isa = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())?
         .finish(settings::Flags::new(reglages))?;
     let mut module = ObjectModule::new(ObjectBuilder::new(isa, "kova", default_libcall_names())?);

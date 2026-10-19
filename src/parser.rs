@@ -144,6 +144,65 @@ impl Parser<'_> {
         }
     }
 
+    /// `Int` ou `(Int, Float)`.
+    fn type_(&mut self) -> R<TypeAst> {
+        if !self.est_sym("(") {
+            return Ok(TypeAst::Nom(self.nom_type()?));
+        }
+        let debut = self.avancer().span;
+        let mut types = vec![self.type_()?];
+        while self.est_sym(",") {
+            self.avancer();
+            types.push(self.type_()?);
+        }
+        let fin = self.attendre(")")?;
+        if types.len() < 2 {
+            return self.erreur(debut.jusqua(fin), "un tuple a au moins 2 éléments");
+        }
+        Ok(TypeAst::Tuple(types))
+    }
+
+    /// `x`, `_` ou `(a, b)`.
+    fn motif(&mut self) -> R<Motif> {
+        if self.genre() == Genre::Ident && self.texte(self.jeton().span) == "_" {
+            return Ok(Motif::Ignorer(self.avancer().span));
+        }
+        if !self.est_sym("(") {
+            return Ok(Motif::Nom(self.nom_valeur("variable")?));
+        }
+        let debut = self.avancer().span;
+        let mut motifs = vec![self.motif()?];
+        while self.est_sym(",") {
+            self.avancer();
+            motifs.push(self.motif()?);
+        }
+        let fin = self.attendre(")")?;
+        if motifs.len() < 2 {
+            return self.erreur(debut.jusqua(fin), "un tuple a au moins 2 éléments");
+        }
+        Ok(Motif::Tuple(motifs, debut.jusqua(fin)))
+    }
+
+    /// `x`, `t.0` ou `(a, b)` à gauche de `:=` : on relit l'expression déjà lue.
+    fn cible(&mut self, e: Expr) -> R<Cible> {
+        let span = e.span;
+        match e.genre {
+            ExprGenre::Var(nom) => Ok(Cible::Lieu { nom: Nom { texte: nom, span }, champs: vec![], span }),
+            ExprGenre::Champ(base, i) => match self.cible(*base)? {
+                Cible::Lieu { nom, mut champs, .. } => {
+                    champs.push(i);
+                    Ok(Cible::Lieu { nom, champs, span })
+                }
+                Cible::Tuple(..) => self.erreur(span, "on ne peut donner une valeur qu'à une variable"),
+            },
+            ExprGenre::Tuple(elems) => {
+                let cibles = elems.into_iter().map(|e| self.cible(e)).collect::<R<Vec<_>>>()?;
+                Ok(Cible::Tuple(cibles, span))
+            }
+            _ => self.erreur(span, "on ne peut donner une valeur qu'à une variable"),
+        }
+    }
+
     // ---- Fichier et fonctions ----
 
     fn fichier(&mut self) -> Fichier {
@@ -181,7 +240,7 @@ impl Parser<'_> {
         while !self.est_sym(")") {
             let nom = self.nom_valeur("paramètre")?;
             self.attendre(":")?;
-            params.push(Param { nom, ty: self.nom_type()? });
+            params.push(Param { nom, ty: self.type_()? });
             if !self.est_sym(")") {
                 self.attendre(",")?;
             }
@@ -189,7 +248,7 @@ impl Parser<'_> {
         self.avancer(); // )
         let retour = if self.est_sym("->") {
             self.avancer();
-            Some(self.nom_type()?)
+            Some(self.type_()?)
         } else {
             None
         };
@@ -251,15 +310,15 @@ impl Parser<'_> {
         match self.genre() {
             Genre::Cle(k @ ("let" | "var")) => {
                 self.avancer();
-                let nom = self.nom_valeur("variable")?;
+                let motif = self.motif()?;
                 let ty = if self.est_sym(":") {
                     self.avancer();
-                    Some(self.nom_type()?)
+                    Some(self.type_()?)
                 } else {
                     None
                 };
                 self.attendre(":=")?;
-                Ok(Instr::Declarer { modifiable: k == "var", nom, ty, valeur: self.expression()? })
+                Ok(Instr::Declarer { modifiable: k == "var", motif, ty, valeur: self.expression()? })
             }
             Genre::Cle("return") => {
                 self.avancer();
@@ -319,11 +378,9 @@ impl Parser<'_> {
                 let Some(&(_, op)) = AFFECTATIONS.iter().find(|(s, _)| self.est_sym(s)) else {
                     return Ok(Instr::Expr(e));
                 };
-                let ExprGenre::Var(nom) = e.genre else {
-                    return self.erreur(e.span, "on ne peut donner une valeur qu'à une variable");
-                };
+                let cible = self.cible(e)?;
                 self.avancer();
-                Ok(Instr::Affecter { nom: Nom { texte: nom, span: e.span }, op, valeur: self.expression()? })
+                Ok(Instr::Affecter { cible, op, valeur: self.expression()? })
             }
         }
     }
@@ -426,6 +483,11 @@ impl Parser<'_> {
         let mut e = self.atome()?;
         while self.est_sym(".") {
             self.avancer();
+            if let Genre::Entier(i) = self.genre() {
+                let fin = self.avancer().span;
+                e = self.expr(e.span.jusqua(fin), ExprGenre::Champ(Box::new(e), i as usize));
+                continue;
+            }
             let nom = self.nom_valeur("méthode")?;
             self.attendre("(")?;
             let args = self.arguments()?;
@@ -469,8 +531,18 @@ impl Parser<'_> {
             Genre::Sym("(") => {
                 self.avancer();
                 let e = self.expression()?;
+                if !self.est_sym(",") {
+                    let fin = self.attendre(")")?;
+                    return Ok(Expr { span: j.span.jusqua(fin), ..e });
+                }
+                // `(a, b)` : un tuple.
+                let mut elems = vec![e];
+                while self.est_sym(",") {
+                    self.avancer();
+                    elems.push(self.expression()?);
+                }
                 let fin = self.attendre(")")?;
-                return Ok(Expr { span: j.span.jusqua(fin), ..e });
+                return Ok(self.expr(j.span.jusqua(fin), ExprGenre::Tuple(elems)));
             }
             _ => {
                 let msg = format!("expression attendue, trouvé {}", self.decrire());

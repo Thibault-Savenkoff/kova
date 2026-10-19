@@ -12,7 +12,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Bloc, Fichier, Fonction, Instr};
+use crate::ast::{Bloc, Fichier, Fonction, Instr, Motif, TypeAst};
 use crate::lexer::{Genre, lexer};
 use crate::{analyser, parser, types};
 
@@ -144,12 +144,12 @@ fn entete(f: &Fonction) -> (String, Vec<[u32; 2]>) {
             texte += ", ";
         }
         let debut = texte.encode_utf16().count() as u32;
-        texte += &format!("{}: {}", p.nom.texte, p.ty.texte);
+        texte += &format!("{}: {}", p.nom.texte, p.ty.texte());
         params.push([debut, texte.encode_utf16().count() as u32]);
     }
     texte += ")";
     if let Some(r) = &f.retour {
-        texte += &format!(" -> {}", r.texte);
+        texte += &format!(" -> {}", r.texte());
     }
     (texte, params)
 }
@@ -176,7 +176,7 @@ fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
     let dedans = |b: &Bloc| b.debut.debut < curseur && curseur <= b.fin.debut;
     if let Some(f) = fichier.fonctions.iter().find(|f| dedans(&f.corps)) {
         let mut vars: Vec<(String, String)> =
-            f.params.iter().map(|p| (p.nom.texte.clone(), p.ty.texte.clone())).collect();
+            f.params.iter().map(|p| (p.nom.texte.clone(), p.ty.texte())).collect();
         visibles(&f.corps, curseur, &mut vars);
         for (nom, ty) in vars {
             items.push(CompletionItem {
@@ -197,9 +197,8 @@ fn visibles(b: &Bloc, curseur: usize, vars: &mut Vec<(String, String)>) {
     for i in &b.instrs {
         match i {
             // Visible seulement après sa valeur : dans `let x: Int := x + 1`, le 2e `x` n'est pas lui.
-            Instr::Declarer { nom, ty, valeur, .. } if valeur.span.fin <= curseur => {
-                let ty = ty.as_ref().map_or(String::new(), |t| t.texte.clone());
-                vars.push((nom.texte.clone(), ty));
+            Instr::Declarer { motif, ty, valeur, .. } if valeur.span.fin <= curseur => {
+                noms_motif(motif, ty.as_ref(), vars);
             }
             Instr::Si { alors, sinon, .. } => {
                 for b in std::iter::once(alors).chain(sinon).filter(|b| dedans(b)) {
@@ -213,6 +212,20 @@ fn visibles(b: &Bloc, curseur: usize, vars: &mut Vec<(String, String)>) {
             }
             _ => {}
         }
+    }
+}
+
+/// Les noms d'un motif avec leur type écrit : `let (a, b): (Int, Float)` → `a: Int`, `b: Float`.
+fn noms_motif(m: &Motif, ty: Option<&TypeAst>, vars: &mut Vec<(String, String)>) {
+    match (m, ty) {
+        (Motif::Nom(n), _) => vars.push((n.texte.clone(), ty.map_or(String::new(), TypeAst::texte))),
+        (Motif::Ignorer(_), _) => {}
+        (Motif::Tuple(ms, _), Some(TypeAst::Tuple(ts))) if ms.len() == ts.len() => {
+            for (m, t) in ms.iter().zip(ts) {
+                noms_motif(m, Some(t), vars);
+            }
+        }
+        (Motif::Tuple(ms, _), _) => ms.iter().for_each(|m| noms_motif(m, None, vars)),
     }
 }
 
@@ -294,6 +307,18 @@ mod tests {
         // `}` pas encore tapée, instruction pas finie : on propose quand même `total`.
         let src = "fn main() {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
         assert_eq!(noms(&completer(src, src.len())), ["total", "i"]);
+    }
+
+    #[test]
+    fn completion_motif_tuple() {
+        let src = "fn main() {\n  let (a, (b, _)): (Int, (Float, Bool)) := (1, (2.0, true))\n  ICI\n}";
+        let items = completer(src, src.find("ICI").unwrap());
+        let vars: Vec<(&str, &str)> = items
+            .iter()
+            .filter(|i| i.kind == Some(CompletionItemKind::VARIABLE))
+            .map(|i| (i.label.as_str(), i.detail.as_deref().unwrap()))
+            .collect();
+        assert_eq!(vars, [("a", "Int"), ("b", "Float")]);
     }
 
     #[test]

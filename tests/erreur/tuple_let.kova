@@ -1,0 +1,8 @@
+fn main() {
+    let t: (Int, Int) := (1, 2)
+    t.0 := 5
+    var (a, b): (Int, Int) := t
+    (a, b) += (1, 1)
+}
+// erreur: `t` est déclarée avec let
+// erreur: `(a, b)` n'est ni un `Int` ni un `Float`

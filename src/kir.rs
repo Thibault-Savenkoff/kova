@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{self, Bloc, Expr, ExprGenre, Instr, OpBin, OpUn};
+use crate::ast::{self, Bloc, Cible, Expr, ExprGenre, Instr, Motif, OpBin, OpUn};
 use crate::diag::{Span, ligne_colonne};
 use crate::types::{Infos, Type, type_de};
 
@@ -37,11 +37,24 @@ pub enum Scalaire {
     Flottant,
 }
 
+/// Où se trouve `t.i` dans les cases d'un tuple de type `t` : (début, longueur).
+fn tranche(t: &Type, i: usize) -> (usize, usize) {
+    let Type::Tuple(ts) = t else { unreachable!("tuple vérifié par le typage") };
+    let debut = ts[..i].iter().map(|t| scalaires(t).len()).sum();
+    (debut, scalaires(&ts[i]).len())
+}
+
+fn element(t: &Type, i: usize) -> Type {
+    let Type::Tuple(ts) = t else { unreachable!("tuple vérifié par le typage") };
+    ts[i].clone()
+}
+
 /// Les cases nécessaires pour une valeur de ce type, dans l'ordre.
 pub fn scalaires(t: &Type) -> Vec<Scalaire> {
     match t {
         Type::Int | Type::Bool | Type::Char => vec![Scalaire::Entier],
         Type::Float => vec![Scalaire::Flottant],
+        Type::Tuple(ts) => ts.iter().flat_map(scalaires).collect(),
         Type::Rien => vec![],
         Type::Erreur => unreachable!("type erroné après le typage"),
     }
@@ -275,8 +288,9 @@ pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str) -> Programme {
                 boucles: vec![],
             };
             for p in &fonc.params {
-                let v = t.nouvelle_valeur(&type_de(&p.ty));
-                t.noms[0].insert(p.nom.texte.clone(), v);
+                let ty = type_de(&p.ty);
+                let v = t.nouvelle_valeur(&ty);
+                t.noms[0].insert(p.nom.texte.clone(), (v, ty));
             }
             let nb_params = t.locaux.len();
             t.courant = t.nouveau_bloc();
@@ -300,8 +314,8 @@ struct Traducteur<'a> {
     src: &'a str,
     infos: &'a Infos,
     numeros: &'a HashMap<&'a str, usize>,
-    /// Nom → ses cases, une table par bloc ouvert.
-    noms: Vec<HashMap<String, Valeur>>,
+    /// Nom → ses cases et son type, une table par bloc ouvert.
+    noms: Vec<HashMap<String, (Valeur, Type)>>,
     locaux: Vec<Scalaire>,
     /// Blocs en construction ; `None` = fin pas encore posée.
     blocs: Vec<(Vec<Inst>, Option<Fin>)>,
@@ -350,8 +364,43 @@ impl Traducteur<'_> {
         let (ligne, colonne) = ligne_colonne(self.src, s.debut);
         Lieu { ligne, colonne }
     }
-    fn valeur_de(&self, nom: &str) -> Valeur {
+    fn variable(&self, nom: &str) -> (Valeur, Type) {
         self.noms.iter().rev().find_map(|t| t.get(nom)).expect("variable vérifiée par le typage").clone()
+    }
+    fn valeur_de(&self, nom: &str) -> Valeur {
+        self.variable(nom).0
+    }
+
+    /// Donne leurs cases aux noms d'un motif : `(a, b)` sur 2 cases → `a` la 1re, `b` la 2e.
+    fn lier(&mut self, m: &Motif, cases: &[Local], ty: &Type) {
+        match m {
+            Motif::Nom(n) => {
+                self.noms.last_mut().unwrap().insert(n.texte.clone(), (cases.to_vec(), ty.clone()));
+            }
+            Motif::Ignorer(_) => {}
+            Motif::Tuple(ms, _) => {
+                for (i, m) in ms.iter().enumerate() {
+                    let (debut, n) = tranche(ty, i);
+                    self.lier(m, &cases[debut..debut + n], &element(ty, i));
+                }
+            }
+        }
+    }
+
+    /// Les cases désignées par une cible de `:=`.
+    fn cases_cible(&self, c: &Cible) -> Valeur {
+        match c {
+            Cible::Tuple(cs, _) => cs.iter().flat_map(|c| self.cases_cible(c)).collect(),
+            Cible::Lieu { nom, champs, .. } => {
+                let (mut cases, mut ty) = self.variable(&nom.texte);
+                for &i in champs {
+                    let (debut, n) = tranche(&ty, i);
+                    cases = cases[debut..debut + n].to_vec();
+                    ty = element(&ty, i);
+                }
+                cases
+            }
+        }
     }
     fn constante(&mut self, v: i64) -> Local {
         let l = self.entier();
@@ -384,21 +433,28 @@ impl Traducteur<'_> {
 
     fn instr(&mut self, i: &Instr) {
         match i {
-            Instr::Declarer { nom, valeur, .. } => {
+            Instr::Declarer { motif, valeur, .. } => {
                 let v = self.expr(valeur);
-                let cases = self.nouvelle_valeur(&self.infos.types[valeur.id].clone());
+                let ty = self.infos.types[valeur.id].clone();
+                let cases = self.nouvelle_valeur(&ty);
                 self.copier(&cases, &v);
-                self.noms.last_mut().unwrap().insert(nom.texte.clone(), cases);
+                self.lier(motif, &cases, &ty);
             }
-            Instr::Affecter { nom, op, valeur } => {
-                let cible = self.valeur_de(&nom.texte);
+            Instr::Affecter { cible, op, valeur } => {
+                let cases = self.cases_cible(cible);
                 let v = self.expr(valeur);
                 match op {
-                    None => self.copier(&cible, &v),
+                    // `(a, b) := (b, a)` : on lit tout avant d'écrire, sinon `a` serait écrasé trop tôt.
+                    None if matches!(cible, Cible::Tuple(..)) => {
+                        let lu = self.nouvelle_valeur(&self.infos.types[valeur.id].clone());
+                        self.copier(&lu, &v);
+                        self.copier(&cases, &lu);
+                    }
+                    None => self.copier(&cases, &v),
                     Some(op) => {
-                        let lieu = self.lieu(nom.span);
-                        let r = self.operation(op_kir(*op), cible[0], v[0], self.est_float(valeur), lieu);
-                        self.emettre(Inst::Copie(cible[0], r));
+                        let lieu = self.lieu(cible.span());
+                        let r = self.operation(op_kir(*op), cases[0], v[0], self.est_float(valeur), lieu);
+                        self.emettre(Inst::Copie(cases[0], r));
                     }
                 }
             }
@@ -454,7 +510,7 @@ impl Traducteur<'_> {
                 self.aller(Fin::Si(c, b_corps, sortie), b_corps);
 
                 self.boucles.push((suite, sortie));
-                self.noms.push(HashMap::from([(compteur.texte.clone(), vec![i])]));
+                self.noms.push(HashMap::from([(compteur.texte.clone(), (vec![i], Type::Int))]));
                 self.bloc(corps);
                 self.noms.pop();
                 self.boucles.pop();
@@ -521,6 +577,12 @@ impl Traducteur<'_> {
             ExprGenre::Caractere(c) => vec![self.constante(*c as i64)],
             ExprGenre::Bool(b) => vec![self.constante(*b as i64)],
             ExprGenre::Var(nom) => self.valeur_de(nom),
+            ExprGenre::Tuple(elems) => elems.iter().flat_map(|x| self.expr(x)).collect(),
+            ExprGenre::Champ(x, i) => {
+                let v = self.expr(x);
+                let (debut, n) = tranche(&self.infos.types[x.id], *i);
+                v[debut..debut + n].to_vec()
+            }
             ExprGenre::Appel { nom, args } => {
                 let mut vals = vec![];
                 for a in args {

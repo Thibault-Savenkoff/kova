@@ -1,0 +1,77 @@
+// Tuples, plusieurs résultats, déstructuration, échange.
+
+fn min_max(a: Int, b: Int, c: Int) -> (Int, Int) {
+    var (petit, grand): (Int, Int) := (a, a)
+    if b < petit { petit := b }
+    if c < petit { petit := c }
+    if b > grand { grand := b }
+    if c > grand { grand := c }
+    return (petit, grand)
+}
+
+// Beaucoup de résultats de types mélangés (le natif doit les ranger en mémoire).
+fn statistiques(n: Int) -> (Int, Float, Bool, Char, (Int, Int)) {
+    return (n * 2, n.to_float() / 4.0, n > 3, 'k', (n, -n))
+}
+
+fn somme(p: (Int, Int)) -> Int {
+    return p.0 + p.1
+}
+
+fn main() {
+    let (min, max): (Int, Int) := min_max(5, 1, 9)
+    print(min)
+    print(max)
+
+    var a: Int := 1
+    var b: Int := 2
+    (a, b) := (b, a)
+    print(a)
+    print(b)
+
+    // Échange à trois : tout est lu avant d'être écrit.
+    var c: Int := 3
+    (a, b, c) := (c, a, b)
+    write(a)
+    write(b)
+    print(c)
+
+    let s: (Int, Float, Bool, Char, (Int, Int)) := statistiques(5)
+    print(s.0)
+    print(s.1)
+    print(s.2)
+    print(s.3)
+    print(s.4.1)
+    let (_, quart, _, _, (n, moins_n)): (Int, Float, Bool, Char, (Int, Int)) := statistiques(6)
+    print(quart)
+    print(n + moins_n)
+
+    var t: (Int, (Int, Int)) := (1, (2, 3))
+    t.1.0 := 20
+    t.0 += 100
+    print(t.0)
+    print(t.1.0)
+    print(somme(t.1))
+    t := (0, (0, 7))
+    print(somme(t.1))
+
+    let point: (Int, Int) := if a > 0 { (a, 0) } else { (0, a) }
+    print(point.0)
+}
+// attendu: 1
+// attendu: 9
+// attendu: 2
+// attendu: 1
+// attendu: 321
+// attendu: 10
+// attendu: 1.25
+// attendu: true
+// attendu: k
+// attendu: -5
+// attendu: 1.5
+// attendu: 0
+// attendu: 101
+// attendu: 20
+// attendu: 23
+// attendu: 7
+// attendu: 3
