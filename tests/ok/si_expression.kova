@@ -1,0 +1,54 @@
+// `if` qui donne une valeur : la dernière ligne de la branche choisie.
+
+fn valeur_absolue(n: Int) -> Int {
+    return if n < 0 { -n } else { n }
+}
+
+fn mention(note: Int) -> Int {
+    // `else if` en chaîne, accolades à la ligne (style Allman).
+    let m: Int := if note >= 16
+    {
+        3
+    }
+    else if note >= 12
+    {
+        2
+    }
+    else
+    {
+        1
+    }
+    return m
+}
+
+fn main() {
+    print(valeur_absolue(-7))
+    print(valeur_absolue(4))
+    print(mention(17))
+    print(mention(13))
+    print(mention(5))
+
+    // Une branche peut contenir des instructions avant sa valeur.
+    let x: Int := if true {
+        let double: Int := 21 * 2
+        print(0)
+        double
+    } else {
+        0
+    }
+    print(x)
+
+    // Un `if` dans une branche, et dans un argument.
+    let y: Bool := if x > 10 { if x > 100 { false } else { true } } else { false }
+    print(y)
+    print(if y { 1 } else { 2 } + 10)
+}
+// attendu: 7
+// attendu: 4
+// attendu: 3
+// attendu: 2
+// attendu: 1
+// attendu: 0
+// attendu: 42
+// attendu: true
+// attendu: 11

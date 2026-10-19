@@ -335,6 +335,7 @@ impl Verif<'_> {
                 self.attendre(x, Type::Bool);
                 Type::Bool
             }
+            ExprGenre::Si { cond, alors, sinon } => self.si_valeur(cond, alors, sinon),
             ExprGenre::Binaire(op, a, b) => {
                 use OpBin::*;
                 match op {
@@ -370,6 +371,45 @@ impl Verif<'_> {
                 }
             }
         }
+    }
+
+    fn si_valeur(&mut self, cond: &Expr, alors: &Bloc, sinon: &Bloc) -> Type {
+        self.attendre(cond, Type::Bool);
+        let (a, b) = (self.bloc_valeur(alors), self.bloc_valeur(sinon));
+        if a != b && a != Type::Erreur && b != Type::Erreur {
+            let msg = format!("les deux branches doivent donner le même type : `{}` et `{}`", a.nom(), b.nom());
+            self.erreur(sinon.debut, msg);
+            return Type::Erreur;
+        }
+        a
+    }
+
+    /// Le type d'un bloc qui donne une valeur : celui de sa dernière ligne.
+    fn bloc_valeur(&mut self, b: &Bloc) -> Type {
+        self.portees.push(HashMap::new());
+        let (dernier, avant) = match b.instrs.split_last() {
+            Some((d, a)) => (Some(d), a),
+            None => (None, &[][..]),
+        };
+        for i in avant {
+            self.instr(i);
+        }
+        let ty = match dernier {
+            Some(Instr::Expr(e)) => self.expr(e),
+            Some(Instr::Si { cond, alors, sinon: Some(sinon) }) => self.si_valeur(cond, alors, sinon),
+            autre => {
+                if let Some(i) = autre {
+                    self.instr(i);
+                }
+                self.diags.push(
+                    Diag::new(b.fin, "cette branche doit finir par une valeur")
+                        .aide("la dernière ligne d'une branche est la valeur du `if`"),
+                );
+                Type::Erreur
+            }
+        };
+        self.portees.pop();
+        ty
     }
 
     fn appel(&mut self, nom: &Nom, args: &[Expr]) -> Type {

@@ -64,6 +64,8 @@ pub enum ExprGenre {
     Appel { nom: Nom, args: Vec<Expr> },
     Unaire(OpUn, Box<Expr>),
     Binaire(OpBin, Box<Expr>, Box<Expr>),
+    /// `if c { 1 } else { 2 }` qui donne une valeur : la dernière ligne de la branche choisie.
+    Si { cond: Box<Expr>, alors: Bloc, sinon: Bloc },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

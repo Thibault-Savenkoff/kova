@@ -353,6 +353,33 @@ impl Parser<'_> {
         Ok(Instr::Si { cond, alors, sinon: Some(sinon) })
     }
 
+    /// `if` dans une expression : le `else` est obligatoire (il faut une valeur dans tous les cas).
+    fn si_expr(&mut self) -> R<Expr> {
+        let debut = self.avancer().span; // if
+        let cond = self.expression()?;
+        self.sauter_lignes();
+        let alors = self.bloc()?;
+        self.sauter_lignes();
+        if !self.est_cle("else") {
+            self.diags.push(
+                Diag::new(debut, "un `if` qui donne une valeur a besoin d'un `else`")
+                    .aide("ajoute `else { ... }` : la valeur doit exister dans tous les cas"),
+            );
+            return Err(());
+        }
+        self.avancer();
+        self.sauter_lignes();
+        let sinon = if self.est_cle("if") {
+            let debut = self.jeton().span;
+            let e = self.si_expr()?;
+            Bloc { debut, fin: Span::new(e.span.fin, e.span.fin), instrs: vec![Instr::Expr(e)] }
+        } else {
+            self.bloc()?
+        };
+        let span = debut.jusqua(sinon.fin);
+        Ok(self.expr(span, ExprGenre::Si { cond: Box::new(cond), alors, sinon }))
+    }
+
     // ---- Expressions ----
 
     fn expression(&mut self) -> R<Expr> {
@@ -416,6 +443,7 @@ impl Parser<'_> {
                 let fin = self.avancer().span;
                 return Ok(self.expr(nom.span.jusqua(fin), ExprGenre::Appel { nom, args }));
             }
+            Genre::Cle("if") => return self.si_expr(),
             Genre::Sym("(") => {
                 self.avancer();
                 let e = self.expression()?;

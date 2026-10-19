@@ -340,6 +340,36 @@ impl Traducteur<'_> {
         }
     }
 
+    fn si_valeur(&mut self, cond: &Expr, alors: &Bloc, sinon: &Bloc, ty: &Type) -> Valeur {
+        let dst = self.nouvelle_valeur(ty);
+        let c = self.expr1(cond);
+        let (b_alors, b_sinon, b_apres) = (self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc());
+        self.aller(Fin::Si(c, b_alors, b_sinon), b_alors);
+        let v = self.bloc_valeur(alors, ty);
+        self.copier(&dst, &v);
+        self.aller(Fin::Saut(b_apres), b_sinon);
+        let v = self.bloc_valeur(sinon, ty);
+        self.copier(&dst, &v);
+        self.aller(Fin::Saut(b_apres), b_apres);
+        dst
+    }
+
+    /// La valeur d'un bloc : celle de sa dernière ligne (vérifiée par le typage).
+    fn bloc_valeur(&mut self, b: &Bloc, ty: &Type) -> Valeur {
+        self.noms.push(HashMap::new());
+        let (dernier, avant) = b.instrs.split_last().expect("bloc vérifié par le typage");
+        for i in avant {
+            self.instr(i);
+        }
+        let v = match dernier {
+            Instr::Expr(e) => self.expr(e),
+            Instr::Si { cond, alors, sinon: Some(sinon) } => self.si_valeur(cond, alors, sinon, ty),
+            _ => unreachable!("bloc vérifié par le typage"),
+        };
+        self.noms.pop();
+        v
+    }
+
     /// Une expression dont la valeur tient dans une seule case (Int, Bool…).
     fn expr1(&mut self, e: &Expr) -> Local {
         self.expr(e)[0]
@@ -381,6 +411,10 @@ impl Traducteur<'_> {
                 let dst = self.entier();
                 self.emettre(Inst::Non(dst, a));
                 vec![dst]
+            }
+            ExprGenre::Si { cond, alors, sinon } => {
+                let ty = self.infos.types[e.id].clone();
+                self.si_valeur(cond, alors, sinon, &ty)
             }
             ExprGenre::Binaire(op @ (OpBin::Et | OpBin::Ou), a, b) => {
                 // Court-circuit : `b` n'est calculé que si `a` ne suffit pas.
