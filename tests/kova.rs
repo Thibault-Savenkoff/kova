@@ -2,6 +2,8 @@
 //
 // tests/ok/*.kova     : doit marcher en `run` ET en `build`, avec la même sortie.
 //                       Sortie attendue : une ligne `// attendu: ...` par ligne affichée.
+//                       Erreur à l'exécution : `// code: 101` et `// stderr: ...` (morceau du message).
+//                       stderr doit être identique dans les deux modes.
 // tests/erreur/*.kova : doit être refusé ; `// erreur: ...` doit apparaître dans le message.
 
 use std::path::{Path, PathBuf};
@@ -34,13 +36,22 @@ fn texte(o: &[u8]) -> String {
     String::from_utf8_lossy(o).into_owned()
 }
 
-fn verifier_sortie(nom: &str, mode: &str, out: &Output, attendu: &[String], echecs: &mut Vec<String>) {
+struct Attendu {
+    sortie: Vec<String>,
+    code: i32,
+    stderr: Vec<String>,
+}
+
+fn verifier_sortie(nom: &str, mode: &str, out: &Output, a: &Attendu, echecs: &mut Vec<String>) {
     let obtenu: Vec<String> = texte(&out.stdout).lines().map(String::from).collect();
-    if !out.status.success() || obtenu != attendu {
+    let stderr = texte(&out.stderr);
+    if out.status.code() != Some(a.code) || obtenu != a.sortie || !a.stderr.iter().all(|m| stderr.contains(m.as_str())) {
         echecs.push(format!(
-            "{nom} [{mode}] : code {:?}\n  attendu : {attendu:?}\n  obtenu  : {obtenu:?}\n  stderr  : {}",
+            "{nom} [{mode}] : code {:?} (attendu {})\n  attendu : {:?}\n  obtenu  : {obtenu:?}\n  stderr  : {}",
             out.status.code(),
-            texte(&out.stderr).trim()
+            a.code,
+            a.sortie,
+            stderr.trim()
         ));
     }
 }
@@ -53,11 +64,16 @@ fn programmes_ok() {
 
     for f in fichiers("ok") {
         let nom = f.file_name().unwrap().to_string_lossy().into_owned();
-        let attendu = attentes(&std::fs::read_to_string(&f).unwrap(), "attendu");
+        let source = std::fs::read_to_string(&f).unwrap();
+        let attendu = Attendu {
+            sortie: attentes(&source, "attendu"),
+            code: attentes(&source, "code").first().map_or(0, |c| c.parse().unwrap()),
+            stderr: attentes(&source, "stderr"),
+        };
 
         // Mode run
-        let out = Command::new(KOVA).arg("run").arg(&f).output().unwrap();
-        verifier_sortie(&nom, "run", &out, &attendu, &mut echecs);
+        let run = Command::new(KOVA).arg("run").arg(&f).output().unwrap();
+        verifier_sortie(&nom, "run", &run, &attendu, &mut echecs);
 
         // Mode build : compile, puis lance l'exécutable produit.
         let exe = tmp.join(nom.trim_end_matches(".kova"));
@@ -68,6 +84,13 @@ fn programmes_ok() {
         }
         let out = Command::new(&exe).output().unwrap();
         verifier_sortie(&nom, "build", &out, &attendu, &mut echecs);
+        if out.stderr != run.stderr {
+            echecs.push(format!(
+                "{nom} : stderr différent\n  run   : {}\n  build : {}",
+                texte(&run.stderr).trim(),
+                texte(&out.stderr).trim()
+            ));
+        }
     }
 
     let _ = std::fs::remove_dir_all(&tmp);

@@ -1,0 +1,14 @@
+// Un dépassement arrête le programme (code 101) ; ce qui a été affiché avant reste affiché.
+fn main() {
+    var x: Int := 9223372036854775806
+    print(x)
+    x := x + 1
+    print(x)
+    x := x + 1
+    print(x)
+}
+// attendu: 9223372036854775806
+// attendu: 9223372036854775807
+// code: 101
+// stderr: erreur: dépassement d'entier
+// stderr: panne_addition.kova:7:12

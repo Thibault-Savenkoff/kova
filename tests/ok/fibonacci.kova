@@ -1,0 +1,41 @@
+// Le jalon J1 : Fibonacci, en récursif et en boucle.
+
+fn fib(n: Int) -> Int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn fib_rapide(n: Int) -> Int {
+    var a: Int := 0
+    var b: Int := 1
+    for i in 0..n {
+        let c: Int := a + b
+        a := b
+        b := c
+    }
+    return a
+}
+
+fn main() {
+    from i := 0 to 10 {
+        print(fib(i))
+    }
+    print(fib_rapide(90))
+    print(fib(25) = fib_rapide(25))
+}
+
+// attendu: 0
+// attendu: 1
+// attendu: 1
+// attendu: 2
+// attendu: 3
+// attendu: 5
+// attendu: 8
+// attendu: 13
+// attendu: 21
+// attendu: 34
+// attendu: 55
+// attendu: 2880067194370816120
+// attendu: true

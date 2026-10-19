@@ -1,0 +1,8 @@
+// -9223372036854775808 / -1 = 9223372036854775808 : trop grand pour un Int.
+fn main() {
+    var moins_un: Int := -1
+    print(-9223372036854775808 / moins_un)
+}
+// code: 101
+// stderr: erreur: dépassement d'entier
+// stderr: panne_division_min.kova:4:32

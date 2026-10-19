@@ -1,0 +1,6 @@
+fn main() {
+    from i := 1 to 10 {
+        i := 5
+    }
+}
+// erreur: `i` est un compteur de boucle

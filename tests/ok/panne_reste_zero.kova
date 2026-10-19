@@ -1,0 +1,7 @@
+fn main() {
+    var zero: Int := 0
+    print(5 % zero)
+}
+// code: 101
+// stderr: erreur: division par zéro
+// stderr: panne_reste_zero.kova:3:13

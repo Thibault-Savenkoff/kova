@@ -1,0 +1,5 @@
+fn main() {
+    let a: Bool := 1 < 2 < 3
+}
+// erreur: `<` ne peut pas s'enchaîner
+// erreur: a < b && b < c

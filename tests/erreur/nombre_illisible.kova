@@ -1,0 +1,6 @@
+fn main() {
+    print(99999999999999999999)
+    print(0xZZ)
+}
+// erreur: nombre trop grand `99999999999999999999`
+// erreur: nombre mal écrit `0xZZ`

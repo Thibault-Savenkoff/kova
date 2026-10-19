@@ -1,6 +1,15 @@
 // Point d'entrée : lit la ligne de commande et lance la bonne action.
 // Voir docs/PLAN.md, Partie 1 (commandes) et 2.11 (header).
 
+mod ast;
+mod codegen;
+mod diag;
+mod interp;
+mod kir;
+mod lexer;
+mod parser;
+mod types;
+
 use std::process::exit;
 
 const USAGE: &str = "\
@@ -46,9 +55,54 @@ fn main() {
         }
     };
 
-    let _ = (source, commande);
-    eprintln!("erreur: pas encore implémenté (jalon J1)");
-    exit(1);
+    let programme = match compiler(&source) {
+        Ok(p) => p,
+        Err(diags) => {
+            for d in &diags {
+                eprintln!("{}", diag::afficher(d, fichier, &source));
+            }
+            exit(1);
+        }
+    };
+
+    match commande {
+        Commande::Run => exit(interp::executer(&programme, fichier)),
+        Commande::Build { sortie, boost } => {
+            let _ = boost; // ponytail: `--boost` ne change rien tant qu'il n'y a pas de contrats (J2).
+            let sortie = sortie.unwrap_or_else(|| fichier.trim_end_matches(".kova").to_string());
+            if sortie == fichier {
+                eprintln!("erreur: l'exécutable écraserait `{fichier}` ; choisis un autre nom avec `-o`");
+                exit(1);
+            }
+            if let Err(e) = codegen::construire(&programme, fichier, &sortie) {
+                eprintln!("erreur: {e}");
+                exit(1);
+            }
+        }
+        Commande::Test => {
+            eprintln!("erreur: `kova test` arrive au jalon J2");
+            exit(1);
+        }
+    }
+}
+
+/// Texte source → KIR, ou la liste de toutes les erreurs.
+/// Lit du texte en mémoire : `kova lsp` pourra l'appeler sur un fichier pas encore sauvegardé.
+fn compiler(source: &str) -> Result<kir::Programme, Vec<diag::Diag>> {
+    let (jetons, mut diags) = lexer::lexer(source);
+    let (fichier, nb_exprs, d) = parser::parser(jetons, source);
+    diags.extend(d);
+    // Erreurs de syntaxe : on s'arrête là, sinon le typage en inventerait d'autres
+    // (une variable dont le `let` est illisible serait « inconnue » partout).
+    if diags.is_empty() {
+        let (infos, d) = types::verifier(&fichier, nb_exprs, source);
+        if d.is_empty() {
+            return Ok(kir::traduire(&fichier, &infos, source));
+        }
+        diags = d;
+    }
+    diags.sort_by_key(|d| d.span.debut);
+    Err(diags)
 }
 
 /// Lit `-o sortie` et `--boost`, dans n'importe quel ordre.
