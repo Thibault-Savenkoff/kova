@@ -1,0 +1,86 @@
+// SYNTAX TEST "source.kova" "Couleurs de Kova"
+
+fn carré(x: Int) -> Int {
+// <-- storage.type.function.kova
+// ^^^^^ entity.name.function.kova
+//          ^^^ support.type.primitive.kova
+//               ^^ keyword.operator.arrow.kova
+    require x >= 0 else "x doit être positif"
+//  ^^^^^^^ keyword.control.contract.kova
+//            ^^ keyword.operator.comparison.kova
+//                 ^^^^ keyword.control.kova
+//                         ^^^^ string.quoted.double.kova
+    let total: Int := 1_000 + 0xFF
+//  ^^^ storage.type.kova
+//                 ^^ keyword.operator.assignment.kova
+//                    ^^^^^ constant.numeric.integer.kova
+//                            ^^^^ constant.numeric.hex.kova
+    print("Salut {nom}, \{pas ça\} \\")
+//  ^^^^^ entity.name.function.call.kova
+//               ^ punctuation.section.interpolation.begin.kova
+//                ^^^ meta.interpolation.kova
+//                      ^^ constant.character.escape.kova
+//                        ^^^ string.quoted.double.kova
+//                                 ^^ constant.character.escape.kova
+    print("{ Point { x := 1 } } fin")
+//           ^^^^^ entity.name.type.kova
+//                     ^^ keyword.operator.assignment.kova
+//                            ^ punctuation.section.interpolation.end.kova
+//                              ^^^ string.quoted.double.kova
+    if x = Feu.Rouge { return none }
+//  ^^ keyword.control.kova
+//       ^ keyword.operator.comparison.kova
+//         ^^^ entity.name.type.kova
+//                     ^^^^^^ keyword.control.kova
+//                            ^^^^ constant.language.none.kova
+    from i := 1 to 10 { total += i }
+//  ^^^^ keyword.control.kova
+//              ^^ keyword.control.kova
+//                            ^^ keyword.operator.assignment.kova
+    for i in 0..10 { }
+//        ^^ keyword.control.kova
+//            ^^ keyword.operator.range.kova
+//              ^^ constant.numeric.integer.kova
+    let c: Char := '\n'
+//                 ^^^^ string.quoted.single.kova
+    let f: Float := 3.14e-2
+//                  ^^^^^^^ constant.numeric.float.kova
+    var r: String or IoError := ok("x")?
+//  ^^^ storage.type.kova
+//                ^^ keyword.operator.word.kova
+//                   ^^^^^^^ entity.name.type.kova
+//                              ^^ support.function.result.kova
+//                                     ^ keyword.operator.propagation.kova
+    garder(move notes) && !fini
+//  ^^^^^^ entity.name.function.call.kova
+//         ^^^^ storage.modifier.kova
+//                     ^^ keyword.operator.logical.kova
+//                        ^ keyword.operator.logical.kova
+}
+/* bloc /* imbriqué */ toujours commentaire */ let
+//                     ^^^^^^^^ comment.block.kova
+//                                             ^^^ storage.type.kova
+struct Chien : Animal {
+// <------ storage.type.kova
+//     ^^^^^ entity.name.type.kova
+//             ^^^^^^ entity.name.type.kova
+private:
+// <------- storage.modifier.visibility.kova
+    fn cri(self) -> String { return "wouf" }
+//     ^^^ entity.name.function.kova
+//         ^^^^ variable.language.kova
+//                  ^^^^^^ support.type.primitive.kova
+}
+copy struct Vec2 { x: Float }
+// <---- storage.modifier.kova
+//          ^^^^ entity.name.type.kova
+test "carré de 3" {
+// <---- keyword.other.test.kova
+//    ^^^^^ string.quoted.double.kova
+    check carré(3) = 9 else "raté"
+//  ^^^^^ keyword.control.contract.kova
+//        ^^^^^ entity.name.function.call.kova
+}
+header {
+// <------ keyword.other.header.kova
+}

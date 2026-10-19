@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Losange (pierre taillée = « solide ») avec un K -->
+  <path d="M16 1 L31 16 L16 31 L1 16 Z" fill="#2f6f8f"/>
+  <path d="M16 4 L28 16 L16 28 L4 16 Z" fill="#3d8fb8"/>
+  <path d="M12 9 V23 M12 16 L19 9 M13.5 15 L19.5 23" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,0 +1,89 @@
+// Fichier qui utilise toute la syntaxe de Kova, pour vérifier les couleurs.
+/* Commentaire de bloc /* imbriqué */ toujours commentaire */
+
+header {
+    mode := build
+    lock := false
+}
+
+import maths
+
+interface Animal {
+    fn cri(self) -> String
+    fn presenter(self) -> String { return "Je fais {self.cri()}" }
+}
+
+struct Chien : Animal {
+private:
+    nom: String
+public:
+    fn cri(self) -> String { return "wouf" }
+    fn renommer(var self, nouveau: move String) { self.nom := nouveau }
+}
+
+copy struct Vec2 { x: Float, y: Float }
+
+enum Forme {
+    Cercle(rayon: Float),
+    Carre(cote: Float),
+}
+
+fn aire(f: Forme) -> Float {
+    return match f {
+        Cercle(r) => 3.14 * r * r,
+        Carre(c)  => c * c,
+    }
+}
+
+fn diviser(a: Int, b: Int) -> Int
+    require b != 0 else "on ne peut pas diviser par zéro"
+    ensure result * b <= a
+{
+    return a / b
+}
+
+fn min_max(notes: List<Int>) -> (Int, Int) {
+    var (petite, grande): (Int, Int) := (notes[0], notes[0])
+    for note in notes {
+        if note < petite { petite := note }
+        else if note > grande { grande := note }
+    }
+    return (petite, grande)
+}
+
+fn lire(chemin: String) -> String or IoError {
+    let texte: String := read_file(chemin)?
+    return ok(texte)
+}
+
+fn main() {
+    var notes: List<Int> := [12, 5, 18]
+    let (min, max): (Int, Int) := min_max(notes)
+    print("Min : {min}, max : {max}, accolades : \{\}, barre : \\")
+
+    var total: Int := 0
+    from i := 1 to 10 {
+        total += i
+    }
+    while total > 0 && !(total = 1) {
+        total := total / 2
+    }
+    for i in 0..10 { write(i) }
+
+    let surnom: String? := none
+    if surnom != none {
+        print(surnom.length())
+    }
+
+    let rex := Chien { nom := "Rex" }
+    let grand: Int := 1_000_000 + 0xFF + 0b1010
+    let c: Char := '\n'
+    let f: Float := 3.14e-2
+    check grand > 0 else "impossible"
+    garder(move notes)
+    let ok_ou_pas: Bool := true || false
+}
+
+test "carré de 3" {
+    check diviser(9, 3) = 3
+}

@@ -1,0 +1,35 @@
+{
+  "name": "kova",
+  "displayName": "Kova",
+  "description": "Prise en charge du langage Kova : couleurs, raccourcis, et bientôt erreurs en direct.",
+  "version": "0.1.0",
+  "publisher": "thibault-savenkoff",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages", "Snippets"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "kova",
+        "aliases": ["Kova", "kova"],
+        "extensions": [".kova"],
+        "configuration": "./language-configuration.json",
+        "icon": { "light": "./icones/kova.svg", "dark": "./icones/kova.svg" }
+      }
+    ],
+    "grammars": [
+      { "language": "kova", "scopeName": "source.kova", "path": "./syntaxes/kova.tmLanguage.json" }
+    ],
+    "snippets": [
+      { "language": "kova", "path": "./snippets/kova.json" }
+    ]
+  },
+  "scripts": {
+    "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova'",
+    "package": "vsce package --skip-license --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.0",
+    "vscode-tmgrammar-test": "^0.1.3"
+  }
+}

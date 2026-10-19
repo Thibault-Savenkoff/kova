@@ -1,0 +1,117 @@
+{
+  "fonction": {
+    "prefix": "fn",
+    "body": ["fn ${1:nom}(${2:param}: ${3:Type}) -> ${4:Type} {", "\t$0", "}"],
+    "description": "Fonction"
+  },
+  "fonction sans résultat": {
+    "prefix": "fnv",
+    "body": ["fn ${1:nom}(${2}) {", "\t$0", "}"],
+    "description": "Fonction qui ne renvoie rien"
+  },
+  "main": {
+    "prefix": "main",
+    "body": ["fn main() {", "\t$0", "}"],
+    "description": "Point d'entrée du programme"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Nom} {", "\t${2:champ}: ${3:Type}", "$0", "}"],
+    "description": "Structure"
+  },
+  "struct avec sections": {
+    "prefix": "structp",
+    "body": ["struct ${1:Nom} {", "private:", "\t${2:champ}: ${3:Type}", "public:", "\tfn ${4:methode}(self) {", "\t\t$0", "\t}", "}"],
+    "description": "Structure avec champs privés et méthodes publiques"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": ["enum ${1:Nom} {", "\t${2:Cas1},", "\t${3:Cas2},", "}"],
+    "description": "Énumération"
+  },
+  "interface": {
+    "prefix": "interface",
+    "body": ["interface ${1:Nom} {", "\tfn ${2:methode}(self) -> ${3:Type}", "}"],
+    "description": "Interface"
+  },
+  "let": {
+    "prefix": "let",
+    "body": ["let ${1:nom}: ${2:Type} := ${0}"],
+    "description": "Variable figée"
+  },
+  "var": {
+    "prefix": "var",
+    "body": ["var ${1:nom}: ${2:Type} := ${0}"],
+    "description": "Variable modifiable"
+  },
+  "if": {
+    "prefix": "if",
+    "body": ["if ${1:condition} {", "\t$0", "}"],
+    "description": "Condition"
+  },
+  "if else": {
+    "prefix": "ife",
+    "body": ["if ${1:condition} {", "\t$2", "} else {", "\t$0", "}"],
+    "description": "Condition avec sinon"
+  },
+  "while": {
+    "prefix": "while",
+    "body": ["while ${1:condition} {", "\t$0", "}"],
+    "description": "Boucle tant que"
+  },
+  "for": {
+    "prefix": "for",
+    "body": ["for ${1:element} in ${2:liste} {", "\t$0", "}"],
+    "description": "Boucle sur une liste ou un intervalle"
+  },
+  "from": {
+    "prefix": "from",
+    "body": ["from ${1:i} := ${2:1} to ${3:10} {", "\t$0", "}"],
+    "description": "Boucle de début à fin (fin incluse)"
+  },
+  "match": {
+    "prefix": "match",
+    "body": ["match ${1:valeur} {", "\t${2:Cas} => ${3:resultat},", "\t$0", "}"],
+    "description": "Choix selon le cas"
+  },
+  "require": {
+    "prefix": "require",
+    "body": ["require ${1:condition} else \"${2:message}\""],
+    "description": "Contrat vérifié à l'entrée de la fonction"
+  },
+  "ensure": {
+    "prefix": "ensure",
+    "body": ["ensure ${1:condition} else \"${2:message}\""],
+    "description": "Contrat vérifié à la sortie (result = valeur renvoyée)"
+  },
+  "check": {
+    "prefix": "check",
+    "body": ["check ${1:condition} else \"${2:message}\""],
+    "description": "Vérification à cet endroit du code"
+  },
+  "test": {
+    "prefix": "test",
+    "body": ["test \"${1:description}\" {", "\tcheck ${0}", "}"],
+    "description": "Test lancé par `kova test`"
+  },
+  "header": {
+    "prefix": "header",
+    "body": ["header {", "\tmode := ${1|run,build|}", "\tlock := ${2|false,true|}", "}"],
+    "description": "Mode par défaut de `kova fichier.kova`"
+  },
+  "print": {
+    "prefix": "print",
+    "body": ["print(\"${1}\")"],
+    "description": "Afficher (avec retour à la ligne)"
+  },
+  "import": {
+    "prefix": "import",
+    "body": ["import ${1:module}"],
+    "description": "Utiliser un autre fichier .kova"
+  },
+  "return": {
+    "prefix": "return",
+    "body": ["return ${0}"],
+    "description": "Renvoyer une valeur"
+  }
+}
