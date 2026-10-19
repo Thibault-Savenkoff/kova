@@ -69,6 +69,8 @@ pub fn scalaires(t: &Type) -> Vec<Scalaire> {
 pub struct Programme {
     pub fonctions: Vec<Fonction>,
     pub principale: usize,
+    /// Les blocs `test` (nom, numéro de leur fonction) : traduits seulement pour `kova test`.
+    pub tests: Vec<(String, usize)>,
 }
 
 pub struct Fonction {
@@ -287,19 +289,22 @@ pub fn texte_panne(p: Panne, fichier: &str, l: Lieu) -> String {
 // ---- Traduction AST → KIR ----
 
 /// `contrats` = false pour `kova build --boost` : les `require`, `ensure` et `check` disparaissent.
-pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str, contrats: bool) -> Programme {
+/// `tests` = true pour `kova test` : chaque bloc `test` devient une fonction de plus.
+pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str, contrats: bool, tests: bool) -> Programme {
     let numeros: HashMap<&str, usize> =
         f.fonctions.iter().enumerate().map(|(i, f)| (f.nom.texte.as_str(), i)).collect();
     // Les fonctions qui reçoivent le lieu de l'appel (`main` est appelée par le runtime).
     let sites: Vec<bool> =
         f.fonctions.iter().map(|g| contrats && !g.contrats.is_empty() && g.nom.texte != "main").collect();
-    let fonctions = f
-        .fonctions
-        .iter()
+    // Un test = une fonction sans paramètre, ni résultat, ni contrat.
+    let corps = f.fonctions.iter().map(|g| (g.nom.texte.as_str(), &g.params[..], g.retour.as_ref(), &g.contrats[..], &g.corps));
+    let corps_tests = f.tests.iter().filter(|_| tests).map(|t| (t.nom.as_str(), &[][..], None, &[][..], &t.corps));
+    let fonctions = corps
+        .chain(corps_tests)
         .enumerate()
-        .map(|(i, fonc)| {
-            let retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
-            let gardes = |g: GenreContrat| fonc.contrats.iter().filter(move |c| contrats && c.genre == g);
+        .map(|(i, (nom, params, retour, contrats_ecrits, corps))| {
+            let retour = retour.map_or(Type::Rien, type_de);
+            let gardes = |g: GenreContrat| contrats_ecrits.iter().filter(move |c: &&Contrat| contrats && c.genre == g);
             let mut t = Traducteur {
                 src,
                 infos,
@@ -316,25 +321,25 @@ pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str, contrats: bool) -> P
                 courant: 0,
                 boucles: vec![],
             };
-            for p in &fonc.params {
+            for p in params {
                 let ty = type_de(&p.ty);
                 let v = t.nouvelle_valeur(&ty);
                 t.noms[0].insert(p.nom.texte.clone(), (v, ty));
             }
-            t.site = sites[i].then(|| (t.entier(), t.entier()));
+            t.site = sites.get(i).is_some_and(|&s| s).then(|| (t.entier(), t.entier()));
             let nb_params = t.locaux.len();
             t.courant = t.nouveau_bloc();
             for c in gardes(GenreContrat::Require) {
                 t.verifier(c, t.site);
             }
-            t.bloc(&fonc.corps);
+            t.bloc(corps);
             if retour == Type::Rien {
                 t.sortir(vec![]);
             } else {
                 t.terminer(Fin::Inatteignable);
             }
             Fonction {
-                nom: fonc.nom.texte.clone(),
+                nom: nom.to_string(),
                 nb_params,
                 locaux: t.locaux,
                 retours: scalaires(&retour),
@@ -342,7 +347,9 @@ pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str, contrats: bool) -> P
             }
         })
         .collect();
-    Programme { fonctions, principale: numeros["main"] }
+    let n = f.fonctions.len();
+    let tests = f.tests.iter().filter(|_| tests).enumerate().map(|(i, t)| (t.nom.clone(), n + i)).collect();
+    Programme { fonctions, principale: numeros["main"], tests }
 }
 
 struct Traducteur<'a> {

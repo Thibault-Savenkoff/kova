@@ -6,6 +6,7 @@ use crate::diag::Span;
 
 pub struct Fichier {
     pub fonctions: Vec<Fonction>,
+    pub tests: Vec<Test>,
 }
 
 pub struct Fonction {
@@ -13,6 +14,14 @@ pub struct Fonction {
     pub params: Vec<Param>,
     pub retour: Option<TypeAst>,
     pub contrats: Vec<Contrat>,
+    pub corps: Bloc,
+}
+
+/// `test "carré de 3" { check carre(3) = 9 }` : lancé seulement par `kova test`.
+pub struct Test {
+    pub nom: String,
+    /// Le texte `"..."`, pour les messages.
+    pub span: Span,
     pub corps: Bloc,
 }
 

@@ -152,6 +152,18 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
         }
     }
 
+    // 4. Les tests : vérifiés même par `kova run`, pour que les erreurs se voient tout de suite.
+    let mut noms: HashMap<&str, Span> = HashMap::new();
+    for t in &f.tests {
+        if let Some(premier) = noms.insert(&t.nom, t.span) {
+            let (ligne, _) = ligne_colonne(src, premier.debut);
+            v.erreur(t.span, format!("le test « {} » existe déjà (ligne {ligne})", t.nom));
+        }
+        v.retour = Type::Rien;
+        v.portees = vec![];
+        v.bloc(&t.corps, vec![]);
+    }
+
     (Infos { types: v.types }, v.diags)
 }
 

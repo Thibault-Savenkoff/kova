@@ -174,10 +174,11 @@ fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
         });
     }
     let dedans = |b: &Bloc| b.debut.debut < curseur && curseur <= b.fin.debut;
-    if let Some(f) = fichier.fonctions.iter().find(|f| dedans(&f.corps)) {
-        let mut vars: Vec<(String, String)> =
-            f.params.iter().map(|p| (p.nom.texte.clone(), p.ty.texte())).collect();
-        visibles(&f.corps, curseur, &mut vars);
+    let corps = fichier.fonctions.iter().map(|f| (&f.params[..], &f.corps));
+    let corps_tests = fichier.tests.iter().map(|t| (&[][..], &t.corps));
+    if let Some((params, corps)) = corps.chain(corps_tests).find(|(_, c)| dedans(c)) {
+        let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.nom.texte.clone(), p.ty.texte())).collect();
+        visibles(corps, curseur, &mut vars);
         for (nom, ty) in vars {
             items.push(CompletionItem {
                 label: nom,
@@ -300,6 +301,12 @@ mod tests {
         assert_eq!(noms(&completer(src, apres_si)), ["n", "a"]);
         // Les fonctions sont toujours proposées.
         assert!(completer(src, ici).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_dans_un_test() {
+        let src = "test \"essai\" {\n  let a: Int := 1\n  check ICI\n}\nfn main() {}";
+        assert_eq!(noms(&completer(src, src.find("ICI").unwrap())), ["a"]);
     }
 
     #[test]

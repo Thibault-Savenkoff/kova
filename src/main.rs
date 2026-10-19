@@ -65,7 +65,7 @@ fn main() {
     };
 
     let contrats = !matches!(commande, Commande::Build { boost: true, .. });
-    let programme = match compiler(&source, contrats) {
+    let programme = match compiler(&source, contrats, matches!(commande, Commande::Test)) {
         Ok(p) => p,
         Err(diags) => {
             for d in &diags {
@@ -88,18 +88,16 @@ fn main() {
                 exit(1);
             }
         }
-        Commande::Test => {
-            eprintln!("erreur: `kova test` arrive au jalon J2");
-            exit(1);
-        }
+        Commande::Test => exit(interp::tester(&programme, fichier)),
     }
 }
 
 /// Texte source → KIR, ou la liste de toutes les erreurs.
 /// `contrats` = false : `require`, `ensure` et `check` sont retirés (`--boost`).
-fn compiler(source: &str, contrats: bool) -> Result<kir::Programme, Vec<diag::Diag>> {
+/// `tests` = true : les blocs `test` sont traduits aussi (`kova test`).
+fn compiler(source: &str, contrats: bool, tests: bool) -> Result<kir::Programme, Vec<diag::Diag>> {
     match analyser(source) {
-        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source, contrats)),
+        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source, contrats, tests)),
         (_, None, diags) => Err(diags),
     }
 }

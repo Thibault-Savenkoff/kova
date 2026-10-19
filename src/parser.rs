@@ -206,30 +206,44 @@ impl Parser<'_> {
     // ---- Fichier et fonctions ----
 
     fn fichier(&mut self) -> Fichier {
-        let mut fonctions = vec![];
+        let (mut fonctions, mut tests) = (vec![], vec![]);
         loop {
             self.sauter_lignes();
-            match self.genre() {
+            let lu = match self.genre() {
                 Genre::Fin => break,
-                Genre::Cle("fn") => match self.fonction() {
-                    Ok(f) => fonctions.push(f),
-                    Err(()) => self.aller_au_prochain_fn(),
-                },
+                Genre::Cle("fn") => self.fonction().map(|f| fonctions.push(f)),
+                Genre::Cle("test") => self.test().map(|t| tests.push(t)),
                 _ => {
-                    let msg = format!("`fn` attendu, trouvé {}", self.decrire());
-                    let _: R<()> = self.erreur(self.jeton().span, msg);
-                    self.aller_au_prochain_fn();
+                    let msg = format!("`fn` ou `test` attendu, trouvé {}", self.decrire());
+                    self.erreur(self.jeton().span, msg)
                 }
+            };
+            if lu.is_err() {
+                self.aller_au_prochain_fn();
             }
         }
-        Fichier { fonctions }
+        Fichier { fonctions, tests }
     }
 
     fn aller_au_prochain_fn(&mut self) {
         self.avancer();
-        while !matches!(self.genre(), Genre::Cle("fn") | Genre::Fin) {
+        while !matches!(self.genre(), Genre::Cle("fn" | "test") | Genre::Fin) {
             self.avancer();
         }
+    }
+
+    fn test(&mut self) -> R<Test> {
+        self.avancer(); // test
+        let j = self.jeton();
+        if j.genre != Genre::Texte {
+            let msg = format!("nom du test entre guillemets attendu, trouvé {}", self.decrire());
+            self.diags.push(Diag::new(j.span, msg).aide("exemple : `test \"carré de 3\" { check carre(3) = 9 }`"));
+            return Err(());
+        }
+        self.avancer();
+        self.sauter_lignes();
+        let corps = self.bloc()?;
+        Ok(Test { nom: crate::lexer::contenu_texte(&self.texte(j.span)), span: j.span, corps })
     }
 
     fn fonction(&mut self) -> R<Fonction> {
@@ -299,7 +313,7 @@ impl Parser<'_> {
                 break;
             }
             // `}` oubliée (souvent : en train de taper) : on garde ce qui a été lu.
-            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn")) {
+            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn" | "test")) {
                 let span = self.jeton().span;
                 self.diags.push(Diag::new(span, "`}` manquante à la fin du bloc"));
                 return Ok(Bloc { debut, instrs, fin: span });

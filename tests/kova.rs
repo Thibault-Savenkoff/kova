@@ -137,6 +137,18 @@ fn ligne_de_commande() {
     assert_eq!(out.status.code(), Some(101));
     assert!(texte(&out.stderr).starts_with("erreur: division par zéro"), "{}", texte(&out.stderr));
 
+    // `kova test` : chaque test est lancé, même après un échec ; code 1 s'il y a un échec.
+    let out = Command::new(KOVA).args(["test", "tests/ok/blocs_test.kova"]).output().unwrap();
+    let sortie = texte(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{sortie}");
+    for morceau in [
+        "✅ carré de 3\n❌ carré d'un négatif\n   erreur: un carré est toujours positif\n",
+        "     check carre(n) = -16\n     valeurs : n = -4\n❌ division\n   erreur: division par zéro\n",
+        "\n1 réussi(s), 2 raté(s) sur 3\n",
+    ] {
+        assert!(sortie.contains(morceau), "« {morceau} » absent de :\n{sortie}");
+    }
+
     assert_eq!(
         attentes("// attendu: 3\nx\n  // attendu:  a b\n// erreur: z", "attendu"),
         ["3", " a b"]

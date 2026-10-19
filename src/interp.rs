@@ -18,6 +18,31 @@ pub fn executer(p: &Programme, fichier: &str) -> i32 {
     }
 }
 
+/// `kova test` : lance chaque bloc `test`, même si un autre a raté. Code 1 si au moins un rate.
+pub fn tester(p: &Programme, fichier: &str) -> i32 {
+    if p.tests.is_empty() {
+        println!("aucun bloc `test` dans {fichier}");
+        return 0;
+    }
+    let mut sortie = BufWriter::new(std::io::stdout());
+    let mut rates = 0;
+    for (nom, num) in &p.tests {
+        let resultat = appeler(p, *num, &[], &mut sortie, fichier);
+        let _ = match resultat {
+            Ok(_) => writeln!(sortie, "✅ {nom}"),
+            Err(message) => {
+                rates += 1;
+                let message: Vec<String> = message.lines().map(|l| format!("   {l}")).collect();
+                writeln!(sortie, "❌ {nom}\n{}", message.join("\n"))
+            }
+        };
+    }
+    let total = p.tests.len();
+    let _ = writeln!(sortie, "\n{} réussi(s), {rates} raté(s) sur {total}", total - rates);
+    sortie.flush().unwrap();
+    if rates > 0 { 1 } else { 0 }
+}
+
 /// `Err` = le message de l'erreur d'exécution, tel qu'il sera affiché.
 type Resultat = Result<Vec<i64>, String>;
 
