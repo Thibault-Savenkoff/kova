@@ -133,3 +133,61 @@ fn ligne_de_commande() {
         ["3", " a b"]
     );
 }
+
+/// Parle à `kova lsp` comme le fait l'éditeur : ouvre un fichier faux, reçoit l'erreur,
+/// demande la complétion, puis arrête proprement le serveur.
+#[test]
+fn serveur_de_langage() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::Stdio;
+
+    let mut serveur = Command::new(KOVA).arg("lsp").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut entree = serveur.stdin.take().unwrap();
+    let mut sortie = BufReader::new(serveur.stdout.take().unwrap());
+    let mut envoyer = |msg: serde_json::Value| {
+        let texte = msg.to_string();
+        write!(entree, "Content-Length: {}\r\n\r\n{texte}", texte.len()).unwrap();
+        entree.flush().unwrap();
+    };
+    let mut recevoir = || -> serde_json::Value {
+        let mut longueur = 0;
+        loop {
+            let mut ligne = String::new();
+            sortie.read_line(&mut ligne).unwrap();
+            if ligne == "\r\n" {
+                break;
+            }
+            if let Some(n) = ligne.strip_prefix("Content-Length: ") {
+                longueur = n.trim().parse().unwrap();
+            }
+        }
+        let mut corps = vec![0; longueur];
+        sortie.read_exact(&mut corps).unwrap();
+        serde_json::from_slice(&corps).unwrap()
+    };
+    let uri = "file:///tmp/essai.kova";
+
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}));
+    assert!(recevoir()["result"]["capabilities"]["completionProvider"].is_object());
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
+
+    let texte = "fn main() {\n    let a: Int := 1\n    a := 2\n}\n";
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {"textDocument": {"uri": uri, "languageId": "kova", "version": 1, "text": texte}}}));
+    let diag = recevoir();
+    assert_eq!(diag["method"], "textDocument/publishDiagnostics");
+    let erreur = &diag["params"]["diagnostics"][0];
+    assert!(erreur["message"].as_str().unwrap().contains("`a` est déclarée avec let"), "{diag}");
+    assert_eq!(erreur["range"]["start"], serde_json::json!({"line": 2, "character": 4}));
+
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",
+        "params": {"textDocument": {"uri": uri}, "position": {"line": 2, "character": 4}}}));
+    let reponse = recevoir();
+    let labels: Vec<&str> = reponse["result"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap()).collect();
+    assert!(labels.contains(&"a") && labels.contains(&"main") && labels.contains(&"print"), "{labels:?}");
+
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
+    assert_eq!(recevoir()["id"], 3);
+    envoyer(serde_json::json!({"jsonrpc": "2.0", "method": "exit"}));
+    assert!(serveur.wait().unwrap().success());
+}

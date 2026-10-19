@@ -7,6 +7,7 @@ mod diag;
 mod interp;
 mod kir;
 mod lexer;
+mod lsp;
 mod parser;
 mod types;
 
@@ -19,6 +20,7 @@ usage :
   kova build <fichier.kova> [-o sortie] [--boost]
                                        crée un exécutable autonome
   kova test <fichier.kova>             lance les blocs `test`
+  kova lsp                             serveur de langage (pour l'éditeur)
   kova --version";
 
 enum Commande {
@@ -34,6 +36,13 @@ fn main() {
     let (commande, fichier) = match args.as_slice() {
         ["--version" | "-V"] => {
             println!("kova {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        ["lsp"] => {
+            if let Err(e) = lsp::lancer() {
+                eprintln!("erreur: kova lsp : {e}");
+                exit(1);
+            }
             return;
         }
         ["run", f] => (Commande::Run, *f),
@@ -87,8 +96,16 @@ fn main() {
 }
 
 /// Texte source → KIR, ou la liste de toutes les erreurs.
-/// Lit du texte en mémoire : `kova lsp` pourra l'appeler sur un fichier pas encore sauvegardé.
 fn compiler(source: &str) -> Result<kir::Programme, Vec<diag::Diag>> {
+    match analyser(source) {
+        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source)),
+        (_, None, diags) => Err(diags),
+    }
+}
+
+/// Lexer + parser + typage. Lit du texte en mémoire : `kova lsp` l'appelle sur le
+/// texte pas encore sauvegardé. `Some(infos)` seulement s'il n'y a aucune erreur.
+fn analyser(source: &str) -> (ast::Fichier, Option<types::Infos>, Vec<diag::Diag>) {
     let (jetons, mut diags) = lexer::lexer(source);
     let (fichier, nb_exprs, d) = parser::parser(jetons, source);
     diags.extend(d);
@@ -97,12 +114,12 @@ fn compiler(source: &str) -> Result<kir::Programme, Vec<diag::Diag>> {
     if diags.is_empty() {
         let (infos, d) = types::verifier(&fichier, nb_exprs, source);
         if d.is_empty() {
-            return Ok(kir::traduire(&fichier, &infos, source));
+            return (fichier, Some(infos), d);
         }
         diags = d;
     }
     diags.sort_by_key(|d| d.span.debut);
-    Err(diags)
+    (fichier, None, diags)
 }
 
 /// Lit `-o sortie` et `--boost`, dans n'importe quel ordre.

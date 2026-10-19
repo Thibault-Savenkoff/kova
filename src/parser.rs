@@ -201,15 +201,18 @@ impl Parser<'_> {
     // ---- Blocs et instructions ----
 
     fn bloc(&mut self) -> R<Bloc> {
-        self.attendre("{")?;
+        let debut = self.attendre("{")?;
         let mut instrs = vec![];
         loop {
             self.sauter_lignes();
             if self.est_sym("}") {
                 break;
             }
-            if self.genre() == Genre::Fin {
-                return self.erreur(self.jeton().span, "`}` manquante à la fin du bloc");
+            // `}` oubliée (souvent : en train de taper) : on garde ce qui a été lu.
+            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn")) {
+                let span = self.jeton().span;
+                self.diags.push(Diag::new(span, "`}` manquante à la fin du bloc"));
+                return Ok(Bloc { debut, instrs, fin: span });
             }
             match self.instr() {
                 Ok(i) => {
@@ -224,7 +227,7 @@ impl Parser<'_> {
             }
         }
         let fin = self.avancer().span;
-        Ok(Bloc { instrs, fin })
+        Ok(Bloc { debut, instrs, fin })
     }
 
     /// Après une erreur : saute jusqu'à la fin de l'instruction (fin de ligne ou `}` du bloc).
@@ -341,8 +344,9 @@ impl Parser<'_> {
         self.sauter_lignes();
         let sinon = if self.est_cle("if") {
             // `else if` = un bloc `else` qui contient juste un `if`.
+            let debut = self.jeton().span;
             let si = self.si()?;
-            Bloc { instrs: vec![si], fin: self.j[self.pos - 1].span }
+            Bloc { debut, instrs: vec![si], fin: self.j[self.pos - 1].span }
         } else {
             self.bloc()?
         };

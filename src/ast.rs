@@ -28,6 +28,8 @@ pub struct Param {
 }
 
 pub struct Bloc {
+    /// Position de la `{` ouvrante.
+    pub debut: Span,
     pub instrs: Vec<Instr>,
     /// Position de la `}` fermante (pour « il manque un return »).
     pub fin: Span,
