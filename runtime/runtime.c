@@ -152,6 +152,21 @@ void kova_panne(int64_t genre, int64_t ligne, int64_t colonne) {
     exit(101);
 }
 
+// Le message d'un contrat non respecté arrive en morceaux (src/kir.rs, `Morceau`),
+// puis `kova_echec` arrête le programme.
+void kova_ecrire_texte(const char *texte, int64_t n) {
+    fflush(stdout);
+    fwrite(texte, 1, n, stderr);
+}
+
+void kova_ecrire_valeur(int64_t valeur, int64_t genre) {
+    ecrire(stderr, valeur, genre);
+}
+
+void kova_echec(void) {
+    exit(101);
+}
+
 int main(void) {
     kova_main();
     return 0;

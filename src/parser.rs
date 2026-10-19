@@ -252,9 +252,40 @@ impl Parser<'_> {
         } else {
             None
         };
-        self.sauter_lignes();
+        let mut contrats = vec![];
+        loop {
+            self.sauter_lignes();
+            let genre = match self.genre() {
+                Genre::Cle("require") => GenreContrat::Require,
+                Genre::Cle("ensure") => GenreContrat::Ensure,
+                _ => break,
+            };
+            contrats.push(self.contrat(genre)?);
+        }
         let corps = self.bloc()?;
-        Ok(Fonction { nom, params, retour, corps })
+        Ok(Fonction { nom, params, retour, contrats, corps })
+    }
+
+    /// `require cond`, `ensure cond` ou `check cond`, avec `else "message"` facultatif.
+    fn contrat(&mut self, genre: GenreContrat) -> R<Contrat> {
+        self.avancer(); // require, ensure ou check
+        let cond = self.expression()?;
+        // `else` peut être à la ligne suivante.
+        let avant = self.pos;
+        self.sauter_lignes();
+        if !self.est_cle("else") {
+            self.pos = avant;
+            return Ok(Contrat { genre, cond, message: None });
+        }
+        self.avancer();
+        let j = self.jeton();
+        if j.genre != Genre::Texte {
+            let msg = format!("message entre guillemets attendu après `else`, trouvé {}", self.decrire());
+            self.diags.push(Diag::new(j.span, msg).aide(format!("exemple : `{} b != 0 else \"b ne doit pas valoir 0\"`", genre.mot())));
+            return Err(());
+        }
+        self.avancer();
+        Ok(Contrat { genre, cond, message: Some(crate::lexer::contenu_texte(&self.texte(j.span))) })
     }
 
     // ---- Blocs et instructions ----
@@ -332,6 +363,12 @@ impl Parser<'_> {
             Genre::Cle("break") => Ok(Instr::Sortir(self.avancer().span)),
             Genre::Cle("continue") => Ok(Instr::Continuer(self.avancer().span)),
             Genre::Cle("if") => self.si(),
+            Genre::Cle("check") => Ok(Instr::Verifier(self.contrat(GenreContrat::Check)?)),
+            Genre::Cle(k @ ("require" | "ensure")) => {
+                let msg = format!("`{k}` s'écrit entre la signature de la fonction et son `{{`");
+                self.diags.push(Diag::new(debut, msg).aide("à l'intérieur d'une fonction, utilise `check`"));
+                Err(())
+            }
             Genre::Cle("while") => {
                 self.avancer();
                 let cond = self.expression()?;
@@ -517,6 +554,8 @@ impl Parser<'_> {
             Genre::Caractere(c) => ExprGenre::Caractere(c),
             Genre::Cle("true") => ExprGenre::Bool(true),
             Genre::Cle("false") => ExprGenre::Bool(false),
+            Genre::Cle("result") => ExprGenre::Resultat,
+            Genre::Texte => return self.erreur(j.span, "les textes arrivent au jalon J3 (pour l'instant : seulement après `else` dans un contrat)"),
             Genre::Ident => {
                 let nom = self.nom_valeur("variable")?;
                 if !self.est_sym("(") {

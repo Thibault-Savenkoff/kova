@@ -128,6 +128,15 @@ fn ligne_de_commande() {
     let out = Command::new(KOVA).args(["run", "fichier-qui-n-existe-pas.kova"]).output().unwrap();
     assert!(texte(&out.stderr).contains("impossible de lire"));
 
+    // `--boost` retire les contrats : le `require` raté laisse place à la division par zéro.
+    let exe = std::env::temp_dir().join(format!("kova-boost-{}", std::process::id()));
+    let out = Command::new(KOVA).args(["build", "tests/ok/contrat_require.kova", "--boost", "-o"]).arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", texte(&out.stderr));
+    let out = Command::new(&exe).output().unwrap();
+    let _ = std::fs::remove_file(&exe);
+    assert_eq!(out.status.code(), Some(101));
+    assert!(texte(&out.stderr).starts_with("erreur: division par zéro"), "{}", texte(&out.stderr));
+
     assert_eq!(
         attentes("// attendu: 3\nx\n  // attendu:  a b\n// erreur: z", "attendu"),
         ["3", " a b"]

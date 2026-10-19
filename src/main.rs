@@ -64,7 +64,8 @@ fn main() {
         }
     };
 
-    let programme = match compiler(&source) {
+    let contrats = !matches!(commande, Commande::Build { boost: true, .. });
+    let programme = match compiler(&source, contrats) {
         Ok(p) => p,
         Err(diags) => {
             for d in &diags {
@@ -76,8 +77,7 @@ fn main() {
 
     match commande {
         Commande::Run => exit(interp::executer(&programme, fichier)),
-        Commande::Build { sortie, boost } => {
-            let _ = boost; // ponytail: `--boost` ne change rien tant qu'il n'y a pas de contrats (J2).
+        Commande::Build { sortie, .. } => {
             let sortie = sortie.unwrap_or_else(|| fichier.trim_end_matches(".kova").to_string());
             if sortie == fichier {
                 eprintln!("erreur: l'exécutable écraserait `{fichier}` ; choisis un autre nom avec `-o`");
@@ -96,9 +96,10 @@ fn main() {
 }
 
 /// Texte source → KIR, ou la liste de toutes les erreurs.
-fn compiler(source: &str) -> Result<kir::Programme, Vec<diag::Diag>> {
+/// `contrats` = false : `require`, `ensure` et `check` sont retirés (`--boost`).
+fn compiler(source: &str, contrats: bool) -> Result<kir::Programme, Vec<diag::Diag>> {
     match analyser(source) {
-        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source)),
+        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source, contrats)),
         (_, None, diags) => Err(diags),
     }
 }

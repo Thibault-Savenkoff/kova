@@ -1,0 +1,21 @@
+fn f(x: Int) -> Int
+    require x > 0
+{
+    require x > 0
+    return x
+}
+
+fn g(x: Int)
+    require x > 0 else oups
+{
+    check x > 0 else "{x} trop petit"
+}
+
+fn main() {
+    print(f(1))
+    let s: Int := "texte"
+}
+// erreur: `require` s'écrit entre la signature de la fonction et son `{`
+// erreur: message entre guillemets attendu après `else`, trouvé `oups`
+// erreur: l'interpolation `{…}` arrive au jalon J3
+// erreur: les textes arrivent au jalon J3

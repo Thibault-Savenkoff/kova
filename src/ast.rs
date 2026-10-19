@@ -12,7 +12,35 @@ pub struct Fonction {
     pub nom: Nom,
     pub params: Vec<Param>,
     pub retour: Option<TypeAst>,
+    pub contrats: Vec<Contrat>,
     pub corps: Bloc,
+}
+
+/// `require b != 0 else "message"` ou `ensure result >= 0`.
+pub struct Contrat {
+    pub genre: GenreContrat,
+    pub cond: Expr,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum GenreContrat {
+    /// Vérifié avant chaque appel.
+    Require,
+    /// Vérifié à chaque sortie ; `result` = la valeur renvoyée.
+    Ensure,
+    /// Vérifié à l'endroit où il est écrit.
+    Check,
+}
+
+impl GenreContrat {
+    pub fn mot(self) -> &'static str {
+        match self {
+            GenreContrat::Require => "require",
+            GenreContrat::Ensure => "ensure",
+            GenreContrat::Check => "check",
+        }
+    }
 }
 
 /// Un type tel qu'écrit : `Int`, `(Int, Float)`, `((Int, Int), Bool)`.
@@ -80,6 +108,8 @@ pub enum Instr {
     /// `x := 5`, `(a, b) := (b, a)`, ou `x += 5` (`op` = `Some(Plus)`).
     Affecter { cible: Cible, op: Option<OpBin>, valeur: Expr },
     Retour { valeur: Option<Expr>, span: Span },
+    /// `check cond else "message"`.
+    Verifier(Contrat),
     Sortir(Span),
     Continuer(Span),
     Si { cond: Expr, alors: Bloc, sinon: Option<Bloc> },
@@ -102,6 +132,8 @@ pub enum ExprGenre {
     Caractere(char),
     Bool(bool),
     Var(String),
+    /// `result` dans un `ensure`.
+    Resultat,
     Appel { nom: Nom, args: Vec<Expr> },
     /// `x.to_float()` : méthode prédéfinie (J2 : seulement les conversions).
     Methode { recu: Box<Expr>, nom: Nom, args: Vec<Expr> },

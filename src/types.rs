@@ -81,6 +81,8 @@ struct Verif<'a> {
     /// Une table par bloc ouvert, de l'extérieur vers l'intérieur.
     portees: Vec<HashMap<String, Variable>>,
     retour: Type,
+    /// Le type de `result` : `Some` seulement dans un `ensure`.
+    resultat: Option<Type>,
     boucles: usize,
     types: Vec<Type>,
     diags: Vec<Diag>,
@@ -92,6 +94,7 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
         fonctions: HashMap::new(),
         portees: vec![],
         retour: Type::Rien,
+        resultat: None,
         boucles: 0,
         types: vec![Type::Erreur; nb_exprs],
         diags: vec![],
@@ -134,6 +137,12 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
             params.insert(p.nom.texte.clone(), Variable { ty: type_de(&p.ty), sorte: Sorte::Param, span: p.nom.span });
         }
         v.portees = vec![params];
+        // Les contrats ne voient que les paramètres (et `result` dans un `ensure`).
+        for c in &fonc.contrats {
+            v.resultat = (c.genre == GenreContrat::Ensure).then(|| v.retour.clone());
+            v.attendre(&c.cond, &Type::Bool);
+        }
+        v.resultat = None;
         v.bloc(&fonc.corps, vec![]);
         if v.retour != Type::Rien && !termine(&fonc.corps) {
             v.diags.push(
@@ -368,6 +377,7 @@ impl Verif<'_> {
                 }
                 (Some(e), t) => self.attendre(e, &t),
             },
+            Instr::Verifier(c) => self.attendre(&c.cond, &Type::Bool),
             Instr::Sortir(span) | Instr::Continuer(span) => {
                 if self.boucles == 0 {
                     let mot = if matches!(i, Instr::Sortir(_)) { "break" } else { "continue" };
@@ -424,6 +434,20 @@ impl Verif<'_> {
             ExprGenre::Flottant(_) => Type::Float,
             ExprGenre::Caractere(_) => Type::Char,
             ExprGenre::Bool(_) => Type::Bool,
+            ExprGenre::Resultat => match &self.resultat {
+                Some(Type::Rien) => {
+                    self.erreur(e.span, "`result` n'existe pas : cette fonction ne renvoie rien");
+                    Type::Erreur
+                }
+                Some(t) => t.clone(),
+                None => {
+                    self.diags.push(
+                        Diag::new(e.span, "`result` ne s'utilise que dans un `ensure`")
+                            .aide("`ensure result >= 0` vérifie la valeur renvoyée par la fonction"),
+                    );
+                    Type::Erreur
+                }
+            },
             ExprGenre::Var(nom) => match self.chercher(nom) {
                 Some(v) => v.ty.clone(),
                 None => {

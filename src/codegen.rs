@@ -3,15 +3,16 @@
 //
 // Chaque local du KIR devient une `Variable` Cranelift ; chaque bloc KIR, un bloc Cranelift.
 
+use std::collections::HashMap;
 use std::process::Command;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
-use cranelift_codegen::ir::{AbiParam, Block, FuncRef, InstBuilder, MemFlagsData, Signature, TrapCode, Value};
+use cranelift_codegen::ir::{AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, TrapCode, Value};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{DataDescription, FuncId, Linkage, Module, default_libcall_names};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::kir::*;
@@ -42,6 +43,9 @@ pub fn construire(p: &Programme, fichier: &str, sortie: &str) -> Result<(), Stri
 struct Runtime {
     afficher: FuncId,
     panne: FuncId,
+    ecrire_texte: FuncId,
+    ecrire_valeur: FuncId,
+    echec: FuncId,
 }
 
 fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -72,7 +76,12 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
     let rt = Runtime {
         afficher: module.declare_function("kova_afficher", Linkage::Import, &signature(&entiers, &[]))?,
         panne: module.declare_function("kova_panne", Linkage::Import, &signature(&entiers, &[]))?,
+        ecrire_texte: module.declare_function("kova_ecrire_texte", Linkage::Import, &signature(&entiers[..2], &[]))?,
+        ecrire_valeur: module.declare_function("kova_ecrire_valeur", Linkage::Import, &signature(&entiers[..2], &[]))?,
+        echec: module.declare_function("kova_echec", Linkage::Import, &signature(&[], &[]))?,
     };
+    // Les textes des messages de contrats, une seule copie de chacun dans l'exécutable.
+    let mut donnees: HashMap<String, DataId> = HashMap::new();
     let mut ids = vec![];
     for (i, f) in p.fonctions.iter().enumerate() {
         let sig = signature(&f.locaux[..f.nb_params], &f.retours);
@@ -92,7 +101,30 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
         let refs: Vec<FuncRef> = ids.iter().map(|&id| module.declare_func_in_func(id, b.func)).collect();
         let rt_afficher = module.declare_func_in_func(rt.afficher, b.func);
         let rt_panne = module.declare_func_in_func(rt.panne, b.func);
-        Generateur { b, vars: vec![], types: f.locaux.clone(), rt_panne }.fonction(f, &refs, rt_afficher, config);
+        let mut textes = HashMap::new();
+        for m in f.blocs.iter().flat_map(|b| &b.instrs).filter_map(|i| if let Inst::Echec(m) = i { Some(m) } else { None }).flatten() {
+            let t = match m {
+                Morceau::Texte(t) => t.as_str(),
+                Morceau::Fichier => fichier,
+                Morceau::Valeur(..) => continue,
+            };
+            if !donnees.contains_key(t) {
+                let id = module.declare_data(&format!("kova_texte{}", donnees.len()), Linkage::Local, false, false)?;
+                let mut d = DataDescription::new();
+                d.define(t.as_bytes().into());
+                module.define_data(id, &d)?;
+                donnees.insert(t.to_string(), id);
+            }
+            textes.entry(t.to_string()).or_insert_with(|| module.declare_data_in_func(donnees[t], b.func));
+        }
+        let echec = Echec {
+            ecrire_texte: module.declare_func_in_func(rt.ecrire_texte, b.func),
+            ecrire_valeur: module.declare_func_in_func(rt.ecrire_valeur, b.func),
+            fin: module.declare_func_in_func(rt.echec, b.func),
+            textes,
+            fichier: fichier.to_string(),
+        };
+        Generateur { b, vars: vec![], types: f.locaux.clone(), rt_panne, echec }.fonction(f, &refs, rt_afficher, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -111,6 +143,16 @@ struct Generateur<'a> {
     vars: Vec<Variable>,
     types: Vec<Scalaire>,
     rt_panne: FuncRef,
+    echec: Echec,
+}
+
+/// De quoi écrire le message d'un contrat non respecté.
+struct Echec {
+    ecrire_texte: FuncRef,
+    ecrire_valeur: FuncRef,
+    fin: FuncRef,
+    textes: HashMap<String, GlobalValue>,
+    fichier: String,
 }
 
 impl Generateur<'_> {
@@ -247,16 +289,38 @@ impl Generateur<'_> {
                 }
             }
             Inst::Afficher { valeur, genre, ligne } => {
-                let mut v = self.lire(*valeur);
-                if *genre == Affichage::Float {
-                    // Le runtime reçoit les 64 bits du Float dans un entier.
-                    v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
-                }
-                let genre = self.b.ins().iconst(I64, *genre as i64);
+                let (v, genre) = self.valeur_et_genre(*valeur, *genre);
                 let ligne = self.b.ins().iconst(I64, *ligne as i64);
                 self.b.ins().call(rt_afficher, &[v, genre, ligne]);
             }
+            Inst::Echec(morceaux) => {
+                for m in morceaux {
+                    let t = match m {
+                        Morceau::Valeur(l, genre) => {
+                            let (v, genre) = self.valeur_et_genre(*l, *genre);
+                            self.b.ins().call(self.echec.ecrire_valeur, &[v, genre]);
+                            continue;
+                        }
+                        Morceau::Texte(t) => t,
+                        Morceau::Fichier => &self.echec.fichier,
+                    };
+                    let adresse = self.b.ins().symbol_value(I64, self.echec.textes[t]);
+                    let n = self.b.ins().iconst(I64, t.len() as i64);
+                    self.b.ins().call(self.echec.ecrire_texte, &[adresse, n]);
+                }
+                self.b.ins().call(self.echec.fin, &[]);
+            }
         }
+    }
+
+    /// Une case et son genre d'affichage, prêts pour le runtime.
+    fn valeur_et_genre(&mut self, l: Local, genre: Affichage) -> (Value, Value) {
+        let mut v = self.lire(l);
+        if genre == Affichage::Float {
+            // Le runtime reçoit les 64 bits du Float dans un entier.
+            v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
+        }
+        (v, self.b.ins().iconst(I64, genre as i64))
     }
 
     /// Mêmes règles que `interp::calculer_float`.

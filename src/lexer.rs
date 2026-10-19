@@ -16,6 +16,8 @@ pub enum Genre {
     Entier(u64),
     Flottant(f64),
     Caractere(char),
+    /// `"..."` ; le contenu se relit avec `contenu_texte`.
+    Texte,
     /// Mot-clé (`fn`, `let`, …).
     Cle(&'static str),
     /// Symbole (`:=`, `+`, `{`, …).
@@ -131,16 +133,19 @@ fn jetons_bruts(source: &str) -> (Vec<(Jeton, bool)>, Vec<Diag>) {
                     Genre::Caractere(' ')
                 }
             }
+        } else if c == '"' {
+            let (n, erreurs) = lire_texte(reste);
+            for (k, msg) in erreurs {
+                diags.push(Diag::new(Span::new(debut + k, debut + k + 1), msg));
+            }
+            i += n;
+            Genre::Texte
         } else if let Some(s) = SYMBOLES.iter().find(|s| reste.starts_with(**s)) {
             i += s.len();
             Genre::Sym(s)
         } else {
             i += c.len_utf8();
-            let msg = if c == '"' {
-                "les textes arrivent au jalon J3".to_string()
-            } else {
-                format!("caractère inattendu `{c}`")
-            };
+            let msg = format!("caractère inattendu `{c}`");
             diags.push(Diag::new(Span::new(debut, i), msg));
             continue;
         };
@@ -230,6 +235,49 @@ fn lire_caractere(s: &str) -> (usize, Result<char, String>) {
             (n, resultat.and(Err("un caractère s'écrit entre `'` : un seul caractère, comme `'a'`".to_string())))
         }
     }
+}
+
+/// `"..."` au début de `s` : sa longueur, et les erreurs (position dans `s`, message).
+fn lire_texte(s: &str) -> (usize, Vec<(usize, String)>) {
+    let mut erreurs = vec![];
+    let mut it = s.char_indices().skip(1).peekable();
+    while let Some((k, c)) = it.next() {
+        match c {
+            '"' => return (k + 1, erreurs),
+            '\n' => break,
+            '\\' => {
+                let mut reste = s[k + 1..].char_indices();
+                if let Err(msg) = echappement(&mut reste) {
+                    erreurs.push((k, msg));
+                }
+                // Avance d'autant de caractères que l'échappement en a lu.
+                let lu = reste.next().map_or(s.len() - k - 1, |(j, _)| j);
+                while it.peek().is_some_and(|&(j, _)| j <= k + lu) {
+                    it.next();
+                }
+            }
+            // Une seule erreur par texte : `{x}` en donnerait sinon deux.
+            '{' | '}' if !erreurs.iter().any(|(_, m)| m.starts_with("l'interpolation")) => {
+                erreurs.push((k, "l'interpolation `{…}` arrive au jalon J3 (écris `\\{` pour une accolade)".into()))
+            }
+            _ => {}
+        }
+    }
+    let n = s.find('\n').unwrap_or(s.len());
+    erreurs.push((0, "texte jamais fermé : il manque le `\"` de fin".into()));
+    (n, erreurs)
+}
+
+/// Le contenu d'un jeton `Texte` (`"a\nb"` → `a`, retour à la ligne, `b`), déjà vérifié par le lexer.
+pub fn contenu_texte(jeton: &str) -> String {
+    let interieur = jeton.strip_prefix('"').unwrap_or(jeton);
+    let interieur = interieur.strip_suffix('"').unwrap_or(interieur);
+    let mut texte = String::new();
+    let mut it = interieur.char_indices();
+    while let Some((_, c)) = it.next() {
+        texte.push(if c == '\\' { echappement(&mut it).unwrap_or('?') } else { c });
+    }
+    texte
 }
 
 /// Lit ce qui suit un `\` : `n t r 0 \\ " ' { }` ou `u{1F600}`.

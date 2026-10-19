@@ -17,10 +17,16 @@
 //
 // Les erreurs d'exécution (dépassement, division par zéro) sont vérifiées dans
 // `Binaire` et `Neg` : chaque backend les traduit à l'identique.
+//
+// Les contrats deviennent des tests ordinaires suivis d'un `Echec` (message en morceaux) :
+//   - `require` : au début de la fonction. Elle reçoit 2 paramètres cachés, la ligne et la
+//     colonne de l'appel, pour que le message dise qui l'a mal appelée ;
+//   - `ensure` : avant chaque `return`, avec `result` = la valeur renvoyée ;
+//   - `check` : là où il est écrit.
 
 use std::collections::HashMap;
 
-use crate::ast::{self, Bloc, Cible, Expr, ExprGenre, Instr, Motif, OpBin, OpUn};
+use crate::ast::{self, Bloc, Cible, Contrat, Expr, ExprGenre, GenreContrat, Instr, Motif, OpBin, OpUn};
 use crate::diag::{Span, ligne_colonne};
 use crate::types::{Infos, Type, type_de};
 
@@ -106,6 +112,16 @@ pub enum Inst {
     Appel(Valeur, usize, Valeur),
     /// `print` (`ligne` = true) ou `write`.
     Afficher { valeur: Local, genre: Affichage, ligne: bool },
+    /// Contrat non respecté : écrit le message sur la sortie d'erreur et arrête (code 101).
+    Echec(Vec<Morceau>),
+}
+
+/// Un morceau du message d'un contrat non respecté.
+pub enum Morceau {
+    Texte(String),
+    Valeur(Local, Affichage),
+    /// Le nom du fichier lancé (inconnu à la traduction : `kova lsp` traduit du texte).
+    Fichier,
 }
 
 /// Comment afficher une case. Même ordre que dans `runtime/runtime.c`.
@@ -270,17 +286,30 @@ pub fn texte_panne(p: Panne, fichier: &str, l: Lieu) -> String {
 
 // ---- Traduction AST → KIR ----
 
-pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str) -> Programme {
+/// `contrats` = false pour `kova build --boost` : les `require`, `ensure` et `check` disparaissent.
+pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str, contrats: bool) -> Programme {
     let numeros: HashMap<&str, usize> =
         f.fonctions.iter().enumerate().map(|(i, f)| (f.nom.texte.as_str(), i)).collect();
+    // Les fonctions qui reçoivent le lieu de l'appel (`main` est appelée par le runtime).
+    let sites: Vec<bool> =
+        f.fonctions.iter().map(|g| contrats && !g.contrats.is_empty() && g.nom.texte != "main").collect();
     let fonctions = f
         .fonctions
         .iter()
-        .map(|fonc| {
+        .enumerate()
+        .map(|(i, fonc)| {
+            let retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
+            let gardes = |g: GenreContrat| fonc.contrats.iter().filter(move |c| contrats && c.genre == g);
             let mut t = Traducteur {
                 src,
                 infos,
                 numeros: &numeros,
+                sites: &sites,
+                contrats,
+                ensures: gardes(GenreContrat::Ensure).collect(),
+                retour: retour.clone(),
+                resultat: None,
+                site: None,
                 noms: vec![HashMap::new()],
                 locaux: vec![],
                 blocs: vec![],
@@ -292,12 +321,18 @@ pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str) -> Programme {
                 let v = t.nouvelle_valeur(&ty);
                 t.noms[0].insert(p.nom.texte.clone(), (v, ty));
             }
+            t.site = sites[i].then(|| (t.entier(), t.entier()));
             let nb_params = t.locaux.len();
             t.courant = t.nouveau_bloc();
+            for c in gardes(GenreContrat::Require) {
+                t.verifier(c, t.site);
+            }
             t.bloc(&fonc.corps);
-            let retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
-            let fin = if retour == Type::Rien { Fin::Retour(vec![]) } else { Fin::Inatteignable };
-            t.terminer(fin);
+            if retour == Type::Rien {
+                t.sortir(vec![]);
+            } else {
+                t.terminer(Fin::Inatteignable);
+            }
             Fonction {
                 nom: fonc.nom.texte.clone(),
                 nb_params,
@@ -314,6 +349,16 @@ struct Traducteur<'a> {
     src: &'a str,
     infos: &'a Infos,
     numeros: &'a HashMap<&'a str, usize>,
+    /// Par numéro de fonction : reçoit-elle le lieu de l'appel ?
+    sites: &'a [bool],
+    /// Garder les contrats (faux avec `--boost`).
+    contrats: bool,
+    ensures: Vec<&'a Contrat>,
+    retour: Type,
+    /// La valeur de `result` pendant la vérification d'un `ensure`.
+    resultat: Option<(Valeur, Type)>,
+    /// Les 2 paramètres cachés : ligne et colonne de l'appel (voir `sites`).
+    site: Option<(Local, Local)>,
     /// Nom → ses cases et son type, une table par bloc ouvert.
     noms: Vec<HashMap<String, (Valeur, Type)>>,
     locaux: Vec<Scalaire>,
@@ -324,7 +369,7 @@ struct Traducteur<'a> {
     boucles: Vec<(NumBloc, NumBloc)>,
 }
 
-impl Traducteur<'_> {
+impl<'a> Traducteur<'a> {
     fn nouveau_local(&mut self, s: Scalaire) -> Local {
         self.locaux.push(s);
         self.locaux.len() - 1
@@ -460,7 +505,12 @@ impl Traducteur<'_> {
             }
             Instr::Retour { valeur, .. } => {
                 let v = valeur.as_ref().map_or(vec![], |e| self.expr(e));
-                self.terminer(Fin::Retour(v));
+                self.sortir(v);
+            }
+            Instr::Verifier(c) => {
+                if self.contrats {
+                    self.verifier(c, None);
+                }
             }
             Instr::Sortir(_) => {
                 let (_, sortie) = *self.boucles.last().unwrap();
@@ -535,6 +585,66 @@ impl Traducteur<'_> {
         }
     }
 
+    /// `return v` : vérifie les `ensure` avec `result` = v, puis sort.
+    fn sortir(&mut self, v: Valeur) {
+        for c in self.ensures.clone() {
+            self.resultat = Some((v.clone(), self.retour.clone()));
+            self.verifier(c, self.site);
+        }
+        self.resultat = None;
+        self.terminer(Fin::Retour(v));
+    }
+
+    /// Teste la condition d'un contrat ; si elle est fausse : `Echec` avec un message comme
+    ///
+    ///   erreur: on ne peut pas diviser par zéro
+    ///     --> diviser.kova:2:13
+    ///     require b != 0
+    ///     valeurs : b = 0
+    ///     appelé depuis diviser.kova:8:11
+    fn verifier(&mut self, c: &Contrat, site: Option<(Local, Local)>) {
+        let ok = self.expr1(&c.cond);
+        let (echec, suite) = (self.nouveau_bloc(), self.nouveau_bloc());
+        self.aller(Fin::Si(ok, suite, echec), echec);
+
+        let l = self.lieu(c.cond.span);
+        let cond: Vec<&str> = self.src[c.cond.span.debut..c.cond.span.fin].split_whitespace().collect();
+        let mut m = vec![
+            Morceau::Texte(format!("erreur: {}\n  --> ", c.message.as_deref().unwrap_or("contrat non respecté"))),
+            Morceau::Fichier,
+            Morceau::Texte(format!(":{}:{}\n  {} {}\n", l.ligne, l.colonne, c.genre.mot(), cond.join(" "))),
+        ];
+        let mut noms = vec![];
+        noms_dans(&c.cond, &mut noms);
+        let valeurs: Vec<(String, (Valeur, Type))> = noms
+            .into_iter()
+            .filter_map(|n| {
+                let v = if n == "result" { self.resultat.clone() } else { self.noms.iter().rev().find_map(|t| t.get(&n)).cloned() };
+                Some((n, v?))
+            })
+            .collect();
+        for (k, (nom, (v, ty))) in valeurs.iter().enumerate() {
+            m.push(Morceau::Texte(format!("{}{nom} = ", if k == 0 { "  valeurs : " } else { ", " })));
+            morceaux_valeur(v, ty, &mut m);
+        }
+        if !valeurs.is_empty() {
+            m.push(Morceau::Texte("\n".into()));
+        }
+        if let Some((ligne, colonne)) = site {
+            m.extend([
+                Morceau::Texte("  appelé depuis ".into()),
+                Morceau::Fichier,
+                Morceau::Texte(":".into()),
+                Morceau::Valeur(ligne, Affichage::Int),
+                Morceau::Texte(":".into()),
+                Morceau::Valeur(colonne, Affichage::Int),
+                Morceau::Texte("\n".into()),
+            ]);
+        }
+        self.emettre(Inst::Echec(m));
+        self.aller(Fin::Inatteignable, suite);
+    }
+
     fn si_valeur(&mut self, cond: &Expr, alors: &Bloc, sinon: &Bloc, ty: &Type) -> Valeur {
         let dst = self.nouvelle_valeur(ty);
         let c = self.expr1(cond);
@@ -577,6 +687,7 @@ impl Traducteur<'_> {
             ExprGenre::Caractere(c) => vec![self.constante(*c as i64)],
             ExprGenre::Bool(b) => vec![self.constante(*b as i64)],
             ExprGenre::Var(nom) => self.valeur_de(nom),
+            ExprGenre::Resultat => self.resultat.clone().expect("`result` vérifié par le typage").0,
             ExprGenre::Tuple(elems) => elems.iter().flat_map(|x| self.expr(x)).collect(),
             ExprGenre::Champ(x, i) => {
                 let v = self.expr(x);
@@ -594,6 +705,11 @@ impl Traducteur<'_> {
                     return vec![];
                 }
                 let num = self.numeros[nom.texte.as_str()];
+                if self.sites[num] {
+                    let l = self.lieu(nom.span);
+                    let (ligne, colonne) = (self.constante(l.ligne as i64), self.constante(l.colonne as i64));
+                    vals.extend([ligne, colonne]);
+                }
                 let resultat = self.nouvelle_valeur(&self.infos.types[e.id].clone());
                 self.emettre(Inst::Appel(resultat.clone(), num, vals));
                 resultat
@@ -661,6 +777,54 @@ impl Traducteur<'_> {
                 vec![dst]
             }
         }
+    }
+}
+
+/// Les variables d'une condition, dans l'ordre, sans doublon (`result` compris).
+fn noms_dans(e: &Expr, noms: &mut Vec<String>) {
+    let mut ajouter = |n: &str| {
+        if !noms.iter().any(|m| m == n) {
+            noms.push(n.to_string());
+        }
+    };
+    match &e.genre {
+        ExprGenre::Var(n) => ajouter(n),
+        ExprGenre::Resultat => ajouter("result"),
+        ExprGenre::Appel { args, .. } | ExprGenre::Tuple(args) => args.iter().for_each(|a| noms_dans(a, noms)),
+        ExprGenre::Methode { recu, args, .. } => {
+            noms_dans(recu, noms);
+            args.iter().for_each(|a| noms_dans(a, noms));
+        }
+        ExprGenre::Unaire(_, x) | ExprGenre::Champ(x, _) => noms_dans(x, noms),
+        ExprGenre::Si { cond, .. } => noms_dans(cond, noms),
+        ExprGenre::Binaire(_, a, b) => {
+            noms_dans(a, noms);
+            noms_dans(b, noms);
+        }
+        ExprGenre::Entier(_) | ExprGenre::Flottant(_) | ExprGenre::Caractere(_) | ExprGenre::Bool(_) => {}
+    }
+}
+
+/// Une valeur comme on l'écrirait en Kova : `3`, `2.5`, `'a'`, `(1, true)`.
+fn morceaux_valeur(v: &[Local], ty: &Type, m: &mut Vec<Morceau>) {
+    match ty {
+        Type::Tuple(ts) => {
+            m.push(Morceau::Texte("(".into()));
+            for (i, t) in ts.iter().enumerate() {
+                if i > 0 {
+                    m.push(Morceau::Texte(", ".into()));
+                }
+                let (debut, n) = tranche(ty, i);
+                morceaux_valeur(&v[debut..debut + n], t, m);
+            }
+            m.push(Morceau::Texte(")".into()));
+        }
+        Type::Char => {
+            m.push(Morceau::Texte("'".into()));
+            m.push(Morceau::Valeur(v[0], Affichage::Char));
+            m.push(Morceau::Texte("'".into()));
+        }
+        _ => m.push(Morceau::Valeur(v[0], Affichage::de(ty))),
     }
 }
 
