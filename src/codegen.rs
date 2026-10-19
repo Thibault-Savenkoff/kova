@@ -6,7 +6,7 @@
 use std::process::Command;
 
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, FuncRef, InstBuilder, Signature, TrapCode, Value};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_codegen::settings::{self, Configurable};
@@ -60,21 +60,20 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
 
     let convention = module.isa().default_call_conv();
     let config = module.isa().frontend_config();
-    let signature = |n_params: usize, renvoie: bool| {
+    let signature = |params: &[Scalaire], retours: &[Scalaire]| {
         let mut s = Signature::new(convention);
-        s.params.extend((0..n_params).map(|_| AbiParam::new(I64)));
-        if renvoie {
-            s.returns.push(AbiParam::new(I64));
-        }
+        s.params.extend(params.iter().map(|&t| AbiParam::new(type_machine(t))));
+        s.returns.extend(retours.iter().map(|&t| AbiParam::new(type_machine(t))));
         s
     };
+    let entiers = [Scalaire::Entier; 3];
     let rt = Runtime {
-        afficher: module.declare_function("kova_afficher", Linkage::Import, &signature(3, false))?,
-        panne: module.declare_function("kova_panne", Linkage::Import, &signature(3, false))?,
+        afficher: module.declare_function("kova_afficher", Linkage::Import, &signature(&entiers, &[]))?,
+        panne: module.declare_function("kova_panne", Linkage::Import, &signature(&entiers, &[]))?,
     };
     let mut ids = vec![];
     for (i, f) in p.fonctions.iter().enumerate() {
-        let sig = signature(f.nb_params, f.renvoie);
+        let sig = signature(&f.locaux[..f.nb_params], &f.retours);
         let id = if i == p.principale {
             module.declare_function("kova_main", Linkage::Export, &sig)?
         } else {
@@ -86,7 +85,7 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
     let mut ctx = module.make_context();
     let mut fbc = FunctionBuilderContext::new();
     for (i, f) in p.fonctions.iter().enumerate() {
-        ctx.func.signature = signature(f.nb_params, f.renvoie);
+        ctx.func.signature = signature(&f.locaux[..f.nb_params], &f.retours);
         let b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
         let refs: Vec<FuncRef> = ids.iter().map(|&id| module.declare_func_in_func(id, b.func)).collect();
         let rt_afficher = module.declare_func_in_func(rt.afficher, b.func);
@@ -98,6 +97,13 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
     Ok(module.finish().emit()?)
 }
 
+fn type_machine(t: Scalaire) -> cranelift_codegen::ir::Type {
+    match t {
+        Scalaire::Entier => I64,
+        Scalaire::Flottant => F64,
+    }
+}
+
 struct Generateur<'a> {
     b: FunctionBuilder<'a>,
     vars: Vec<Variable>,
@@ -107,7 +113,7 @@ struct Generateur<'a> {
 impl Generateur<'_> {
     fn fonction(mut self, f: &Fonction, refs: &[FuncRef], rt_afficher: FuncRef, config: TargetFrontendConfig) {
         let b = &mut self.b;
-        self.vars = (0..f.nb_locaux).map(|_| b.declare_var(I64)).collect();
+        self.vars = f.locaux.iter().map(|&t| b.declare_var(type_machine(t))).collect();
         let blocs: Vec<Block> = f.blocs.iter().map(|_| b.create_block()).collect();
 
         // Bloc d'entrée : range les paramètres dans leurs variables, puis saute au bloc 0.
@@ -118,8 +124,11 @@ impl Generateur<'_> {
         for (i, v) in params.into_iter().enumerate() {
             b.def_var(self.vars[i], v);
         }
-        for i in f.nb_params..f.nb_locaux {
-            let zero = b.ins().iconst(I64, 0);
+        for (i, &t) in f.locaux.iter().enumerate().skip(f.nb_params) {
+            let zero = match t {
+                Scalaire::Entier => b.ins().iconst(I64, 0),
+                Scalaire::Flottant => b.ins().f64const(0.0),
+            };
             b.def_var(self.vars[i], zero);
         }
         b.ins().jump(blocs[0], &[]);
@@ -198,9 +207,9 @@ impl Generateur<'_> {
             Inst::Appel(d, f, args) => {
                 let vals: Vec<Value> = args.iter().map(|&l| self.lire(l)).collect();
                 let call = self.b.ins().call(refs[*f], &vals);
-                if let Some(d) = d {
-                    let r = self.b.inst_results(call)[0];
-                    self.b.def_var(self.vars[*d], r);
+                let resultats = self.b.inst_results(call).to_vec();
+                for (&d, r) in d.iter().zip(resultats) {
+                    self.b.def_var(self.vars[d], r);
                 }
             }
             Inst::Afficher { valeur, booleen, ligne } => {

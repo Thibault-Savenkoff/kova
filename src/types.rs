@@ -134,7 +134,7 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
     (Infos { types: v.types }, v.diags)
 }
 
-fn type_de(t: &Nom) -> Type {
+pub fn type_de(t: &Nom) -> Type {
     match t.texte.as_str() {
         "Int" => Type::Int,
         "Bool" => Type::Bool,

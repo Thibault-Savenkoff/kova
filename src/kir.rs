@@ -1,7 +1,9 @@
 // KIR : le programme réduit à des instructions très simples, communes aux deux backends.
 //
-// Chaque fonction a des cases numérotées (« locaux », toutes des entiers 64 bits ;
-// un Bool vaut 0 ou 1) et des blocs. Un bloc = une suite d'instructions + une fin
+// Chaque fonction a des cases numérotées (« locaux ») de 64 bits : entier ou flottant
+// (un Bool vaut 0 ou 1). Une valeur Kova occupe une ou plusieurs cases (`Valeur`) :
+// un `Int` en prend une, un tuple `(Int, Float)` deux, un résultat vide aucune.
+// Une fonction a aussi des blocs. Un bloc = une suite d'instructions + une fin
 // (saut, branchement ou retour). Il n'y a plus ni `for`, ni `from`, ni `&&` :
 //
 //   from i := 1 to 3 { print(i) }
@@ -20,10 +22,29 @@ use std::collections::HashMap;
 
 use crate::ast::{self, Bloc, Expr, ExprGenre, Instr, OpBin, OpUn};
 use crate::diag::{Span, ligne_colonne};
-use crate::types::{Infos, Type};
+use crate::types::{Infos, Type, type_de};
 
 pub type Local = usize;
 pub type NumBloc = usize;
+/// Les cases qui contiennent une valeur Kova.
+pub type Valeur = Vec<Local>;
+
+/// Le type machine d'une case.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Scalaire {
+    /// Int, Bool, Char.
+    Entier,
+    Flottant,
+}
+
+/// Les cases nécessaires pour une valeur de ce type, dans l'ordre.
+pub fn scalaires(t: &Type) -> Vec<Scalaire> {
+    match t {
+        Type::Int | Type::Bool => vec![Scalaire::Entier],
+        Type::Rien => vec![],
+        Type::Erreur => unreachable!("type erroné après le typage"),
+    }
+}
 
 pub struct Programme {
     pub fonctions: Vec<Fonction>,
@@ -34,8 +55,9 @@ pub struct Fonction {
     pub nom: String,
     /// Les paramètres sont les locaux `0..nb_params`.
     pub nb_params: usize,
-    pub nb_locaux: usize,
-    pub renvoie: bool,
+    /// Le type de chaque local.
+    pub locaux: Vec<Scalaire>,
+    pub retours: Vec<Scalaire>,
     pub blocs: Vec<BlocK>,
 }
 
@@ -60,7 +82,8 @@ pub enum Inst {
     Neg(Local, Local, Lieu),
     /// `dst := !a` (Bool).
     Non(Local, Local),
-    Appel(Option<Local>, usize, Vec<Local>),
+    /// `résultats := f(args)`.
+    Appel(Valeur, usize, Valeur),
     /// `print` (`ligne` = true) ou `write`.
     Afficher { valeur: Local, booleen: bool, ligne: bool },
 }
@@ -83,7 +106,7 @@ pub enum Op {
 pub enum Fin {
     Saut(NumBloc),
     Si(Local, NumBloc, NumBloc),
-    Retour(Option<Local>),
+    Retour(Valeur),
     /// Jamais atteint (le typage garantit qu'il y a un `return` avant).
     Inatteignable,
 }
@@ -123,24 +146,26 @@ pub fn traduire(f: &ast::Fichier, infos: &Infos, src: &str) -> Programme {
                 infos,
                 numeros: &numeros,
                 noms: vec![HashMap::new()],
-                nb_locaux: 0,
+                locaux: vec![],
                 blocs: vec![],
                 courant: 0,
                 boucles: vec![],
             };
             for p in &fonc.params {
-                let l = t.nouveau_local();
-                t.noms[0].insert(p.nom.texte.clone(), l);
+                let v = t.nouvelle_valeur(&type_de(&p.ty));
+                t.noms[0].insert(p.nom.texte.clone(), v);
             }
+            let nb_params = t.locaux.len();
             t.courant = t.nouveau_bloc();
             t.bloc(&fonc.corps);
-            let fin = if fonc.retour.is_some() { Fin::Inatteignable } else { Fin::Retour(None) };
+            let retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
+            let fin = if retour == Type::Rien { Fin::Retour(vec![]) } else { Fin::Inatteignable };
             t.terminer(fin);
             Fonction {
                 nom: fonc.nom.texte.clone(),
-                nb_params: fonc.params.len(),
-                nb_locaux: t.nb_locaux,
-                renvoie: fonc.retour.is_some(),
+                nb_params,
+                locaux: t.locaux,
+                retours: scalaires(&retour),
                 blocs: t.blocs.into_iter().map(|(instrs, fin)| BlocK { instrs, fin: fin.unwrap_or(Fin::Inatteignable) }).collect(),
             }
         })
@@ -152,9 +177,9 @@ struct Traducteur<'a> {
     src: &'a str,
     infos: &'a Infos,
     numeros: &'a HashMap<&'a str, usize>,
-    /// Nom → local, une table par bloc ouvert.
-    noms: Vec<HashMap<String, Local>>,
-    nb_locaux: usize,
+    /// Nom → ses cases, une table par bloc ouvert.
+    noms: Vec<HashMap<String, Valeur>>,
+    locaux: Vec<Scalaire>,
     /// Blocs en construction ; `None` = fin pas encore posée.
     blocs: Vec<(Vec<Inst>, Option<Fin>)>,
     courant: NumBloc,
@@ -163,9 +188,16 @@ struct Traducteur<'a> {
 }
 
 impl Traducteur<'_> {
-    fn nouveau_local(&mut self) -> Local {
-        self.nb_locaux += 1;
-        self.nb_locaux - 1
+    fn nouveau_local(&mut self, s: Scalaire) -> Local {
+        self.locaux.push(s);
+        self.locaux.len() - 1
+    }
+    fn entier(&mut self) -> Local {
+        self.nouveau_local(Scalaire::Entier)
+    }
+    /// Des cases neuves pour une valeur de type `t`.
+    fn nouvelle_valeur(&mut self, t: &Type) -> Valeur {
+        scalaires(t).into_iter().map(|s| self.nouveau_local(s)).collect()
     }
     fn nouveau_bloc(&mut self) -> NumBloc {
         self.blocs.push((vec![], None));
@@ -173,6 +205,12 @@ impl Traducteur<'_> {
     }
     fn emettre(&mut self, i: Inst) {
         self.blocs[self.courant].0.push(i);
+    }
+    /// Copie case par case.
+    fn copier(&mut self, dst: &[Local], src: &[Local]) {
+        for (&d, &s) in dst.iter().zip(src) {
+            self.emettre(Inst::Copie(d, s));
+        }
     }
     /// Pose la fin du bloc courant, puis continue dans un bloc neuf
     /// (le code après un `return` ou un `break` y atterrit, jamais exécuté).
@@ -189,11 +227,11 @@ impl Traducteur<'_> {
         let (ligne, colonne) = ligne_colonne(self.src, s.debut);
         Lieu { ligne, colonne }
     }
-    fn local_de(&self, nom: &str) -> Local {
-        *self.noms.iter().rev().find_map(|t| t.get(nom)).expect("variable vérifiée par le typage")
+    fn valeur_de(&self, nom: &str) -> Valeur {
+        self.noms.iter().rev().find_map(|t| t.get(nom)).expect("variable vérifiée par le typage").clone()
     }
     fn constante(&mut self, v: i64) -> Local {
-        let l = self.nouveau_local();
+        let l = self.entier();
         self.emettre(Inst::Const(l, v));
         l
     }
@@ -210,23 +248,23 @@ impl Traducteur<'_> {
         match i {
             Instr::Declarer { nom, valeur, .. } => {
                 let v = self.expr(valeur);
-                let l = self.nouveau_local();
-                self.emettre(Inst::Copie(l, v));
-                self.noms.last_mut().unwrap().insert(nom.texte.clone(), l);
+                let cases = self.nouvelle_valeur(&self.infos.types[valeur.id].clone());
+                self.copier(&cases, &v);
+                self.noms.last_mut().unwrap().insert(nom.texte.clone(), cases);
             }
             Instr::Affecter { nom, op, valeur } => {
-                let cible = self.local_de(&nom.texte);
+                let cible = self.valeur_de(&nom.texte);
                 let v = self.expr(valeur);
                 match op {
-                    None => self.emettre(Inst::Copie(cible, v)),
+                    None => self.copier(&cible, &v),
                     Some(op) => {
                         let lieu = self.lieu(nom.span);
-                        self.emettre(Inst::Binaire(cible, op_kir(*op), cible, v, lieu));
+                        self.emettre(Inst::Binaire(cible[0], op_kir(*op), cible[0], v[0], lieu));
                     }
                 }
             }
             Instr::Retour { valeur, .. } => {
-                let v = valeur.as_ref().map(|e| self.expr(e));
+                let v = valeur.as_ref().map_or(vec![], |e| self.expr(e));
                 self.terminer(Fin::Retour(v));
             }
             Instr::Sortir(_) => {
@@ -238,7 +276,7 @@ impl Traducteur<'_> {
                 self.terminer(Fin::Saut(suite));
             }
             Instr::Si { cond, alors, sinon } => {
-                let c = self.expr(cond);
+                let c = self.expr1(cond);
                 let (b_alors, b_sinon, b_apres) = (self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc());
                 self.aller(Fin::Si(c, b_alors, b_sinon), b_alors);
                 self.bloc(alors);
@@ -251,7 +289,7 @@ impl Traducteur<'_> {
             Instr::TantQue { cond, corps } => {
                 let (entete, b_corps, sortie) = (self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc());
                 self.aller(Fin::Saut(entete), entete);
-                let c = self.expr(cond);
+                let c = self.expr1(cond);
                 self.aller(Fin::Si(c, b_corps, sortie), b_corps);
                 self.boucles.push((entete, sortie));
                 self.bloc(corps);
@@ -260,24 +298,24 @@ impl Traducteur<'_> {
             }
             Instr::Boucle { compteur, debut, fin, inclus, corps } => {
                 // La borne de fin est calculée une seule fois, avant la boucle.
-                let d = self.expr(debut);
-                let i = self.nouveau_local();
+                let d = self.expr1(debut);
+                let i = self.entier();
                 self.emettre(Inst::Copie(i, d));
-                let f = self.expr(fin);
-                let borne = self.nouveau_local();
+                let f = self.expr1(fin);
+                let borne = self.entier();
                 self.emettre(Inst::Copie(borne, f));
 
                 let (entete, b_corps, suite, increment, sortie) =
                     (self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc(), self.nouveau_bloc());
                 let lieu = self.lieu(compteur.span);
                 self.aller(Fin::Saut(entete), entete);
-                let c = self.nouveau_local();
+                let c = self.entier();
                 let test = if *inclus { Op::InfEgal } else { Op::Inf };
                 self.emettre(Inst::Binaire(c, test, i, borne, lieu));
                 self.aller(Fin::Si(c, b_corps, sortie), b_corps);
 
                 self.boucles.push((suite, sortie));
-                self.noms.push(HashMap::from([(compteur.texte.clone(), i)]));
+                self.noms.push(HashMap::from([(compteur.texte.clone(), vec![i])]));
                 self.bloc(corps);
                 self.noms.pop();
                 self.boucles.pop();
@@ -286,7 +324,7 @@ impl Traducteur<'_> {
                 // `continue` arrive ici. Pour `..=`, on sort AVANT d'ajouter 1 si on est
                 // sur la borne : `from i := 1 to 9223372036854775807` ne déborde pas.
                 if *inclus {
-                    let dernier = self.nouveau_local();
+                    let dernier = self.entier();
                     self.emettre(Inst::Binaire(dernier, Op::Egal, i, borne, lieu));
                     self.aller(Fin::Si(dernier, sortie, increment), increment);
                 } else {
@@ -302,63 +340,70 @@ impl Traducteur<'_> {
         }
     }
 
-    fn expr(&mut self, e: &Expr) -> Local {
+    /// Une expression dont la valeur tient dans une seule case (Int, Bool…).
+    fn expr1(&mut self, e: &Expr) -> Local {
+        self.expr(e)[0]
+    }
+
+    fn expr(&mut self, e: &Expr) -> Valeur {
         match &e.genre {
-            ExprGenre::Entier(v) => self.constante(*v as i64),
-            ExprGenre::Bool(b) => self.constante(*b as i64),
-            ExprGenre::Var(nom) => self.local_de(nom),
+            ExprGenre::Entier(v) => vec![self.constante(*v as i64)],
+            ExprGenre::Bool(b) => vec![self.constante(*b as i64)],
+            ExprGenre::Var(nom) => self.valeur_de(nom),
             ExprGenre::Appel { nom, args } => {
-                let vals: Vec<Local> = args.iter().map(|a| self.expr(a)).collect();
+                let mut vals = vec![];
+                for a in args {
+                    vals.extend(self.expr(a));
+                }
                 if let n @ ("print" | "write") = nom.texte.as_str() {
                     let booleen = self.infos.types[args[0].id] == Type::Bool;
                     self.emettre(Inst::Afficher { valeur: vals[0], booleen, ligne: n == "print" });
-                    return self.constante(0);
+                    return vec![];
                 }
                 let num = self.numeros[nom.texte.as_str()];
-                let dst = self.nouveau_local();
-                let resultat = (self.infos.types[e.id] != Type::Rien).then_some(dst);
-                self.emettre(Inst::Appel(resultat, num, vals));
-                dst
+                let resultat = self.nouvelle_valeur(&self.infos.types[e.id].clone());
+                self.emettre(Inst::Appel(resultat.clone(), num, vals));
+                resultat
             }
             ExprGenre::Unaire(OpUn::Moins, x) => {
                 // Un nombre écrit avec `-` devant est une constante (gère `-9223372036854775808`).
                 if let ExprGenre::Entier(v) = x.genre {
-                    return self.constante((v as i64).wrapping_neg());
+                    return vec![self.constante((v as i64).wrapping_neg())];
                 }
-                let a = self.expr(x);
-                let dst = self.nouveau_local();
+                let a = self.expr1(x);
+                let dst = self.entier();
                 let lieu = self.lieu(e.span);
                 self.emettre(Inst::Neg(dst, a, lieu));
-                dst
+                vec![dst]
             }
             ExprGenre::Unaire(OpUn::Non, x) => {
-                let a = self.expr(x);
-                let dst = self.nouveau_local();
+                let a = self.expr1(x);
+                let dst = self.entier();
                 self.emettre(Inst::Non(dst, a));
-                dst
+                vec![dst]
             }
             ExprGenre::Binaire(op @ (OpBin::Et | OpBin::Ou), a, b) => {
                 // Court-circuit : `b` n'est calculé que si `a` ne suffit pas.
-                let dst = self.nouveau_local();
-                let va = self.expr(a);
+                let dst = self.entier();
+                let va = self.expr1(a);
                 self.emettre(Inst::Copie(dst, va));
                 let (calcul_b, apres) = (self.nouveau_bloc(), self.nouveau_bloc());
                 let fin = if *op == OpBin::Et { Fin::Si(va, calcul_b, apres) } else { Fin::Si(va, apres, calcul_b) };
                 self.aller(fin, calcul_b);
-                let vb = self.expr(b);
+                let vb = self.expr1(b);
                 self.emettre(Inst::Copie(dst, vb));
                 self.aller(Fin::Saut(apres), apres);
-                dst
+                vec![dst]
             }
             ExprGenre::Binaire(op, a, b) => {
-                let (va, vb) = (self.expr(a), self.expr(b));
-                let dst = self.nouveau_local();
+                let (va, vb) = (self.expr1(a), self.expr1(b));
+                let dst = self.entier();
                 // L'erreur pointe sur l'opérateur : le premier caractère non blanc après `a`.
                 let apres_a = &self.src[a.span.fin..];
                 let pos = a.span.fin + apres_a.len() - apres_a.trim_start().len();
                 let lieu = self.lieu(Span::new(pos, pos));
                 self.emettre(Inst::Binaire(dst, op_kir(*op), va, vb, lieu));
-                dst
+                vec![dst]
             }
         }
     }

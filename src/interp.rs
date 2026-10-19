@@ -18,13 +18,14 @@ pub fn executer(p: &Programme, fichier: &str) -> i32 {
     }
 }
 
-type Resultat = Result<i64, (Panne, Lieu)>;
+type Resultat = Result<Vec<i64>, (Panne, Lieu)>;
 
 // ponytail: récursion Rust = la pile de l'interpréteur ; une récursion infinie
 // plante sans joli message (pareil en natif). À traiter avec les erreurs de pile.
 fn appeler(p: &Programme, num: usize, args: &[i64], sortie: &mut BufWriter<Stdout>) -> Resultat {
     let f = &p.fonctions[num];
-    let mut locaux = vec![0i64; f.nb_locaux];
+    // Toutes les cases tiennent dans 64 bits ; un Float y est rangé bit à bit.
+    let mut locaux = vec![0i64; f.locaux.len()];
     locaux[..args.len()].copy_from_slice(args);
     let mut bloc = 0;
     loop {
@@ -43,8 +44,8 @@ fn appeler(p: &Programme, num: usize, args: &[i64], sortie: &mut BufWriter<Stdou
                 Inst::Appel(d, g, a) => {
                     let vals: Vec<i64> = a.iter().map(|&l| locaux[l]).collect();
                     let r = appeler(p, *g, &vals, sortie)?;
-                    if let Some(d) = d {
-                        locaux[*d] = r;
+                    for (&d, v) in d.iter().zip(r) {
+                        locaux[d] = v;
                     }
                 }
                 Inst::Afficher { valeur, booleen, ligne } => {
@@ -61,7 +62,7 @@ fn appeler(p: &Programme, num: usize, args: &[i64], sortie: &mut BufWriter<Stdou
         match &b.fin {
             Fin::Saut(s) => bloc = *s,
             Fin::Si(c, oui, non) => bloc = if locaux[*c] != 0 { *oui } else { *non },
-            Fin::Retour(v) => return Ok(v.map_or(0, |l| locaux[l])),
+            Fin::Retour(v) => return Ok(v.iter().map(|&l| locaux[l]).collect()),
             Fin::Inatteignable => unreachable!("bloc inatteignable atteint dans `{}`", f.nom),
         }
     }
