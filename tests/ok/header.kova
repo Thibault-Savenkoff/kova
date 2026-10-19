@@ -1,0 +1,10 @@
+// Un header qui garde les valeurs par défaut : run et build marchent tous les deux.
+header {
+    mode := run
+    lock := false
+}
+
+fn main() {
+    print(1)
+}
+// attendu: 1

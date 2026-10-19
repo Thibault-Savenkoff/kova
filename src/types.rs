@@ -41,6 +41,18 @@ impl Type {
     }
 }
 
+/// Les clés du `header` et leurs valeurs permises ; la première est la valeur par défaut.
+pub const REGLAGES: &[(&str, &[&str], &str)] = &[
+    ("mode", &["run", "build"], "ce que fait `kova fichier.kova`"),
+    ("lock", &["false", "true"], "true : l'autre commande est refusée"),
+];
+
+/// La valeur d'un réglage du `header` (vérifié), et sa ligne ; `None` si absent.
+pub fn reglage<'a>(f: &'a Fichier, src: &str, cle: &str) -> Option<(&'a str, usize)> {
+    let (_, v) = f.header.as_ref()?.reglages.iter().find(|(c, _)| c.texte == cle)?;
+    Some((v.texte.as_str(), ligne_colonne(src, v.span.debut).0))
+}
+
 /// Les fonctions prédéfinies : `print(x)` passe à la ligne, `write(x)` non.
 pub const PREDEFINIES: &[&str] = &["print", "write"];
 
@@ -99,6 +111,27 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
         types: vec![Type::Erreur; nb_exprs],
         diags: vec![],
     };
+
+    // 0. Le header.
+    let mut vus: HashMap<&str, Span> = HashMap::new();
+    for (cle, valeur) in f.header.iter().flat_map(|h| &h.reglages) {
+        let Some((_, permises, _)) = REGLAGES.iter().find(|(c, ..)| *c == cle.texte) else {
+            let cles: Vec<String> = REGLAGES.iter().map(|(c, ..)| format!("`{c}`")).collect();
+            v.diags.push(
+                Diag::new(cle.span, format!("réglage inconnu `{}` dans le header", cle.texte))
+                    .aide(format!("réglages possibles : {}", cles.join(", "))),
+            );
+            continue;
+        };
+        if let Some(premier) = vus.insert(&cle.texte, cle.span) {
+            let (ligne, _) = ligne_colonne(src, premier.debut);
+            v.erreur(cle.span, format!("`{}` est déjà réglé (ligne {ligne})", cle.texte));
+        }
+        if !permises.contains(&valeur.texte.as_str()) {
+            let permises: Vec<String> = permises.iter().map(|p| format!("`{p}`")).collect();
+            v.erreur(valeur.span, format!("`{}` vaut {}, pas `{}`", cle.texte, permises.join(" ou "), valeur.texte));
+        }
+    }
 
     // 1. Les signatures d'abord : on peut appeler une fonction écrite plus bas.
     for fonc in &f.fonctions {

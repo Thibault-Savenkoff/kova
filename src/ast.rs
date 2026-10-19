@@ -5,8 +5,18 @@
 use crate::diag::Span;
 
 pub struct Fichier {
+    pub header: Option<Header>,
     pub fonctions: Vec<Fonction>,
     pub tests: Vec<Test>,
+}
+
+/// `header { mode := build  lock := true }` : les réglages du fichier (PLAN 2.11).
+pub struct Header {
+    /// Le `{` et le `}`.
+    pub debut: Span,
+    pub fin: Span,
+    /// (clé, valeur) : `mode := build` → (`mode`, `build`).
+    pub reglages: Vec<(Nom, Nom)>,
 }
 
 pub struct Fonction {

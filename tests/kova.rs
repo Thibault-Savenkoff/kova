@@ -149,6 +149,23 @@ fn ligne_de_commande() {
         assert!(sortie.contains(morceau), "« {morceau} » absent de :\n{sortie}");
     }
 
+    // `header` : `mode := build` → `kova f.kova` compile ; `lock := true` refuse l'autre commande.
+    let dossier = std::env::temp_dir().join(format!("kova-header-{}", std::process::id()));
+    std::fs::create_dir_all(&dossier).unwrap();
+    let source = dossier.join("prog.kova");
+    std::fs::write(&source, "header {\n    mode := build\n    lock := true\n}\nfn main() {\n    print(7)\n}\n").unwrap();
+    let out = Command::new(KOVA).arg("run").arg(&source).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(texte(&out.stderr), "erreur: ce programme est réservé à `kova build` (header ligne 3)\n");
+    let out = Command::new(KOVA).arg(&source).output().unwrap();
+    assert!(out.status.success(), "{}", texte(&out.stderr));
+    assert_eq!(texte(&Command::new(dossier.join("prog")).output().unwrap().stdout), "7\n");
+    std::fs::write(&source, "header {\n    lock := true\n}\nfn main() {\n    print(8)\n}\n").unwrap();
+    let out = Command::new(KOVA).arg("build").arg(&source).output().unwrap();
+    assert_eq!(texte(&out.stderr), "erreur: ce programme est réservé à `kova run` (header ligne 2)\n");
+    assert_eq!(texte(&Command::new(KOVA).arg(&source).output().unwrap().stdout), "8\n");
+    let _ = std::fs::remove_dir_all(&dossier);
+
     assert_eq!(
         attentes("// attendu: 3\nx\n  // attendu:  a b\n// erreur: z", "attendu"),
         ["3", " a b"]

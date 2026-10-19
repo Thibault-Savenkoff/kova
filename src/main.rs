@@ -45,14 +45,14 @@ fn main() {
             }
             return;
         }
-        ["run", f] => (Commande::Run, *f),
-        ["test", f] => (Commande::Test, *f),
+        ["run", f] => (Some(Commande::Run), *f),
+        ["test", f] => (Some(Commande::Test), *f),
         ["build", f, options @ ..] => match options_build(options) {
-            Some((sortie, boost)) => (Commande::Build { sortie, boost }, *f),
+            Some((sortie, boost)) => (Some(Commande::Build { sortie, boost }), *f),
             None => erreur_usage(),
         },
-        // ponytail: le choix run/build via `header` arrive en J2 ; d'ici là, run.
-        [f] if f.ends_with(".kova") => (Commande::Run, *f),
+        // Sans commande : le `header` du fichier choisit (run par défaut).
+        [f] if f.ends_with(".kova") => (None, *f),
         _ => erreur_usage(),
     };
 
@@ -64,16 +64,31 @@ fn main() {
         }
     };
 
-    let contrats = !matches!(commande, Commande::Build { boost: true, .. });
-    let programme = match compiler(&source, contrats, matches!(commande, Commande::Test)) {
-        Ok(p) => p,
-        Err(diags) => {
-            for d in &diags {
-                eprintln!("{}", diag::afficher(d, fichier, &source));
-            }
+    let (arbre, infos, diags) = analyser(&source);
+    let Some(infos) = infos else {
+        for d in &diags {
+            eprintln!("{}", diag::afficher(d, fichier, &source));
+        }
+        exit(1);
+    };
+
+    // Le header : `mode` choisit la commande par défaut, `lock := true` refuse l'autre.
+    let mode = types::reglage(&arbre, &source, "mode").map_or("run", |(v, _)| v);
+    let commande = commande.unwrap_or(if mode == "build" {
+        Commande::Build { sortie: None, boost: false }
+    } else {
+        Commande::Run
+    });
+    if let Some(("true", ligne)) = types::reglage(&arbre, &source, "lock") {
+        let autre = matches!((&commande, mode), (Commande::Run, "build") | (Commande::Build { .. }, "run"));
+        if autre {
+            eprintln!("erreur: ce programme est réservé à `kova {mode}` (header ligne {ligne})");
             exit(1);
         }
-    };
+    }
+
+    let contrats = !matches!(commande, Commande::Build { boost: true, .. });
+    let programme = kir::traduire(&arbre, &infos, &source, contrats, matches!(commande, Commande::Test));
 
     match commande {
         Commande::Run => exit(interp::executer(&programme, fichier)),
@@ -89,16 +104,6 @@ fn main() {
             }
         }
         Commande::Test => exit(interp::tester(&programme, fichier)),
-    }
-}
-
-/// Texte source → KIR, ou la liste de toutes les erreurs.
-/// `contrats` = false : `require`, `ensure` et `check` sont retirés (`--boost`).
-/// `tests` = true : les blocs `test` sont traduits aussi (`kova test`).
-fn compiler(source: &str, contrats: bool, tests: bool) -> Result<kir::Programme, Vec<diag::Diag>> {
-    match analyser(source) {
-        (fichier, Some(infos), _) => Ok(kir::traduire(&fichier, &infos, source, contrats, tests)),
-        (_, None, diags) => Err(diags),
     }
 }
 

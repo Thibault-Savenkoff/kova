@@ -1,0 +1,13 @@
+header {
+    mode := build lock := true
+    vitesse :=
+}
+
+fn main() {
+}
+
+header {
+}
+// erreur: un réglage par ligne
+// erreur: valeur du réglage attendue
+// erreur: le `header` doit être la première déclaration du fichier

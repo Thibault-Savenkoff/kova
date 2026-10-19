@@ -156,6 +156,12 @@ fn entete(f: &Fonction) -> (String, Vec<[u32; 2]>) {
 
 fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
     let fichier = arbre(src);
+    if let Some(h) = &fichier.header
+        && h.debut.debut < curseur
+        && curseur <= h.fin.debut
+    {
+        return completer_header(&src[..curseur]);
+    }
     let mut items: Vec<CompletionItem> = types::PREDEFINIES
         .iter()
         .map(|&nom| CompletionItem {
@@ -189,6 +195,36 @@ fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
         }
     }
     items
+}
+
+/// Dans le `header` : les clés, ou les valeurs de la clé après `:=`.
+fn completer_header(avant: &str) -> Vec<CompletionItem> {
+    let ligne = avant.rsplit('\n').next().unwrap_or("");
+    if let Some((cle, _)) = ligne.split_once(":=") {
+        let Some((_, valeurs, aide)) = types::REGLAGES.iter().find(|(c, ..)| *c == cle.trim()) else {
+            return vec![];
+        };
+        return valeurs
+            .iter()
+            .enumerate()
+            .map(|(i, v)| CompletionItem {
+                label: v.to_string(),
+                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                detail: Some(if i == 0 { format!("{aide} (par défaut)") } else { aide.to_string() }),
+                ..Default::default()
+            })
+            .collect();
+    }
+    types::REGLAGES
+        .iter()
+        .map(|(cle, valeurs, aide)| CompletionItem {
+            label: cle.to_string(),
+            kind: Some(CompletionItemKind::PROPERTY),
+            detail: Some(format!("{} : {aide}", valeurs.join(" | "))),
+            insert_text: Some(format!("{cle} := ")),
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// Ajoute à `vars` les variables de `b` visibles au curseur : déclarées avant lui,
@@ -301,6 +337,17 @@ mod tests {
         assert_eq!(noms(&completer(src, apres_si)), ["n", "a"]);
         // Les fonctions sont toujours proposées.
         assert!(completer(src, ici).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_header() {
+        let src = "header {\n    mode := b\n    \n}\nfn main() {}";
+        let etiquettes = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
+        assert_eq!(etiquettes(completer(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
+        assert_eq!(etiquettes(completer(src, src.find("    \n").unwrap() + 4)), ["mode", "lock"]);
+        // `}` pas encore tapée.
+        let src = "header {\n  lock := ";
+        assert_eq!(etiquettes(completer(src, src.len())), ["false", "true"]);
     }
 
     #[test]

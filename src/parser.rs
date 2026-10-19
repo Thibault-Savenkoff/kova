@@ -206,11 +206,23 @@ impl Parser<'_> {
     // ---- Fichier et fonctions ----
 
     fn fichier(&mut self) -> Fichier {
-        let (mut fonctions, mut tests) = (vec![], vec![]);
+        let (mut header, mut fonctions, mut tests) = (None, vec![], vec![]);
         loop {
             self.sauter_lignes();
             let lu = match self.genre() {
                 Genre::Fin => break,
+                Genre::Cle("header") => {
+                    let premier = header.is_none() && fonctions.is_empty() && tests.is_empty();
+                    if !premier {
+                        let span = self.jeton().span;
+                        self.diags.push(Diag::new(span, "le `header` doit être la première déclaration du fichier"));
+                    }
+                    self.header().map(|h| {
+                        if premier {
+                            header = Some(h);
+                        }
+                    })
+                }
                 Genre::Cle("fn") => self.fonction().map(|f| fonctions.push(f)),
                 Genre::Cle("test") => self.test().map(|t| tests.push(t)),
                 _ => {
@@ -222,7 +234,49 @@ impl Parser<'_> {
                 self.aller_au_prochain_fn();
             }
         }
-        Fichier { fonctions, tests }
+        Fichier { header, fonctions, tests }
+    }
+
+    /// `header { clé := valeur ... }` ; les clés et les valeurs sont vérifiées par le typage.
+    fn header(&mut self) -> R<Header> {
+        self.avancer(); // header
+        self.sauter_lignes();
+        let debut = self.attendre("{")?;
+        let mut reglages = vec![];
+        loop {
+            self.sauter_lignes();
+            if self.est_sym("}") {
+                break;
+            }
+            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn" | "test")) {
+                let span = self.jeton().span;
+                self.diags.push(Diag::new(span, "`}` manquante à la fin du `header`"));
+                return Ok(Header { debut, fin: span, reglages });
+            }
+            match self.reglage() {
+                Ok(r) => reglages.push(r),
+                Err(()) => self.fin_instruction(),
+            }
+        }
+        let fin = self.avancer().span;
+        Ok(Header { debut, fin, reglages })
+    }
+
+    /// `mode := build` : une clé, `:=`, un seul mot.
+    fn reglage(&mut self) -> R<(Nom, Nom)> {
+        let cle = self.nom_valeur("réglage")?;
+        self.attendre(":=")?;
+        let j = self.jeton();
+        if !matches!(j.genre, Genre::Ident | Genre::Cle(_)) {
+            let msg = format!("valeur du réglage attendue (un mot comme `build` ou `true`), trouvé {}", self.decrire());
+            return self.erreur(j.span, msg);
+        }
+        self.avancer();
+        if !matches!(self.genre(), Genre::Ligne | Genre::Sym("}")) {
+            let msg = format!("un réglage par ligne : fin de ligne attendue, trouvé {}", self.decrire());
+            return self.erreur(self.jeton().span, msg);
+        }
+        Ok((cle, Nom { texte: self.texte(j.span), span: j.span }))
     }
 
     fn aller_au_prochain_fn(&mut self) {
