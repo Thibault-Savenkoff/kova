@@ -1,0 +1,6 @@
+fn main() {
+    print(1e400)
+    print(1.5e)
+}
+// erreur: nombre trop grand `1e400`
+// erreur: nombre mal écrit `1.5e`

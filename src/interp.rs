@@ -48,14 +48,34 @@ fn appeler(p: &Programme, num: usize, args: &[i64], sortie: &mut BufWriter<Stdou
                         locaux[d] = v;
                     }
                 }
-                Inst::Afficher { valeur, booleen, ligne } => {
+                Inst::Flottant(d, op, a, b, lieu) => {
+                    locaux[*d] = calculer_float(*op, float(locaux[*a]), float(locaux[*b])).map_err(|e| (e, *lieu))?;
+                }
+                Inst::NegFlottant(d, a) => locaux[*d] = bits(-float(locaux[*a])),
+                Inst::Convertir(d, c, a, lieu) => {
+                    locaux[*d] = match c {
+                        Conversion::EntierVersFlottant => bits(locaux[*a] as f64),
+                        Conversion::FlottantVersEntier => {
+                            let x = float(locaux[*a]);
+                            // Faux pour NaN aussi : toute comparaison avec NaN est fausse.
+                            if !(x >= -9223372036854775808.0 && x < 9223372036854775808.0) {
+                                return Err((Panne::ConversionImpossible, *lieu));
+                            }
+                            x as i64
+                        }
+                    }
+                }
+                Inst::Afficher { valeur, genre, ligne } => {
                     let v = locaux[*valeur];
-                    let fin = if *ligne { "\n" } else { "" };
-                    let _ = if *booleen {
-                        write!(sortie, "{}{fin}", v != 0)
-                    } else {
-                        write!(sortie, "{v}{fin}")
+                    let _ = match genre {
+                        Affichage::Int => write!(sortie, "{v}"),
+                        Affichage::Bool => write!(sortie, "{}", v != 0),
+                        Affichage::Float => write!(sortie, "{}", texte_float(float(v))),
+                        Affichage::Char => write!(sortie, "{}", char::from_u32(v as u32).unwrap()),
                     };
+                    if *ligne {
+                        let _ = writeln!(sortie);
+                    }
                 }
             }
         }
@@ -66,6 +86,32 @@ fn appeler(p: &Programme, num: usize, args: &[i64], sortie: &mut BufWriter<Stdou
             Fin::Inatteignable => unreachable!("bloc inatteignable atteint dans `{}`", f.nom),
         }
     }
+}
+
+fn float(v: i64) -> f64 {
+    f64::from_bits(v as u64)
+}
+fn bits(x: f64) -> i64 {
+    x.to_bits() as i64
+}
+
+/// Les opérations sur les Float ; les comparaisons donnent 0 ou 1.
+fn calculer_float(op: Op, a: f64, b: f64) -> Result<i64, Panne> {
+    Ok(match op {
+        Op::Plus => bits(a + b),
+        Op::Moins => bits(a - b),
+        Op::Fois => bits(a * b),
+        // `b == 0.0` est vrai aussi pour -0.0.
+        Op::Divise if b == 0.0 => return Err(Panne::DivisionParZero),
+        Op::Divise => bits(a / b),
+        Op::Egal => (a == b) as i64,
+        Op::Different => (a != b) as i64,
+        Op::Inf => (a < b) as i64,
+        Op::InfEgal => (a <= b) as i64,
+        Op::Sup => (a > b) as i64,
+        Op::SupEgal => (a >= b) as i64,
+        Op::Reste => unreachable!("`%` refusé sur les Float par le typage"),
+    })
 }
 
 /// Les opérations entières, avec les mêmes règles qu'en natif (`codegen.rs`).

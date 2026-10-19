@@ -161,7 +161,7 @@ fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
         .map(|&nom| CompletionItem {
             label: nom.into(),
             kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(format!("fn {nom}(valeur: Int ou Bool)")),
+            detail: Some(format!("fn {nom}(valeur)")),
             ..Default::default()
         })
         .collect();

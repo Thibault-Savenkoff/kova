@@ -1,0 +1,4 @@
+fn main() {
+    print(5.0 % 2.0)
+}
+// erreur: types différents : `Int` attendu, `Float` donné

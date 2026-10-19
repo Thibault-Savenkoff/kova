@@ -59,9 +59,13 @@ pub struct Expr {
 
 pub enum ExprGenre {
     Entier(u64),
+    Flottant(f64),
+    Caractere(char),
     Bool(bool),
     Var(String),
     Appel { nom: Nom, args: Vec<Expr> },
+    /// `x.to_float()` : méthode prédéfinie (J2 : seulement les conversions).
+    Methode { recu: Box<Expr>, nom: Nom, args: Vec<Expr> },
     Unaire(OpUn, Box<Expr>),
     Binaire(OpBin, Box<Expr>, Box<Expr>),
     /// `if c { 1 } else { 2 }` qui donne une valeur : la dernière ligne de la branche choisie.

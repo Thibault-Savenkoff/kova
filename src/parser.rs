@@ -421,10 +421,38 @@ impl Parser<'_> {
         Ok(self.expr(debut.jusqua(e.span), ExprGenre::Unaire(op, Box::new(e))))
     }
 
+    /// Un atome suivi de ses suffixes : `x.to_float()`.
     fn primaire(&mut self) -> R<Expr> {
+        let mut e = self.atome()?;
+        while self.est_sym(".") {
+            self.avancer();
+            let nom = self.nom_valeur("méthode")?;
+            self.attendre("(")?;
+            let args = self.arguments()?;
+            let fin = self.avancer().span;
+            e = self.expr(e.span.jusqua(fin), ExprGenre::Methode { recu: Box::new(e), nom, args });
+        }
+        Ok(e)
+    }
+
+    /// Les arguments d'un appel, après la `(` ; s'arrête sur la `)` sans la consommer.
+    fn arguments(&mut self) -> R<Vec<Expr>> {
+        let mut args = vec![];
+        while !self.est_sym(")") {
+            args.push(self.expression()?);
+            if !self.est_sym(")") {
+                self.attendre(",")?;
+            }
+        }
+        Ok(args)
+    }
+
+    fn atome(&mut self) -> R<Expr> {
         let j = self.jeton();
         let genre = match j.genre {
             Genre::Entier(v) => ExprGenre::Entier(v),
+            Genre::Flottant(v) => ExprGenre::Flottant(v),
+            Genre::Caractere(c) => ExprGenre::Caractere(c),
             Genre::Cle("true") => ExprGenre::Bool(true),
             Genre::Cle("false") => ExprGenre::Bool(false),
             Genre::Ident => {
@@ -433,13 +461,7 @@ impl Parser<'_> {
                     return Ok(self.expr(nom.span, ExprGenre::Var(nom.texte)));
                 }
                 self.avancer();
-                let mut args = vec![];
-                while !self.est_sym(")") {
-                    args.push(self.expression()?);
-                    if !self.est_sym(")") {
-                        self.attendre(",")?;
-                    }
-                }
+                let args = self.arguments()?;
                 let fin = self.avancer().span;
                 return Ok(self.expr(nom.span.jusqua(fin), ExprGenre::Appel { nom, args }));
             }

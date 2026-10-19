@@ -6,4 +6,4 @@ fn main() {
 }
 // erreur: `carre` prend 1 argument(s), 2 donné(s)
 // erreur: `Int` attendu, `Bool` donné
-// erreur: `print` n'affiche que des `Int` et des `Bool`
+// erreur: `print` : cette expression ne donne pas de valeur à afficher

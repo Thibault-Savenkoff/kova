@@ -40,7 +40,8 @@ pub enum Scalaire {
 /// Les cases nécessaires pour une valeur de ce type, dans l'ordre.
 pub fn scalaires(t: &Type) -> Vec<Scalaire> {
     match t {
-        Type::Int | Type::Bool => vec![Scalaire::Entier],
+        Type::Int | Type::Bool | Type::Char => vec![Scalaire::Entier],
+        Type::Float => vec![Scalaire::Flottant],
         Type::Rien => vec![],
         Type::Erreur => unreachable!("type erroné après le typage"),
     }
@@ -74,6 +75,7 @@ pub struct Lieu {
 }
 
 pub enum Inst {
+    /// Une constante ; pour une case flottante, `v` contient les bits du Float.
     Const(Local, i64),
     Copie(Local, Local),
     /// `dst := a op b` ; `+ - * / %` vérifient dépassement et division par zéro.
@@ -82,10 +84,43 @@ pub enum Inst {
     Neg(Local, Local, Lieu),
     /// `dst := !a` (Bool).
     Non(Local, Local),
+    /// `dst := a op b` sur des Float ; `/` vérifie la division par zéro.
+    /// Les comparaisons donnent un Bool (case entière).
+    Flottant(Local, Op, Local, Local, Lieu),
+    NegFlottant(Local, Local),
+    Convertir(Local, Conversion, Local, Lieu),
     /// `résultats := f(args)`.
     Appel(Valeur, usize, Valeur),
     /// `print` (`ligne` = true) ou `write`.
-    Afficher { valeur: Local, booleen: bool, ligne: bool },
+    Afficher { valeur: Local, genre: Affichage, ligne: bool },
+}
+
+/// Comment afficher une case. Même ordre que dans `runtime/runtime.c`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Affichage {
+    Int = 0,
+    Bool = 1,
+    Float = 2,
+    Char = 3,
+}
+
+impl Affichage {
+    pub fn de(t: &Type) -> Affichage {
+        match t {
+            Type::Bool => Affichage::Bool,
+            Type::Float => Affichage::Float,
+            Type::Char => Affichage::Char,
+            _ => Affichage::Int,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Conversion {
+    /// `n.to_float()`
+    EntierVersFlottant,
+    /// `x.to_int()` : coupe les décimales ; erreur si NaN ou trop grand.
+    FlottantVersEntier,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -116,6 +151,7 @@ pub enum Fin {
 pub enum Panne {
     Depassement = 0,
     DivisionParZero = 1,
+    ConversionImpossible = 2,
 }
 
 impl Panne {
@@ -123,11 +159,98 @@ impl Panne {
         match self {
             Panne::Depassement => "dépassement d'entier",
             Panne::DivisionParZero => "division par zéro",
+            Panne::ConversionImpossible => "conversion impossible : ce Float ne tient pas dans un Int",
         }
     }
 }
 
 /// Message complet d'une erreur d'exécution, identique en `run` et en `build`.
+/// Un Float tel que l'affiche Kova : `3.0`, `0.30000000000000004`, `1e16`, `NaN`, `-inf`.
+///
+/// Les chiffres les plus courts qui redonnent exactement le nombre (à égalité, le chiffre
+/// pair, comme Python). Écriture scientifique sous 0.0001 et à partir de 10^16.
+/// Le runtime C (`ecrire_float`) fait exactement le même calcul, étape par étape.
+pub fn texte_float(x: f64) -> String {
+    if x.is_nan() {
+        return "NaN".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    let a = x.abs();
+    let (ch, exp) = plus_courts(a);
+    let ch: String = ch.iter().map(|d| (b'0' + d) as char).collect();
+    let n = ch.len() as i32;
+    let corps = if a == 0.0 || (1e-4..1e16).contains(&a) {
+        if exp >= 0 {
+            let entier: String = (0..=exp).map(|i| ch.as_bytes().get(i as usize).map_or('0', |&c| c as char)).collect();
+            let decimales = if n > exp + 1 { &ch[exp as usize + 1..] } else { "0" };
+            format!("{entier}.{decimales}")
+        } else {
+            format!("0.{}{ch}", "0".repeat((-exp - 1) as usize))
+        }
+    } else if n > 1 {
+        format!("{}.{}e{exp}", &ch[..1], &ch[1..])
+    } else {
+        format!("{ch}e{exp}")
+    };
+    format!("{}{corps}", if x.is_sign_negative() { "-" } else { "" })
+}
+
+/// Les chiffres les plus courts de `a` (≥ 0) qui redonnent `a`, et l'exposant du premier.
+fn plus_courts(a: f64) -> (Vec<u8>, i32) {
+    if a == 0.0 {
+        return (vec![0], 0);
+    }
+    // Les chiffres exacts : un Float en a au plus ~770, `{:.800e}` les donne tous.
+    let s = format!("{a:.800e}");
+    let (m, e) = s.split_once('e').unwrap();
+    let mut exact: Vec<u8> = m.bytes().filter(|&c| c != b'.').map(|c| c - b'0').collect();
+    while exact.len() > 1 && exact.last() == Some(&0) {
+        exact.pop();
+    }
+    let e: i32 = e.parse().unwrap();
+    let relire = |ch: &[u8], e: i32| {
+        let ch: String = ch.iter().map(|d| (b'0' + d) as char).collect();
+        format!("{}.{}e{e}", &ch[..1], &ch[1..]).parse::<f64>().unwrap() == a
+    };
+    for p in 1..=17 {
+        if exact.len() <= p {
+            return (exact, e);
+        }
+        // Les deux nombres de p chiffres qui entourent `a` : `bas` (coupé) et `haut`.
+        let bas = exact[..p].to_vec();
+        let reste = &exact[p..];
+        let haut = plus_un(&bas, e);
+        let monter = reste[0] > 5 || (reste[0] == 5 && (reste[1..].iter().any(|&d| d != 0) || bas[p - 1] % 2 == 1));
+        let (proche, loin) = if monter { (haut, (bas, e)) } else { ((bas, e), haut) };
+        for (mut ch, e) in [proche, loin] {
+            if relire(&ch, e) {
+                while ch.len() > 1 && ch.last() == Some(&0) {
+                    ch.pop();
+                }
+                return (ch, e);
+            }
+        }
+    }
+    unreachable!("17 chiffres suffisent toujours")
+}
+
+/// `chiffres + 1` sur le dernier chiffre, avec retenue (`999` → `100` et exposant + 1).
+fn plus_un(chiffres: &[u8], e: i32) -> (Vec<u8>, i32) {
+    let mut ch = chiffres.to_vec();
+    for d in ch.iter_mut().rev() {
+        if *d < 9 {
+            *d += 1;
+            return (ch, e);
+        }
+        *d = 0;
+    }
+    ch.insert(0, 1);
+    ch.pop();
+    (ch, e + 1)
+}
+
 pub fn texte_panne(p: Panne, fichier: &str, l: Lieu) -> String {
     format!("erreur: {}\n  --> {fichier}:{}:{}\n", p.message(), l.ligne, l.colonne)
 }
@@ -235,6 +358,21 @@ impl Traducteur<'_> {
         self.emettre(Inst::Const(l, v));
         l
     }
+    fn constante_float(&mut self, v: f64) -> Local {
+        let l = self.nouveau_local(Scalaire::Flottant);
+        self.emettre(Inst::Const(l, v.to_bits() as i64));
+        l
+    }
+    fn est_float(&self, e: &Expr) -> bool {
+        self.infos.types[e.id] == Type::Float
+    }
+    /// `dst := a op b`, en entier ou en flottant selon le type de `a`.
+    fn operation(&mut self, op: Op, a: Local, b: Local, flottant: bool, lieu: Lieu) -> Local {
+        let resultat_float = flottant && matches!(op, Op::Plus | Op::Moins | Op::Fois | Op::Divise);
+        let dst = self.nouveau_local(if resultat_float { Scalaire::Flottant } else { Scalaire::Entier });
+        self.emettre(if flottant { Inst::Flottant(dst, op, a, b, lieu) } else { Inst::Binaire(dst, op, a, b, lieu) });
+        dst
+    }
 
     fn bloc(&mut self, b: &Bloc) {
         self.noms.push(HashMap::new());
@@ -259,7 +397,8 @@ impl Traducteur<'_> {
                     None => self.copier(&cible, &v),
                     Some(op) => {
                         let lieu = self.lieu(nom.span);
-                        self.emettre(Inst::Binaire(cible[0], op_kir(*op), cible[0], v[0], lieu));
+                        let r = self.operation(op_kir(*op), cible[0], v[0], self.est_float(valeur), lieu);
+                        self.emettre(Inst::Copie(cible[0], r));
                     }
                 }
             }
@@ -378,6 +517,8 @@ impl Traducteur<'_> {
     fn expr(&mut self, e: &Expr) -> Valeur {
         match &e.genre {
             ExprGenre::Entier(v) => vec![self.constante(*v as i64)],
+            ExprGenre::Flottant(v) => vec![self.constante_float(*v)],
+            ExprGenre::Caractere(c) => vec![self.constante(*c as i64)],
             ExprGenre::Bool(b) => vec![self.constante(*b as i64)],
             ExprGenre::Var(nom) => self.valeur_de(nom),
             ExprGenre::Appel { nom, args } => {
@@ -386,8 +527,8 @@ impl Traducteur<'_> {
                     vals.extend(self.expr(a));
                 }
                 if let n @ ("print" | "write") = nom.texte.as_str() {
-                    let booleen = self.infos.types[args[0].id] == Type::Bool;
-                    self.emettre(Inst::Afficher { valeur: vals[0], booleen, ligne: n == "print" });
+                    let genre = Affichage::de(&self.infos.types[args[0].id]);
+                    self.emettre(Inst::Afficher { valeur: vals[0], genre, ligne: n == "print" });
                     return vec![];
                 }
                 let num = self.numeros[nom.texte.as_str()];
@@ -397,10 +538,17 @@ impl Traducteur<'_> {
             }
             ExprGenre::Unaire(OpUn::Moins, x) => {
                 // Un nombre écrit avec `-` devant est une constante (gère `-9223372036854775808`).
-                if let ExprGenre::Entier(v) = x.genre {
-                    return vec![self.constante((v as i64).wrapping_neg())];
+                match x.genre {
+                    ExprGenre::Entier(v) => return vec![self.constante((v as i64).wrapping_neg())],
+                    ExprGenre::Flottant(v) => return vec![self.constante_float(-v)],
+                    _ => {}
                 }
                 let a = self.expr1(x);
+                if self.est_float(x) {
+                    let dst = self.nouveau_local(Scalaire::Flottant);
+                    self.emettre(Inst::NegFlottant(dst, a));
+                    return vec![dst];
+                }
                 let dst = self.entier();
                 let lieu = self.lieu(e.span);
                 self.emettre(Inst::Neg(dst, a, lieu));
@@ -431,12 +579,23 @@ impl Traducteur<'_> {
             }
             ExprGenre::Binaire(op, a, b) => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
-                let dst = self.entier();
                 // L'erreur pointe sur l'opérateur : le premier caractère non blanc après `a`.
                 let apres_a = &self.src[a.span.fin..];
                 let pos = a.span.fin + apres_a.len() - apres_a.trim_start().len();
                 let lieu = self.lieu(Span::new(pos, pos));
-                self.emettre(Inst::Binaire(dst, op_kir(*op), va, vb, lieu));
+                vec![self.operation(op_kir(*op), va, vb, self.est_float(a), lieu)]
+            }
+            ExprGenre::Methode { recu, nom, .. } => {
+                let v = self.expr1(recu);
+                let conversion = match (&self.infos.types[recu.id], nom.texte.as_str()) {
+                    (Type::Int, "to_float") => Conversion::EntierVersFlottant,
+                    (Type::Float, "to_int") => Conversion::FlottantVersEntier,
+                    (Type::Char, "to_int") => return vec![v], // un Char est déjà son code
+                    autre => unreachable!("méthode vérifiée par le typage : {autre:?}"),
+                };
+                let dst = self.nouvelle_valeur(&self.infos.types[e.id].clone())[0];
+                let lieu = self.lieu(nom.span);
+                self.emettre(Inst::Convertir(dst, conversion, v, lieu));
                 vec![dst]
             }
         }

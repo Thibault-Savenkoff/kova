@@ -5,9 +5,9 @@
 
 use std::process::Command;
 
-use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
-use cranelift_codegen::ir::{AbiParam, Block, FuncRef, InstBuilder, Signature, TrapCode, Value};
+use cranelift_codegen::ir::{AbiParam, Block, FuncRef, InstBuilder, MemFlagsData, Signature, TrapCode, Value};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -27,7 +27,7 @@ pub fn construire(p: &Programme, fichier: &str, sortie: &str) -> Result<(), Stri
     std::fs::write(&o, objet).map_err(|e| e.to_string())?;
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
 
-    let res = Command::new("cc").args(["-O2", "-o"]).arg(sortie).arg(&o).arg(&c).output();
+    let res = Command::new("cc").args(["-O2", "-o"]).arg(sortie).arg(&o).arg(&c).arg("-lm").output();
     let _ = std::fs::remove_dir_all(&tmp);
     match res {
         Err(e) => Err(format!("impossible de lancer `cc` (il sert à assembler l'exécutable) : {e}")),
@@ -90,7 +90,7 @@ fn produire_objet(p: &Programme, fichier: &str) -> Result<Vec<u8>, Box<dyn std::
         let refs: Vec<FuncRef> = ids.iter().map(|&id| module.declare_func_in_func(id, b.func)).collect();
         let rt_afficher = module.declare_func_in_func(rt.afficher, b.func);
         let rt_panne = module.declare_func_in_func(rt.panne, b.func);
-        Generateur { b, vars: vec![], rt_panne }.fonction(f, &refs, rt_afficher, config);
+        Generateur { b, vars: vec![], types: f.locaux.clone(), rt_panne }.fonction(f, &refs, rt_afficher, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -107,6 +107,7 @@ fn type_machine(t: Scalaire) -> cranelift_codegen::ir::Type {
 struct Generateur<'a> {
     b: FunctionBuilder<'a>,
     vars: Vec<Variable>,
+    types: Vec<Scalaire>,
     rt_panne: FuncRef,
 }
 
@@ -180,7 +181,38 @@ impl Generateur<'_> {
     fn inst(&mut self, inst: &Inst, refs: &[FuncRef], rt_afficher: FuncRef) {
         match inst {
             Inst::Const(d, v) => {
-                let v = self.b.ins().iconst(I64, *v);
+                let v = match self.types[*d] {
+                    Scalaire::Entier => self.b.ins().iconst(I64, *v),
+                    Scalaire::Flottant => self.b.ins().f64const(f64::from_bits(*v as u64)),
+                };
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::Flottant(d, op, a, b, lieu) => {
+                let (a, b) = (self.lire(*a), self.lire(*b));
+                let v = self.flottant(*op, a, b, *lieu);
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::NegFlottant(d, a) => {
+                let a = self.lire(*a);
+                let v = self.b.ins().fneg(a);
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::Convertir(d, c, a, lieu) => {
+                let a = self.lire(*a);
+                let v = match c {
+                    Conversion::EntierVersFlottant => self.b.ins().fcvt_from_sint(F64, a),
+                    Conversion::FlottantVersEntier => {
+                        // Comparaisons « ordonnées » : fausses pour NaN, donc NaN est refusé.
+                        let min = self.b.ins().f64const(-9223372036854775808.0);
+                        let max = self.b.ins().f64const(9223372036854775808.0);
+                        let assez_grand = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, a, min);
+                        let assez_petit = self.b.ins().fcmp(FloatCC::LessThan, a, max);
+                        let ok = self.b.ins().band(assez_grand, assez_petit);
+                        let ko = self.b.ins().bxor_imm_s(ok, 1);
+                        self.panne_si(ko, Panne::ConversionImpossible, *lieu);
+                        self.b.ins().fcvt_to_sint(I64, a)
+                    }
+                };
                 self.b.def_var(self.vars[*d], v);
             }
             Inst::Copie(d, s) => {
@@ -212,12 +244,42 @@ impl Generateur<'_> {
                     self.b.def_var(self.vars[d], r);
                 }
             }
-            Inst::Afficher { valeur, booleen, ligne } => {
-                let v = self.lire(*valeur);
-                let booleen = self.b.ins().iconst(I64, *booleen as i64);
+            Inst::Afficher { valeur, genre, ligne } => {
+                let mut v = self.lire(*valeur);
+                if *genre == Affichage::Float {
+                    // Le runtime reçoit les 64 bits du Float dans un entier.
+                    v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
+                }
+                let genre = self.b.ins().iconst(I64, *genre as i64);
                 let ligne = self.b.ins().iconst(I64, *ligne as i64);
-                self.b.ins().call(rt_afficher, &[v, booleen, ligne]);
+                self.b.ins().call(rt_afficher, &[v, genre, ligne]);
             }
+        }
+    }
+
+    /// Mêmes règles que `interp::calculer_float`.
+    fn flottant(&mut self, op: Op, a: Value, b: Value, lieu: Lieu) -> Value {
+        let comparer = |g: &mut Self, cc: FloatCC| {
+            let c = g.b.ins().fcmp(cc, a, b);
+            g.b.ins().uextend(I64, c)
+        };
+        match op {
+            Op::Plus => self.b.ins().fadd(a, b),
+            Op::Moins => self.b.ins().fsub(a, b),
+            Op::Fois => self.b.ins().fmul(a, b),
+            Op::Divise => {
+                let zero = self.b.ins().f64const(0.0);
+                let par_zero = self.b.ins().fcmp(FloatCC::Equal, b, zero); // vrai aussi pour -0.0
+                self.panne_si(par_zero, Panne::DivisionParZero, lieu);
+                self.b.ins().fdiv(a, b)
+            }
+            Op::Egal => comparer(self, FloatCC::Equal),
+            Op::Different => comparer(self, FloatCC::NotEqual), // vrai pour NaN, comme en Rust
+            Op::Inf => comparer(self, FloatCC::LessThan),
+            Op::InfEgal => comparer(self, FloatCC::LessThanOrEqual),
+            Op::Sup => comparer(self, FloatCC::GreaterThan),
+            Op::SupEgal => comparer(self, FloatCC::GreaterThanOrEqual),
+            Op::Reste => unreachable!("`%` refusé sur les Float par le typage"),
         }
     }
 

@@ -15,7 +15,9 @@ use crate::diag::{Diag, Span, ligne_colonne};
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Type {
     Int,
+    Float,
     Bool,
+    Char,
     /// Ce que renvoie une fonction sans `->`.
     Rien,
     /// Type inconnu à cause d'une erreur déjà signalée : on ne la répète pas.
@@ -26,7 +28,9 @@ impl Type {
     fn nom(self) -> &'static str {
         match self {
             Type::Int => "Int",
+            Type::Float => "Float",
             Type::Bool => "Bool",
+            Type::Char => "Char",
             Type::Rien => "rien",
             Type::Erreur => "?",
         }
@@ -35,6 +39,13 @@ impl Type {
 
 /// Les fonctions prédéfinies : `print(x)` passe à la ligne, `write(x)` non.
 pub const PREDEFINIES: &[&str] = &["print", "write"];
+
+/// Les méthodes prédéfinies (J2 : les conversions) : (type du receveur, nom, résultat).
+pub const METHODES: &[(Type, &str, Type)] = &[
+    (Type::Int, "to_float", Type::Float),
+    (Type::Float, "to_int", Type::Int),
+    (Type::Char, "to_int", Type::Int),
+];
 
 pub struct Infos {
     /// Type de chaque expression, par `Expr::id`.
@@ -137,7 +148,9 @@ pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
 pub fn type_de(t: &Nom) -> Type {
     match t.texte.as_str() {
         "Int" => Type::Int,
+        "Float" => Type::Float,
         "Bool" => Type::Bool,
+        "Char" => Type::Char,
         _ => Type::Erreur,
     }
 }
@@ -199,8 +212,25 @@ impl Verif<'_> {
         let t = self.expr(e);
         if t != attendu && t != Type::Erreur && attendu != Type::Erreur {
             let msg = format!("types différents : `{}` attendu, `{}` donné", attendu.nom(), t.nom());
-            self.erreur(e.span, msg);
+            let mut d = Diag::new(e.span, msg);
+            if let (Type::Float, ExprGenre::Entier(v)) = (attendu, &e.genre) {
+                d = d.aide(format!("pour un `Float`, écris `{v}.0`"));
+            } else if matches!((attendu, t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
+                d = d.aide("Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`");
+            }
+            self.diags.push(d);
         }
+    }
+
+    /// Vérifie que `e` a un des types `permis` ; renvoie son type.
+    fn parmi(&mut self, e: &Expr, permis: &[Type], quoi: &str) -> Type {
+        let t = self.expr(e);
+        if t == Type::Erreur || permis.contains(&t) {
+            return t;
+        }
+        let noms: Vec<String> = permis.iter().map(|t| format!("`{}`", t.nom())).collect();
+        self.erreur(e.span, format!("{quoi} s'applique à {}, pas à `{}`", noms.join(" ou "), t.nom()));
+        Type::Erreur
     }
 
     fn instr(&mut self, i: &Instr) {
@@ -241,8 +271,8 @@ impl Verif<'_> {
                         self.erreur(nom.span, format!("`{n}` est un compteur de boucle : il ne peut pas changer"))
                     }
                 }
-                if op.is_some() && ty != Type::Int && ty != Type::Erreur {
-                    self.erreur(nom.span, format!("`{n}` n'est pas un `Int`"));
+                if op.is_some() && !matches!(ty, Type::Int | Type::Float | Type::Erreur) {
+                    self.erreur(nom.span, format!("`{n}` n'est ni un `Int` ni un `Float`"));
                 }
                 self.attendre(valeur, ty);
             }
@@ -311,6 +341,8 @@ impl Verif<'_> {
                 }
                 Type::Int
             }
+            ExprGenre::Flottant(_) => Type::Float,
+            ExprGenre::Caractere(_) => Type::Char,
             ExprGenre::Bool(_) => Type::Bool,
             ExprGenre::Var(nom) => match self.chercher(nom) {
                 Some(v) => v.ty,
@@ -320,6 +352,29 @@ impl Verif<'_> {
                 }
             },
             ExprGenre::Appel { nom, args } => self.appel(nom, args),
+            ExprGenre::Methode { recu, nom, args } => {
+                let t = self.expr(recu);
+                for a in args {
+                    self.expr(a);
+                }
+                if t == Type::Erreur {
+                    return Type::Erreur;
+                }
+                let Some(&(_, _, resultat)) = METHODES.iter().find(|(r, n, _)| *r == t && *n == nom.texte) else {
+                    let connues: Vec<String> =
+                        METHODES.iter().filter(|(r, ..)| *r == t).map(|(_, n, _)| format!("`{n}`")).collect();
+                    let mut d = Diag::new(nom.span, format!("`{}` n'a pas de méthode `{}`", t.nom(), nom.texte));
+                    if !connues.is_empty() {
+                        d = d.aide(format!("méthodes de `{}` : {}", t.nom(), connues.join(", ")));
+                    }
+                    self.diags.push(d);
+                    return Type::Erreur;
+                };
+                if !args.is_empty() {
+                    self.erreur(nom.span, format!("`{}` ne prend pas d'argument", nom.texte));
+                }
+                resultat
+            }
             ExprGenre::Unaire(OpUn::Moins, x) => {
                 // `-9223372036854775808` : le seul cas où le nombre seul serait trop grand.
                 if let ExprGenre::Entier(v) = x.genre
@@ -328,8 +383,7 @@ impl Verif<'_> {
                     self.types[x.id] = Type::Int;
                     return Type::Int;
                 }
-                self.attendre(x, Type::Int);
-                Type::Int
+                self.parmi(x, &[Type::Int, Type::Float], "`-`")
             }
             ExprGenre::Unaire(OpUn::Non, x) => {
                 self.attendre(x, Type::Bool);
@@ -353,8 +407,8 @@ impl Verif<'_> {
                         Type::Bool
                     }
                     Inf | InfEgal | Sup | SupEgal => {
-                        self.attendre(a, Type::Int);
-                        self.attendre(b, Type::Int);
+                        let t = self.parmi(a, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.texte()));
+                        self.attendre(b, t);
                         Type::Bool
                     }
                     Intervalle | IntervalleInclus => {
@@ -363,10 +417,15 @@ impl Verif<'_> {
                         self.erreur(e.span, format!("`{}` ne s'utilise que dans `for`", op.texte()));
                         Type::Erreur
                     }
-                    Plus | Moins | Fois | Divise | Reste => {
+                    Reste => {
                         self.attendre(a, Type::Int);
                         self.attendre(b, Type::Int);
                         Type::Int
+                    }
+                    Plus | Moins | Fois | Divise => {
+                        let t = self.parmi(a, &[Type::Int, Type::Float], &format!("`{}`", op.texte()));
+                        self.attendre(b, t);
+                        t
                     }
                 }
             }
@@ -419,8 +478,8 @@ impl Verif<'_> {
             }
             for a in args {
                 let t = self.expr(a);
-                if !matches!(t, Type::Int | Type::Bool | Type::Erreur) {
-                    self.erreur(a.span, format!("`{}` n'affiche que des `Int` et des `Bool`", nom.texte));
+                if matches!(t, Type::Rien) {
+                    self.erreur(a.span, format!("`{}` : cette expression ne donne pas de valeur à afficher", nom.texte));
                 }
             }
             return Type::Rien;
