@@ -91,6 +91,14 @@
         {
           "match": "\\b(test)\\s+(?=\")",
           "captures": { "1": { "name": "keyword.other.test.kova" } }
+        },
+        {
+          "comment": "`lang fr {`: a translation file. `lang` is not a reserved word, only this form counts.",
+          "match": "^\\s*(lang)\\s+(\\p{Ll}[\\p{L}\\p{N}_]*)\\b",
+          "captures": {
+            "1": { "name": "keyword.other.lang.kova" },
+            "2": { "name": "entity.name.section.kova" }
+          }
         }
       ]
     },

@@ -4,4 +4,4 @@ fn main() {
         let x: Int := 2
     }
 }
-// error: `x` existe déjà (ligne 2)
+// error: `x` already exists (line 2)

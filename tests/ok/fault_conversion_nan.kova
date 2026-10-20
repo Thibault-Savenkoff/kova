@@ -6,4 +6,4 @@ fn main() {
 }
 // expect: NaN
 // code: 101
-// stderr: erreur: conversion impossible
+// stderr: error: impossible conversion: this Float does not fit in an Int

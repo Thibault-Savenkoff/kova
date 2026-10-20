@@ -3,5 +3,5 @@ fn main() {
     print(-9223372036854775809)
 }
 // error: :2:11
-// error: nombre trop grand pour un `Int`
+// error: number too big for an `Int` (maximum 9223372036854775807)
 // error: :3:12

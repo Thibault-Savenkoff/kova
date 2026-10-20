@@ -3,4 +3,4 @@ fn main() {
         i := 5
     }
 }
-// error: `i` est un compteur de boucle
+// error: `i` is a loop counter: it cannot change

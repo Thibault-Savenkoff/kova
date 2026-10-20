@@ -16,8 +16,8 @@ fn main() {
 }
 // expect: 1.5
 // code: 101
-// stderr: erreur: contrat non respecté
+// stderr: error: contract violated
 // stderr: contract_ensure.kova:4:12
 // stderr:   ensure result >= a && result <= b
-// stderr:   valeurs : result = 3.0, a = 1.0, b = 2.0
+// stderr:   values: result = 3.0, a = 1.0, b = 2.0
 // stderr: contract_ensure.kova:15:11

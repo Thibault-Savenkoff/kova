@@ -4,4 +4,4 @@ fn main() {
 }
 // error: :2:47
 // error: :3:40
-// error: cette branche doit finir par une valeur
+// error: this branch must end with a value

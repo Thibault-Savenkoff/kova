@@ -7,7 +7,7 @@ header {
 
 fn main() {
 }
-// error: `mode` vaut `run` ou `build`, pas `vite`
-// error: `mode` est déjà réglé (ligne 2)
-// error: réglage inconnu `vitesse` dans le header
-// error: `lock` vaut `false` ou `true`, pas `oui`
+// error: `mode` is `run` or `build`, not `vite`
+// error: `mode` is already set (line 2)
+// error: unknown setting `vitesse` in the header
+// error: `lock` is `false` or `true`, not `oui`

@@ -3,5 +3,5 @@ fn main() {
     print(-min)
 }
 // code: 101
-// stderr: erreur: dépassement d'entier
+// stderr: error: integer overflow
 // stderr: fault_negation.kova:3:11

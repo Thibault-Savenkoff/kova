@@ -6,5 +6,5 @@ fn main() {
 }
 // expect: 0.5
 // code: 101
-// stderr: erreur: division par zéro
+// stderr: error: division by zero
 // stderr: fault_float_zero.kova:5:15

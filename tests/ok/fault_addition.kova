@@ -10,5 +10,5 @@ fn main() {
 // expect: 9223372036854775806
 // expect: 9223372036854775807
 // code: 101
-// stderr: erreur: dépassement d'entier
+// stderr: error: integer overflow
 // stderr: fault_addition.kova:7:12

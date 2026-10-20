@@ -84,3 +84,9 @@ test "carré de 3" {
 header {
 // <------ keyword.other.header.kova
 }
+lang fr {
+// <---- keyword.other.lang.kova
+//   ^^ entity.name.section.kova
+    hello := "Bonjour {name}"
+//        ^^ keyword.operator.assignment.kova
+}

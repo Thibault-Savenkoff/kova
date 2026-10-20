@@ -5,8 +5,8 @@ fn main() {
     print('\u{D800}')
     print('\u{110000}')
 }
-// error: caractère vide
-// error: un seul caractère
-// error: échappement inconnu `\q`
-// error: `D800` n'est pas un caractère Unicode valide
-// error: `110000` n'est pas un caractère Unicode valide
+// error: empty character: write for example `'a'`
+// error: a character is written between `'`: a single character, like `'a'`
+// error: unknown escape `\q`
+// error: `D800` is not a valid Unicode character
+// error: `110000` is not a valid Unicode character

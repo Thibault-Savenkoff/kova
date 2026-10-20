@@ -1,5 +1,5 @@
 fn main() {
     let Total: Int := 0
 }
-// error: un nom de variable commence par une minuscule
-// error: écris `total`
+// error: a variable name starts with a lowercase letter
+// error: write `total` (capitals are reserved for types)

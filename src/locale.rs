@@ -256,5 +256,8 @@ mod tests {
             assert!(holes(&cats[0][*key]).is_empty(), "`{key}` is used by the C runtime: no holes");
         }
         assert_eq!(RUNTIME[0], "error_prefix", "runtime.c reads the prefix at index 0");
+        let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
+        let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
+        assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");
     }
 }

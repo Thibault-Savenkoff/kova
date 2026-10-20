@@ -13,14 +13,14 @@ const KOVA: &str = env!("CARGO_BIN_EXE_kova");
 
 /// `kova` (or a built executable) with its language fixed: the tests must not depend
 /// on the machine's `LANG`.
-const LANG: &str = "fr";
+const LANG: &str = "en";
 
 fn kova(lang: &str) -> Command {
     program(KOVA, lang)
 }
 fn program(path: impl AsRef<std::ffi::OsStr>, lang: &str) -> Command {
     let mut c = Command::new(path);
-    c.env("KOVA_LANG", lang);
+    c.env("KOVA_LANG", lang).env_remove("LC_ALL").env_remove("LC_MESSAGES").env_remove("LANG");
     c
 }
 
@@ -139,7 +139,7 @@ fn command_line() {
     assert_eq!(out.status.code(), Some(2), "unknown command → usage + code 2");
 
     let out = kova(LANG).args(["run", "file-that-does-not-exist.kova"]).output().unwrap();
-    assert!(text(&out.stderr).contains("impossible de lire"));
+    assert!(text(&out.stderr).contains("cannot read"));
 
     // `--boost` removes contracts: the failed `require` gives way to the division by zero.
     let exe = std::env::temp_dir().join(format!("kova-boost-{}", std::process::id()));
@@ -148,16 +148,16 @@ fn command_line() {
     let out = program(&exe, LANG).output().unwrap();
     let _ = std::fs::remove_file(&exe);
     assert_eq!(out.status.code(), Some(101));
-    assert!(text(&out.stderr).starts_with("erreur: division par zéro"), "{}", text(&out.stderr));
+    assert!(text(&out.stderr).starts_with("error: division by zero"), "{}", text(&out.stderr));
 
     // `kova test`: every test runs, even after a failure; code 1 if any failed.
     let out = kova(LANG).args(["test", "tests/ok/test_blocks.kova"]).output().unwrap();
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
     for piece in [
-        "✅ carré de 3\n❌ carré d'un négatif\n   erreur: un carré est toujours positif\n",
-        "     check carre(n) = -16\n     valeurs : n = -4\n❌ division\n   erreur: division par zéro\n",
-        "\n1 réussi(s), 2 raté(s) sur 3\n",
+        "✅ carré de 3\n❌ carré d'un négatif\n   error: un carré est toujours positif\n",
+        "     check carre(n) = -16\n     values: n = -4\n❌ division\n   error: division by zero\n",
+        "\n1 passed, 2 failed out of 3\n",
     ] {
         assert!(stdout.contains(piece), "« {piece} » missing from:\n{stdout}");
     }
@@ -169,17 +169,62 @@ fn command_line() {
     std::fs::write(&source, "header {\n    mode := build\n    lock := true\n}\nfn main() {\n    print(7)\n}\n").unwrap();
     let out = kova(LANG).arg("run").arg(&source).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
-    assert_eq!(text(&out.stderr), "erreur: ce programme est réservé à `kova build` (header ligne 3)\n");
+    assert_eq!(text(&out.stderr), "error: this program is reserved for `kova build` (header line 3)\n");
     let out = kova(LANG).arg(&source).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&program(dir.join("prog"), LANG).output().unwrap().stdout), "7\n");
     std::fs::write(&source, "header {\n    lock := true\n}\nfn main() {\n    print(8)\n}\n").unwrap();
     let out = kova(LANG).arg("build").arg(&source).output().unwrap();
-    assert_eq!(text(&out.stderr), "erreur: ce programme est réservé à `kova run` (header ligne 2)\n");
+    assert_eq!(text(&out.stderr), "error: this program is reserved for `kova run` (header line 2)\n");
     assert_eq!(text(&kova(LANG).arg(&source).output().unwrap().stdout), "8\n");
     let _ = std::fs::remove_dir_all(&dir);
 
+    languages();
+
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
+}
+
+/// The language of the messages (PLAN 2.13): environment, `header`, translation files.
+fn languages() {
+    let dir = std::env::temp_dir().join(format!("kova-lang-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let stderr = |c: &mut Command| text(&c.output().unwrap().stderr);
+
+    // A compile error: the first non-empty variable decides, even if unknown (then English).
+    let source = dir.join("bad.kova");
+    std::fs::write(&source, "fn main() {\n    let a: Int := 1\n    a := 2\n}\n").unwrap();
+    assert!(stderr(kova("fr").arg("run").arg(&source)).starts_with("erreur: `a` est déclarée avec let"));
+    assert!(stderr(kova("").env("LANG", "fr_FR.UTF-8").arg("run").arg(&source)).starts_with("erreur: "));
+    assert!(stderr(kova("C").env("LANG", "fr_FR.UTF-8").arg("run").arg(&source)).starts_with("error: "));
+    assert!(stderr(kova("de_DE.UTF-8").arg("run").arg(&source)).starts_with("error: "));
+
+    // One executable, every language; `header { lang := fr }` wins over the environment.
+    let source = dir.join("fault.kova");
+    let program_text = "fn main() {\n    let z: Int := 0\n    print(1 / z)\n}\n";
+    std::fs::write(&source, program_text).unwrap();
+    let exe = dir.join("fault");
+    assert!(kova("en").arg("build").arg(&source).arg("-o").arg(&exe).status().unwrap().success());
+    assert!(stderr(&mut program(&exe, "en")).starts_with("error: division by zero"));
+    assert!(stderr(&mut program(&exe, "fr")).starts_with("erreur: division par zéro"));
+    std::fs::write(&source, format!("header {{\n    lang := fr\n}}\n{program_text}")).unwrap();
+    assert!(stderr(kova("en").arg("run").arg(&source)).starts_with("erreur: division par zéro"));
+    assert!(kova("en").arg("build").arg(&source).arg("-o").arg(&exe).status().unwrap().success());
+    assert!(stderr(&mut program(&exe, "en")).starts_with("erreur: division par zéro"));
+
+    // `kova run` on a translation file checks it against the others of its folder.
+    let out = kova("en").args(["run", "locales/fr.kova"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    assert!(text(&out.stdout).contains("complete compared with en.kova"));
+    std::fs::write(dir.join("en.kova"), "lang en {\n    hello := \"Hello {name}\"\n    bye := \"Bye\"\n}\n").unwrap();
+    std::fs::write(dir.join("fr.kova"), "lang fr {\n    hello := \"Bonjour {nom}\"\n}\n").unwrap();
+    let out = kova("en").arg("run").arg(dir.join("fr.kova")).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("1 key(s)\n  missing compared with en.kova: bye\n"), "{stdout}");
+    assert!(stdout.contains("different `{…}` from en.kova: hello"), "{stdout}");
+    assert_eq!(kova("en").arg("build").arg(dir.join("fr.kova")).output().unwrap().status.code(), Some(1));
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Talks to `kova lsp` like the editor does: opens a wrong file, receives the error,
@@ -225,7 +270,7 @@ fn language_server() {
     let diag = receive();
     assert_eq!(diag["method"], "textDocument/publishDiagnostics");
     let error = &diag["params"]["diagnostics"][0];
-    assert!(error["message"].as_str().unwrap().contains("`a` est déclarée avec let"), "{diag}");
+    assert!(error["message"].as_str().unwrap().contains("`a` is declared with let"), "{diag}");
     assert_eq!(error["range"]["start"], serde_json::json!({"line": 2, "character": 4}));
 
     send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",

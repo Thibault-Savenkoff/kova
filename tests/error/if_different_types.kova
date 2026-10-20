@@ -1,4 +1,4 @@
 fn main() {
     let x: Int := if true { 1 } else { false }
 }
-// error: les deux branches doivent donner le même type : `Int` et `Bool`
+// error: both branches must give the same type: `Int` and `Bool`

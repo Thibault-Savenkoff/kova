@@ -11,8 +11,8 @@ fn main() {
 }
 // expect: 5
 // code: 101
-// stderr: erreur: on ne peut pas diviser par zéro
+// stderr: error: on ne peut pas diviser par zéro
 // stderr: contract_require.kova:3:13
 // stderr:   require b != 0
-// stderr:   valeurs : b = 0
+// stderr:   values: b = 0
 // stderr: contract_require.kova:10:11

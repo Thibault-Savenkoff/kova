@@ -7,6 +7,6 @@ test "a" {
 }
 fn main() {
 }
-// error: le test « a » existe déjà (ligne 1)
-// error: variable inconnue `x`
-// error: cette fonction ne renvoie rien
+// error: the test "a" already exists (line 1)
+// error: unknown variable `x`
+// error: this function returns nothing

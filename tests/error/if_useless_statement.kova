@@ -2,4 +2,4 @@
 fn main() {
     if true { 1 } else { 2 }
 }
-// error: cette expression ne fait rien
+// error: this expression does nothing

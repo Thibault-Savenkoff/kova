@@ -3,5 +3,5 @@ fn main() {
     print(5 % zero)
 }
 // code: 101
-// stderr: erreur: division par zéro
+// stderr: error: division by zero
 // stderr: fault_remainder_zero.kova:3:13

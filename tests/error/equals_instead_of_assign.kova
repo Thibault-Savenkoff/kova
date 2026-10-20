@@ -2,5 +2,5 @@ fn main() {
     var x: Int := 0
     x = 5
 }
-// error: cette expression ne fait rien
-// error: pour donner une valeur, écris `:=`
+// error: this expression does nothing
+// error: `=` compares; to give a value, write `:=`

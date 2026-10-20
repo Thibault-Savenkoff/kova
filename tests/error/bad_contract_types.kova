@@ -14,7 +14,7 @@ fn g(x: Int)
 fn main() {
     print(f(1))
 }
-// error: types différents : `Bool` attendu, `Int` donné
-// error: variable inconnue `y`
-// error: `result` ne s'utilise que dans un `ensure`
-// error: `result` n'existe pas : cette fonction ne renvoie rien
+// error: different types: `Bool` expected, `Int` given
+// error: unknown variable `y`
+// error: `result` is only used in an `ensure`
+// error: `result` does not exist: this function returns nothing

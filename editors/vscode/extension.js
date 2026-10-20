@@ -13,6 +13,9 @@ const { command } = require('./commands');
 // nor your PATH. So flatpak-spawn is used to run on the host system.
 const inFlatpak = fs.existsSync('/.flatpak-info');
 
+// Kova's messages follow the editor's language (`fr`, `en-us`…), see docs/PLAN.md 2.13.
+const lang = `KOVA_LANG=${vscode.env.language}`;
+
 /** @type {LanguageClient | undefined} */
 let client;
 
@@ -26,8 +29,8 @@ function activate(context) {
 
   const kova = kovaPath();
   const server = inFlatpak
-    ? { command: '/usr/bin/flatpak-spawn', args: ['--host', '--watch-bus', kova, 'lsp'] }
-    : { command: kova, args: ['lsp'] };
+    ? { command: '/usr/bin/flatpak-spawn', args: ['--host', '--watch-bus', `--env=${lang}`, kova, 'lsp'] }
+    : { command: kova, args: ['lsp'], options: { env: { ...process.env, KOVA_LANG: vscode.env.language } } };
   client = new LanguageClient('kova', 'Kova', server, {
     documentSelector: [{ language: 'kova' }],
   });
@@ -69,10 +72,10 @@ function terminal() {
     return vscode.window.createTerminal({
       name: 'Kova',
       shellPath: '/usr/bin/flatpak-spawn',
-      shellArgs: ['--host', '--watch-bus', '--env=TERM=xterm-256color', 'sh', '-c', 'exec "${SHELL:-sh}" -l'],
+      shellArgs: ['--host', '--watch-bus', '--env=TERM=xterm-256color', `--env=${lang}`, 'sh', '-c', 'exec "${SHELL:-sh}" -l'],
     });
   }
-  return vscode.window.createTerminal({ name: 'Kova' });
+  return vscode.window.createTerminal({ name: 'Kova', env: { KOVA_LANG: vscode.env.language } });
 }
 
 module.exports = { activate, deactivate };

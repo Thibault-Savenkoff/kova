@@ -2,5 +2,5 @@ fn main() {
     let a: Int := 1
     a := 2
 }
-// error: `a` est déclarée avec let
-// error: déclare-la avec `var a`
+// error: `a` is declared with let
+// error: declare it with `var a` if it must change

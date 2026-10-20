@@ -3,6 +3,6 @@ fn main() {
     print('a' + 'b')
     print(true < false)
 }
-// error: `-` s'applique à `Int` ou `Float`, pas à `Bool`
-// error: `+` s'applique à `Int` ou `Float`, pas à `Char`
-// error: `<` s'applique à `Int` ou `Float` ou `Char`, pas à `Bool`
+// error: `-` applies to `Int` or `Float`, not to `Bool`
+// error: `+` applies to `Int` or `Float`, not to `Char`
+// error: `<` applies to `Int` or `Float` or `Char`, not to `Bool`

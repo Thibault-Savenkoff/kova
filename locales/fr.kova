@@ -158,7 +158,7 @@ lang fr {
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` est un fichier de traductions : `kova run {file}` le vérifie"
-    lang_check_count := "{file} : {count} clés"
+    lang_check_count := "{file} : {count} clé(s)"
     lang_check_alone := "  aucune autre langue dans ce dossier pour comparer"
     lang_check_missing := "  manquantes par rapport à {other} : {keys}"
     lang_check_holes := "  `\{…\}` différents de {other} : {keys}"

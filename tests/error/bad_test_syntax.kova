@@ -8,4 +8,4 @@ test sans_nom {
 }
 fn main() {
 }
-// error: nom du test entre guillemets attendu, trouvé `sans_nom`
+// error: test name in quotes expected, found `sans_nom`

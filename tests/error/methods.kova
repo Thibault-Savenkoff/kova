@@ -4,8 +4,8 @@ fn main() {
     print(true.to_int())
     print(1.to_float(2))
 }
-// error: `Int` n'a pas de méthode `to_int`
-// error: méthodes de `Int` : `to_float`
-// error: `Float` n'a pas de méthode `carre`
-// error: `Bool` n'a pas de méthode `to_int`
-// error: `to_float` ne prend pas d'argument
+// error: `Int` has no method `to_int`
+// error: methods of `Int`: `to_float`
+// error: `Float` has no method `carre`
+// error: `Bool` has no method `to_int`
+// error: `to_float` takes no argument

@@ -8,7 +8,7 @@ fn main() {
 }
 // expect: 4
 // code: 101
-// stderr: erreur: pas d'accent
+// stderr: error: pas d'accent
 // stderr: contract_check.kova:6:11
 // stderr:   check t.1 = 'e'
-// stderr:   valeurs : t = (4, 'é')
+// stderr:   values: t = (4, 'é')

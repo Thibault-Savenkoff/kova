@@ -6,4 +6,4 @@ fn signe(x: Int) -> Int {
     }
 }
 fn main() { print(signe(2)) }
-// error: `signe` peut arriver ici sans `return`
+// error: `signe` can get here without a `return`

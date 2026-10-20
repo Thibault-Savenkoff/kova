@@ -18,7 +18,7 @@ fn main() {
     print(f(1))
     let s: Int := "texte"
 }
-// error: `require` s'écrit entre la signature de la fonction et son `{`
-// error: message entre guillemets attendu après `else`, trouvé `oups`
-// error: l'interpolation `{…}` arrive au jalon J3
-// error: les textes arrivent au jalon J3
+// error: `require` goes between the function's signature and its `{`
+// error: message in quotes expected after `else`, found `oups`
+// error: interpolation `{…}` arrives in milestone J3 (write `\{` for a brace)
+// error: texts arrive in milestone J3 (for now: only after `else` in a contract)

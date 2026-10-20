@@ -3,7 +3,7 @@ fn main() {
     let b: Float := 1.5 + 2
     let c: Int := 2.0
 }
-// error: pour un `Float`, écris `3.0`
+// error: for a `Float`, write `3.0`
 // error: :3:27
-// error: Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`
+// error: Kova never converts by itself: use `.to_float()` or `.to_int()`
 // error: :4:19

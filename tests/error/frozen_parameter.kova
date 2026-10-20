@@ -2,4 +2,4 @@ fn f(n: Int) {
     n += 1
 }
 fn main() { f(1) }
-// error: `n` est un paramètre
+// error: `n` is a parameter: it cannot change

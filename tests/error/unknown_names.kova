@@ -3,6 +3,6 @@ fn main() {
     calculer(2)
     let z: Texte := 1
 }
-// error: variable inconnue `y`
-// error: fonction inconnue `calculer`
-// error: type inconnu `Texte`
+// error: unknown variable `y`
+// error: unknown function `calculer`
+// error: unknown type `Texte`

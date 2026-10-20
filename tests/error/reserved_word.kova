@@ -1,4 +1,4 @@
 fn main() {
     let match: Int := 1
 }
-// error: `match` est un mot réservé de Kova
+// error: `match` is a Kova reserved word: it cannot be used as a name

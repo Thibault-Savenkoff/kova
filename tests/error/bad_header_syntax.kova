@@ -8,6 +8,6 @@ fn main() {
 
 header {
 }
-// error: un réglage par ligne
-// error: valeur du réglage attendue
-// error: le `header` doit être la première déclaration du fichier
+// error: one setting per line: line end expected, found `lock`
+// error: setting value expected (a word like `build` or `true`), found `}`
+// error: the `header` must be the first declaration of the file
