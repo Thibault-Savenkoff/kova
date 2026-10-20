@@ -17,6 +17,7 @@ lang fr {
     what_setting := "réglage"
     what_language := "langue"
     what_key := "clé"
+    what_field := "champ"
 
     // ---- Command line ----
     usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost]\n                                       crée un exécutable autonome\n  kova test <fichier.kova>             lance les blocs `test`\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova --version"
@@ -175,6 +176,27 @@ lang fr {
     field_move_help := "prends une copie : `{place}.clone`"
     loop_move := "`{name}` est déplacé dans une boucle : il le serait encore au tour suivant"
     loop_move_help := "utilise `{name}.clone`, ou redonne une valeur à `{name}` avant la fin de la boucle"
+
+    // ---- Structs (J3) ----
+    struct_unclosed := "`\}` manquante à la fin de la struct"
+    type_builtin := "`{name}` est un type de base : choisis un autre nom"
+    type_exists := "le type `{name}` existe déjà (ligne {line})"
+    field_exists := "le champ `{name}` existe déjà (ligne {line})"
+    struct_contains_itself := "`{name}` se contient lui-même : sa taille serait infinie"
+    struct_contains_itself_help := "un champ `List<{name}>` pourra contenir d'autres `{name}` (J3, `List`)"
+    copy_struct_field := "`{type}` est une `copy struct` : son champ `{name}` (`{field_type}`) ne peut pas être copié"
+    copy_struct_field_help := "enlève `copy` : `{type}` sera alors déplacé, comme un `String`"
+    no_member := "`{type}` n'a pas de champ ni de méthode `{name}`"
+    fields_of := "champs de `{type}` : {fields}"
+    field_twice := "`{name}` est donné deux fois"
+    fields_missing := "il manque dans `{type} \{ … \}` : {fields}"
+    struct_compare := "`{op}` ne compare pas encore les structs (`{type}`)"
+    struct_compare_help := "compare les champs un par un : `a.x = b.x && a.y = b.y` (l'interface `Equal` arrive en J5)"
+    struct_field_move := "`{place}` ne peut pas être sorti de sa struct"
+    literal_in_heading := "ici, une struct littérale doit être entre parenthèses : `({name} \{ … \})`"
+    literal_in_heading_help := "après `if`, `while`, `for`, `from`, `require` et `ensure`, une `\{` ouvre le corps"
+    type_not_value := "`{name}` est un type, pas une valeur"
+    type_not_value_help := "pour en créer un : `{name} \{ champ := valeur \}`"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` est un fichier de traductions : `kova run {file}` le vérifie"

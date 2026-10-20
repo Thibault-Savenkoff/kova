@@ -1,0 +1,24 @@
+// A struct is moved like a String; a `copy struct` is copied.
+struct Dog { name: String, age: Int }
+struct Pair { a: Int, b: Int }
+copy struct Point { x: Int, y: Int }
+
+fn name_of(d: Dog) -> String {
+    return d.name
+}
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3 }
+    let s: String := rex.name
+    let pair := Pair { a := 1, b := 2 }
+    let other: Pair := pair
+    print(pair.a)
+    let p := Point { x := 1, y := 2 }
+    let q: Point := p
+    print(p.x + q.x)
+    let kept := Dog { name := rex.name, age := 1 }
+}
+// error: `d.name` cannot be moved out of its struct
+// error: take a copy: `d.name.clone`
+// error: `rex.name` cannot be moved out of its struct
+// error: `pair` was moved (line 14)

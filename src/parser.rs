@@ -36,14 +36,27 @@ const ASSIGNMENTS: &[(&str, Option<BinOp>)] = &[
 /// Returns the tree, the number of expressions (for the type table) and the errors.
 pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
     // The functions without parameters, wherever they are declared: a bare `main` calls `fn main`.
-    // ponytail: a scan of `fn name` tokens; struct methods (J3) will need their own list.
+    // ponytail: a scan of `fn name` tokens outside any `{ }` (a struct's methods are not in it).
+    let mut depth = 0;
+    let outside: Vec<bool> = tokens
+        .iter()
+        .map(|t| {
+            match t.kind {
+                Kind::Sym("{") => depth += 1,
+                Kind::Sym("}") => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        })
+        .collect();
     let no_params = tokens
         .windows(4)
-        .filter(|w| w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
-        .filter(|w| w[2].kind != Kind::Sym("(") || w[3].kind == Kind::Sym(")"))
-        .map(|w| source[w[1].span.start..w[1].span.end].to_string())
+        .zip(&outside)
+        .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
+        .filter(|(w, _)| w[2].kind != Kind::Sym("(") || w[3].kind == Kind::Sym(")"))
+        .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
         .collect();
-    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params };
+    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false };
     let file = p.file();
     (file, p.ids, p.diags)
 }
@@ -55,6 +68,8 @@ struct Parser<'a> {
     diags: Vec<Diag>,
     ids: usize,
     no_params: HashSet<String>,
+    /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
+    no_literal: bool,
 }
 
 impl Parser<'_> {
@@ -195,36 +210,55 @@ impl Parser<'_> {
         Ok(Pattern::Tuple(patterns, open.to(close)))
     }
 
-    /// `x`, `t.0` or `(a, b)` left of `:=`: re-reads the expression already parsed.
+    /// `x`, `t.0`, `rex.age` or `(a, b)` left of `:=`: re-reads the expression already parsed.
     fn target(&mut self, e: Expr) -> R<Target> {
         let span = e.span;
-        match e.kind {
-            ExprKind::Var(name) => Ok(Target::Place { name: Name { text: name, span }, fields: vec![], span }),
-            ExprKind::Field(base, i) => match self.target(*base)? {
-                Target::Place { name, mut fields, .. } => {
-                    fields.push(i);
-                    Ok(Target::Place { name, fields, span })
-                }
-                Target::Tuple(..) => self.error(span, t!("assign_target")),
-            },
+        let (base, step) = match e.kind {
+            ExprKind::Var(name) => return Ok(Target::Place { name: Name { text: name, span }, fields: vec![], span }),
+            ExprKind::Field(base, i) => (base, Step::Index(i)),
+            // `rex.age`: a field (checked by the type checker); `rex.age(1)` is a call.
+            ExprKind::Method { receiver, name, args } if args.is_empty() => (receiver, Step::Name(name)),
             ExprKind::Tuple(elems) => {
                 let targets = elems.into_iter().map(|e| self.target(e)).collect::<R<Vec<_>>>()?;
-                Ok(Target::Tuple(targets, span))
+                return Ok(Target::Tuple(targets, span));
             }
-            _ => self.error(span, t!("assign_target")),
+            _ => return self.error(span, t!("assign_target")),
+        };
+        match self.target(*base)? {
+            Target::Place { name, mut fields, .. } => {
+                fields.push(step);
+                Ok(Target::Place { name, fields, span })
+            }
+            Target::Tuple(..) => self.error(span, t!("assign_target")),
         }
+    }
+
+    /// `while cond {`: the expression before a body.
+    fn heading_expr(&mut self) -> R<Expr> {
+        let saved = std::mem::replace(&mut self.no_literal, true);
+        let e = self.expression();
+        self.no_literal = saved;
+        e
+    }
+
+    /// An expression between delimiters (`( )`, `{ }`): struct literals are allowed again.
+    fn inner_expr(&mut self) -> R<Expr> {
+        let saved = std::mem::replace(&mut self.no_literal, false);
+        let e = self.expression();
+        self.no_literal = saved;
+        e
     }
 
     // ---- File and functions ----
 
     fn file(&mut self) -> File {
-        let (mut header, mut functions, mut tests, mut langs) = (None, vec![], vec![], vec![]);
+        let (mut header, mut functions, mut structs, mut tests, mut langs) = (None, vec![], vec![], vec![], vec![]);
         loop {
             self.skip_newlines();
             let read = match self.kind() {
                 Kind::Eof => break,
                 Kind::Keyword("header") => {
-                    let first = header.is_none() && functions.is_empty() && tests.is_empty();
+                    let first = header.is_none() && functions.is_empty() && structs.is_empty() && tests.is_empty();
                     if !first {
                         let span = self.token().span;
                         self.diags.push(Diag::new(span, t!("header_first")));
@@ -236,6 +270,7 @@ impl Parser<'_> {
                     })
                 }
                 Kind::Keyword("fn") => self.function().map(|f| functions.push(f)),
+                Kind::Keyword("struct" | "copy") => self.struct_().map(|s| structs.push(s)),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
@@ -248,7 +283,7 @@ impl Parser<'_> {
                 self.skip_to_next_fn();
             }
         }
-        File { header, functions, tests, langs }
+        File { header, functions, structs, tests, langs }
     }
 
     /// `header { key := value ... }`; keys and values are checked by the type checker.
@@ -295,7 +330,7 @@ impl Parser<'_> {
 
     fn skip_to_next_fn(&mut self) {
         self.advance();
-        while !matches!(self.kind(), Kind::Keyword("fn" | "test") | Kind::Eof) && !self.at_lang() {
+        while !matches!(self.kind(), Kind::Keyword("fn" | "test" | "struct" | "copy") | Kind::Eof) && !self.at_lang() {
             self.advance();
         }
     }
@@ -365,7 +400,7 @@ impl Parser<'_> {
             .collect();
         let saved = (std::mem::replace(&mut self.t, tokens), self.pos);
         self.pos = 0;
-        let e = self.expression().ok();
+        let e = self.inner_expr().ok();
         self.skip_newlines();
         if e.is_some() && !self.is_sym("}") {
             let msg = t!("expected_symbol", symbol = "}", found = self.describe());
@@ -415,6 +450,59 @@ impl Parser<'_> {
             return self.error(self.token().span, msg);
         }
         Ok((key, t.span))
+    }
+
+    /// `struct Dog { name: String, age: Int }`: fields separated by `,` or a line break.
+    fn struct_(&mut self) -> R<Struct> {
+        let copy = self.is_keyword("copy");
+        if copy {
+            self.advance();
+            if !self.is_keyword("struct") {
+                let msg = t!("expected_symbol", symbol = "struct", found = self.describe());
+                return self.error(self.token().span, msg);
+            }
+        }
+        self.advance(); // struct
+        let name = self.type_name()?;
+        self.skip_newlines();
+        self.expect("{")?;
+        let mut fields = vec![];
+        loop {
+            self.skip_newlines();
+            match self.kind() {
+                Kind::Sym("}") => break,
+                Kind::Eof | Kind::Keyword("fn" | "test" | "struct" | "copy") => {
+                    let span = self.token().span;
+                    self.diags.push(Diag::new(span, t!("struct_unclosed")));
+                    return Ok(Struct { copy, name, fields });
+                }
+                // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
+                Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                    self.advance();
+                    self.advance();
+                }
+                _ => match self.field() {
+                    Ok(f) => fields.push(f),
+                    Err(()) => self.skip_statement(),
+                },
+            }
+        }
+        self.advance(); // }
+        Ok(Struct { copy, name, fields })
+    }
+
+    /// `name: String`, followed by `,`, a line break or the `}`.
+    fn field(&mut self) -> R<Param> {
+        let name = self.value_name("what_field")?;
+        self.expect(":")?;
+        let ty = self.type_()?;
+        if self.is_sym(",") {
+            self.advance();
+        } else if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+            let msg = t!("expected_symbol", symbol = ",", found = self.describe());
+            return self.error(self.token().span, msg);
+        }
+        Ok(Param { name, ty })
     }
 
     fn test(&mut self) -> R<Test> {
@@ -481,7 +569,8 @@ impl Parser<'_> {
     /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.
     fn contract(&mut self, kind: ContractKind) -> R<Contract> {
         self.advance(); // require, ensure or check
-        let cond = self.expression()?;
+        // `require` and `ensure` come right before the body's `{`.
+        let cond = if kind == ContractKind::Check { self.expression()? } else { self.heading_expr()? };
         // `else` may be on the next line.
         let before = self.pos;
         self.skip_newlines();
@@ -512,7 +601,7 @@ impl Parser<'_> {
                 break;
             }
             // Forgotten `}` (often: while typing): keep what was read.
-            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test")) {
+            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test" | "struct")) {
                 let span = self.token().span;
                 self.diags.push(Diag::new(span, t!("block_unclosed")));
                 return Ok(Block { open, stmts, close: span });
@@ -583,7 +672,7 @@ impl Parser<'_> {
             }
             Kind::Keyword("while") => {
                 self.advance();
-                let cond = self.expression()?;
+                let cond = self.heading_expr()?;
                 self.skip_newlines();
                 Ok(Stmt::While { cond, body: self.block()? })
             }
@@ -595,7 +684,7 @@ impl Parser<'_> {
                     return self.error(self.token().span, msg);
                 }
                 self.advance();
-                let e = self.expression()?;
+                let e = self.heading_expr()?;
                 let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = e.kind else {
                     self.diags.push(
                         Diag::new(e.span, t!("for_range_only")).help(t!("for_range_help")),
@@ -610,13 +699,13 @@ impl Parser<'_> {
                 self.advance();
                 let counter = self.value_name("what_variable")?;
                 self.expect(":=")?;
-                let start = self.expression()?;
+                let start = self.heading_expr()?;
                 if !self.is_keyword("to") {
                     let msg = t!("expected_symbol", symbol = "to", found = self.describe());
                     return self.error(self.token().span, msg);
                 }
                 self.advance();
-                let end = self.expression()?;
+                let end = self.heading_expr()?;
                 self.skip_newlines();
                 Ok(Stmt::Loop { counter, start, end, inclusive: true, body: self.block()? })
             }
@@ -634,7 +723,7 @@ impl Parser<'_> {
 
     fn if_stmt(&mut self) -> R<Stmt> {
         self.advance(); // if
-        let cond = self.expression()?;
+        let cond = self.heading_expr()?;
         self.skip_newlines();
         let then = self.block()?;
         // `else` may be on the next line: look past the line ends.
@@ -660,7 +749,7 @@ impl Parser<'_> {
     /// `if` in an expression: `else` is required (there must be a value in every case).
     fn if_expr(&mut self) -> R<Expr> {
         let start = self.advance().span; // if
-        let cond = self.expression()?;
+        let cond = self.heading_expr()?;
         self.skip_newlines();
         let then = self.block()?;
         self.skip_newlines();
@@ -757,7 +846,7 @@ impl Parser<'_> {
     fn arguments(&mut self) -> R<Vec<Expr>> {
         let mut args = vec![];
         while !self.is_sym(")") {
-            args.push(self.expression()?);
+            args.push(self.inner_expr()?);
             if !self.is_sym(")") {
                 self.expect(",")?;
             }
@@ -822,9 +911,10 @@ impl Parser<'_> {
                 return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
             }
             Kind::Keyword("if") => return self.if_expr(),
+            Kind::Type => return self.type_atom(),
             Kind::Sym("(") => {
                 self.advance();
-                let e = self.expression()?;
+                let e = self.inner_expr()?;
                 if !self.is_sym(",") {
                     let end = self.expect(")")?;
                     return Ok(Expr { span: t.span.to(end), ..e });
@@ -833,7 +923,7 @@ impl Parser<'_> {
                 let mut elems = vec![e];
                 while self.is_sym(",") {
                     self.advance();
-                    elems.push(self.expression()?);
+                    elems.push(self.inner_expr()?);
                 }
                 let end = self.expect(")")?;
                 return Ok(self.expr(t.span.to(end), ExprKind::Tuple(elems)));
@@ -845,5 +935,48 @@ impl Parser<'_> {
         };
         self.advance();
         Ok(self.expr(t.span, kind))
+    }
+
+    /// An expression starting with a type name: `Dog { name := "Rex" }`.
+    fn type_atom(&mut self) -> R<Expr> {
+        let ty = self.type_name()?;
+        // The `{` of a literal is on the same line as the type name (PLAN 2.3).
+        let brace = self.is_sym("{") && !self.src[ty.span.end..self.token().span.start].contains('\n');
+        if brace && self.no_literal {
+            self.diags.push(
+                Diag::new(ty.span, t!("literal_in_heading", name = ty.text)).help(t!("literal_in_heading_help")),
+            );
+            return Err(());
+        }
+        if !brace {
+            self.diags.push(Diag::new(ty.span, t!("type_not_value", name = ty.text)).help(t!("type_not_value_help", name = ty.text)));
+            return Err(());
+        }
+        self.advance(); // {
+        let saved = std::mem::replace(&mut self.no_literal, false);
+        let fields = self.literal_fields();
+        self.no_literal = saved;
+        let (fields, end) = fields?;
+        Ok(self.expr(ty.span.to(end), ExprKind::StructLit { ty, fields }))
+    }
+
+    /// `name := "Rex", age := 3 }`: separated by `,` or a line break. Returns the `}` too.
+    fn literal_fields(&mut self) -> R<(Vec<(Name, Expr)>, Span)> {
+        let mut fields = vec![];
+        loop {
+            self.skip_newlines();
+            if self.is_sym("}") {
+                return Ok((fields, self.advance().span));
+            }
+            let name = self.value_name("what_field")?;
+            self.expect(":=")?;
+            fields.push((name, self.expression()?));
+            if self.is_sym(",") {
+                self.advance();
+            } else if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+                let msg = t!("expected_symbol", symbol = ",", found = self.describe());
+                return self.error(self.token().span, msg);
+            }
+        }
     }
 }

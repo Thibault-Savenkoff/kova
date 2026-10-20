@@ -1,0 +1,87 @@
+// Structs (PLAN 2.6): a struct is moved when given away, a `copy struct` is copied.
+struct Dog {
+    name: String
+    age: Int
+}
+
+copy struct Point { x: Int, y: Int }
+
+// Declared before the struct it uses, and holding a tuple.
+struct Kennel {
+public:
+    owner: String,
+    dog: Dog
+private:
+    spot: (Int, Char)
+}
+
+struct Empty {}
+
+fn older(d: Dog) -> Int {
+    return d.age + 1
+}
+
+fn origin -> Point {
+    return Point { y := 0, x := 0 }
+}
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3 }
+    print(rex)
+    print(rex.name)
+    print(older(rex))
+    print("{rex.name} is {rex.age}: {rex}")
+
+    var p := Point { x := 1, y := 2 }
+    let q: Point := p
+    p.x := 10
+    p.y += 5
+    print(p)
+    print(q)
+    print(origin)
+
+    var k := Kennel { dog := rex, spot := (4, 'b'), owner := "Ann" }
+    print(k)
+    k.dog.age := 4
+    k.dog.name := k.dog.name + "!"
+    k.spot.1 := 'c'
+    print(k.dog)
+    print("spot {k.spot.0}{k.spot.1}")
+
+    var fido := Dog {
+        name := "Fido"
+        age := 7
+    }
+    fido := Dog { name := "Fido II", age := 1 }
+    let moved: Dog := fido
+    print(moved.name.length)
+
+    if (Point { x := 1, y := 1 }).x = 1 {
+        print(Empty {})
+    }
+    write(Empty {})
+    print("")
+
+    // `.clone`: a deep copy, its Strings are copied too.
+    var twin: Dog := moved.clone
+    twin.name := "Twin"
+    print("{moved.name} {twin.name}")
+    let t: (String, Dog) := ("t", twin.clone)
+    let u: (String, Dog) := t.clone
+    print(u.1)
+}
+// expect: Dog { name: "Rex", age: 3 }
+// expect: Rex
+// expect: 4
+// expect: Rex is 3: Dog { name: "Rex", age: 3 }
+// expect: Point { x: 10, y: 7 }
+// expect: Point { x: 1, y: 2 }
+// expect: Point { x: 0, y: 0 }
+// expect: Kennel { owner: "Ann", dog: Dog { name: "Rex", age: 3 }, spot: (4, 'b') }
+// expect: Dog { name: "Rex!", age: 4 }
+// expect: spot 4c
+// expect: 7
+// expect: Empty {}
+// expect: Empty {}
+// expect: Fido II Twin
+// expect: Dog { name: "Twin", age: 1 }

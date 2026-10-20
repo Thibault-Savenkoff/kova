@@ -1,0 +1,13 @@
+struct P { x: Int }
+fn main {
+    let p := P { x := 1 }
+    if p.x = P { x := 1 }.x {
+        print(1)
+    }
+    let d := P
+    let q := P
+    { x := 1 }
+}
+// error: a struct literal here must be in parentheses: `(P { … })`
+// error: `P` is a type, not a value
+// error: `P` is a type, not a value

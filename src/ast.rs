@@ -7,6 +7,7 @@ use crate::diag::Span;
 pub struct File {
     pub header: Option<Header>,
     pub functions: Vec<Function>,
+    pub structs: Vec<Struct>,
     pub tests: Vec<Test>,
     /// `lang fr { ... }`: only in a translation file (PLAN 2.13).
     pub langs: Vec<Lang>,
@@ -27,6 +28,13 @@ pub struct Header {
     pub close: Span,
     /// (key, value): `mode := build` → (`mode`, `build`).
     pub settings: Vec<(Name, Name)>,
+}
+
+/// `struct Dog { name: String, age: Int }`; `copy struct` = copied like an `Int` (PLAN 2.6).
+pub struct Struct {
+    pub copy: bool,
+    pub name: Name,
+    pub fields: Vec<Param>,
 }
 
 pub struct Function {
@@ -103,11 +111,27 @@ pub enum Pattern {
     Ignore(Span),
 }
 
-/// What receives a value in `:=`: `x`, `t.0`, `(a, b)`.
+/// What receives a value in `:=`: `x`, `t.0`, `rex.age`, `(a, b)`.
 pub enum Target {
-    /// A variable, followed by field numbers: `t.1.0` = `name: t, fields: [1, 0]`.
-    Place { name: Name, fields: Vec<usize>, span: Span },
+    /// A variable, followed by fields: `t.1.age` = `name: t, fields: [Index(1), Name(age)]`.
+    Place { name: Name, fields: Vec<Step>, span: Span },
     Tuple(Vec<Target>, Span),
+}
+
+/// One field of a place: `.0` (tuple) or `.age` (struct).
+pub enum Step {
+    Index(usize),
+    Name(Name),
+}
+
+impl Step {
+    /// The field as written after the `.`: `0`, `age`.
+    pub fn text(&self) -> String {
+        match self {
+            Step::Index(i) => i.to_string(),
+            Step::Name(n) => n.text.clone(),
+        }
+    }
 }
 
 impl Target {
@@ -175,7 +199,7 @@ pub enum ExprKind {
     /// `result` in an `ensure`.
     Result,
     Call { name: Name, args: Vec<Expr> },
-    /// `x.to_float()`: built-in method (J2: only conversions).
+    /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).
     Method { receiver: Box<Expr>, name: Name, args: Vec<Expr> },
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -183,6 +207,8 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
+    /// `Dog { name := "Rex", age := 3 }`: the fields in the written order.
+    StructLit { ty: Name, fields: Vec<(Name, Expr)> },
     /// `mode = build` (`negated`: `mode != build`); `build` false = `run`. Known before running.
     InMode { build: bool, negated: bool },
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.

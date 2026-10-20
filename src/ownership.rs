@@ -4,7 +4,7 @@
 //   let b: String := a      // `a` gives its text to `b`: a move
 //   print(a)                // error: `a` was moved (line 2)
 //
-// A value is moved where it is *given*: `let`, `:=`, `return`, a tuple element, the value
+// A value is moved where it is *given*: `let`, `:=`, `return`, a tuple element or struct field, the value
 // of an `if` branch. Everywhere else (a call argument, an operand, `print`) it is only
 // borrowed. Copyable types (`Int`, `(Int, Bool)`…) are copied instead (`types::is_copy`).
 //
@@ -281,6 +281,13 @@ impl Owner<'_> {
                 let place = &self.src[e.span.start..e.span.end];
                 self.diags.push(Diag::new(e.span, t!("field_move", place = place)).help(t!("field_move_help", place = place)));
             }
+            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+                self.borrow(e);
+                let place = &self.src[e.span.start..e.span.end];
+                self.diags.push(
+                    Diag::new(e.span, t!("struct_field_move", place = place)).help(t!("field_move_help", place = place)),
+                );
+            }
             _ => self.borrow(e),
         }
     }
@@ -319,8 +326,9 @@ impl Owner<'_> {
                 self.borrow(a);
                 self.borrow(b);
             }
-            // A new tuple owns its elements.
+            // A new tuple or struct owns its elements.
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
+            ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
             ExprKind::Interp(parts) => self.parts(parts.iter()),
             ExprKind::Int(_)

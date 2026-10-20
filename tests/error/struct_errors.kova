@@ -1,0 +1,37 @@
+struct Dog {
+    name: String
+    age: Int
+    age: Int
+}
+struct Int { x: Int }
+struct Dog { x: Int }
+struct Node { next: Node }
+struct A { b: B }
+struct B { a: A }
+copy struct Tag { label: String }
+struct Cage { pet: Cat }
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3, age := 4 }
+    let fido := Dog { name := "Fido" }
+    let max := Dog { name := "Max", age := 2, color := 1 }
+    let bad := Wolf { x := 1 }
+    let n: Int := rex.color
+    print(rex = rex)
+    var p: Dog := rex
+    p.size := 3
+}
+// error: the field `age` already exists (line 3)
+// error: `Int` is a built-in type: choose another name
+// error: the type `Dog` already exists (line 1)
+// error: `Node` contains itself: its size would be infinite
+// error: `A` contains itself: its size would be infinite
+// error: `Tag` is a `copy struct`: its field `label` (`String`) cannot be copied
+// error: unknown type `Cat`
+// error: `age` is given twice
+// error: missing in `Dog { … }`: `age`
+// error: `Dog` has no field or method `color`
+// error: unknown type `Wolf`
+// error: `Dog` has no field or method `color`
+// error: `=` does not compare structs (`Dog`) yet
+// error: `Dog` has no field or method `size`

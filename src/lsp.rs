@@ -12,7 +12,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Block, File, Function, Pattern, Stmt, TypeAst};
+use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, TypeAst};
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
 use crate::{analyze, parser, types};
@@ -180,6 +180,15 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
             ..Default::default()
         });
     }
+    for st in &file.structs {
+        let fields: Vec<String> = st.fields.iter().map(|f| format!("{}: {}", f.name.text, f.ty.text())).collect();
+        items.push(CompletionItem {
+            label: st.name.text.clone(),
+            kind: Some(CompletionItemKind::STRUCT),
+            detail: Some(format!("struct {} {{ {} }}", st.name.text, fields.join(", "))),
+            ..Default::default()
+        });
+    }
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
     let bodies = file.functions.iter().map(|f| (&f.params[..], &f.body));
     let test_bodies = file.tests.iter().map(|t| (&[][..], &t.body));
@@ -236,7 +245,12 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
         match s {
             // Visible only after its value: in `let x: Int := x + 1`, the 2nd `x` isn't it.
             Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
-                pattern_names(pattern, ty.as_ref(), vars);
+                // `let rex := Dog { ... }`: the type is the literal's.
+                let written = match (&value.kind, ty) {
+                    (ExprKind::StructLit { ty: name, .. }, None) => Some(TypeAst::Name(name.clone())),
+                    _ => None,
+                };
+                pattern_names(pattern, ty.as_ref().or(written.as_ref()), vars);
             }
             Stmt::If { then, otherwise, .. } => {
                 for b in std::iter::once(then).chain(otherwise).filter(|b| inside(b)) {

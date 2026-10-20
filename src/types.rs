@@ -8,6 +8,7 @@
 // The result: the type of each expression (indexed by `Expr::id`).
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
@@ -23,6 +24,8 @@ pub enum Type {
     String,
     /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
+    /// A `struct`: its slots are those of its fields, in order (like a tuple).
+    Struct(Rc<StructDef>),
     /// What a function without `->` returns.
     Unit,
     /// Unknown type because of an error already reported: it is not repeated.
@@ -30,6 +33,11 @@ pub enum Type {
 }
 
 impl Type {
+    /// `rex.name` is a field read (and not a method call).
+    pub fn is_field(&self, name: &str) -> bool {
+        matches!(self, Type::Struct(d) if d.field(name).is_some())
+    }
+
     /// The type as in the code: `Int`, `(Int, Float)`.
     pub fn text(&self) -> String {
         match self {
@@ -39,11 +47,29 @@ impl Type {
             Type::Char => "Char".into(),
             Type::String => "String".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
+            Type::Struct(d) => d.name.clone(),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
     }
 }
+
+#[derive(PartialEq, Debug)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub copy: bool,
+}
+
+impl StructDef {
+    /// The number and type of a field.
+    pub fn field(&self, name: &str) -> Option<(usize, &Type)> {
+        self.fields.iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, t))| (i, t))
+    }
+}
+
+/// The structs of the program, by name.
+pub type Structs = HashMap<String, Rc<StructDef>>;
 
 /// The `header` keys, their allowed values (the first one is the default) and the key of their help.
 pub const SETTINGS: &[(&str, &[&str], &str)] = &[
@@ -76,6 +102,7 @@ pub fn is_copy(t: &Type) -> bool {
     match t {
         Type::String => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
+        Type::Struct(d) => d.copy,
         _ => true,
     }
 }
@@ -85,6 +112,7 @@ pub struct Info {
     pub types: Vec<Type>,
     /// By `Expr::id`: true if this variable is moved here (filled by `ownership.rs`).
     pub moves: Vec<bool>,
+    pub structs: Structs,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -109,6 +137,7 @@ struct Signature {
 struct Checker<'a> {
     src: &'a str,
     functions: HashMap<&'a str, Signature>,
+    structs: Structs,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
     ret: Type,
@@ -123,6 +152,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let mut c = Checker {
         src,
         functions: HashMap::new(),
+        structs: Structs::new(),
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -153,13 +183,30 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
 
-    // 1. Signatures first: a function written further down can be called.
+    // 1. The structs, then the signatures: what is written further down can be used.
+    let mut decls: HashMap<&str, usize> = HashMap::new();
+    for (i, s) in f.structs.iter().enumerate() {
+        let name = s.name.text.as_str();
+        if primitive(name).is_some() {
+            c.error(s.name.span, t!("type_builtin", name = name));
+        } else if let Some(&j) = decls.get(name) {
+            let (line, _) = line_col(src, f.structs[j].name.span.start);
+            c.error(s.name.span, t!("type_exists", name = name, line = line));
+        } else {
+            decls.insert(name, i);
+        }
+    }
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) == Some(&i) {
+            c.define(f, &decls, i, &mut vec![]);
+        }
+    }
     for func in &f.functions {
         for t in func.params.iter().map(|p| &p.ty).chain(&func.ret) {
             c.report_unknown(t);
         }
-        let params = func.params.iter().map(|p| type_of(&p.ty)).collect();
-        let ret = func.ret.as_ref().map_or(Type::Unit, type_of);
+        let params = func.params.iter().map(|p| type_of(&p.ty, &c.structs)).collect();
+        let ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
         let name = func.name.text.as_str();
         if BUILTINS.contains(&name) {
             c.error(func.name.span, t!("builtin_function", name = name));
@@ -180,7 +227,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // A translation file contains only `lang` blocks.
     if !f.langs.is_empty() {
-        let others = f.header.iter().map(|h| h.open).chain(f.functions.iter().map(|f| f.name.span)).chain(f.tests.iter().map(|t| t.span));
+        let others = f.header.iter().map(|h| h.open).chain(f.functions.iter().map(|f| f.name.span));
+        let others = others.chain(f.structs.iter().map(|s| s.name.span)).chain(f.tests.iter().map(|t| t.span));
         for span in others {
             c.error(span, t!("lang_file_only"));
         }
@@ -200,14 +248,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // 3. The bodies.
     for func in &f.functions {
-        c.ret = func.ret.as_ref().map_or(Type::Unit, type_of);
+        c.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
         let mut params = HashMap::new();
         for p in &func.params {
             if params.contains_key(&p.name.text) {
                 c.error(p.name.span, t!("param_exists", name = p.name.text));
             }
             c.function_name(&p.name);
-            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty), kind: VarKind::Param, span: p.name.span });
+            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &c.structs), kind: VarKind::Param, span: p.name.span });
         }
         c.scopes = vec![params];
         // Contracts only see the parameters (and `result` in an `ensure`).
@@ -238,22 +286,28 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     let moves = vec![false; c.types.len()];
-    (Info { types: c.types, moves }, c.diags)
+    (Info { types: c.types, moves, structs: c.structs }, c.diags)
+}
+
+fn primitive(name: &str) -> Option<Type> {
+    Some(match name {
+        "Int" => Type::Int,
+        "Float" => Type::Float,
+        "Bool" => Type::Bool,
+        "Char" => Type::Char,
+        "String" => Type::String,
+        _ => return None,
+    })
 }
 
 /// The written type; `Error` if it contains an unknown name.
-pub fn type_of(t: &TypeAst) -> Type {
+pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
-        TypeAst::Name(n) => match n.text.as_str() {
-            "Int" => Type::Int,
-            "Float" => Type::Float,
-            "Bool" => Type::Bool,
-            "Char" => Type::Char,
-            "String" => Type::String,
-            _ => Type::Error,
-        },
+        TypeAst::Name(n) => primitive(&n.text)
+            .or_else(|| structs.get(&n.text).map(|d| Type::Struct(d.clone())))
+            .unwrap_or(Type::Error),
         TypeAst::Tuple(ts) => {
-            let ts: Vec<Type> = ts.iter().map(type_of).collect();
+            let ts: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
             if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
         }
     }
@@ -273,9 +327,71 @@ impl Checker<'_> {
         self.diags.push(Diag::new(span, msg));
     }
 
+    /// Builds the `StructDef` of `f.structs[i]` after those of its fields' structs.
+    /// `open`: the structs being built; meeting one again = it would contain itself.
+    fn define(&mut self, f: &File, decls: &HashMap<&str, usize>, i: usize, open: &mut Vec<usize>) -> Option<Rc<StructDef>> {
+        let s = &f.structs[i];
+        if let Some(d) = self.structs.get(&s.name.text) {
+            return Some(d.clone());
+        }
+        if open.contains(&i) {
+            return None;
+        }
+        open.push(i);
+        let mut fields: Vec<(String, Type)> = vec![];
+        for p in &s.fields {
+            let ty = self.field_type(f, decls, &p.ty, open);
+            if let Some(k) = s.fields.iter().position(|q| q.name.text == p.name.text)
+                && s.fields[k].name.span != p.name.span
+            {
+                let (line, _) = line_col(self.src, s.fields[k].name.span.start);
+                self.error(p.name.span, t!("field_exists", name = p.name.text, line = line));
+                continue;
+            }
+            if s.copy && !is_copy(&ty) && ty != Type::Error {
+                let msg = t!("copy_struct_field", type = s.name.text, name = p.name.text, field_type = ty.text());
+                self.diags.push(Diag::new(p.name.span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
+            }
+            fields.push((p.name.text.clone(), ty));
+        }
+        open.pop();
+        let d = Rc::new(StructDef { name: s.name.text.clone(), fields, copy: s.copy });
+        self.structs.insert(s.name.text.clone(), d.clone());
+        Some(d)
+    }
+
+    /// The type of a field, building the structs it uses first (see `define`).
+    fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
+        match t {
+            TypeAst::Tuple(ts) => {
+                let ts: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
+                if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
+            }
+            TypeAst::Name(n) => {
+                if let Some(t) = primitive(&n.text) {
+                    return t;
+                }
+                let Some(&j) = decls.get(n.text.as_str()) else {
+                    self.error(n.span, t!("type_unknown", name = n.text));
+                    return Type::Error;
+                };
+                match self.define(f, decls, j, open) {
+                    Some(d) => Type::Struct(d),
+                    None => {
+                        self.diags.push(
+                            Diag::new(n.span, t!("struct_contains_itself", name = n.text))
+                                .help(t!("struct_contains_itself_help", name = n.text)),
+                        );
+                        Type::Error
+                    }
+                }
+            }
+        }
+    }
+
     fn report_unknown(&mut self, t: &TypeAst) {
         match t {
-            TypeAst::Name(n) if type_of(t) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
+            TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
         }
@@ -283,7 +399,7 @@ impl Checker<'_> {
 
     fn written_type(&mut self, t: &TypeAst) -> Type {
         self.report_unknown(t);
-        type_of(t)
+        type_of(t, &self.structs)
     }
 
     fn lookup(&self, name: &str) -> Option<&Variable> {
@@ -447,7 +563,7 @@ impl Checker<'_> {
 
     /// The type of a `:=` target, checking that it may change.
     /// `seen`: the places already met in the same target (`(a, a) := …` is refused).
-    fn target(&mut self, t: &Target, seen: &mut Vec<(String, Vec<usize>)>) -> Type {
+    fn target(&mut self, t: &Target, seen: &mut Vec<(String, Vec<String>)>) -> Type {
         match t {
             Target::Tuple(ts, _) => {
                 let types: Vec<Type> = ts.iter().map(|t| self.target(t, seen)).collect();
@@ -456,11 +572,12 @@ impl Checker<'_> {
             Target::Place { name, fields, span } => {
                 let n = &name.text;
                 // `t` and `t.0` in the same target: the same slot would receive two values.
-                let overlaps = seen.iter().any(|(m, f)| m == n && (f.starts_with(fields) || fields.starts_with(f)));
+                let path: Vec<String> = fields.iter().map(Step::text).collect();
+                let overlaps = seen.iter().any(|(m, f)| m == n && (f.starts_with(&path) || path.starts_with(f)));
                 if overlaps {
                     self.error(*span, t!("two_values", target = &self.src[span.start..span.end]));
                 }
-                seen.push((n.clone(), fields.clone()));
+                seen.push((n.clone(), path));
                 let Some(var) = self.lookup(n) else {
                     self.error(name.span, t!("variable_unknown", name = n));
                     return Type::Error;
@@ -478,8 +595,11 @@ impl Checker<'_> {
                         self.error(name.span, t!("counter_immutable", name = n))
                     }
                 }
-                for &i in fields {
-                    ty = self.field(ty, i, *span);
+                for step in fields {
+                    ty = match step {
+                        Step::Index(i) => self.field(ty, *i, *span),
+                        Step::Name(f) => self.named_field(ty, f),
+                    };
                 }
                 ty
             }
@@ -503,8 +623,41 @@ impl Checker<'_> {
         }
     }
 
+    /// The type of `x.name` when `x` has type `ty` and `name` is not a method.
+    fn named_field(&mut self, ty: Type, name: &Name) -> Type {
+        match &ty {
+            Type::Struct(d) => match d.field(&name.text) {
+                Some((_, t)) => t.clone(),
+                None => {
+                    self.no_field(d, name);
+                    Type::Error
+                }
+            },
+            Type::Error => Type::Error,
+            other => {
+                self.error(name.span, t!("no_method", type = other.text(), name = name.text));
+                Type::Error
+            }
+        }
+    }
+
+    /// `rex.color`: no such field (or method) in `Dog`.
+    fn no_field(&mut self, d: &StructDef, name: &Name) {
+        let fields: Vec<String> = d.fields.iter().map(|(n, _)| format!("`{n}`")).collect();
+        let mut diag = Diag::new(name.span, t!("no_member", type = d.name, name = name.text));
+        if !fields.is_empty() {
+            diag = diag.help(t!("fields_of", type = d.name, fields = fields.join(", ")));
+        }
+        self.diags.push(diag);
+    }
+
     fn stmt(&mut self, s: &Stmt) {
         match s {
+            // `let rex := Dog { ... }`: the type is written on the right (PLAN 2.5).
+            Stmt::Declare { mutable, pattern, ty: None, value } if matches!(value.kind, ExprKind::StructLit { .. }) => {
+                let ty = self.expr(value);
+                self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
+            }
             Stmt::Declare { mutable, pattern, ty, value } => {
                 let ty = match ty {
                     Some(t) => self.written_type(t),
@@ -640,6 +793,7 @@ impl Checker<'_> {
                 let t = self.expr(x);
                 self.field(t, *i, e.span)
             }
+            ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
             ExprKind::Call { name, args } => self.call(name, args),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
@@ -648,6 +802,23 @@ impl Checker<'_> {
                 }
                 if t == Type::Error {
                     return Type::Error;
+                }
+                // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
+                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Tuple(_)) && !t.is_field("clone") {
+                    if !args.is_empty() {
+                        self.error(name.span, t!("no_arguments", name = name.text));
+                    }
+                    return t;
+                }
+                if let Type::Struct(d) = &t {
+                    let Some((_, ft)) = d.field(&name.text) else {
+                        self.no_field(d, name);
+                        return Type::Error;
+                    };
+                    if !args.is_empty() {
+                        self.error(name.span, t!("no_arguments", name = name.text));
+                    }
+                    return ft.clone();
                 }
                 let Some((_, _, result)) = METHODS.iter().find(|(r, n, _)| *r == t && *n == name.text) else {
                     let known: Vec<String> =
@@ -694,6 +865,10 @@ impl Checker<'_> {
                             Type::Tuple(_) => self.diags.push(
                                 Diag::new(e.span, t!("tuple_compare", op = op.text())).help(t!("tuple_compare_help")),
                             ),
+                            Type::Struct(_) => self.diags.push(
+                                Diag::new(e.span, t!("struct_compare", op = op.text(), type = ta.text()))
+                                    .help(t!("struct_compare_help")),
+                            ),
                             _ => {}
                         }
                         self.like(a, ta, b);
@@ -721,6 +896,36 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+
+    /// `Dog { name := "Rex", age := 3 }`: every field exactly once, in any order.
+    fn struct_literal(&mut self, ty: &Name, fields: &[(Name, Expr)]) -> Type {
+        let Some(d) = self.structs.get(&ty.text).cloned() else {
+            self.error(ty.span, t!("type_unknown", name = ty.text));
+            fields.iter().for_each(|(_, v)| {
+                self.expr(v);
+            });
+            return Type::Error;
+        };
+        let mut given: Vec<&str> = vec![];
+        for (name, value) in fields {
+            let Some((_, t)) = d.field(&name.text) else {
+                self.no_field(&d, name);
+                self.expr(value);
+                continue;
+            };
+            if given.contains(&name.text.as_str()) {
+                self.error(name.span, t!("field_twice", name = name.text));
+            }
+            given.push(&name.text);
+            self.expect(value, t);
+        }
+        let missing: Vec<String> =
+            d.fields.iter().filter(|(n, _)| !given.contains(&n.as_str())).map(|(n, _)| format!("`{n}`")).collect();
+        if !missing.is_empty() {
+            self.error(ty.span, t!("fields_missing", type = d.name, fields = missing.join(", ")));
+        }
+        Type::Struct(d)
     }
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) -> Type {

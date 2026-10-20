@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
 use crate::types::{Info, Type, type_of};
@@ -50,17 +50,33 @@ pub enum Scalar {
     Float,
 }
 
-/// Where `t.i` lies in the slots of a tuple of type `t`: (start, length).
+/// The elements of a tuple or the fields of a struct, in the order of their slots.
+fn members(t: &Type) -> Vec<Type> {
+    match t {
+        Type::Tuple(ts) => ts.clone(),
+        Type::Struct(d) => d.fields.iter().map(|(_, t)| t.clone()).collect(),
+        _ => unreachable!("tuple or struct checked by the type checker"),
+    }
+}
+
+/// Where member `i` (see `members`) lies in the slots of a value of type `t`: (start, length).
 fn slice_of(t: &Type, i: usize) -> (usize, usize) {
-    let Type::Tuple(ts) = t else { unreachable!("tuple checked by the type checker") };
+    let ts = members(t);
     let start = ts[..i].iter().map(|t| scalars(t).len()).sum();
     (start, scalars(&ts[i]).len())
 }
 
 fn element(t: &Type, i: usize) -> Type {
-    let Type::Tuple(ts) = t else { unreachable!("tuple checked by the type checker") };
-    ts[i].clone()
+    members(t)[i].clone()
 }
+
+/// The number of the field `name` in a struct of type `t`.
+fn field_index(t: &Type, name: &str) -> usize {
+    let Type::Struct(d) = t else { unreachable!("struct checked by the type checker") };
+    d.field(name).expect("field checked by the type checker").0
+}
+
+
 
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
@@ -68,6 +84,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         Type::Int | Type::Bool | Type::Char | Type::String => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
+        Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
         Type::Unit => vec![],
         Type::Error => unreachable!("erroneous type after type checking"),
     }
@@ -77,7 +94,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 fn strings(t: &Type) -> Vec<bool> {
     match t {
         Type::String => vec![true],
-        Type::Tuple(ts) => ts.iter().flat_map(strings).collect(),
+        Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(strings).collect(),
         _ => vec![false; scalars(t).len()],
     }
 }
@@ -176,13 +193,15 @@ pub enum Show {
 }
 
 impl Show {
+    /// A value of one slot; a tuple or a struct is shown by `value_pieces`.
     pub fn of(t: &Type) -> Show {
         match t {
+            Type::Int => Show::Int,
             Type::Bool => Show::Bool,
             Type::Float => Show::Float,
             Type::Char => Show::Char,
             Type::String => Show::String,
-            _ => Show::Int,
+            other => unreachable!("`{}` is not shown in one slot", other.text()),
         }
     }
 }
@@ -347,7 +366,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
         .chain(test_bodies)
         .enumerate()
         .map(|(i, (name, params, ret, written_contracts, body))| {
-            let ret = ret.map_or(Type::Unit, type_of);
+            let ret = ret.map_or(Type::Unit, |t| type_of(t, &info.structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
             let mut t = Translator {
                 src,
@@ -368,7 +387,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 temps: vec![],
             };
             for p in params {
-                let ty = type_of(&p.ty);
+                let ty = type_of(&p.ty, &info.structs);
                 let v = t.new_slots(&ty);
                 t.names[0].insert(p.name.text.clone(), (v, ty));
             }
@@ -559,7 +578,11 @@ impl<'a> Translator<'a> {
             }
             Target::Place { name, fields, .. } => {
                 let (mut slots, mut ty) = self.variable(&name.text);
-                for &i in fields {
+                for step in fields {
+                    let i = match step {
+                        Step::Index(i) => *i,
+                        Step::Name(n) => field_index(&ty, &n.text),
+                    };
                     let (start, n) = slice_of(&ty, i);
                     slots = slots[start..start + n].to_vec();
                     ty = element(&ty, i);
@@ -770,10 +793,7 @@ impl<'a> Translator<'a> {
         match &c.message {
             Some(parts) => {
                 for p in parts {
-                    m.push(match p {
-                        Part::Text(t) => Piece::Text(t.clone()),
-                        Part::Code(e) => Piece::Value(self.expr1(e), Show::of(&self.info.types[e.id])),
-                    });
+                    self.part_pieces(p, &mut m);
                 }
             }
             None => m.push(Piece::Label("contract_violated")),
@@ -819,6 +839,69 @@ impl<'a> Translator<'a> {
         }
         self.emit(Inst::Fail(m));
         self.go(End::Unreachable, next);
+    }
+
+    /// The pieces of a part of a text: a String or a number as `print` shows it, a struct
+    /// as `Dog { name: "Rex", age: 3 }`.
+    fn part_pieces(&mut self, p: &Part, m: &mut Vec<Piece>) {
+        match p {
+            Part::Text(t) => m.push(Piece::Text(t.clone())),
+            Part::Code(e) => match &self.info.types[e.id] {
+                ty @ Type::Struct(_) => {
+                    let ty = ty.clone();
+                    let v = self.expr(e);
+                    value_pieces(&v, &ty, m);
+                }
+                ty => {
+                    let show = Show::of(ty);
+                    m.push(Piece::Value(self.expr1(e), show));
+                }
+            },
+        }
+    }
+
+    /// A new String made of these pieces: `"a{x}b"` = ("a" + text of x) + "b",
+    /// each intermediate String freed at once.
+    fn join(&mut self, pieces: Vec<Piece>) -> Local {
+        let mut whole: Option<Local> = None;
+        let mut pieces = pieces.into_iter().peekable();
+        while let Some(p) = pieces.next() {
+            let (piece, fresh) = match p {
+                Piece::Text(mut t) => {
+                    while let Some(Piece::Text(next)) = pieces.peek() {
+                        t += next;
+                        pieces.next();
+                    }
+                    let l = self.int_local();
+                    self.emit(Inst::Text(l, t));
+                    (l, true)
+                }
+                Piece::Value(v, Show::String) => (v, false),
+                Piece::Value(v, show) => {
+                    let l = self.int_local();
+                    self.emit(Inst::Str(l, StrOp::Format(show), vec![v]));
+                    (l, true)
+                }
+                Piece::Label(_) | Piece::File => unreachable!("only in contract messages"),
+            };
+            let l = match whole {
+                None if fresh => piece,
+                _ => self.int_local(),
+            };
+            match whole {
+                None if fresh => {}
+                None => self.emit(Inst::Str(l, StrOp::Clone, vec![piece])),
+                Some(w) => {
+                    self.emit(Inst::Str(l, StrOp::Concat, vec![w, piece]));
+                    self.emit(Inst::Free(w));
+                    if fresh {
+                        self.emit(Inst::Free(piece));
+                    }
+                }
+            }
+            whole = Some(l);
+        }
+        whole.expect("a text has at least one part")
     }
 
     /// The value of a condition known before running: `mode = build`, `!(mode = run)`.
@@ -889,48 +972,25 @@ impl<'a> Translator<'a> {
                 self.temps.push(l);
                 vec![l]
             }
-            // `"a{x}b"` = ("a" + text of x) + "b", each intermediate String freed at once.
             ExprKind::Interp(parts) => {
-                let mut whole: Option<Local> = None;
+                let mut pieces = vec![];
                 for p in parts {
-                    let (piece, fresh) = match p {
-                        Part::Text(t) => {
-                            let l = self.int_local();
-                            self.emit(Inst::Text(l, t.clone()));
-                            (l, true)
-                        }
-                        Part::Code(x) => {
-                            let v = self.expr1(x);
-                            match &self.info.types[x.id] {
-                                Type::String => (v, false),
-                                ty => {
-                                    let l = self.int_local();
-                                    self.emit(Inst::Str(l, StrOp::Format(Show::of(ty)), vec![v]));
-                                    (l, true)
-                                }
-                            }
-                        }
-                    };
-                    let l = match whole {
-                        None if fresh => piece,
-                        _ => self.int_local(),
-                    };
-                    match whole {
-                        None if fresh => {}
-                        None => self.emit(Inst::Str(l, StrOp::Clone, vec![piece])),
-                        Some(w) => {
-                            self.emit(Inst::Str(l, StrOp::Concat, vec![w, piece]));
-                            self.emit(Inst::Free(w));
-                            if fresh {
-                                self.emit(Inst::Free(piece));
-                            }
-                        }
-                    }
-                    whole = Some(l);
+                    self.part_pieces(p, &mut pieces);
                 }
-                let l = whole.expect("a text has at least one part");
+                let l = self.join(pieces);
                 self.temps.push(l);
                 vec![l]
+            }
+            ExprKind::StructLit { fields, .. } => {
+                // Computed in the written order, placed in the declared order.
+                let ty = self.info.types[e.id].clone();
+                let mut parts: Vec<Slots> = vec![vec![]; members(&ty).len()];
+                for (name, value) in fields {
+                    parts[field_index(&ty, &name.text)] = self.owned(value);
+                }
+                let v: Slots = parts.concat();
+                self.track(&v, &ty);
+                v
             }
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
@@ -951,8 +1011,17 @@ impl<'a> Translator<'a> {
                     vals.extend(self.expr(a));
                 }
                 if let n @ ("print" | "write") = name.text.as_str() {
-                    let show = Show::of(&self.info.types[args[0].id]);
-                    self.emit(Inst::Print { value: vals[0], show, newline: n == "print" });
+                    let newline = n == "print";
+                    match &self.info.types[args[0].id] {
+                        ty @ Type::Struct(_) => {
+                            let mut pieces = vec![];
+                            value_pieces(&vals, ty, &mut pieces);
+                            let text = self.join(pieces);
+                            self.emit(Inst::Print { value: text, show: Show::String, newline });
+                            self.emit(Inst::Free(text));
+                        }
+                        ty => self.emit(Inst::Print { value: vals[0], show: Show::of(ty), newline }),
+                    }
                     return vec![];
                 }
                 let num = self.numbers[name.text.as_str()];
@@ -1033,6 +1102,24 @@ impl<'a> Translator<'a> {
                 let loc = self.loc(Span::new(pos, pos));
                 vec![self.operation(kir_op(*op), va, vb, self.is_float(a), loc)]
             }
+            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+                let ty = self.info.types[receiver.id].clone();
+                let v = self.expr(receiver);
+                let (start, n) = slice_of(&ty, field_index(&ty, &name.text));
+                v[start..start + n].to_vec()
+            }
+            ExprKind::Method { receiver, name, .. }
+                if name.text == "clone" && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Tuple(_)) =>
+            {
+                let ty = self.info.types[receiver.id].clone();
+                let v = self.expr(receiver);
+                let copy = self.new_slots(&ty);
+                for ((&d, &l), s) in copy.iter().zip(&v).zip(strings(&ty)) {
+                    self.emit(if s { Inst::Str(d, StrOp::Clone, vec![l]) } else { Inst::Copy(d, l) });
+                }
+                self.track(&copy, &ty);
+                copy
+            }
             ExprKind::Method { receiver, name, .. } => {
                 let v = self.expr1(receiver);
                 let string = |op| match op {
@@ -1078,6 +1165,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names));
         }
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) => names_in(x, names),
+        ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, v)| names_in(v, names)),
         ExprKind::If { cond, .. } => names_in(cond, names),
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {
             if let Part::Code(x) = p {
@@ -1092,9 +1180,21 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
     }
 }
 
-/// A value the way it would be written in Kova: `3`, `2.5`, `'a'`, `(1, true)`.
+/// A value the way it would be written in Kova: `3`, `2.5`, `'a'`, `(1, true)`,
+/// `Dog { name: "Rex", age: 3 }`.
 fn value_pieces(v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
     match ty {
+        Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", d.name))),
+        Type::Struct(d) => {
+            m.push(Piece::Text(format!("{} {{ ", d.name)));
+            for (i, (name, t)) in d.fields.iter().enumerate() {
+                let sep = if i > 0 { ", " } else { "" };
+                m.push(Piece::Text(format!("{sep}{name}: ")));
+                let (start, n) = slice_of(ty, i);
+                value_pieces(&v[start..start + n], t, m);
+            }
+            m.push(Piece::Text(" }".into()));
+        }
         Type::Tuple(ts) => {
             m.push(Piece::Text("(".into()));
             for (i, t) in ts.iter().enumerate() {
