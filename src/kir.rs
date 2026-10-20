@@ -733,7 +733,11 @@ impl<'a> Translator<'a> {
     /// `return v`: frees what the function still owns, checks the `ensure`s with
     /// `result` = v, then exits. The parameters are borrowed: the caller frees them.
     fn exit(&mut self, v: Slots) {
-        self.free_temps(0);
+        // The temporaries of the enclosing statements (a loop bound…) are freed on this path
+        // only: they stay listed, the normal path frees them at the end of their statement.
+        for l in self.temps.clone().into_iter().rev() {
+            self.emit(Inst::Free(l));
+        }
         self.free_scopes(1);
         for c in self.ensures.clone() {
             self.result = Some((v.clone(), self.ret.clone()));
