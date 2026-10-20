@@ -719,6 +719,10 @@ impl Checker<'_> {
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
         let found = match self.structs.get(&ty.text).cloned() {
+            None if primitive(&ty.text).is_some() => {
+                self.error(name.span, t!("no_static", type = ty.text, name = name.text));
+                None
+            }
             None => {
                 self.error(ty.span, t!("type_unknown", name = ty.text));
                 None

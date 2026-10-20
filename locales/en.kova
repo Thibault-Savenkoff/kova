@@ -211,6 +211,7 @@ lang en {
     method_needs_value_help := "call it on a value: `x.{name}`"
     var_method_temporary := "`{name}` changes the value it is called on: call it on a variable"
     exclusive_use := "`{name}` is changed by `{method}`: it cannot be read by the same call"
+    no_static := "`{type}` has no function `{type}.{name}`"
     exclusive_use_help := "give a copy: `{arg}.clone`"
 
     // ---- Translation files (`kova run fr.kova`) ----

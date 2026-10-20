@@ -18,6 +18,7 @@ fn main {
     print(Dog.sound)
     print(Dog.bark)
     print(Cat.create)
+    print(Int.parse("1"))
     rex.birthday
     Dog.create.birthday
     print(rex.sound(1))
@@ -35,6 +36,7 @@ fn main {
 // error: `Dog` has no field or method `bark`
 // error: `Dog` has `name`, `age`, `birthday`, `create`, `grow`, `set`, `sound`, `take`
 // error: unknown type `Cat`
+// error: `Int` has no function `Int.parse`
 // error: `rex` is declared with let
 // error: `birthday` changes the value it is called on: call it on a variable
 // error: `sound` takes 0 argument(s), 1 given
