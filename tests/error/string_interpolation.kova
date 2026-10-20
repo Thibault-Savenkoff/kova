@@ -1,5 +1,13 @@
 fn main {
-    let name: String := "you"
-    print("hello {name}")
+    print("{}")
+    print("{1 +}")
+    print("{1 2}")
+    print("}")
 }
-// error: interpolation `{…}` arrives in milestone J3 (write `\{` for a brace)
+
+test "name {1}" {}
+// error: empty `{}`: put a value inside, or write `\{\}` for braces
+// error: expression expected, found `}`
+// error: `}` expected, found `2`
+// error: write `\}` for a brace
+// error: a test name is a fixed text: write `\{` for a brace

@@ -51,7 +51,7 @@ struct Runtime {
     /// `kova_str_new`, `kova_str_free`, then one per `StrOp` (in `str_op` order).
     str_new: FuncId,
     str_free: FuncId,
-    str_ops: [FuncId; 4],
+    str_ops: [FuncId; 5],
 }
 
 /// The runtime function of a String operation, and its number of arguments.
@@ -61,6 +61,8 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Eq => (1, "kova_str_eq", 2),
         StrOp::Length => (2, "kova_str_length", 1),
         StrOp::Clone => (3, "kova_str_clone", 1),
+        // The value and its `Show`.
+        StrOp::Format(_) => (4, "kova_str_format", 2),
     }
 }
 
@@ -99,7 +101,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int)] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -196,7 +198,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 4],
+    ops: [FuncRef; 5],
 }
 
 /// What is needed to write the message of a broken contract.
@@ -350,7 +352,13 @@ impl Generator<'_> {
                 self.b.def_var(self.vars[*d], v);
             }
             Inst::Str(d, op, args) => {
-                let vals: Vec<Value> = args.iter().map(|&l| self.read(l)).collect();
+                let vals: Vec<Value> = match op {
+                    StrOp::Format(show) => {
+                        let (v, show) = self.value_and_show(args[0], *show);
+                        vec![v, show]
+                    }
+                    _ => args.iter().map(|&l| self.read(l)).collect(),
+                };
                 let call = self.b.ins().call(self.strings.ops[str_op(*op).0], &vals);
                 let v = self.b.inst_results(call)[0];
                 self.b.def_var(self.vars[*d], v);

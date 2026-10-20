@@ -10,13 +10,8 @@ fn g(x: Int)
 {
 }
 
-fn h(x: Int) {
-    check x > 0 else "{x} trop petit"
-}
-
 fn main {
     print(f(1))
 }
 // error: `require` goes between the function's signature and its `{`
 // error: message in quotes expected after `else`, found `oups`
-// error: interpolation `{…}` arrives in milestone J3 (write `\{` for a brace)

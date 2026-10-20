@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use crate::ast::*;
 use crate::diag::{Diag, Span};
-use crate::lexer::{Kind, Token, interpolation, string_content};
+use crate::lexer::{Kind, Token, code_end, escape, interpolation, lex, string_content};
 use crate::locale::t;
 
 /// `Err(())` = an error was already added to `diags`; the caller resynchronizes.
@@ -308,8 +308,71 @@ impl Parser<'_> {
     fn no_interpolation(&mut self, t: Token) {
         if let Some(k) = interpolation(&self.text(t.span)) {
             let at = t.span.start + k;
-            self.diags.push(Diag::new(Span::new(at, at + 1), t!("interpolation_j3")));
+            self.diags.push(Diag::new(Span::new(at, at + 1), t!("test_name_fixed")));
         }
+    }
+
+    /// The parts of a `Str` token: `"a{x}b"` → the text `a`, the expression `x`, the text `b`.
+    fn text_parts(&mut self, t: Token) -> Vec<Part> {
+        let start = t.span.start + 1;
+        let end = if t.span.end > start && self.src[..t.span.end].ends_with('"') { t.span.end - 1 } else { t.span.end };
+        let inner = &self.src[start..end.max(start)];
+        let (mut parts, mut text) = (vec![], String::new());
+        let mut it = inner.char_indices();
+        while let Some((k, c)) = it.next() {
+            match c {
+                '\\' => text.push(escape(&mut it).unwrap_or('?')),
+                '}' => self.diags.push(Diag::new(Span::new(start + k, start + k + 1), t!("brace_alone"))),
+                '{' => {
+                    // Unclosed: already reported by the lexer.
+                    let Some(n) = code_end(&inner[k + 1..]) else { break };
+                    if !text.is_empty() {
+                        parts.push(Part::Text(std::mem::take(&mut text)));
+                    }
+                    if let Some(e) = self.code(start + k + 1, start + k + 1 + n) {
+                        parts.push(Part::Code(e));
+                    }
+                    while it.clone().next().is_some_and(|(j, _)| j <= k + 1 + n) {
+                        it.next();
+                    }
+                }
+                c => text.push(c),
+            }
+        }
+        if !text.is_empty() || parts.is_empty() {
+            parts.push(Part::Text(text));
+        }
+        parts
+    }
+
+    /// The expression of a `{code}` in a text, at `src[a..b]`: read with its own tokens.
+    fn code(&mut self, a: usize, b: usize) -> Option<Expr> {
+        if self.src[a..b].trim().is_empty() {
+            self.diags.push(Diag::new(Span::new(a - 1, b + 1), t!("interpolation_empty")));
+            return None;
+        }
+        let shift = |s: Span| Span::new(s.start + a, s.end + a);
+        let (tokens, diags) = lex(&self.src[a..b]);
+        self.diags.extend(diags.into_iter().map(|d| Diag { span: shift(d.span), ..d }));
+        // The end of the code is the closing `}` (so that messages say "found `}`").
+        let tokens = tokens
+            .into_iter()
+            .map(|t| match t.kind {
+                Kind::Eof => Token { kind: Kind::Sym("}"), span: Span::new(b, b + 1) },
+                _ => Token { span: shift(t.span), ..t },
+            })
+            .chain([Token { kind: Kind::Eof, span: Span::new(b + 1, b + 1) }])
+            .collect();
+        let saved = (std::mem::replace(&mut self.t, tokens), self.pos);
+        self.pos = 0;
+        let e = self.expression().ok();
+        self.skip_newlines();
+        if e.is_some() && !self.is_sym("}") {
+            let msg = t!("expected_symbol", symbol = "}", found = self.describe());
+            self.diags.push(Diag::new(self.token().span, msg));
+        }
+        (self.t, self.pos) = saved;
+        e
     }
 
     /// `lang fr { key := "text" ... }`: one translation per line (PLAN 2.13).
@@ -434,8 +497,8 @@ impl Parser<'_> {
             return Err(());
         }
         self.advance();
-        self.no_interpolation(t);
-        Ok(Contract { kind, cond, message: Some(string_content(&self.text(t.span))) })
+        let message = self.text_parts(t);
+        Ok(Contract { kind, cond, message: Some(message) })
     }
 
     // ---- Blocks and statements ----
@@ -735,8 +798,11 @@ impl Parser<'_> {
             Kind::Keyword("false") => ExprKind::Bool(false),
             Kind::Keyword("result") => ExprKind::Result,
             Kind::Str => {
-                self.no_interpolation(t);
-                ExprKind::Str(string_content(&self.text(t.span)))
+                let mut parts = self.text_parts(t);
+                match parts.as_mut_slice() {
+                    [Part::Text(s)] => ExprKind::Str(std::mem::take(s)),
+                    _ => ExprKind::Interp(parts),
+                }
             }
             Kind::Ident if self.text(t.span) == "mode" && self.mode_test() => return self.in_mode(),
             Kind::Ident => {

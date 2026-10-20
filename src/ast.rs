@@ -49,7 +49,14 @@ pub struct Test {
 pub struct Contract {
     pub kind: ContractKind,
     pub cond: Expr,
-    pub message: Option<String>,
+    /// The text after `else`; its `{values}` are computed only if the contract fails.
+    pub message: Option<Vec<Part>>,
+}
+
+/// A piece of a text with `{}`: `"Hello {name}!"` = `Text("Hello ")`, `Code(name)`, `Text("!")`.
+pub enum Part {
+    Text(String),
+    Code(Expr),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -162,6 +169,8 @@ pub enum ExprKind {
     Bool(bool),
     /// `"hello"`, escapes already decoded: a new `String`.
     Str(String),
+    /// `"Hello {name}!"`: a new `String` made of its parts.
+    Interp(Vec<Part>),
     Var(String),
     /// `result` in an `ensure`.
     Result,

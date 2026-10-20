@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Pattern, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
 use crate::types::{Info, Type, type_of};
@@ -150,6 +150,8 @@ pub enum StrOp {
     Length,
     /// `s.clone`: a new String.
     Clone,
+    /// The text of a value, as `print` writes it: a new String.
+    Format(Show),
 }
 
 /// A piece of the message of a broken contract.
@@ -761,16 +763,27 @@ impl<'a> Translator<'a> {
 
         let l = self.loc(c.cond.span);
         let cond: Vec<&str> = self.src[c.cond.span.start..c.cond.span.end].split_whitespace().collect();
-        let mut m = vec![
-            Piece::Label("error_prefix"),
-            match &c.message {
-                Some(text) => Piece::Text(text.clone()),
-                None => Piece::Label("contract_violated"),
-            },
+        // The `{values}` of the message are computed here, only when the contract fails;
+        // the program stops right after, so its temporaries are not freed.
+        let mark = self.temps.len();
+        let mut m = vec![Piece::Label("error_prefix")];
+        match &c.message {
+            Some(parts) => {
+                for p in parts {
+                    m.push(match p {
+                        Part::Text(t) => Piece::Text(t.clone()),
+                        Part::Code(e) => Piece::Value(self.expr1(e), Show::of(&self.info.types[e.id])),
+                    });
+                }
+            }
+            None => m.push(Piece::Label("contract_violated")),
+        }
+        self.temps.truncate(mark);
+        m.extend([
             Piece::Text("\n  --> ".into()),
             Piece::File,
             Piece::Text(format!(":{}:{}\n  {} {}\n", l.line, l.col, c.kind.keyword(), cond.join(" "))),
-        ];
+        ]);
         let mut names = vec![];
         names_in(&c.cond, &mut names);
         let values: Vec<(String, (Slots, Type))> = names
@@ -873,6 +886,49 @@ impl<'a> Translator<'a> {
             ExprKind::Str(text) => {
                 let l = self.int_local();
                 self.emit(Inst::Text(l, text.clone()));
+                self.temps.push(l);
+                vec![l]
+            }
+            // `"a{x}b"` = ("a" + text of x) + "b", each intermediate String freed at once.
+            ExprKind::Interp(parts) => {
+                let mut whole: Option<Local> = None;
+                for p in parts {
+                    let (piece, fresh) = match p {
+                        Part::Text(t) => {
+                            let l = self.int_local();
+                            self.emit(Inst::Text(l, t.clone()));
+                            (l, true)
+                        }
+                        Part::Code(x) => {
+                            let v = self.expr1(x);
+                            match &self.info.types[x.id] {
+                                Type::String => (v, false),
+                                ty => {
+                                    let l = self.int_local();
+                                    self.emit(Inst::Str(l, StrOp::Format(Show::of(ty)), vec![v]));
+                                    (l, true)
+                                }
+                            }
+                        }
+                    };
+                    let l = match whole {
+                        None if fresh => piece,
+                        _ => self.int_local(),
+                    };
+                    match whole {
+                        None if fresh => {}
+                        None => self.emit(Inst::Str(l, StrOp::Clone, vec![piece])),
+                        Some(w) => {
+                            self.emit(Inst::Str(l, StrOp::Concat, vec![w, piece]));
+                            self.emit(Inst::Free(w));
+                            if fresh {
+                                self.emit(Inst::Free(piece));
+                            }
+                        }
+                    }
+                    whole = Some(l);
+                }
+                let l = whole.expect("a text has at least one part");
                 self.temps.push(l);
                 vec![l]
             }
@@ -1023,6 +1079,11 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
         }
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) => names_in(x, names),
         ExprKind::If { cond, .. } => names_in(cond, names),
+        ExprKind::Interp(parts) => parts.iter().for_each(|p| {
+            if let Part::Code(x) = p {
+                names_in(x, names);
+            }
+        }),
         ExprKind::Binary(_, a, b) => {
             names_in(a, names);
             names_in(b, names);

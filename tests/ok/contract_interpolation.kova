@@ -1,0 +1,15 @@
+// The `{values}` of a contract message are computed only when it fails.
+fn divide(a: Int, b: Int) -> Int
+    require b != 0 else "cannot divide {a} by zero"
+{
+    return a / b
+}
+
+fn main {
+    print(divide(6, 3))
+    print(divide(5, 0))
+}
+// expect: 2
+// code: 101
+// stderr: error: cannot divide 5 by zero
+// stderr: values: b = 0

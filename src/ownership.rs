@@ -68,7 +68,7 @@ pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
         }
         o.state = Some(HashMap::new());
         for c in &func.contracts {
-            o.borrow(&c.cond);
+            o.contract(c);
         }
         o.block(&func.body);
     }
@@ -187,7 +187,7 @@ impl Owner<'_> {
                 }
                 self.state = None;
             }
-            Stmt::Check(c) => self.borrow(&c.cond),
+            Stmt::Check(c) => self.contract(c),
             Stmt::Break(_) => {
                 let s = self.state.take();
                 let l = self.loops.last_mut().unwrap();
@@ -285,6 +285,19 @@ impl Owner<'_> {
         }
     }
 
+    fn contract(&mut self, c: &Contract) {
+        self.borrow(&c.cond);
+        self.parts(c.message.iter().flatten());
+    }
+
+    fn parts<'p>(&mut self, parts: impl Iterator<Item = &'p Part>) {
+        for p in parts {
+            if let Part::Code(e) = p {
+                self.borrow(e);
+            }
+        }
+    }
+
     /// `e` is only read.
     fn borrow(&mut self, e: &Expr) {
         match &e.kind {
@@ -309,6 +322,7 @@ impl Owner<'_> {
             // A new tuple owns its elements.
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
+            ExprKind::Interp(parts) => self.parts(parts.iter()),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Char(_)

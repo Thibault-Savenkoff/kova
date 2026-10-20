@@ -1,0 +1,27 @@
+// `"{expr}"` (J3 step 2): any value `print` can show, written the same way.
+
+fn plural(n: Int) -> String {
+    return if n = 1 { "" } else { "s" }
+}
+
+fn main {
+    let name: String := "Rex"
+    let age: Int := 3
+    print("{name} is {age} year{plural(age)} old")
+    let x: Float := 2.5
+    print("x = {x}, double = {x * 2}, int = {x.to_int}")
+    print("{true} {'é'} {name.length} {name + "!"}")
+    print("{name}")
+    print("braces: \{ \} and {"nested {age}"}")
+    var log: String := ""
+    from i := 1 to 3 {
+        log += "[{i}]"
+    }
+    print(log)
+}
+// expect: Rex is 3 years old
+// expect: x = 2.5, double = 5.0, int = 2
+// expect: true é 3 Rex!
+// expect: Rex
+// expect: braces: { } and nested 3
+// expect: [1][2][3]

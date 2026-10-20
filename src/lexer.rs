@@ -246,6 +246,18 @@ fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
         match c {
             '"' => return (k + 1, errors),
             '\n' => break,
+            // `{code}`: skipped here (the parser reads it); it may hold texts and braces.
+            '{' => match code_end(&s[k + 1..]) {
+                Some(n) => {
+                    while it.peek().is_some_and(|&(j, _)| j <= k + n) {
+                        it.next();
+                    }
+                }
+                None => {
+                    errors.push((k, t!("interpolation_unclosed")));
+                    return (s.find('\n').unwrap_or(s.len()), errors);
+                }
+            },
             '\\' => {
                 let mut rest = s[k + 1..].char_indices();
                 if let Err(msg) = escape(&mut rest) {
@@ -265,7 +277,33 @@ fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
     (n, errors)
 }
 
-/// The position of the first `{` or `}` of a `Str` token: interpolation arrives in J3.
+/// The end of the code of a `{code}` in a text: `code` starts `s`; returns the position of
+/// the closing `}` (`None` if the line ends first). Texts and characters inside are skipped.
+pub fn code_end(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    let mut k = 0;
+    while let Some(c) = s[k..].chars().next() {
+        match c {
+            '\n' => return None,
+            '"' => {
+                k += read_string(&s[k..]).0;
+                continue;
+            }
+            '\'' => {
+                k += read_char(&s[k..]).0;
+                continue;
+            }
+            '{' => depth += 1,
+            '}' if depth == 0 => return Some(k),
+            '}' => depth -= 1,
+            _ => {}
+        }
+        k += c.len_utf8();
+    }
+    None
+}
+
+/// The position of the first `{` or `}` of a `Str` token (a test name has no interpolation).
 pub fn interpolation(token: &str) -> Option<usize> {
     let mut it = token.char_indices();
     while let Some((k, c)) = it.next() {

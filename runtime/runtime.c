@@ -217,6 +217,21 @@ int64_t kova_str_clone(int64_t a) {
 // Same order as `Show` in src/kir.rs.
 enum { INT, BOOL, FLOAT, CHAR, STRING };
 
+static void write_value(FILE *f, int64_t value, int64_t show);
+
+// The text of a value, as `print` writes it (`"{x}"`).
+int64_t kova_str_format(int64_t value, int64_t show) {
+    char *bytes = NULL;
+    size_t n = 0;
+    FILE *f = open_memstream(&bytes, &n);
+    if (!f) abort();
+    write_value(f, value, show);
+    fclose(f);
+    int64_t s = kova_str_new(bytes, n);
+    free(bytes);
+    return s;
+}
+
 static void write_value(FILE *f, int64_t value, int64_t show) {
     double x;
     switch (show) {

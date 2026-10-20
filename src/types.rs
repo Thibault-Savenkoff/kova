@@ -213,7 +213,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         // Contracts only see the parameters (and `result` in an `ensure`).
         for k in &func.contracts {
             c.result = (k.kind == ContractKind::Ensure).then(|| c.ret.clone());
-            c.expect(&k.cond, &Type::Bool);
+            c.contract(k);
         }
         c.result = None;
         c.block(&func.body, vec![]);
@@ -288,6 +288,25 @@ impl Checker<'_> {
 
     fn lookup(&self, name: &str) -> Option<&Variable> {
         self.scopes.iter().rev().find_map(|s| s.get(name))
+    }
+
+    fn contract(&mut self, k: &Contract) {
+        self.expect(&k.cond, &Type::Bool);
+        if let Some(m) = &k.message {
+            self.parts(m);
+        }
+    }
+
+    /// The `{values}` of a text: anything `print` can show.
+    fn parts(&mut self, parts: &[Part]) {
+        for p in parts {
+            let Part::Code(e) = p else { continue };
+            match self.expr(e) {
+                Type::Unit => self.error(e.span, t!("interp_no_value")),
+                Type::Tuple(_) => self.diags.push(Diag::new(e.span, t!("interp_tuple")).help(t!("interp_tuple_help"))),
+                _ => {}
+            }
+        }
     }
 
     /// A bare `main` calls `fn main`: no variable may take the name of a function without parameters.
@@ -523,7 +542,7 @@ impl Checker<'_> {
                 }
                 (Some(e), t) => self.expect(e, &t),
             },
-            Stmt::Check(k) => self.expect(&k.cond, &Type::Bool),
+            Stmt::Check(k) => self.contract(k),
             Stmt::Break(span) | Stmt::Continue(span) => {
                 if self.loops == 0 {
                     let word = if matches!(s, Stmt::Break(_)) { "break" } else { "continue" };
@@ -602,6 +621,10 @@ impl Checker<'_> {
             },
             ExprKind::InMode { .. } => Type::Bool,
             ExprKind::Str(_) => Type::String,
+            ExprKind::Interp(parts) => {
+                self.parts(parts);
+                Type::String
+            }
             ExprKind::Tuple(elems) => {
                 let mut ts = vec![];
                 for x in elems {

@@ -1,0 +1,4 @@
+fn main {
+    print("{name")
+}
+// error: `{` is never closed: write `\{` for a brace

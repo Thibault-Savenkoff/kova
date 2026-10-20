@@ -164,6 +164,10 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             let copy = s(0).to_string();
                             heap.make(copy)
                         }
+                        StrOp::Format(show) => {
+                            let t = text(locals[a[0]], *show, heap);
+                            heap.make(t)
+                        }
                     }
                 }
                 Inst::Free(l) => {
