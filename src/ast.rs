@@ -172,6 +172,8 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
+    /// `mode = build` (`negated`: `mode != build`); `build` false = `run`. Known before running.
+    InMode { build: bool, negated: bool },
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.
     If { cond: Box<Expr>, then: Block, otherwise: Block },
 }

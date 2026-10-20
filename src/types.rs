@@ -533,6 +533,7 @@ impl Checker<'_> {
                     Type::Error
                 }
             },
+            ExprKind::InMode { .. } => Type::Bool,
             ExprKind::Tuple(elems) => {
                 let mut ts = vec![];
                 for x in elems {

@@ -1,0 +1,6 @@
+fn main {
+    if mode = fast {
+        print(1)
+    }
+}
+// error: `mode` is `run` or `build`, not `fast`

@@ -180,8 +180,20 @@ fn command_line() {
     let _ = std::fs::remove_dir_all(&dir);
 
     languages();
+    modes();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
+}
+
+/// `if mode = build`: each mode translates only its own branch.
+fn modes() {
+    let out = kova(LANG).args(["run", "tests/modes/mode.kova"]).output().unwrap();
+    assert_eq!(text(&out.stdout), "11\n1\n3\n", "{}", text(&out.stderr));
+    let exe = std::env::temp_dir().join(format!("kova-mode-{}", std::process::id()));
+    let out = kova(LANG).args(["build", "tests/modes/mode.kova", "-o"]).arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&program(&exe, LANG).output().unwrap().stdout), "20\n2\n3\n");
+    let _ = std::fs::remove_file(&exe);
 }
 
 /// The language of the messages (PLAN 2.13): environment, `header`, translation files.

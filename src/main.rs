@@ -84,7 +84,7 @@ fn main() {
     }
 
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let program = kir::translate(&tree, &info, &source, contracts, matches!(command, Command::Test));
+    let program = kir::translate(&tree, &info, &source, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
 
     match command {
         Command::Run => exit(interp::run(&program, file)),

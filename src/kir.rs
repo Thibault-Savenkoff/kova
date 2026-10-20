@@ -296,7 +296,8 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 
 /// `contracts` = false for `kova build --boost`: `require`, `ensure` and `check` disappear.
 /// `tests` = true for `kova test`: each `test` block becomes one more function.
-pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: bool) -> Program {
+/// `built` = true for `kova build`: the value of `mode = build`.
+pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
     let numbers: HashMap<&str, usize> =
         f.functions.iter().enumerate().map(|(i, f)| (f.name.text.as_str(), i)).collect();
     // The functions that receive the call location (`main` is called by the runtime).
@@ -317,6 +318,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 numbers: &numbers,
                 sites: &sites,
                 contracts,
+                built,
                 ensures: kept(ContractKind::Ensure).collect(),
                 ret: ret.clone(),
                 result: None,
@@ -366,6 +368,8 @@ struct Translator<'a> {
     sites: &'a [bool],
     /// Keep contracts (false with `--boost`).
     contracts: bool,
+    /// `kova build` (true) or `kova run` / `kova test` (false).
+    built: bool,
     ensures: Vec<&'a Contract>,
     ret: Type,
     /// The value of `result` while checking an `ensure`.
@@ -534,6 +538,15 @@ impl<'a> Translator<'a> {
                 self.finish(End::Jump(next));
             }
             Stmt::If { cond, then, otherwise } => {
+                // `if mode = build`: only the branch of this mode is translated.
+                if let Some(yes) = self.known(cond) {
+                    match (yes, otherwise) {
+                        (true, _) => self.block(then),
+                        (false, Some(o)) => self.block(o),
+                        (false, None) => {}
+                    }
+                    return;
+                }
                 let c = self.expr1(cond);
                 let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
                 self.go(End::Branch(c, b_then, b_else), b_then);
@@ -669,7 +682,19 @@ impl<'a> Translator<'a> {
         self.go(End::Unreachable, next);
     }
 
+    /// The value of a condition known before running: `mode = build`, `!(mode = run)`.
+    fn known(&self, e: &Expr) -> Option<bool> {
+        match &e.kind {
+            ExprKind::InMode { build, negated } => Some((*build == self.built) != *negated),
+            ExprKind::Unary(UnOp::Not, x) => self.known(x).map(|b| !b),
+            _ => None,
+        }
+    }
+
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, ty: &Type) -> Slots {
+        if let Some(yes) = self.known(cond) {
+            return self.block_value(if yes { then } else { otherwise }, ty);
+        }
         let dst = self.new_slots(ty);
         let c = self.expr1(cond);
         let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
@@ -710,6 +735,7 @@ impl<'a> Translator<'a> {
             ExprKind::Float(v) => vec![self.float_constant(*v)],
             ExprKind::Char(c) => vec![self.constant(*c as i64)],
             ExprKind::Bool(b) => vec![self.constant(*b as i64)],
+            ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => elems.iter().flat_map(|x| self.expr(x)).collect(),
@@ -825,7 +851,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(a, names);
             names_in(b, names);
         }
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) => {}
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::InMode { .. } => {}
     }
 }
 

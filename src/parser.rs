@@ -702,6 +702,29 @@ impl Parser<'_> {
         Ok(args)
     }
 
+    /// `mode = ` or `mode != `: the test of the mode (`kova run` or `kova build`).
+    /// ponytail: contextual, so `mode` alone is still an ordinary name.
+    fn mode_test(&self) -> bool {
+        matches!(self.t[self.pos + 1].kind, Kind::Sym("=" | "!="))
+    }
+
+    /// `mode = build`, `mode != run`.
+    fn in_mode(&mut self) -> R<Expr> {
+        let start = self.advance().span; // mode
+        let negated = self.advance().kind == Kind::Sym("!=");
+        let t = self.token();
+        let build = match (t.kind, self.text(t.span).as_str()) {
+            (Kind::Ident, "build") => true,
+            (Kind::Ident, "run") => false,
+            _ => {
+                let msg = t!("setting_bad_value", key = "mode", allowed = format!("`run` {} `build`", t!("word_or")), value = self.text(t.span));
+                return self.error(t.span, msg);
+            }
+        };
+        self.advance();
+        Ok(self.expr(start.to(t.span), ExprKind::InMode { build, negated }))
+    }
+
     fn atom(&mut self) -> R<Expr> {
         let t = self.token();
         let kind = match t.kind {
@@ -714,6 +737,7 @@ impl Parser<'_> {
             Kind::Str => {
                 return self.error(t.span, t!("texts_j3"));
             }
+            Kind::Ident if self.text(t.span) == "mode" && self.mode_test() => return self.in_mode(),
             Kind::Ident => {
                 let name = self.value_name("what_variable")?;
                 if !self.is_sym("(") {
