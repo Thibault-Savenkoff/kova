@@ -28,6 +28,7 @@ use std::collections::HashMap;
 
 use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Pattern, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
+use crate::locale;
 use crate::types::{Info, Type, type_of};
 
 pub type Local = usize;
@@ -121,6 +122,9 @@ pub enum Inst {
 /// A piece of the message of a broken contract.
 pub enum Piece {
     Text(String),
+    /// A text of `locale::RUNTIME` (`contract_values`): translated when the message is written,
+    /// so that an executable speaks the language of whoever runs it.
+    Label(&'static str),
     Value(Local, Show),
     /// The name of the running file (unknown at translation time: `kova lsp` translates text).
     File,
@@ -177,20 +181,21 @@ pub enum End {
     Unreachable,
 }
 
-/// Runtime errors. The C runtime (`runtime/runtime.c`) has the same texts.
+/// Runtime errors.
 #[derive(Clone, Copy)]
 pub enum Fault {
-    Overflow = 0,
-    DivisionByZero = 1,
-    BadConversion = 2,
+    Overflow,
+    DivisionByZero,
+    BadConversion,
 }
 
 impl Fault {
-    pub fn message(self) -> &'static str {
+    /// Its message, a key of `locale::RUNTIME`.
+    pub fn key(self) -> &'static str {
         match self {
-            Fault::Overflow => "dépassement d'entier",
-            Fault::DivisionByZero => "division par zéro",
-            Fault::BadConversion => "conversion impossible : ce Float ne tient pas dans un Int",
+            Fault::Overflow => "fault_overflow",
+            Fault::DivisionByZero => "fault_division_by_zero",
+            Fault::BadConversion => "fault_bad_conversion",
         }
     }
 }
@@ -283,7 +288,8 @@ fn plus_one(digits: &[u8], e: i32) -> (Vec<u8>, i32) {
 }
 
 pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
-    format!("erreur: {}\n  --> {file}:{}:{}\n", f.message(), l.line, l.col)
+    let text = |k| locale::text(k, &[]);
+    format!("{}{}\n  --> {file}:{}:{}\n", text("error_prefix"), text(f.key()), l.line, l.col)
 }
 
 // ---- Translation AST → KIR ----
@@ -604,11 +610,11 @@ impl<'a> Translator<'a> {
 
     /// Tests a contract's condition; if false: `Fail` with a message like
     ///
-    ///   erreur: on ne peut pas diviser par zéro
-    ///     --> diviser.kova:2:13
+    ///   error: you cannot divide by zero
+    ///     --> divide.kova:2:13
     ///     require b != 0
-    ///     valeurs : b = 0
-    ///     appelé depuis diviser.kova:8:11
+    ///     values: b = 0
+    ///     called from divide.kova:8:11
     fn check(&mut self, c: &Contract, site: Option<(Local, Local)>) {
         let ok = self.expr1(&c.cond);
         let (fail, next) = (self.new_block(), self.new_block());
@@ -617,7 +623,12 @@ impl<'a> Translator<'a> {
         let l = self.loc(c.cond.span);
         let cond: Vec<&str> = self.src[c.cond.span.start..c.cond.span.end].split_whitespace().collect();
         let mut m = vec![
-            Piece::Text(format!("erreur: {}\n  --> ", c.message.as_deref().unwrap_or("contrat non respecté"))),
+            Piece::Label("error_prefix"),
+            match &c.message {
+                Some(text) => Piece::Text(text.clone()),
+                None => Piece::Label("contract_violated"),
+            },
+            Piece::Text("\n  --> ".into()),
             Piece::File,
             Piece::Text(format!(":{}:{}\n  {} {}\n", l.line, l.col, c.kind.keyword(), cond.join(" "))),
         ];
@@ -631,7 +642,12 @@ impl<'a> Translator<'a> {
             })
             .collect();
         for (k, (name, (v, ty))) in values.iter().enumerate() {
-            m.push(Piece::Text(format!("{}{name} = ", if k == 0 { "  valeurs : " } else { ", " })));
+            if k == 0 {
+                m.extend([Piece::Text("  ".into()), Piece::Label("contract_values")]);
+            } else {
+                m.push(Piece::Text(", ".into()));
+            }
+            m.push(Piece::Text(format!("{name} = ")));
             value_pieces(v, ty, &mut m);
         }
         if !values.is_empty() {
@@ -639,7 +655,8 @@ impl<'a> Translator<'a> {
         }
         if let Some((line, col)) = site {
             m.extend([
-                Piece::Text("  appelé depuis ".into()),
+                Piece::Text("  ".into()),
+                Piece::Label("contract_called_from"),
                 Piece::File,
                 Piece::Text(":".into()),
                 Piece::Value(line, Show::Int),

@@ -8,6 +8,9 @@ fn f(x: Int) -> Int
 fn g(x: Int)
     require x > 0 else oups
 {
+}
+
+fn h(x: Int) {
     check x > 0 else "{x} trop petit"
 }
 

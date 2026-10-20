@@ -2,6 +2,8 @@
 // The compiler returns a list of `Diag` instead of stopping:
 // `kova run` prints them, `kova lsp` sends them to the editor.
 
+use crate::locale::t;
+
 /// A piece of the source text, in bytes: `source[start..end]`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Span {
@@ -47,12 +49,12 @@ pub fn line_col(source: &str, pos: usize) -> (usize, usize) {
 /// Renders an error the way rustc does:
 ///
 /// ```text
-/// erreur: `a` est déclarée avec let
+/// error: `a` is declared with let
 ///   --> main.kova:3:5
 ///    |
 ///  3 |     a := 2
 ///    |     ^
-///    = aide : ...
+///    = help: ...
 /// ```
 pub fn render(d: &Diag, file: &str, source: &str) -> String {
     let (line, col) = line_col(source, d.span.start);
@@ -65,11 +67,11 @@ pub fn render(d: &Diag, file: &str, source: &str) -> String {
         .clamp(1, rest.max(1));
     let margin = " ".repeat(line.to_string().len());
 
-    let mut s = format!("erreur: {}\n{margin}--> {file}:{line}:{col}\n", d.message);
+    let mut s = format!("{}{}\n{margin}--> {file}:{line}:{col}\n", t!("error_prefix"), d.message);
     s += &format!("{margin} |\n{line} | {line_text}\n");
     s += &format!("{margin} | {}{}\n", " ".repeat(col - 1), "^".repeat(width));
     if let Some(help) = &d.help {
-        s += &format!("{margin} = aide : {help}\n");
+        s += &format!("{margin} = {}{help}\n", t!("help_prefix"));
     }
     s
 }

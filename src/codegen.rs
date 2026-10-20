@@ -1,5 +1,5 @@
 // Native backend (`kova build`): KIR → machine code with Cranelift → `main.o`,
-// then `cc` glues `main.o` and the C runtime into an executable.
+// then `cc` glues `main.o`, the C runtime and its texts (`locale::c_texts`) into an executable.
 //
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
@@ -16,25 +16,26 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, default
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::kir::*;
+use crate::locale::{self, t};
 
 const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
 
-pub fn build(p: &Program, file: &str, output: &str) -> Result<(), String> {
-    let object = make_object(p, file).map_err(|e| format!("génération du code : {e}"))?;
+/// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
+pub fn build(p: &Program, file: &str, output: &str, lang: Option<usize>) -> Result<(), String> {
+    let object = make_object(p, file).map_err(|e| t!("codegen_failed", error = e))?;
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let (o, c) = (tmp.join("main.o"), tmp.join("runtime.c"));
+    let (o, c, texts) = (tmp.join("main.o"), tmp.join("runtime.c"), tmp.join("texts.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
+    std::fs::write(&texts, locale::c_texts(lang)).map_err(|e| e.to_string())?;
 
-    let res = Command::new("cc").args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg("-lm").output();
+    let res = Command::new("cc").args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output();
     let _ = std::fs::remove_dir_all(&tmp);
     match res {
-        Err(e) => Err(format!("impossible de lancer `cc` (il sert à assembler l'exécutable) : {e}")),
-        Ok(out) if !out.status.success() => {
-            Err(format!("`cc` a échoué :\n{}", String::from_utf8_lossy(&out.stderr)))
-        }
+        Err(e) => Err(t!("cc_missing", error = e)),
+        Ok(out) if !out.status.success() => Err(t!("cc_failed", output = String::from_utf8_lossy(&out.stderr))),
         Ok(_) => Ok(()),
     }
 }
@@ -44,6 +45,7 @@ struct Runtime {
     print: FuncId,
     fault: FuncId,
     write_text: FuncId,
+    write_label: FuncId,
     write_value: FuncId,
     fail: FuncId,
 }
@@ -76,6 +78,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         print: module.declare_function("kova_print", Linkage::Import, &signature(&ints, &[]))?,
         fault: module.declare_function("kova_fault", Linkage::Import, &signature(&ints, &[]))?,
         write_text: module.declare_function("kova_write_text", Linkage::Import, &signature(&ints[..2], &[]))?,
+        write_label: module.declare_function("kova_write_label", Linkage::Import, &signature(&ints[..1], &[]))?,
         write_value: module.declare_function("kova_write_value", Linkage::Import, &signature(&ints[..2], &[]))?,
         fail: module.declare_function("kova_fail", Linkage::Import, &signature(&[], &[]))?,
     };
@@ -106,7 +109,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             let t = match m {
                 Piece::Text(t) => t.as_str(),
                 Piece::File => file,
-                Piece::Value(..) => continue,
+                Piece::Value(..) | Piece::Label(_) => continue,
             };
             if !data.contains_key(t) {
                 let id = module.declare_data(&format!("kova_text{}", data.len()), Linkage::Local, false, false)?;
@@ -119,6 +122,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         }
         let fail = Fail {
             write_text: module.declare_func_in_func(rt.write_text, b.func),
+            write_label: module.declare_func_in_func(rt.write_label, b.func),
             write_value: module.declare_func_in_func(rt.write_value, b.func),
             stop: module.declare_func_in_func(rt.fail, b.func),
             texts,
@@ -129,6 +133,11 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         module.clear_context(&mut ctx);
     }
     Ok(module.finish().emit()?)
+}
+
+/// The number of a text of the runtime (`kova_texts` in the generated C).
+fn runtime_text(key: &str) -> i64 {
+    locale::RUNTIME.iter().position(|k| *k == key).expect("key of locale::RUNTIME") as i64
 }
 
 fn machine_type(t: Scalar) -> cranelift_codegen::ir::Type {
@@ -149,6 +158,7 @@ struct Generator<'a> {
 /// What is needed to write the message of a broken contract.
 struct Fail {
     write_text: FuncRef,
+    write_label: FuncRef,
     write_value: FuncRef,
     stop: FuncRef,
     texts: HashMap<String, GlobalValue>,
@@ -216,7 +226,7 @@ impl Generator<'_> {
         b.set_cold_block(fault_block);
         b.ins().brif(cond, fault_block, &[], next, &[]);
         b.switch_to_block(fault_block);
-        let args = [fault as i64, loc.line as i64, loc.col as i64].map(|v| b.ins().iconst(I64, v));
+        let args = [runtime_text(fault.key()), loc.line as i64, loc.col as i64].map(|v| b.ins().iconst(I64, v));
         b.ins().call(self.rt_fault, &args);
         b.ins().trap(TrapCode::unwrap_user(1));
         b.switch_to_block(next);
@@ -299,6 +309,11 @@ impl Generator<'_> {
                         Piece::Value(l, show) => {
                             let (v, show) = self.value_and_show(*l, *show);
                             self.b.ins().call(self.fail.write_value, &[v, show]);
+                            continue;
+                        }
+                        Piece::Label(k) => {
+                            let i = self.b.ins().iconst(I64, runtime_text(k));
+                            self.b.ins().call(self.fail.write_label, &[i]);
                             continue;
                         }
                         Piece::Text(t) => t,

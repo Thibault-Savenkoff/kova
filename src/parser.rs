@@ -5,7 +5,8 @@
 
 use crate::ast::*;
 use crate::diag::{Diag, Span};
-use crate::lexer::{Kind, Token, string_content};
+use crate::lexer::{Kind, Token, interpolation, string_content};
+use crate::locale::t;
 
 /// `Err(())` = an error was already added to `diags`; the caller resynchronizes.
 type R<T> = Result<T, ()>;
@@ -78,8 +79,8 @@ impl Parser<'_> {
     /// How to name the current token in a message.
     fn describe(&self) -> String {
         match self.kind() {
-            Kind::Newline => "une fin de ligne".into(),
-            Kind::Eof => "la fin du fichier".into(),
+            Kind::Newline => t!("found_newline"),
+            Kind::Eof => t!("found_eof"),
             _ => format!("`{}`", self.text(self.token().span)),
         }
     }
@@ -91,7 +92,7 @@ impl Parser<'_> {
         if self.is_sym(s) {
             return Ok(self.advance().span);
         }
-        let msg = format!("`{s}` attendu, trouvé {}", self.describe());
+        let msg = t!("expected_symbol", symbol = s, found = self.describe());
         self.error(self.token().span, msg)
     }
     fn expr(&mut self, span: Span, kind: ExprKind) -> Expr {
@@ -99,8 +100,9 @@ impl Parser<'_> {
         Expr { id: self.ids - 1, span, kind }
     }
 
-    /// A variable or function name: lowercase required.
+    /// A variable or function name: lowercase required. `what` = the key of its kind (`what_variable`).
     fn value_name(&mut self, what: &str) -> R<Name> {
+        let what = crate::locale::text(what, &[]);
         let t = self.token();
         match t.kind {
             Kind::Ident => {
@@ -112,17 +114,16 @@ impl Parser<'_> {
                 let mut c = text.chars();
                 let lowercase: String = c.next().unwrap().to_lowercase().chain(c).collect();
                 self.diags.push(
-                    Diag::new(t.span, format!("un nom de {what} commence par une minuscule"))
-                        .help(format!("écris `{lowercase}` (la majuscule est réservée aux types)")),
+                    Diag::new(t.span, t!("name_lowercase", what = what)).help(t!("name_lowercase_help", name = lowercase)),
                 );
                 Err(())
             }
             Kind::Keyword(k) => {
-                let msg = format!("`{k}` est un mot réservé de Kova : il ne peut pas servir de nom");
+                let msg = t!("reserved_word", word = k);
                 self.error(t.span, msg)
             }
             _ => {
-                let msg = format!("nom de {what} attendu, trouvé {}", self.describe());
+                let msg = t!("name_expected", what = what, found = self.describe());
                 self.error(t.span, msg)
             }
         }
@@ -136,9 +137,9 @@ impl Parser<'_> {
                 self.advance();
                 Ok(Name { text: self.text(t.span), span: t.span })
             }
-            Kind::Ident => self.error(t.span, "un nom de type commence par une majuscule"),
+            Kind::Ident => self.error(t.span, t!("type_uppercase")),
             _ => {
-                let msg = format!("type attendu, trouvé {}", self.describe());
+                let msg = t!("type_expected", found = self.describe());
                 self.error(t.span, msg)
             }
         }
@@ -157,7 +158,7 @@ impl Parser<'_> {
         }
         let close = self.expect(")")?;
         if types.len() < 2 {
-            return self.error(open.to(close), "un tuple a au moins 2 éléments");
+            return self.error(open.to(close), t!("tuple_too_small"));
         }
         Ok(TypeAst::Tuple(types))
     }
@@ -168,7 +169,7 @@ impl Parser<'_> {
             return Ok(Pattern::Ignore(self.advance().span));
         }
         if !self.is_sym("(") {
-            return Ok(Pattern::Name(self.value_name("variable")?));
+            return Ok(Pattern::Name(self.value_name("what_variable")?));
         }
         let open = self.advance().span;
         let mut patterns = vec![self.pattern()?];
@@ -178,7 +179,7 @@ impl Parser<'_> {
         }
         let close = self.expect(")")?;
         if patterns.len() < 2 {
-            return self.error(open.to(close), "un tuple a au moins 2 éléments");
+            return self.error(open.to(close), t!("tuple_too_small"));
         }
         Ok(Pattern::Tuple(patterns, open.to(close)))
     }
@@ -193,20 +194,20 @@ impl Parser<'_> {
                     fields.push(i);
                     Ok(Target::Place { name, fields, span })
                 }
-                Target::Tuple(..) => self.error(span, "on ne peut donner une valeur qu'à une variable"),
+                Target::Tuple(..) => self.error(span, t!("assign_target")),
             },
             ExprKind::Tuple(elems) => {
                 let targets = elems.into_iter().map(|e| self.target(e)).collect::<R<Vec<_>>>()?;
                 Ok(Target::Tuple(targets, span))
             }
-            _ => self.error(span, "on ne peut donner une valeur qu'à une variable"),
+            _ => self.error(span, t!("assign_target")),
         }
     }
 
     // ---- File and functions ----
 
     fn file(&mut self) -> File {
-        let (mut header, mut functions, mut tests) = (None, vec![], vec![]);
+        let (mut header, mut functions, mut tests, mut langs) = (None, vec![], vec![], vec![]);
         loop {
             self.skip_newlines();
             let read = match self.kind() {
@@ -215,7 +216,7 @@ impl Parser<'_> {
                     let first = header.is_none() && functions.is_empty() && tests.is_empty();
                     if !first {
                         let span = self.token().span;
-                        self.diags.push(Diag::new(span, "le `header` doit être la première déclaration du fichier"));
+                        self.diags.push(Diag::new(span, t!("header_first")));
                     }
                     self.header().map(|h| {
                         if first {
@@ -225,8 +226,10 @@ impl Parser<'_> {
                 }
                 Kind::Keyword("fn") => self.function().map(|f| functions.push(f)),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
+                // `lang` is not a reserved word: it only means something here.
+                Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
                 _ => {
-                    let msg = format!("`fn` ou `test` attendu, trouvé {}", self.describe());
+                    let msg = t!("declaration_expected", found = self.describe());
                     self.error(self.token().span, msg)
                 }
             };
@@ -234,7 +237,7 @@ impl Parser<'_> {
                 self.skip_to_next_fn();
             }
         }
-        File { header, functions, tests }
+        File { header, functions, tests, langs }
     }
 
     /// `header { key := value ... }`; keys and values are checked by the type checker.
@@ -250,7 +253,7 @@ impl Parser<'_> {
             }
             if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test")) {
                 let span = self.token().span;
-                self.diags.push(Diag::new(span, "`}` manquante à la fin du `header`"));
+                self.diags.push(Diag::new(span, t!("header_unclosed")));
                 return Ok(Header { open, close: span, settings });
             }
             match self.setting() {
@@ -264,16 +267,16 @@ impl Parser<'_> {
 
     /// `mode := build`: a key, `:=`, a single word.
     fn setting(&mut self) -> R<(Name, Name)> {
-        let key = self.value_name("réglage")?;
+        let key = self.value_name("what_setting")?;
         self.expect(":=")?;
         let t = self.token();
         if !matches!(t.kind, Kind::Ident | Kind::Keyword(_)) {
-            let msg = format!("valeur du réglage attendue (un mot comme `build` ou `true`), trouvé {}", self.describe());
+            let msg = t!("setting_value_expected", found = self.describe());
             return self.error(t.span, msg);
         }
         self.advance();
         if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
-            let msg = format!("un réglage par ligne : fin de ligne attendue, trouvé {}", self.describe());
+            let msg = t!("one_setting_per_line", found = self.describe());
             return self.error(self.token().span, msg);
         }
         Ok((key, Name { text: self.text(t.span), span: t.span }))
@@ -281,20 +284,75 @@ impl Parser<'_> {
 
     fn skip_to_next_fn(&mut self) {
         self.advance();
-        while !matches!(self.kind(), Kind::Keyword("fn" | "test") | Kind::Eof) {
+        while !matches!(self.kind(), Kind::Keyword("fn" | "test") | Kind::Eof) && !self.at_lang() {
             self.advance();
         }
+    }
+
+    fn at_lang(&self) -> bool {
+        self.kind() == Kind::Ident && self.text(self.token().span) == "lang"
+    }
+
+    /// Texts are plain until J3: `{x}` is refused in a test name or a contract message.
+    fn no_interpolation(&mut self, t: Token) {
+        if let Some(k) = interpolation(&self.text(t.span)) {
+            let at = t.span.start + k;
+            self.diags.push(Diag::new(Span::new(at, at + 1), t!("interpolation_j3")));
+        }
+    }
+
+    /// `lang fr { key := "text" ... }`: one translation per line (PLAN 2.13).
+    fn lang(&mut self) -> R<Lang> {
+        self.advance(); // lang
+        let name = self.value_name("what_language")?;
+        self.skip_newlines();
+        self.expect("{")?;
+        let mut entries = vec![];
+        loop {
+            self.skip_newlines();
+            if self.is_sym("}") {
+                self.advance();
+                return Ok(Lang { name, entries });
+            }
+            if self.kind() == Kind::Eof {
+                let span = self.token().span;
+                self.diags.push(Diag::new(span, t!("lang_unclosed")));
+                return Ok(Lang { name, entries });
+            }
+            match self.entry() {
+                Ok(e) => entries.push(e),
+                Err(()) => self.skip_statement(),
+            }
+        }
+    }
+
+    /// `already_exists := "`{name}` already exists"`.
+    fn entry(&mut self) -> R<(Name, Span)> {
+        let key = self.value_name("what_key")?;
+        self.expect(":=")?;
+        let t = self.token();
+        if t.kind != Kind::Str {
+            let msg = t!("lang_text_expected", found = self.describe());
+            return self.error(t.span, msg);
+        }
+        self.advance();
+        if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+            let msg = t!("lang_one_per_line", found = self.describe());
+            return self.error(self.token().span, msg);
+        }
+        Ok((key, t.span))
     }
 
     fn test(&mut self) -> R<Test> {
         self.advance(); // test
         let t = self.token();
         if t.kind != Kind::Str {
-            let msg = format!("nom du test entre guillemets attendu, trouvé {}", self.describe());
-            self.diags.push(Diag::new(t.span, msg).help("exemple : `test \"carré de 3\" { check carre(3) = 9 }`"));
+            let msg = t!("test_name_expected", found = self.describe());
+            self.diags.push(Diag::new(t.span, msg).help(t!("test_name_help")));
             return Err(());
         }
         self.advance();
+        self.no_interpolation(t);
         self.skip_newlines();
         let body = self.block()?;
         Ok(Test { name: string_content(&self.text(t.span)), span: t.span, body })
@@ -302,11 +360,11 @@ impl Parser<'_> {
 
     fn function(&mut self) -> R<Function> {
         self.advance(); // fn
-        let name = self.value_name("fonction")?;
+        let name = self.value_name("what_function")?;
         self.expect("(")?;
         let mut params = vec![];
         while !self.is_sym(")") {
-            let name = self.value_name("paramètre")?;
+            let name = self.value_name("what_parameter")?;
             self.expect(":")?;
             params.push(Param { name, ty: self.type_()? });
             if !self.is_sym(")") {
@@ -348,12 +406,12 @@ impl Parser<'_> {
         self.advance();
         let t = self.token();
         if t.kind != Kind::Str {
-            let msg = format!("message entre guillemets attendu après `else`, trouvé {}", self.describe());
-            let help = format!("exemple : `{} b != 0 else \"b ne doit pas valoir 0\"`", kind.keyword());
-            self.diags.push(Diag::new(t.span, msg).help(help));
+            let msg = t!("contract_message_expected", found = self.describe());
+            self.diags.push(Diag::new(t.span, msg).help(t!("contract_message_help", keyword = kind.keyword())));
             return Err(());
         }
         self.advance();
+        self.no_interpolation(t);
         Ok(Contract { kind, cond, message: Some(string_content(&self.text(t.span))) })
     }
 
@@ -370,14 +428,14 @@ impl Parser<'_> {
             // Forgotten `}` (often: while typing): keep what was read.
             if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test")) {
                 let span = self.token().span;
-                self.diags.push(Diag::new(span, "`}` manquante à la fin du bloc"));
+                self.diags.push(Diag::new(span, t!("block_unclosed")));
                 return Ok(Block { open, stmts, close: span });
             }
             match self.stmt() {
                 Ok(s) => {
                     stmts.push(s);
                     if !matches!(self.kind(), Kind::Newline | Kind::Sym("}") | Kind::Eof) {
-                        let msg = format!("fin d'instruction attendue, trouvé {}", self.describe());
+                        let msg = t!("statement_end_expected", found = self.describe());
                         let _: R<()> = self.error(self.token().span, msg);
                         self.skip_statement();
                     }
@@ -434,8 +492,7 @@ impl Parser<'_> {
             Kind::Keyword("if") => self.if_stmt(),
             Kind::Keyword("check") => Ok(Stmt::Check(self.contract(ContractKind::Check)?)),
             Kind::Keyword(k @ ("require" | "ensure")) => {
-                let msg = format!("`{k}` s'écrit entre la signature de la fonction et son `{{`");
-                self.diags.push(Diag::new(start, msg).help("à l'intérieur d'une fonction, utilise `check`"));
+                self.diags.push(Diag::new(start, t!("contract_place", keyword = k)).help(t!("contract_place_help")));
                 Err(())
             }
             Kind::Keyword("while") => {
@@ -446,17 +503,16 @@ impl Parser<'_> {
             }
             Kind::Keyword("for") => {
                 self.advance();
-                let counter = self.value_name("variable")?;
+                let counter = self.value_name("what_variable")?;
                 if !self.is_keyword("in") {
-                    let msg = format!("`in` attendu, trouvé {}", self.describe());
+                    let msg = t!("expected_symbol", symbol = "in", found = self.describe());
                     return self.error(self.token().span, msg);
                 }
                 self.advance();
                 let e = self.expression()?;
                 let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = e.kind else {
                     self.diags.push(
-                        Diag::new(e.span, "en J1, `for` ne parcourt que des intervalles")
-                            .help("exemple : `for i in 0..10` (sans 10) ou `for i in 0..=10` (avec 10)"),
+                        Diag::new(e.span, t!("for_range_only")).help(t!("for_range_help")),
                     );
                     return Err(());
                 };
@@ -466,11 +522,11 @@ impl Parser<'_> {
             }
             Kind::Keyword("from") => {
                 self.advance();
-                let counter = self.value_name("variable")?;
+                let counter = self.value_name("what_variable")?;
                 self.expect(":=")?;
                 let start = self.expression()?;
                 if !self.is_keyword("to") {
-                    let msg = format!("`to` attendu, trouvé {}", self.describe());
+                    let msg = t!("expected_symbol", symbol = "to", found = self.describe());
                     return self.error(self.token().span, msg);
                 }
                 self.advance();
@@ -524,8 +580,7 @@ impl Parser<'_> {
         self.skip_newlines();
         if !self.is_keyword("else") {
             self.diags.push(
-                Diag::new(start, "un `if` qui donne une valeur a besoin d'un `else`")
-                    .help("ajoute `else { ... }` : la valeur doit exister dans tous les cas"),
+                Diag::new(start, t!("if_needs_else")).help(t!("if_needs_else_help")),
             );
             return Err(());
         }
@@ -558,8 +613,7 @@ impl Parser<'_> {
             if seen && !chainable {
                 let span = self.token().span;
                 self.diags.push(
-                    Diag::new(span, format!("`{s}` ne peut pas s'enchaîner"))
-                        .help("pour `a < b < c`, écris `a < b && b < c`"),
+                    Diag::new(span, t!("not_chainable", op = s)).help(t!("not_chainable_help")),
                 );
                 return Err(());
             }
@@ -593,7 +647,7 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Field(Box::new(e), i as usize));
                 continue;
             }
-            let name = self.value_name("méthode")?;
+            let name = self.value_name("what_method")?;
             self.expect("(")?;
             let args = self.arguments()?;
             let end = self.advance().span;
@@ -624,11 +678,10 @@ impl Parser<'_> {
             Kind::Keyword("false") => ExprKind::Bool(false),
             Kind::Keyword("result") => ExprKind::Result,
             Kind::Str => {
-                let msg = "les textes arrivent au jalon J3 (pour l'instant : seulement après `else` dans un contrat)";
-                return self.error(t.span, msg);
+                return self.error(t.span, t!("texts_j3"));
             }
             Kind::Ident => {
-                let name = self.value_name("variable")?;
+                let name = self.value_name("what_variable")?;
                 if !self.is_sym("(") {
                     return Ok(self.expr(name.span, ExprKind::Var(name.text)));
                 }
@@ -655,7 +708,7 @@ impl Parser<'_> {
                 return Ok(self.expr(t.span.to(end), ExprKind::Tuple(elems)));
             }
             _ => {
-                let msg = format!("expression attendue, trouvé {}", self.describe());
+                let msg = t!("expression_expected", found = self.describe());
                 return self.error(t.span, msg);
             }
         };

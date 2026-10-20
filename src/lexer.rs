@@ -3,9 +3,10 @@
 //   "let x: Int := 5"  →  [Keyword(let)] [Ident] [Sym(:)] [Type] [Sym(:=)] [Int(5)]
 //
 // It also adds the line ends (`Newline`) that end statements,
-// following the rules of docs/PLAN.md 2.1 (« Fins de ligne »).
+// following the rules of docs/PLAN.md 2.1 ("Line ends").
 
 use crate::diag::{Diag, Span};
+use crate::locale::t;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
@@ -93,7 +94,7 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
                     i += n;
                 }
                 None => {
-                    diags.push(Diag::new(Span::new(i, i + 2), "commentaire `/*` jamais fermé"));
+                    diags.push(Diag::new(Span::new(i, i + 2), t!("comment_unclosed")));
                     i = source.len();
                 }
             }
@@ -145,7 +146,7 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
             Kind::Sym(s)
         } else {
             i += c.len_utf8();
-            let msg = format!("caractère inattendu `{c}`");
+            let msg = t!("unexpected_char", char = c);
             diags.push(Diag::new(Span::new(start, i), msg));
             continue;
         };
@@ -211,9 +212,9 @@ fn read_number(text: &str) -> Result<Kind, String> {
     if decimal && text.contains(['.', 'e', 'E']) {
         let clean = text.replace('_', "");
         return match clean.parse::<f64>() {
-            Ok(v) if v.is_infinite() => Err(format!("nombre trop grand `{text}`")),
+            Ok(v) if v.is_infinite() => Err(t!("number_too_big", text = text)),
             Ok(v) => Ok(Kind::Float(v)),
-            Err(_) => Err(format!("nombre mal écrit `{text}`")),
+            Err(_) => Err(t!("number_malformed", text = text)),
         };
     }
     read_int(text).map(Kind::Int)
@@ -224,7 +225,7 @@ fn read_char(s: &str) -> (usize, Result<char, String>) {
     let line_end = s.find('\n').unwrap_or(s.len());
     let mut it = s[1..line_end].char_indices();
     let result = match it.next() {
-        None | Some((_, '\'')) => Err("caractère vide : écris par exemple `'a'`".to_string()),
+        None | Some((_, '\'')) => Err(t!("char_empty")),
         Some((_, '\\')) => escape(&mut it),
         Some((_, c)) => Ok(c),
     };
@@ -232,7 +233,7 @@ fn read_char(s: &str) -> (usize, Result<char, String>) {
         Some((k, '\'')) => (k + 2, result),
         _ => {
             let n = s[1..line_end].find('\'').map_or(line_end, |k| k + 2);
-            (n, result.and(Err("un caractère s'écrit entre `'` : un seul caractère, comme `'a'`".to_string())))
+            (n, result.and(Err(t!("char_single"))))
         }
     }
 }
@@ -240,7 +241,6 @@ fn read_char(s: &str) -> (usize, Result<char, String>) {
 /// `"..."` at the start of `s`: its length, and the errors (position in `s`, message).
 fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
     let mut errors = vec![];
-    let mut interpolation_reported = false;
     let mut it = s.char_indices().skip(1).peekable();
     while let Some((k, c)) = it.next() {
         match c {
@@ -257,17 +257,30 @@ fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
                     it.next();
                 }
             }
-            // One error per string: `{x}` would otherwise give two.
-            '{' | '}' if !interpolation_reported => {
-                interpolation_reported = true;
-                errors.push((k, "l'interpolation `{…}` arrive au jalon J3 (écris `\\{` pour une accolade)".into()))
-            }
             _ => {}
         }
     }
     let n = s.find('\n').unwrap_or(s.len());
-    errors.push((0, "texte jamais fermé : il manque le `\"` de fin".into()));
+    errors.push((0, t!("string_unclosed")));
     (n, errors)
+}
+
+/// The position of the first `{` or `}` of a `Str` token: interpolation arrives in J3.
+pub fn interpolation(token: &str) -> Option<usize> {
+    let mut it = token.char_indices();
+    while let Some((k, c)) = it.next() {
+        match c {
+            // `\{` is a brace, `\u{1F600}` a character.
+            '\\' => {
+                if let Some((_, 'u')) = it.next() {
+                    it.by_ref().find(|&(_, c)| c == '}');
+                }
+            }
+            '{' | '}' => return Some(k),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The content of a `Str` token (`"a\nb"` → `a`, line break, `b`), already checked by the lexer.
@@ -293,7 +306,7 @@ pub fn escape(it: &mut std::str::CharIndices) -> Result<char, String> {
         Some('u') => {
             let mut hex = String::new();
             if it.next().map(|(_, c)| c) != Some('{') {
-                return Err("écris `\\u{1F600}` (code en hexadécimal entre accolades)".into());
+                return Err(t!("escape_unicode_form"));
             }
             for (_, c) in it.by_ref() {
                 if c == '}' {
@@ -301,11 +314,11 @@ pub fn escape(it: &mut std::str::CharIndices) -> Result<char, String> {
                 }
                 hex.push(c);
             }
-            let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("code `{hex}` mal écrit (hexadécimal attendu)"))?;
-            char::from_u32(code).ok_or_else(|| format!("`{hex}` n'est pas un caractère Unicode valide"))?
+            let code = u32::from_str_radix(&hex, 16).map_err(|_| t!("escape_bad_code", hex = hex))?;
+            char::from_u32(code).ok_or_else(|| t!("escape_not_unicode", hex = hex))?
         }
-        Some(c) => return Err(format!("échappement inconnu `\\{c}`")),
-        None => return Err("échappement incomplet".into()),
+        Some(c) => return Err(t!("escape_unknown", char = c)),
+        None => return Err(t!("escape_incomplete")),
     })
 }
 
@@ -320,9 +333,9 @@ fn read_int(text: &str) -> Result<u64, String> {
     };
     let digits = digits.replace('_', "");
     if digits.is_empty() || !digits.chars().all(|c| c.is_digit(base)) {
-        return Err(format!("nombre mal écrit `{text}`"));
+        return Err(t!("number_malformed", text = text));
     }
-    u64::from_str_radix(&digits, base).map_err(|_| format!("nombre trop grand `{text}`"))
+    u64::from_str_radix(&digits, base).map_err(|_| t!("number_too_big", text = text))
 }
 
 /// Adds the `Newline` tokens that end statements (PLAN 2.1, rules 1 to 3).

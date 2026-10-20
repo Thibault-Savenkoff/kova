@@ -8,6 +8,16 @@ pub struct File {
     pub header: Option<Header>,
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
+    /// `lang fr { ... }`: only in a translation file (PLAN 2.13).
+    pub langs: Vec<Lang>,
+}
+
+/// `lang fr { already_exists := "`{name}` existe déjà" }`.
+pub struct Lang {
+    #[allow(dead_code)] // read by the tests; later by the programs that pick a language
+    pub name: Name,
+    /// (key, the `"..."` token); the text is read by `locale::segments`.
+    pub entries: Vec<(Name, Span)>,
 }
 
 /// `header { mode := build  lock := true }`: the file's settings (PLAN 2.11).

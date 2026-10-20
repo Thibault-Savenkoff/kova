@@ -14,6 +14,7 @@ use lsp_types::*;
 
 use crate::ast::{Block, File, Function, Pattern, Stmt, TypeAst};
 use crate::lexer::{Kind, lex};
+use crate::locale::{self, t};
 use crate::{analyze, parser, types};
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -50,7 +51,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let help = docs.get(&doc.text_document.uri).and_then(|src| signature(src, offset(src, doc.position)));
                         Response::new_ok(req.id, help)
                     }
-                    _ => Response::new_err(req.id, ErrorCode::MethodNotFound as i32, "pas encore géré".into()),
+                    _ => Response::new_err(req.id, ErrorCode::MethodNotFound as i32, t!("not_handled")),
                 };
                 connection.sender.send(response.into())?;
             }
@@ -121,7 +122,7 @@ fn errors(src: &str) -> Vec<Diagnostic> {
             severity: Some(DiagnosticSeverity::ERROR),
             source: Some("kova".into()),
             message: match d.help {
-                Some(help) => format!("{}\naide : {help}", d.message),
+                Some(help) => format!("{}\n{}{help}", d.message, t!("help_prefix")),
                 None => d.message,
             },
             ..Default::default()
@@ -167,7 +168,7 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
         .map(|&name| CompletionItem {
             label: name.into(),
             kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(format!("fn {name}(valeur)")),
+            detail: Some(format!("fn {name}(value)")),
             ..Default::default()
         })
         .collect();
@@ -210,7 +211,7 @@ fn complete_header(before: &str) -> Vec<CompletionItem> {
             .map(|(i, v)| CompletionItem {
                 label: v.to_string(),
                 kind: Some(CompletionItemKind::ENUM_MEMBER),
-                detail: Some(if i == 0 { format!("{help} (par défaut)") } else { help.to_string() }),
+                detail: Some(if i == 0 { t!("completion_default", help = locale::text(help, &[])) } else { locale::text(help, &[]) }),
                 ..Default::default()
             })
             .collect();
@@ -220,7 +221,7 @@ fn complete_header(before: &str) -> Vec<CompletionItem> {
         .map(|(key, values, help)| CompletionItem {
             label: key.to_string(),
             kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some(format!("{} : {help}", values.join(" | "))),
+            detail: Some(t!("completion_setting", values = values.join(" | "), help = locale::text(help, &[]))),
             insert_text: Some(format!("{key} := ")),
             ..Default::default()
         })
@@ -291,9 +292,9 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
     let name = name?;
 
     let (label, params) = if types::BUILTINS.contains(&name) {
-        let label = format!("fn {name}(valeur)");
+        let label = format!("fn {name}(value)");
         let start = label.find('(').unwrap() as u32 + 1;
-        (label, vec![[start, start + 6]])
+        (label, vec![[start, start + 5]])
     } else {
         heading(tree(src).functions.iter().find(|f| f.name.text == name)?)
     };
@@ -344,7 +345,7 @@ mod tests {
         let src = "header {\n    mode := b\n    \n}\nfn main() {}";
         let labels = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
         assert_eq!(labels(complete(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
-        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock"]);
+        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang"]);
         // `}` not typed yet.
         let src = "header {\n  lock := ";
         assert_eq!(labels(complete(src, src.len())), ["false", "true"]);
@@ -384,6 +385,6 @@ mod tests {
         let help = signature(src, src.len() - 4).unwrap(); // right after `square(`
         assert_eq!(help.active_parameter, Some(0));
         let help = signature(src, src.find("square(1").unwrap()).unwrap(); // inside `print(`
-        assert_eq!(help.signatures[0].label, "fn print(valeur)");
+        assert_eq!(help.signatures[0].label, "fn print(value)");
     }
 }

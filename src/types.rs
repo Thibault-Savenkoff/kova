@@ -2,8 +2,8 @@
 //
 // Kova guesses (almost) nothing: it checks that what is written is consistent.
 //
-//   let x: Int := true    →  erreur: types différents : `Int` attendu, `Bool` donné
-//   a := 2  (a is a let)  →  erreur: `a` est déclarée avec let
+//   let x: Int := true    →  error: different types: `Int` expected, `Bool` given
+//   a := 2  (a is a let)  →  error: `a` is declared with let
 //
 // The result: the type of each expression (indexed by `Expr::id`).
 
@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
+use crate::locale::{self, t};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
@@ -35,16 +36,18 @@ impl Type {
             Type::Bool => "Bool".into(),
             Type::Char => "Char".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
-            Type::Unit => "rien".into(),
+            Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
     }
 }
 
-/// The `header` keys and their allowed values; the first one is the default.
+/// The `header` keys, their allowed values (the first one is the default) and the key of their help.
 pub const SETTINGS: &[(&str, &[&str], &str)] = &[
-    ("mode", &["run", "build"], "ce que fait `kova fichier.kova`"),
-    ("lock", &["false", "true"], "true : l'autre commande est refusée"),
+    ("mode", &["run", "build"], "setting_mode"),
+    ("lock", &["false", "true"], "setting_lock"),
+    // `auto`, then the codes of `locale::LANGUAGES` (checked by a test).
+    ("lang", &["auto", "en", "fr"], "setting_lang"),
 ];
 
 /// The value of a (checked) `header` setting, and its line; `None` if absent.
@@ -118,18 +121,19 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let Some((_, allowed, _)) = SETTINGS.iter().find(|(k, ..)| *k == key.text) else {
             let keys: Vec<String> = SETTINGS.iter().map(|(k, ..)| format!("`{k}`")).collect();
             c.diags.push(
-                Diag::new(key.span, format!("réglage inconnu `{}` dans le header", key.text))
-                    .help(format!("réglages possibles : {}", keys.join(", "))),
+                Diag::new(key.span, t!("setting_unknown", key = key.text))
+                    .help(t!("setting_unknown_help", keys = keys.join(", "))),
             );
             continue;
         };
         if let Some(first) = seen.insert(&key.text, key.span) {
             let (line, _) = line_col(src, first.start);
-            c.error(key.span, format!("`{}` est déjà réglé (ligne {line})", key.text));
+            c.error(key.span, t!("setting_twice", key = key.text, line = line));
         }
         if !allowed.contains(&value.text.as_str()) {
             let allowed: Vec<String> = allowed.iter().map(|a| format!("`{a}`")).collect();
-            c.error(value.span, format!("`{}` vaut {}, pas `{}`", key.text, allowed.join(" ou "), value.text));
+            let allowed = allowed.join(&format!(" {} ", t!("word_or")));
+            c.error(value.span, t!("setting_bad_value", key = key.text, allowed = allowed, value = value.text));
         }
     }
 
@@ -142,21 +146,40 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let ret = func.ret.as_ref().map_or(Type::Unit, type_of);
         let name = func.name.text.as_str();
         if BUILTINS.contains(&name) {
-            c.error(func.name.span, format!("`{name}` est une fonction prédéfinie"));
+            c.error(func.name.span, t!("builtin_function", name = name));
         } else if c.functions.contains_key(name) {
-            c.error(func.name.span, format!("la fonction `{name}` existe déjà"));
+            c.error(func.name.span, t!("function_exists", name = name));
         } else {
             c.functions.insert(name, Signature { params, ret });
         }
     }
 
-    // 2. `fn main()`: required, without parameters or result.
+    // 2. `fn main()`: required, without parameters or result; not in a translation file.
     match f.functions.iter().find(|f| f.name.text == "main") {
-        None => c.error(Span::new(0, 0), "il manque la fonction `main`"),
-        Some(m) if !m.params.is_empty() || m.ret.is_some() => {
-            c.diags.push(Diag::new(m.name.span, "`main` ne prend pas de paramètre et ne renvoie rien"));
-        }
+        None if !f.langs.is_empty() => {}
+        None => c.error(Span::new(0, 0), t!("main_missing")),
+        Some(m) if !m.params.is_empty() || m.ret.is_some() => c.error(m.name.span, t!("main_signature")),
         _ => {}
+    }
+
+    // A translation file contains only `lang` blocks.
+    if !f.langs.is_empty() {
+        let others = f.header.iter().map(|h| h.open).chain(f.functions.iter().map(|f| f.name.span)).chain(f.tests.iter().map(|t| t.span));
+        for span in others {
+            c.error(span, t!("lang_file_only"));
+        }
+    }
+    for l in &f.langs {
+        let mut keys: HashMap<&str, Span> = HashMap::new();
+        for (key, text) in &l.entries {
+            if let Some(first) = keys.insert(&key.text, key.span) {
+                let (line, _) = line_col(src, first.start);
+                c.error(key.span, t!("key_twice", key = key.text, line = line));
+            }
+            if let Err((k, msg)) = locale::segments(&src[text.start..text.end]) {
+                c.error(Span::new(text.start + k, text.start + k + 1), msg);
+            }
+        }
     }
 
     // 3. The bodies.
@@ -165,7 +188,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let mut params = HashMap::new();
         for p in &func.params {
             if params.contains_key(&p.name.text) {
-                c.error(p.name.span, format!("le paramètre `{}` existe déjà", p.name.text));
+                c.error(p.name.span, t!("param_exists", name = p.name.text));
             }
             params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty), kind: VarKind::Param, span: p.name.span });
         }
@@ -179,8 +202,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         c.block(&func.body, vec![]);
         if c.ret != Type::Unit && !always_returns(&func.body) {
             c.diags.push(
-                Diag::new(func.body.close, format!("`{}` peut arriver ici sans `return`", func.name.text))
-                    .help(format!("la fonction doit renvoyer un `{}` dans tous les cas", c.ret.text())),
+                Diag::new(func.body.close, t!("missing_return", name = func.name.text))
+                    .help(t!("missing_return_help", type = c.ret.text())),
             );
         }
     }
@@ -190,7 +213,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for t in &f.tests {
         if let Some(first) = names.insert(&t.name, t.span) {
             let (line, _) = line_col(src, first.start);
-            c.error(t.span, format!("le test « {} » existe déjà (ligne {line})", t.name));
+            c.error(t.span, t!("test_exists", name = t.name, line = line));
         }
         c.ret = Type::Unit;
         c.scopes = vec![];
@@ -233,7 +256,7 @@ impl Checker<'_> {
 
     fn report_unknown(&mut self, t: &TypeAst) {
         match t {
-            TypeAst::Name(n) if type_of(t) == Type::Error => self.error(n.span, format!("type inconnu `{}`", n.text)),
+            TypeAst::Name(n) if type_of(t) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
         }
@@ -253,8 +276,7 @@ impl Checker<'_> {
         if let Some(old) = self.lookup(&name.text) {
             let (line, _) = line_col(self.src, old.span.start);
             self.diags.push(
-                Diag::new(name.span, format!("`{}` existe déjà (ligne {line})", name.text))
-                    .help("choisis un autre nom : un nom encore visible ne peut pas être redéclaré"),
+                Diag::new(name.span, t!("already_exists", name = name.text, line = line)).help(t!("already_exists_help")),
             );
             return;
         }
@@ -274,7 +296,7 @@ impl Checker<'_> {
             }
             (Pattern::Tuple(ps, span), _) => {
                 if *ty != Type::Error {
-                    let msg = format!("ce motif a {} éléments, mais la valeur est un `{}`", ps.len(), ty.text());
+                    let msg = t!("pattern_size", count = ps.len(), type = ty.text());
                     self.error(*span, msg);
                 }
                 for p in ps {
@@ -300,12 +322,12 @@ impl Checker<'_> {
     fn expect(&mut self, e: &Expr, expected: &Type) {
         let t = self.expr(e);
         if t != *expected && t != Type::Error && *expected != Type::Error {
-            let msg = format!("types différents : `{}` attendu, `{}` donné", expected.text(), t.text());
+            let msg = t!("types_differ", expected = expected.text(), given = t.text());
             let mut d = Diag::new(e.span, msg);
             if let (Type::Float, ExprKind::Int(v)) = (expected, &e.kind) {
-                d = d.help(format!("pour un `Float`, écris `{v}.0`"));
+                d = d.help(t!("float_literal", value = v));
             } else if matches!((expected, &t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
-                d = d.help("Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`");
+                d = d.help(t!("no_conversion"));
             }
             self.diags.push(d);
         }
@@ -318,7 +340,8 @@ impl Checker<'_> {
             return t;
         }
         let names: Vec<String> = allowed.iter().map(|t| format!("`{}`", t.text())).collect();
-        self.error(e.span, format!("{what} s'applique à {}, pas à `{}`", names.join(" ou "), t.text()));
+        let names = names.join(&format!(" {} ", t!("word_or")));
+        self.error(e.span, t!("applies_to", what = what, allowed = names, given = t.text()));
         Type::Error
     }
 
@@ -335,26 +358,24 @@ impl Checker<'_> {
                 // `t` and `t.0` in the same target: the same slot would receive two values.
                 let overlaps = seen.iter().any(|(m, f)| m == n && (f.starts_with(fields) || fields.starts_with(f)));
                 if overlaps {
-                    self.error(*span, format!("`{}` reçoit deux valeurs dans la même affectation", &self.src[span.start..span.end]));
+                    self.error(*span, t!("two_values", target = &self.src[span.start..span.end]));
                 }
                 seen.push((n.clone(), fields.clone()));
                 let Some(var) = self.lookup(n) else {
-                    self.error(name.span, format!("variable inconnue `{n}`"));
+                    self.error(name.span, t!("variable_unknown", name = n));
                     return Type::Error;
                 };
                 let (mut ty, kind) = (var.ty.clone(), var.kind);
                 match kind {
                     VarKind::Var => {}
                     VarKind::Let => self.diags.push(
-                        Diag::new(name.span, format!("`{n}` est déclarée avec let"))
-                            .help(format!("déclare-la avec `var {n}` si elle doit changer")),
+                        Diag::new(name.span, t!("declared_with_let", name = n)).help(t!("declared_with_let_help", name = n)),
                     ),
                     VarKind::Param => self.diags.push(
-                        Diag::new(name.span, format!("`{n}` est un paramètre : il ne peut pas changer"))
-                            .help(format!("copie-le d'abord : `var {n}2: ... := {n}`")),
+                        Diag::new(name.span, t!("param_immutable", name = n)).help(t!("param_immutable_help", name = n)),
                     ),
                     VarKind::Counter => {
-                        self.error(name.span, format!("`{n}` est un compteur de boucle : il ne peut pas changer"))
+                        self.error(name.span, t!("counter_immutable", name = n))
                     }
                 }
                 for &i in fields {
@@ -370,13 +391,13 @@ impl Checker<'_> {
         match ty {
             Type::Tuple(ts) if i < ts.len() => ts[i].clone(),
             Type::Tuple(ts) => {
-                let msg = format!("ce tuple a {} éléments : de `.0` à `.{}`", ts.len(), ts.len() - 1);
+                let msg = t!("tuple_field_range", count = ts.len(), last = ts.len() - 1);
                 self.error(span, msg);
                 Type::Error
             }
             Type::Error => Type::Error,
             other => {
-                self.error(span, format!("`.{i}` s'applique à un tuple, pas à `{}`", other.text()));
+                self.error(span, t!("field_on_non_tuple", index = i, type = other.text()));
                 Type::Error
             }
         }
@@ -393,8 +414,7 @@ impl Checker<'_> {
                             Pattern::Tuple(_, s) | Pattern::Ignore(s) => (*s, self.src[s.start..s.end].to_string()),
                         };
                         self.diags.push(
-                            Diag::new(span, format!("il faut écrire le type de `{name}`"))
-                                .help(format!("par exemple `{name}: Int`")),
+                            Diag::new(span, t!("type_required", name = name)).help(t!("type_required_help", name = name)),
                         );
                         Type::Error
                     }
@@ -406,18 +426,17 @@ impl Checker<'_> {
                 let ty = self.target(target, &mut vec![]);
                 if op.is_some() && !matches!(ty, Type::Int | Type::Float | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
-                    self.error(target.span(), format!("`{text}` n'est ni un `Int` ni un `Float`"));
+                    self.error(target.span(), t!("not_numeric", target = text));
                 }
                 self.expect(value, &ty);
             }
             Stmt::Return { value, span } => match (value, self.ret.clone()) {
                 (None, Type::Unit | Type::Error) => {}
-                (None, t) => self.error(*span, format!("cette fonction doit renvoyer un `{}`", t.text())),
+                (None, t) => self.error(*span, t!("must_return", type = t.text())),
                 (Some(e), Type::Unit) => {
                     self.expr(e);
                     self.diags.push(
-                        Diag::new(e.span, "cette fonction ne renvoie rien")
-                            .help("ajoute `-> Type` après les paramètres pour renvoyer une valeur"),
+                        Diag::new(e.span, t!("returns_nothing")).help(t!("returns_nothing_help")),
                     );
                 }
                 (Some(e), t) => self.expect(e, &t),
@@ -426,7 +445,7 @@ impl Checker<'_> {
             Stmt::Break(span) | Stmt::Continue(span) => {
                 if self.loops == 0 {
                     let word = if matches!(s, Stmt::Break(_)) { "break" } else { "continue" };
-                    self.error(*span, format!("`{word}` en dehors d'une boucle"));
+                    self.error(*span, t!("outside_loop", word = word));
                 }
             }
             Stmt::If { cond, then, otherwise } => {
@@ -452,9 +471,9 @@ impl Checker<'_> {
             Stmt::Expr(e) => {
                 self.expr(e);
                 if !matches!(e.kind, ExprKind::Call { .. }) {
-                    let mut d = Diag::new(e.span, "cette expression ne fait rien");
+                    let mut d = Diag::new(e.span, t!("does_nothing"));
                     if let ExprKind::Binary(BinOp::Eq, ..) = e.kind {
-                        d = d.help("`=` compare ; pour donner une valeur, écris `:=`");
+                        d = d.help(t!("eq_vs_assign"));
                     }
                     self.diags.push(d);
                 }
@@ -472,7 +491,7 @@ impl Checker<'_> {
         match &e.kind {
             ExprKind::Int(v) => {
                 if *v > i64::MAX as u64 {
-                    self.error(e.span, "nombre trop grand pour un `Int` (maximum 9223372036854775807)");
+                    self.error(e.span, t!("int_too_big"));
                 }
                 Type::Int
             }
@@ -481,14 +500,13 @@ impl Checker<'_> {
             ExprKind::Bool(_) => Type::Bool,
             ExprKind::Result => match &self.result {
                 Some(Type::Unit) => {
-                    self.error(e.span, "`result` n'existe pas : cette fonction ne renvoie rien");
+                    self.error(e.span, t!("result_in_unit"));
                     Type::Error
                 }
                 Some(t) => t.clone(),
                 None => {
                     self.diags.push(
-                        Diag::new(e.span, "`result` ne s'utilise que dans un `ensure`")
-                            .help("`ensure result >= 0` vérifie la valeur renvoyée par la fonction"),
+                        Diag::new(e.span, t!("result_outside_ensure")).help(t!("result_help")),
                     );
                     Type::Error
                 }
@@ -496,7 +514,7 @@ impl Checker<'_> {
             ExprKind::Var(name) => match self.lookup(name) {
                 Some(v) => v.ty.clone(),
                 None => {
-                    self.error(e.span, format!("variable inconnue `{name}`"));
+                    self.error(e.span, t!("variable_unknown", name = name));
                     Type::Error
                 }
             },
@@ -505,7 +523,7 @@ impl Checker<'_> {
                 for x in elems {
                     let t = self.expr(x);
                     if t == Type::Unit {
-                        self.error(x.span, "cette expression ne donne pas de valeur à mettre dans un tuple");
+                        self.error(x.span, t!("tuple_no_value"));
                     }
                     ts.push(t);
                 }
@@ -527,15 +545,15 @@ impl Checker<'_> {
                 let Some((_, _, result)) = METHODS.iter().find(|(r, n, _)| *r == t && *n == name.text) else {
                     let known: Vec<String> =
                         METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, _)| format!("`{n}`")).collect();
-                    let mut d = Diag::new(name.span, format!("`{}` n'a pas de méthode `{}`", t.text(), name.text));
+                    let mut d = Diag::new(name.span, t!("no_method", type = t.text(), name = name.text));
                     if !known.is_empty() {
-                        d = d.help(format!("méthodes de `{}` : {}", t.text(), known.join(", ")));
+                        d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));
                     }
                     self.diags.push(d);
                     return Type::Error;
                 };
                 if !args.is_empty() {
-                    self.error(name.span, format!("`{}` ne prend pas d'argument", name.text));
+                    self.error(name.span, t!("no_arguments", name = name.text));
                 }
                 result.clone()
             }
@@ -565,10 +583,9 @@ impl Checker<'_> {
                     Eq | Ne => {
                         let ta = self.expr(a);
                         match ta {
-                            Type::Unit => self.error(a.span, "cette expression ne renvoie rien"),
+                            Type::Unit => self.error(a.span, t!("expression_nothing")),
                             Type::Tuple(_) => self.diags.push(
-                                Diag::new(e.span, format!("`{}` ne compare pas encore des tuples", op.text()))
-                                    .help("compare les éléments un par un : `t.0 = u.0 && t.1 = u.1`"),
+                                Diag::new(e.span, t!("tuple_compare", op = op.text())).help(t!("tuple_compare_help")),
                             ),
                             _ => {}
                         }
@@ -583,7 +600,7 @@ impl Checker<'_> {
                     Range | RangeInclusive => {
                         self.expr(a);
                         self.expr(b);
-                        self.error(e.span, format!("`{}` ne s'utilise que dans `for`", op.text()));
+                        self.error(e.span, t!("range_only_in_for", op = op.text()));
                         Type::Error
                     }
                     Rem => {
@@ -605,7 +622,7 @@ impl Checker<'_> {
         self.expect(cond, &Type::Bool);
         let (a, b) = (self.block_value(then), self.block_value(otherwise));
         if a != b && a != Type::Error && b != Type::Error {
-            let msg = format!("les deux branches doivent donner le même type : `{}` et `{}`", a.text(), b.text());
+            let msg = t!("branches_differ", a = a.text(), b = b.text());
             self.error(otherwise.open, msg);
             return Type::Error;
         }
@@ -630,8 +647,7 @@ impl Checker<'_> {
                     self.stmt(s);
                 }
                 self.diags.push(
-                    Diag::new(b.close, "cette branche doit finir par une valeur")
-                        .help("la dernière ligne d'une branche est la valeur du `if`"),
+                    Diag::new(b.close, t!("branch_needs_value")).help(t!("branch_value_help")),
                 );
                 Type::Error
             }
@@ -643,16 +659,15 @@ impl Checker<'_> {
     fn call(&mut self, name: &Name, args: &[Expr]) -> Type {
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
-                self.error(name.span, format!("`{}` prend exactement 1 argument", name.text));
+                self.error(name.span, t!("builtin_one_arg", name = name.text));
             }
             for a in args {
                 match self.expr(a) {
                     Type::Unit => {
-                        self.error(a.span, format!("`{}` : cette expression ne donne pas de valeur à afficher", name.text))
+                        self.error(a.span, t!("print_no_value", name = name.text))
                     }
                     Type::Tuple(_) => self.diags.push(
-                        Diag::new(a.span, format!("`{}` n'affiche pas encore les tuples", name.text))
-                            .help("affiche les éléments un par un : `print(t.0)`"),
+                        Diag::new(a.span, t!("print_tuple", name = name.text)).help(t!("print_tuple_help")),
                     ),
                     _ => {}
                 }
@@ -660,7 +675,7 @@ impl Checker<'_> {
             return Type::Unit;
         }
         let Some(sig) = self.functions.get(name.text.as_str()) else {
-            self.error(name.span, format!("fonction inconnue `{}`", name.text));
+            self.error(name.span, t!("function_unknown", name = name.text));
             args.iter().for_each(|a| {
                 self.expr(a);
             });
@@ -668,7 +683,7 @@ impl Checker<'_> {
         };
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
         if params.len() != args.len() {
-            let msg = format!("`{}` prend {} argument(s), {} donné(s)", name.text, params.len(), args.len());
+            let msg = t!("argument_count", name = name.text, expected = params.len(), given = args.len());
             self.error(name.span, msg);
         }
         for (i, a) in args.iter().enumerate() {

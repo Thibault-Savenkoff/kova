@@ -3,6 +3,7 @@
 use std::io::{BufWriter, Stdout, Write};
 
 use crate::kir::*;
+use crate::locale::{self, t};
 
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
 pub fn run(p: &Program, file: &str) -> i32 {
@@ -21,7 +22,7 @@ pub fn run(p: &Program, file: &str) -> i32 {
 /// `kova test`: runs every `test` block, even if another one failed. Code 1 if at least one fails.
 pub fn test(p: &Program, file: &str) -> i32 {
     if p.tests.is_empty() {
-        println!("aucun bloc `test` dans {file}");
+        println!("{}", t!("tests_none", file = file));
         return 0;
     }
     let mut out = BufWriter::new(std::io::stdout());
@@ -38,7 +39,7 @@ pub fn test(p: &Program, file: &str) -> i32 {
         };
     }
     let total = p.tests.len();
-    let _ = writeln!(out, "\n{} réussi(s), {failed} raté(s) sur {total}", total - failed);
+    let _ = writeln!(out, "\n{}", t!("tests_summary", passed = total - failed, failed = failed, total = total));
     out.flush().unwrap();
     if failed > 0 { 1 } else { 0 }
 }
@@ -103,6 +104,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         .iter()
                         .map(|m| match m {
                             Piece::Text(t) => t.clone(),
+                            Piece::Label(k) => locale::text(k, &[]),
                             Piece::Value(l, show) => text(locals[*l], *show),
                             Piece::File => file.to_string(),
                         })
