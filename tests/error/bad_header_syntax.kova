@@ -3,7 +3,7 @@ header {
     vitesse :=
 }
 
-fn main() {
+fn main {
 }
 
 header {

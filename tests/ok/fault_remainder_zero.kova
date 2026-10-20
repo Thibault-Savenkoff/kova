@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     var zero: Int := 0
     print(5 % zero)
 }

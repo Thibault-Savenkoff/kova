@@ -1,7 +1,7 @@
 // for, from, while, break, continue.
 
 
-fn main() {
+fn main {
     // `..` excludes the end, `..=` and `from ... to` include it.
     for i in 0..3 { write(i) }
     print(0)

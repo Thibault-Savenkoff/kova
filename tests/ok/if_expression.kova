@@ -21,7 +21,7 @@ fn mention(note: Int) -> Int {
     return m
 }
 
-fn main() {
+fn main {
     print(valeur_absolue(-7))
     print(valeur_absolue(4))
     print(mention(17))

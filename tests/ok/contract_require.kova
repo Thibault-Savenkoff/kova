@@ -5,7 +5,7 @@ fn diviser(a: Int, b: Int) -> Int
     return a / b
 }
 
-fn main() {
+fn main {
     print(diviser(10, 2))
     print(diviser(5, 0))
 }

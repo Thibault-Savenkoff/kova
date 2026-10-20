@@ -1,5 +1,5 @@
 // Printing Floats and Chars: edge cases (same text in run and build).
-fn main() {
+fn main {
     print(3.0)
     print(0.1 + 0.2)
     print(-0.0)
@@ -15,13 +15,13 @@ fn main() {
     print(inf - inf)
     print(inf - inf != inf - inf)
     print(inf - inf = inf - inf)
-    print(7.to_float() / 2.0)
-    print(-7.9.to_int())
-    print((-7.9).to_int())
+    print(7.to_float / 2.0)
+    print(-7.9.to_int)
+    print((-7.9).to_int)
     print('é')
     print('😀')
     print('a' < 'b')
-    print('A'.to_int())
+    print('A'.to_int)
     write('\n')
     print(1_000.5e3)
 }

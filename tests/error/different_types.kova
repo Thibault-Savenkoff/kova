@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     let x: Int := true
     let b: Bool := 1 + 2
     if 3 { print(1) }

@@ -1,6 +1,6 @@
 // Integers, booleans, precedence, divisions.
 
-fn vrai_bavard() -> Bool {
+fn vrai_bavard -> Bool {
     print(999)
     return true
 }
@@ -15,7 +15,7 @@ fn signe(x: Int) -> Int {
     }
 }
 
-fn main() {
+fn main {
     print(2 + 3 * 4)
     print((2 + 3) * 4)
     print(10 - 3 - 2)
@@ -38,9 +38,9 @@ fn main() {
     print(!(1 = 1) || 2 != 2)
     print(true = false)
 
-    // Short circuit: vrai_bavard() is never called.
-    print(false && vrai_bavard())
-    print(true || vrai_bavard())
+    // Short circuit: vrai_bavard is never called.
+    print(false && vrai_bavard)
+    print(true || vrai_bavard)
 
     print(signe(-5))
     print(signe(0))

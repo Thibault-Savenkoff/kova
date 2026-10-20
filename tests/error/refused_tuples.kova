@@ -1,6 +1,6 @@
-fn paire() -> (Int, Int) { return (1, 2) }
-fn main() {
-    let (a, b, c): (Int, Int, Int) := paire()
+fn paire -> (Int, Int) { return (1, 2) }
+fn main {
+    let (a, b, c): (Int, Int, Int) := paire
     let (d, e): Int := 3
     let t: (Int, Int) := (1, 2)
     print(t.2)

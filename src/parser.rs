@@ -3,6 +3,8 @@
 // It doesn't stop at the first error: it records it, skips to the end of the
 // statement, then continues. So all errors are seen at once.
 
+use std::collections::HashSet;
+
 use crate::ast::*;
 use crate::diag::{Diag, Span};
 use crate::lexer::{Kind, Token, interpolation, string_content};
@@ -33,7 +35,15 @@ const ASSIGNMENTS: &[(&str, Option<BinOp>)] = &[
 
 /// Returns the tree, the number of expressions (for the type table) and the errors.
 pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
-    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0 };
+    // The functions without parameters, wherever they are declared: a bare `main` calls `fn main`.
+    // ponytail: a scan of `fn name` tokens; struct methods (J3) will need their own list.
+    let no_params = tokens
+        .windows(4)
+        .filter(|w| w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
+        .filter(|w| w[2].kind != Kind::Sym("(") || w[3].kind == Kind::Sym(")"))
+        .map(|w| source[w[1].span.start..w[1].span.end].to_string())
+        .collect();
+    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params };
     let file = p.file();
     (file, p.ids, p.diags)
 }
@@ -44,6 +54,7 @@ struct Parser<'a> {
     src: &'a str,
     diags: Vec<Diag>,
     ids: usize,
+    no_params: HashSet<String>,
 }
 
 impl Parser<'_> {
@@ -361,8 +372,15 @@ impl Parser<'_> {
     fn function(&mut self) -> R<Function> {
         self.advance(); // fn
         let name = self.value_name("what_function")?;
-        self.expect("(")?;
         let mut params = vec![];
+        if !self.is_sym("(") {
+            return self.function_rest(name, params);
+        }
+        let open = self.advance().span;
+        if self.is_sym(")") {
+            let span = open.to(self.token().span);
+            self.diags.push(Diag::new(span, t!("empty_parens_fn", name = name.text)));
+        }
         while !self.is_sym(")") {
             let name = self.value_name("what_parameter")?;
             self.expect(":")?;
@@ -372,6 +390,11 @@ impl Parser<'_> {
             }
         }
         self.advance(); // )
+        self.function_rest(name, params)
+    }
+
+    /// After the parameters: `-> Type`, the contracts, the body.
+    fn function_rest(&mut self, name: Name, params: Vec<Param>) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
             Some(self.type_()?)
@@ -637,7 +660,14 @@ impl Parser<'_> {
         Ok(self.expr(start.to(e.span), ExprKind::Unary(op, Box::new(e))))
     }
 
-    /// An atom followed by its suffixes: `x.to_float()`.
+    /// `f()`: empty parentheses are not written at a call.
+    fn empty_parens(&mut self, args: &[Expr], open: Span, close: Span, name: &str) {
+        if args.is_empty() {
+            self.diags.push(Diag::new(open.to(close), t!("empty_parens", name = name)));
+        }
+    }
+
+    /// An atom followed by its suffixes: `x.to_float`.
     fn primary(&mut self) -> R<Expr> {
         let mut e = self.atom()?;
         while self.is_sym(".") {
@@ -648,9 +678,13 @@ impl Parser<'_> {
                 continue;
             }
             let name = self.value_name("what_method")?;
-            self.expect("(")?;
-            let args = self.arguments()?;
-            let end = self.advance().span;
+            let (mut args, mut end) = (vec![], name.span);
+            if self.is_sym("(") {
+                let open = self.advance().span;
+                args = self.arguments()?;
+                end = self.advance().span;
+                self.empty_parens(&args, open, end, &name.text);
+            }
             e = self.expr(e.span.to(end), ExprKind::Method { receiver: Box::new(e), name, args });
         }
         Ok(e)
@@ -683,11 +717,17 @@ impl Parser<'_> {
             Kind::Ident => {
                 let name = self.value_name("what_variable")?;
                 if !self.is_sym("(") {
-                    return Ok(self.expr(name.span, ExprKind::Var(name.text)));
+                    let kind = if self.no_params.contains(&name.text) {
+                        ExprKind::Call { name: name.clone(), args: vec![] }
+                    } else {
+                        ExprKind::Var(name.text.clone())
+                    };
+                    return Ok(self.expr(name.span, kind));
                 }
-                self.advance();
+                let open = self.advance().span;
                 let args = self.arguments()?;
                 let end = self.advance().span;
+                self.empty_parens(&args, open, end, &name.text);
                 return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
             }
             Kind::Keyword("if") => return self.if_expr(),

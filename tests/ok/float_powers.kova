@@ -1,6 +1,6 @@
 // Powers of 2 and exact ties: where rounding is the trickiest.
 // (Checked against Python's `repr` on 8,110 values.)
-fn main() {
+fn main {
     var x: Float := 1.0
     from i := 1 to 1075 {
         if i % 25 = 0 || i > 1070 || (i > 20 && i < 30) { print(x) }

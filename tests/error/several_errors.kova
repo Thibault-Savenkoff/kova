@@ -1,11 +1,11 @@
 // The parser continues after an error: both are reported.
-fn a() {
+fn a {
     let x: Int := (1 +
     print(2)
 }
-fn b() {
+fn b {
     let := 3
 }
-fn main() {}
+fn main {}
 // error: :5:1
 // error: :7:9

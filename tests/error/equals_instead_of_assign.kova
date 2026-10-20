@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     var x: Int := 0
     x = 5
 }

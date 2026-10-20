@@ -190,6 +190,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             if params.contains_key(&p.name.text) {
                 c.error(p.name.span, t!("param_exists", name = p.name.text));
             }
+            c.function_name(&p.name);
             params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty), kind: VarKind::Param, span: p.name.span });
         }
         c.scopes = vec![params];
@@ -271,8 +272,22 @@ impl Checker<'_> {
         self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 
+    /// A bare `main` calls `fn main`: no variable may take the name of a function without parameters.
+    fn function_name(&mut self, name: &Name) -> bool {
+        let taken = self.functions.get(name.text.as_str()).is_some_and(|f| f.params.is_empty());
+        if taken {
+            self.diags.push(
+                Diag::new(name.span, t!("function_name_taken", name = name.text)).help(t!("function_name_taken_help", name = name.text)),
+            );
+        }
+        taken
+    }
+
     /// Declares a variable. Refused if the name is still visible (same block or enclosing block).
     fn declare(&mut self, name: &Name, ty: Type, kind: VarKind) {
+        if self.function_name(name) {
+            return;
+        }
         if let Some(old) = self.lookup(&name.text) {
             let (line, _) = line_col(self.src, old.span.start);
             self.diags.push(

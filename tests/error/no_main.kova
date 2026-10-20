@@ -1,2 +1,2 @@
-fn principal() {}
+fn principal {}
 // error: the `main` function is missing

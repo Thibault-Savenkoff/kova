@@ -11,7 +11,7 @@ fn g(x: Int)
 {
 }
 
-fn main() {
+fn main {
     print(f(1))
 }
 // error: different types: `Bool` expected, `Int` given

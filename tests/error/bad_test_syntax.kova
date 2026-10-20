@@ -6,6 +6,6 @@ test "a" {
 }
 test sans_nom {
 }
-fn main() {
+fn main {
 }
 // error: test name in quotes expected, found `sans_nom`

@@ -1,7 +1,7 @@
-fn main() {
-    print(3.to_int())
-    print(3.0.carre())
-    print(true.to_int())
+fn main {
+    print(3.to_int)
+    print(3.0.carre)
+    print(true.to_int)
     print(1.to_float(2))
 }
 // error: `Int` has no method `to_int`

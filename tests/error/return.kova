@@ -1,5 +1,5 @@
-fn rien() { return 3 }
-fn nombre() -> Int { return }
-fn main() {}
+fn rien { return 3 }
+fn nombre -> Int { return }
+fn main {}
 // error: this function returns nothing
 // error: this function must return `Int`

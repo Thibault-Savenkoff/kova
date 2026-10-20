@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     break
 }
 // error: `break` outside of a loop

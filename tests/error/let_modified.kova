@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     let a: Int := 1
     a := 2
 }

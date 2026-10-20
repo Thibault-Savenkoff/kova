@@ -1,8 +1,8 @@
-fn main() {
+fn main {
     let inf: Float := 1e308 * 10.0
     let nan: Float := inf - inf
     print(nan)
-    print(nan.to_int())
+    print(nan.to_int)
 }
 // expect: NaN
 // code: 101

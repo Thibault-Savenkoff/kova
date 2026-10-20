@@ -14,7 +14,7 @@ test "division" {
     print(7 / 0)
 }
 
-fn main() {
+fn main {
     print(carre(5))
 }
 // expect: 25

@@ -5,7 +5,7 @@ header {
     lock := oui
 }
 
-fn main() {
+fn main {
 }
 // error: `mode` is `run` or `build`, not `vite`
 // error: `mode` is already set (line 2)

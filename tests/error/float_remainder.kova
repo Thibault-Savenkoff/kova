@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     print(5.0 % 2.0)
 }
 // error: different types: `Int` expected, `Float` given

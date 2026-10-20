@@ -11,14 +11,14 @@ fn min_max(a: Int, b: Int, c: Int) -> (Int, Int) {
 
 // Many results of mixed types (native code must store them in memory).
 fn statistiques(n: Int) -> (Int, Float, Bool, Char, (Int, Int)) {
-    return (n * 2, n.to_float() / 4.0, n > 3, 'k', (n, -n))
+    return (n * 2, n.to_float / 4.0, n > 3, 'k', (n, -n))
 }
 
 fn somme(p: (Int, Int)) -> Int {
     return p.0 + p.1
 }
 
-fn main() {
+fn main {
     let (min, max): (Int, Int) := min_max(5, 1, 9)
     print(min)
     print(max)

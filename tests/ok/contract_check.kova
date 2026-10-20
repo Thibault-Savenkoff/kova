@@ -1,5 +1,5 @@
 // Failed `check`: tuples and Chars are shown as in the code.
-fn main() {
+fn main {
     let t: (Int, Char) := (4, 'é')
     check t.0 > 0
     print(t.0)

@@ -1,0 +1,11 @@
+// A bare `seven` calls `fn seven`: no variable can take its name.
+fn seven -> Int { return 7 }
+
+fn main {
+    let seven: Int := 1
+}
+
+fn twice(main: Int) -> Int { return main * 2 }
+// error: `seven` is a function without parameters: no variable can have its name
+// error: `main` is a function without parameters: no variable can have its name
+// error: choose another name: `seven` alone calls the function

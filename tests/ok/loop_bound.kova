@@ -1,13 +1,13 @@
 // A loop's bound is computed only once, before the first iteration.
 
-fn borne() -> Int {
+fn borne -> Int {
     print(100)
     return 3
 }
 
-fn main() {
-    from i := 1 to borne() { print(i) }
-    for i in 0..borne() { print(i) }
+fn main {
+    from i := 1 to borne { print(i) }
+    for i in 0..borne { print(i) }
 }
 
 // expect: 100

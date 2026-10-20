@@ -1,0 +1,16 @@
+// A function without parameters is declared and called without `()`.
+fn seven -> Int { return 7 }
+
+fn greet {
+    print(seven + 1)
+}
+
+fn main {
+    greet
+    let x: Float := seven.to_float / 2.0
+    print(x)
+    print(seven.to_float.to_int)
+}
+// expect: 8
+// expect: 3.5
+// expect: 7

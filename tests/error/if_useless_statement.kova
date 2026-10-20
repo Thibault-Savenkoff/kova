@@ -1,5 +1,5 @@
 // An `if` statement gives no value: `1` alone does nothing.
-fn main() {
+fn main {
     if true { 1 } else { 2 }
 }
 // error: this expression does nothing

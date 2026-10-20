@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     let a: Bool := 1 < 2 < 3
 }
 // error: `<` cannot be chained

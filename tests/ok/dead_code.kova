@@ -4,7 +4,7 @@ fn f(x: Int) -> Int {
     let y: Int := x + 1
     print(y)
 }
-fn main() {
+fn main {
     while true {
         break
         print(1)

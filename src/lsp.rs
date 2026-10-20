@@ -138,17 +138,17 @@ fn tree(src: &str) -> File {
 
 /// `fn square(x: Int) -> Int`, and the position of each parameter in this text.
 fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
-    let mut text = format!("fn {}(", f.name.text);
+    let mut text = format!("fn {}", f.name.text);
     let mut params = vec![];
     for (i, p) in f.params.iter().enumerate() {
-        if i > 0 {
-            text += ", ";
-        }
+        text += if i > 0 { ", " } else { "(" };
         let start = text.encode_utf16().count() as u32;
         text += &format!("{}: {}", p.name.text, p.ty.text());
         params.push([start, text.encode_utf16().count() as u32]);
     }
-    text += ")";
+    if !f.params.is_empty() {
+        text += ")";
+    }
     if let Some(r) = &f.ret {
         text += &format!(" -> {}", r.text());
     }
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn utf16_positions() {
-        let src = "fn carré() {\n  é😀x\n}";
+        let src = "fn carré {\n  é😀x\n}";
         let x = src.find('x').unwrap();
         assert_eq!(position(src, x), Position::new(1, 5)); // é = 1 unit, 😀 = 2
         assert_eq!(offset(src, Position::new(1, 5)), x);
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn completion_of_visible_variables() {
-        let src = "fn f(n: Int) {\n  let a: Int := 1\n  if a = 1 {\n    let b: Bool := true\n    HERE\n  }\n  let c: Int := 2\n}\nfn main() {}";
+        let src = "fn f(n: Int) {\n  let a: Int := 1\n  if a = 1 {\n    let b: Bool := true\n    HERE\n  }\n  let c: Int := 2\n}\nfn main {}";
         let here = src.find("HERE").unwrap();
         assert_eq!(names(&complete(src, here)), ["n", "a", "b"]);
         // After the `if`: `b` is no longer visible, `c` not yet (we are before it).
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn header_completion() {
-        let src = "header {\n    mode := b\n    \n}\nfn main() {}";
+        let src = "header {\n    mode := b\n    \n}\nfn main {}";
         let labels = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
         assert_eq!(labels(complete(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
         assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang"]);
@@ -353,20 +353,20 @@ mod tests {
 
     #[test]
     fn completion_in_a_test() {
-        let src = "test \"sample\" {\n  let a: Int := 1\n  check HERE\n}\nfn main() {}";
+        let src = "test \"sample\" {\n  let a: Int := 1\n  check HERE\n}\nfn main {}";
         assert_eq!(names(&complete(src, src.find("HERE").unwrap())), ["a"]);
     }
 
     #[test]
     fn completion_while_typing() {
         // `}` not typed yet, statement unfinished: `total` is offered anyway.
-        let src = "fn main() {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
+        let src = "fn main {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
         assert_eq!(names(&complete(src, src.len())), ["total", "i"]);
     }
 
     #[test]
     fn tuple_pattern_completion() {
-        let src = "fn main() {\n  let (a, (b, _)): (Int, (Float, Bool)) := (1, (2.0, true))\n  HERE\n}";
+        let src = "fn main {\n  let (a, (b, _)): (Int, (Float, Bool)) := (1, (2.0, true))\n  HERE\n}";
         let items = complete(src, src.find("HERE").unwrap());
         let vars: Vec<(&str, &str)> = items
             .iter()
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn parameter_help() {
-        let src = "fn square(x: Int, y: Bool) -> Int { return x }\nfn main() { print(square(1, ";
+        let src = "fn square(x: Int, y: Bool) -> Int { return x }\nfn main { print(square(1, ";
         let help = signature(src, src.len()).unwrap();
         assert_eq!(help.signatures[0].label, "fn square(x: Int, y: Bool) -> Int");
         assert_eq!(help.active_parameter, Some(1));

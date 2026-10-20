@@ -6,12 +6,12 @@
   },
   "fonction sans résultat": {
     "prefix": "fnv",
-    "body": ["fn ${1:nom}(${2}) {", "\t$0", "}"],
+    "body": ["fn ${1:nom}(${2:param}: ${3:Type}) {", "\t$0", "}"],
     "description": "Fonction qui ne renvoie rien"
   },
   "main": {
     "prefix": "main",
-    "body": ["fn main() {", "\t$0", "}"],
+    "body": ["fn main {", "\t$0", "}"],
     "description": "Point d'entrée du programme"
   },
   "struct": {

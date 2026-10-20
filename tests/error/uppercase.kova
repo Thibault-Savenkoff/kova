@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     let Total: Int := 0
 }
 // error: a variable name starts with a lowercase letter

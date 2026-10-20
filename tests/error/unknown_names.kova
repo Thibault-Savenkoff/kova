@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     print(y)
     calculer(2)
     let z: Texte := 1

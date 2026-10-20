@@ -14,7 +14,7 @@ fn h(x: Int) {
     check x > 0 else "{x} trop petit"
 }
 
-fn main() {
+fn main {
     print(f(1))
     let s: Int := "texte"
 }

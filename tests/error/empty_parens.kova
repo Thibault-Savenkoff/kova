@@ -1,0 +1,10 @@
+// Calls without arguments are written without `()` (PLAN 2.6, like Eiffel).
+fn seven -> Int { return 7 }
+
+fn main() {
+    print(seven())
+    print(seven.to_float())
+}
+// error: a function without parameters is declared without `()`: `fn main`
+// error: a call without arguments is written without `()`: `seven`
+// error: a call without arguments is written without `()`: `to_float`

@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     var x: Int := 2
     while true {
         x *= 2

@@ -18,7 +18,7 @@ fn fib_rapide(n: Int) -> Int {
     return a
 }
 
-fn main() {
+fn main {
     from i := 0 to 10 {
         print(fib(i))
     }

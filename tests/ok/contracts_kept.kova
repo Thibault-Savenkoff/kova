@@ -32,7 +32,7 @@ fn compter(n: Int)
     print('.')
 }
 
-fn main() {
+fn main {
     print(fib(20))
     let (s, negatif): (Int, Bool) := signe(-7)
     print(s)

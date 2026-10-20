@@ -1,5 +1,5 @@
 // main before the others, braces on their own line, accents, Bool as parameter and result.
-fn main()
+fn main
 {
     dire(3)
     print(carré(-4))

@@ -1,5 +1,5 @@
 fn carre(x: Int) -> Int { return x * x }
-fn main() {
+fn main {
     print(carre(1, 2))
     print(carre(true))
     print(print(1))

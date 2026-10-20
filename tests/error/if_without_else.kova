@@ -1,4 +1,4 @@
-fn main() {
+fn main {
     let x: Int := if true { 1 }
 }
 // error: an `if` that gives a value needs an `else`
