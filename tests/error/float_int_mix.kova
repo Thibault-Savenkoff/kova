@@ -1,9 +1,11 @@
 fn main {
-    let a: Float := 3
-    let b: Float := 1.5 + 2
+    let n: Int := 2
+    let a: Float := 1.5 + n
     let c: Int := 2.0
+    let d: Float := 9007199254740993
 }
-// error: for a `Float`, write `3.0`
+// error: different types: `Float` expected, `Int` given
 // error: :3:27
-// error: Kova never converts by itself: use `.to_float` or `.to_int`
+// error: Kova never converts a variable by itself: use `.to_float` or `.to_int`
 // error: :4:19
+// error: `9007199254740993` is too big to be exactly a `Float`: the nearest one is `9007199254740992.0`

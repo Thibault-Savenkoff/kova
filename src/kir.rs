@@ -731,6 +731,7 @@ impl<'a> Translator<'a> {
 
     fn expr(&mut self, e: &Expr) -> Slots {
         match &e.kind {
+            ExprKind::Int(v) if self.info.types[e.id] == Type::Float => vec![self.float_constant(*v as f64)],
             ExprKind::Int(v) => vec![self.constant(*v as i64)],
             ExprKind::Float(v) => vec![self.float_constant(*v)],
             ExprKind::Char(c) => vec![self.constant(*c as i64)],
@@ -767,6 +768,7 @@ impl<'a> Translator<'a> {
             ExprKind::Unary(UnOp::Neg, x) => {
                 // A number written with `-` in front is a constant (handles `-9223372036854775808`).
                 match x.kind {
+                    ExprKind::Int(v) if self.info.types[e.id] == Type::Float => return vec![self.float_constant(-(v as f64))],
                     ExprKind::Int(v) => return vec![self.constant((v as i64).wrapping_neg())],
                     ExprKind::Float(v) => return vec![self.float_constant(-v)],
                     _ => {}

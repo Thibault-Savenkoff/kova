@@ -1,0 +1,29 @@
+// A number written directly becomes a `Float` when it fits exactly (PLAN 2.5).
+
+fn half(x: Float) -> Float {
+    return x / 2
+}
+
+fn main {
+    let a: Float := 3
+    print(a)
+    print(1.5 + 2)
+    print(2 * a - 1)
+    print(-2 + a)
+    print(half(5))
+    print(a = 3)
+    print(4 > a)
+    var b: Float := 0
+    b += 1
+    print(b)
+    print(9007199254740992 + 0.0)
+}
+// expect: 3.0
+// expect: 3.5
+// expect: 5.0
+// expect: 1.0
+// expect: 2.5
+// expect: true
+// expect: true
+// expect: 1.0
+// expect: 9007199254740992.0

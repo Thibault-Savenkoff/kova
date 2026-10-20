@@ -336,11 +336,59 @@ impl Checker<'_> {
     /// Checks that `e` has type `expected`.
     fn expect(&mut self, e: &Expr, expected: &Type) {
         let t = self.expr(e);
+        if *expected == Type::Float && t == Type::Int && self.as_float(e) {
+            return;
+        }
+        self.mismatch(e, t, expected);
+    }
+
+    /// A number written directly, like `3` or `-2`, becomes a `Float` if it fits exactly
+    /// (PLAN 2.5: `let f: Float := 3`, `1.5 + 2`). A variable still needs `.to_float`.
+    fn as_float(&mut self, e: &Expr) -> bool {
+        let (v, inner) = match &e.kind {
+            ExprKind::Int(v) => (*v, None),
+            ExprKind::Unary(UnOp::Neg, x) => match x.kind {
+                ExprKind::Int(v) => (v, Some(x.id)),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if v as f64 as u64 != v || v as f64 >= 18446744073709551615.0 {
+            return false;
+        }
+        self.types[e.id] = Type::Float;
+        if let Some(id) = inner {
+            self.types[id] = Type::Float;
+        }
+        true
+    }
+
+    /// `a op b`, both of the same type; `2 * x` with a `Float` `x` makes `2` a `Float`.
+    fn same_type(&mut self, a: &Expr, b: &Expr, allowed: &[Type], what: &str) -> Type {
+        let t = self.one_of(a, allowed, what);
+        self.like(a, t, b)
+    }
+
+    /// Checks `b` against the type `t` of `a` (see `same_type`).
+    fn like(&mut self, a: &Expr, t: Type, b: &Expr) -> Type {
+        if t != Type::Int || !matches!(a.kind, ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
+            self.expect(b, &t);
+            return t;
+        }
+        let tb = self.expr(b);
+        if tb == Type::Float && self.as_float(a) {
+            return Type::Float;
+        }
+        self.mismatch(b, tb, &t);
+        t
+    }
+
+    fn mismatch(&mut self, e: &Expr, t: Type, expected: &Type) {
         if t != *expected && t != Type::Error && *expected != Type::Error {
             let msg = t!("types_differ", expected = expected.text(), given = t.text());
             let mut d = Diag::new(e.span, msg);
             if let (Type::Float, ExprKind::Int(v)) = (expected, &e.kind) {
-                d = d.help(t!("float_literal", value = v));
+                d = d.help(t!("float_inexact", value = v, nearest = crate::kir::float_text(*v as f64)));
             } else if matches!((expected, &t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
                 d = d.help(t!("no_conversion"));
             }
@@ -605,12 +653,11 @@ impl Checker<'_> {
                             ),
                             _ => {}
                         }
-                        self.expect(b, &ta);
+                        self.like(a, ta, b);
                         Type::Bool
                     }
                     Lt | Le | Gt | Ge => {
-                        let t = self.one_of(a, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.text()));
-                        self.expect(b, &t);
+                        self.same_type(a, b, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.text()));
                         Type::Bool
                     }
                     Range | RangeInclusive => {
@@ -625,9 +672,7 @@ impl Checker<'_> {
                         Type::Int
                     }
                     Plus | Minus | Times | Div => {
-                        let t = self.one_of(a, &[Type::Int, Type::Float], &format!("`{}`", op.text()));
-                        self.expect(b, &t);
-                        t
+                        self.same_type(a, b, &[Type::Int, Type::Float], &format!("`{}`", op.text()))
                     }
                 }
             }
