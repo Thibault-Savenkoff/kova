@@ -160,6 +160,8 @@ pub enum ExprKind {
     Float(f64),
     Char(char),
     Bool(bool),
+    /// `"hello"`, escapes already decoded: a new `String`.
+    Str(String),
     Var(String),
     /// `result` in an `ensure`.
     Result,

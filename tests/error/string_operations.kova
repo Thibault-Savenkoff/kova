@@ -1,0 +1,17 @@
+fn main {
+    let a: String := "a"
+    print(a < "b")
+    print(a - "b")
+    print(a + 1)
+    var s: String := "s"
+    s -= "x"
+    let n: Int := "5"
+    print(a.size)
+}
+// error: `<` applies to `Int` or `Float` or `Char`, not to `String`
+// error: `-` applies to `Int` or `Float`, not to `String`
+// error: different types: `String` expected, `Int` given
+// error: `s` is neither an `Int` nor a `Float`
+// error: different types: `Int` expected, `String` given
+// error: `String` has no method `size`
+// error: methods of `String`: `length`, `clone`

@@ -37,6 +37,8 @@ lang fr {
     contract_violated := "contrat non respecté"
     contract_values := "valeurs : "
     contract_called_from := "appelé depuis "
+    leak_allocated := "Strings créés : "
+    leak_live := "Strings jamais libérés : "
 
     // ---- Lexer ----
     comment_unclosed := "commentaire `/*` jamais fermé"
@@ -82,7 +84,6 @@ lang fr {
     if_needs_else_help := "ajoute `else \{ ... \}` : la valeur doit exister dans tous les cas"
     not_chainable := "`{op}` ne peut pas s'enchaîner"
     not_chainable_help := "pour `a < b < c`, écris `a < b && b < c`"
-    texts_j3 := "les textes arrivent au jalon J3 (pour l'instant : seulement après `else` dans un contrat)"
     expression_expected := "expression attendue, trouvé {found}"
     empty_parens := "un appel sans argument s'écrit sans `()` : `{name}`"
     empty_parens_fn := "une fonction sans paramètre se déclare sans `()` : `fn {name}`"
@@ -159,6 +160,16 @@ lang fr {
     print_tuple_help := "affiche les éléments un par un : `print(t.0)`"
     function_unknown := "fonction inconnue `{name}`"
     argument_count := "`{name}` prend {expected} argument(s), {given} donné(s)"
+
+    // ---- Ownership ----
+    moved_use := "`{name}` a été déplacé (ligne {line})"
+    moved_use_help := "utilise `{name}.clone` à la ligne {line} si tu veux en garder une copie"
+    borrowed_move := "`{name}` est emprunté ici : il ne peut pas être déplacé"
+    borrowed_move_help := "donne une copie : `{name}.clone`"
+    field_move := "`{place}` ne peut pas être sorti de son tuple"
+    field_move_help := "prends une copie : `{place}.clone`"
+    loop_move := "`{name}` est déplacé dans une boucle : il le serait encore au tour suivant"
+    loop_move_help := "utilise `{name}.clone`, ou redonne une valeur à `{name}` avant la fin de la boucle"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` est un fichier de traductions : `kova run {file}` le vérifie"

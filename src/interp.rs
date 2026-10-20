@@ -5,18 +5,75 @@ use std::io::{BufWriter, Stdout, Write};
 use crate::kir::*;
 use crate::locale::{self, t};
 
+/// The Strings of the running program; a String's slot holds its number here (0 = none).
+#[derive(Default)]
+struct Heap {
+    strings: Vec<Option<String>>,
+    /// Numbers of freed Strings, to reuse.
+    free: Vec<usize>,
+    allocated: usize,
+    live: usize,
+}
+
+impl Heap {
+    fn make(&mut self, s: String) -> i64 {
+        self.allocated += 1;
+        self.live += 1;
+        if self.strings.is_empty() {
+            self.strings.push(None); // number 0 = no String
+        }
+        match self.free.pop() {
+            Some(i) => {
+                self.strings[i] = Some(s);
+                i as i64
+            }
+            None => {
+                self.strings.push(Some(s));
+                self.strings.len() as i64 - 1
+            }
+        }
+    }
+    fn get(&self, h: i64) -> &str {
+        self.strings[h as usize].as_deref().expect("String used after being freed")
+    }
+    fn release(&mut self, h: i64) {
+        if h != 0 {
+            self.strings[h as usize].take().expect("String freed twice");
+            self.free.push(h as usize);
+            self.live -= 1;
+        }
+    }
+}
+
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
+/// With `KOVA_LEAKS` set (the test runner sets it): at the end, a String never freed
+/// is an error (code 102); `KOVA_LEAKS=count` also prints how many were made.
 pub fn run(p: &Program, file: &str) -> i32 {
     let mut out = BufWriter::new(std::io::stdout());
-    let result = call(p, p.main, &[], &mut out, file);
+    let mut heap = Heap::default();
+    let result = call(p, p.main, &[], &mut out, file, &mut heap);
     out.flush().unwrap();
     match result {
-        Ok(_) => 0,
+        Ok(_) => leaks(heap.allocated, heap.live),
         Err(message) => {
             eprint!("{message}");
             101
         }
     }
+}
+
+/// Same check as `kova_leaks` in `runtime/runtime.c`.
+fn leaks(allocated: usize, live: usize) -> i32 {
+    let Ok(mode) = std::env::var("KOVA_LEAKS") else { return 0 };
+    let text = |k| locale::text(k, &[]);
+    if mode == "count" {
+        eprintln!("{}{allocated}", text("leak_allocated"));
+    }
+    if live == 0 {
+        return 0;
+    }
+    eprintln!("{}{}{live}", text("error_prefix"), text("leak_live"));
+    102
 }
 
 /// `kova test`: runs every `test` block, even if another one failed. Code 1 if at least one fails.
@@ -28,7 +85,7 @@ pub fn test(p: &Program, file: &str) -> i32 {
     let mut out = BufWriter::new(std::io::stdout());
     let mut failed = 0;
     for (name, num) in &p.tests {
-        let result = call(p, *num, &[], &mut out, file);
+        let result = call(p, *num, &[], &mut out, file, &mut Heap::default());
         let _ = match result {
             Ok(_) => writeln!(out, "✅ {name}"),
             Err(message) => {
@@ -49,7 +106,7 @@ type Outcome = Result<Vec<i64>, String>;
 
 // ponytail: Rust recursion = the interpreter's stack; infinite recursion
 // crashes without a nice message (same in native). To handle with stack errors.
-fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file: &str) -> Outcome {
+fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file: &str, heap: &mut Heap) -> Outcome {
     let fault = |f: Fault, loc: &Loc| fault_text(f, file, *loc);
     let f = &p.functions[num];
     // Every slot fits in 64 bits; a Float is stored bit for bit.
@@ -71,7 +128,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                 Inst::Not(d, a) => locals[*d] = 1 - locals[*a],
                 Inst::Call(d, g, a) => {
                     let vals: Vec<i64> = a.iter().map(|&l| locals[l]).collect();
-                    let r = call(p, *g, &vals, out, file)?;
+                    let r = call(p, *g, &vals, out, file, heap)?;
                     for (&d, v) in d.iter().zip(r) {
                         locals[d] = v;
                     }
@@ -93,8 +150,28 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         }
                     }
                 }
+                Inst::Text(d, s) => locals[*d] = heap.make(s.clone()),
+                Inst::Str(d, op, a) => {
+                    let s = |k: usize| heap.get(locals[a[k]]);
+                    locals[*d] = match op {
+                        StrOp::Concat => {
+                            let joined = format!("{}{}", s(0), s(1));
+                            heap.make(joined)
+                        }
+                        StrOp::Eq => (s(0) == s(1)) as i64,
+                        StrOp::Length => s(0).chars().count() as i64,
+                        StrOp::Clone => {
+                            let copy = s(0).to_string();
+                            heap.make(copy)
+                        }
+                    }
+                }
+                Inst::Free(l) => {
+                    heap.release(locals[*l]);
+                    locals[*l] = 0;
+                }
                 Inst::Print { value, show, newline } => {
-                    let _ = write!(out, "{}", text(locals[*value], *show));
+                    let _ = write!(out, "{}", text(locals[*value], *show, heap));
                     if *newline {
                         let _ = writeln!(out);
                     }
@@ -105,7 +182,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         .map(|m| match m {
                             Piece::Text(t) => t.clone(),
                             Piece::Label(k) => locale::text(k, &[]),
-                            Piece::Value(l, show) => text(locals[*l], *show),
+                            Piece::Value(l, show) => text(locals[*l], *show, heap),
                             Piece::File => file.to_string(),
                         })
                         .collect());
@@ -121,8 +198,9 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
     }
 }
 
-fn text(v: i64, show: Show) -> String {
+fn text(v: i64, show: Show, heap: &Heap) -> String {
     match show {
+        Show::String => heap.get(v).to_string(),
         Show::Int => v.to_string(),
         Show::Bool => (v != 0).to_string(),
         Show::Float => float_text(float(v)),

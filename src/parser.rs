@@ -735,7 +735,8 @@ impl Parser<'_> {
             Kind::Keyword("false") => ExprKind::Bool(false),
             Kind::Keyword("result") => ExprKind::Result,
             Kind::Str => {
-                return self.error(t.span, t!("texts_j3"));
+                self.no_interpolation(t);
+                ExprKind::Str(string_content(&self.text(t.span)))
             }
             Kind::Ident if self.text(t.span) == "mode" && self.mode_test() => return self.in_mode(),
             Kind::Ident => {

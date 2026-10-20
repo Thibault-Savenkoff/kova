@@ -18,6 +18,12 @@
 // Runtime errors (overflow, division by zero) are checked inside `Binary`
 // and `Neg`: each backend translates them identically.
 //
+// A `String` is one slot holding a handle (an address in native code, a number in the
+// interpreter); 0 = no String. Each one has a single owner (`ownership.rs`):
+//   - a variable frees its String at the end of its block (`Free`); a move empties the
+//     variable first (slot := 0), and freeing 0 does nothing;
+//   - a temporary (`a + b` given to `print`) is freed at the end of its statement.
+//
 // Contracts become ordinary tests followed by a `Fail` (message in pieces):
 //   - `require`: at the start of the function. It receives 2 hidden parameters, the line and
 //     column of the call, so that the message says who called it wrongly;
@@ -59,11 +65,20 @@ fn element(t: &Type, i: usize) -> Type {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Unit => vec![],
         Type::Error => unreachable!("erroneous type after type checking"),
+    }
+}
+
+/// For each slot of a value of this type: does it hold a `String`?
+fn strings(t: &Type) -> Vec<bool> {
+    match t {
+        Type::String => vec![true],
+        Type::Tuple(ts) => ts.iter().flat_map(strings).collect(),
+        _ => vec![false; scalars(t).len()],
     }
 }
 
@@ -113,10 +128,28 @@ pub enum Inst {
     Convert(Local, Conversion, Local, Loc),
     /// `results := f(args)`.
     Call(Slots, usize, Slots),
+    /// `dst := "text"`: a new String.
+    Text(Local, String),
+    /// `dst := op(args)`, done by the runtime (`kova_str_*` in `runtime/runtime.c`).
+    Str(Local, StrOp, Slots),
+    /// Frees a String, then sets its slot to 0 (freeing 0 does nothing).
+    Free(Local),
     /// `print` (`newline` = true) or `write`.
     Print { value: Local, show: Show, newline: bool },
     /// Broken contract: writes the message to stderr and stops (code 101).
     Fail(Vec<Piece>),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum StrOp {
+    /// `a + b`: a new String.
+    Concat,
+    /// `a = b`: 1 or 0.
+    Eq,
+    /// `s.length`: the number of characters.
+    Length,
+    /// `s.clone`: a new String.
+    Clone,
 }
 
 /// A piece of the message of a broken contract.
@@ -137,6 +170,7 @@ pub enum Show {
     Bool = 1,
     Float = 2,
     Char = 3,
+    String = 4,
 }
 
 impl Show {
@@ -145,6 +179,7 @@ impl Show {
             Type::Bool => Show::Bool,
             Type::Float => Show::Float,
             Type::Char => Show::Char,
+            Type::String => Show::String,
             _ => Show::Int,
         }
     }
@@ -328,6 +363,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 blocks: vec![],
                 current: 0,
                 loops: vec![],
+                temps: vec![],
             };
             for p in params {
                 let ty = type_of(&p.ty);
@@ -382,8 +418,11 @@ struct Translator<'a> {
     /// Blocks being built; `None` = end not set yet.
     blocks: Vec<(Vec<Inst>, Option<End>)>,
     current: BlockId,
-    /// For each open loop: (target of `continue`, target of `break`).
-    loops: Vec<(BlockId, BlockId)>,
+    /// For each open loop: (target of `continue`, target of `break`, number of open blocks).
+    loops: Vec<(BlockId, BlockId, usize)>,
+    /// The Strings made by the current statement and not given to anyone yet:
+    /// freed at the end of the statement.
+    temps: Vec<Local>,
 }
 
 impl<'a> Translator<'a> {
@@ -433,13 +472,72 @@ impl<'a> Translator<'a> {
         self.variable(name).0
     }
 
+    /// A new value (call result, `a + b`…): its Strings are temporaries until someone takes them.
+    fn track(&mut self, v: &[Local], ty: &Type) {
+        let s = strings(ty);
+        self.temps.extend(v.iter().zip(s).filter(|(_, s)| *s).map(|(&l, _)| l));
+    }
+    fn untrack(&mut self, v: &[Local]) {
+        self.temps.retain(|l| !v.contains(l));
+    }
+    /// Frees the temporaries made since `mark`.
+    fn free_temps(&mut self, mark: usize) {
+        let temps: Vec<Local> = self.temps.drain(mark..).collect();
+        for l in temps.into_iter().rev() {
+            self.emit(Inst::Free(l));
+        }
+    }
+    fn free_value(&mut self, v: &[Local], ty: &Type) {
+        for (&l, s) in v.iter().zip(strings(ty)).rev() {
+            if s {
+                self.emit(Inst::Free(l));
+            }
+        }
+    }
+    /// Frees the variables of the blocks `names[from..]` (from the innermost).
+    fn free_scopes(&mut self, from: usize) {
+        let vars: Vec<(Slots, Type)> = self.names[from..].iter().rev().flat_map(|t| t.values().cloned()).collect();
+        for (v, ty) in vars {
+            self.free_value(&v, &ty);
+        }
+    }
+
+    /// `e` is given (`let`, `:=`, `return`…): the value now belongs to the receiver.
+    /// A moved variable (marked by `ownership.rs`) is emptied, so that its block frees nothing.
+    fn owned(&mut self, e: &Expr) -> Slots {
+        if !self.info.moves[e.id] {
+            let v = self.expr(e);
+            self.untrack(&v);
+            return v;
+        }
+        let ExprKind::Var(name) = &e.kind else { unreachable!("only a variable is moved") };
+        let (src, ty) = self.variable(name);
+        let v = self.new_slots(&ty);
+        self.copy(&v, &src);
+        for (&l, s) in src.iter().zip(strings(&ty)) {
+            if s {
+                self.emit(Inst::Const(l, 0));
+            }
+        }
+        v
+    }
+
+    /// A condition: its temporaries are freed right away (a `while` computes it at each turn).
+    fn cond1(&mut self, e: &Expr) -> Local {
+        let mark = self.temps.len();
+        let c = self.expr1(e);
+        self.free_temps(mark);
+        c
+    }
+
     /// Gives their slots to the names of a pattern: `(a, b)` on 2 slots → `a` the 1st, `b` the 2nd.
     fn bind(&mut self, p: &Pattern, slots: &[Local], ty: &Type) {
         match p {
             Pattern::Name(n) => {
                 self.names.last_mut().unwrap().insert(n.text.clone(), (slots.to_vec(), ty.clone()));
             }
-            Pattern::Ignore(_) => {}
+            // Nobody receives this part: freed at once.
+            Pattern::Ignore(_) => self.free_value(slots, ty),
             Pattern::Tuple(ps, _) => {
                 for (i, p) in ps.iter().enumerate() {
                     let (start, n) = slice_of(ty, i);
@@ -449,10 +547,14 @@ impl<'a> Translator<'a> {
         }
     }
 
-    /// The slots designated by a `:=` target.
-    fn target_slots(&self, t: &Target) -> Slots {
+    /// The slots designated by a `:=` target, and their type.
+    fn target_slots(&self, t: &Target) -> (Slots, Type) {
         match t {
-            Target::Tuple(ts, _) => ts.iter().flat_map(|t| self.target_slots(t)).collect(),
+            Target::Tuple(ts, _) => {
+                let parts: Vec<(Slots, Type)> = ts.iter().map(|t| self.target_slots(t)).collect();
+                let slots = parts.iter().flat_map(|(s, _)| s.clone()).collect();
+                (slots, Type::Tuple(parts.into_iter().map(|(_, t)| t).collect()))
+            }
             Target::Place { name, fields, .. } => {
                 let (mut slots, mut ty) = self.variable(&name.text);
                 for &i in fields {
@@ -460,7 +562,7 @@ impl<'a> Translator<'a> {
                     slots = slots[start..start + n].to_vec();
                     ty = element(&ty, i);
                 }
-                slots
+                (slots, ty)
             }
         }
     }
@@ -490,30 +592,45 @@ impl<'a> Translator<'a> {
         for s in &b.stmts {
             self.stmt(s);
         }
+        self.free_scopes(self.names.len() - 1);
         self.names.pop();
     }
 
     fn stmt(&mut self, s: &Stmt) {
+        let mark = self.temps.len();
+        self.statement(s);
+        self.free_temps(mark);
+    }
+
+    fn statement(&mut self, s: &Stmt) {
         match s {
             Stmt::Declare { pattern, value, .. } => {
-                let v = self.expr(value);
+                let v = self.owned(value);
                 let ty = self.info.types[value.id].clone();
                 let slots = self.new_slots(&ty);
                 self.copy(&slots, &v);
                 self.bind(pattern, &slots, &ty);
             }
             Stmt::Assign { target, op, value } => {
-                let slots = self.target_slots(target);
-                let v = self.expr(value);
+                let (slots, ty) = self.target_slots(target);
                 match op {
                     // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
-                    None if matches!(target, Target::Tuple(..)) => {
-                        let read = self.new_slots(&self.info.types[value.id].clone());
+                    None => {
+                        let v = self.owned(value);
+                        let read = self.new_slots(&ty);
                         self.copy(&read, &v);
+                        self.free_value(&slots, &ty);
                         self.copy(&slots, &read);
                     }
-                    None => self.copy(&slots, &v),
+                    Some(BinOp::Plus) if ty == Type::String => {
+                        let v = self.expr1(value);
+                        let r = self.int_local();
+                        self.emit(Inst::Str(r, StrOp::Concat, vec![slots[0], v]));
+                        self.emit(Inst::Free(slots[0]));
+                        self.emit(Inst::Copy(slots[0], r));
+                    }
                     Some(op) => {
+                        let v = self.expr(value);
                         let loc = self.loc(target.span());
                         let r = self.operation(kir_op(*op), slots[0], v[0], self.is_float(value), loc);
                         self.emit(Inst::Copy(slots[0], r));
@@ -521,7 +638,7 @@ impl<'a> Translator<'a> {
                 }
             }
             Stmt::Return { value, .. } => {
-                let v = value.as_ref().map_or(vec![], |e| self.expr(e));
+                let v = value.as_ref().map_or(vec![], |e| self.owned(e));
                 self.exit(v);
             }
             Stmt::Check(c) => {
@@ -530,11 +647,13 @@ impl<'a> Translator<'a> {
                 }
             }
             Stmt::Break(_) => {
-                let (_, exit) = *self.loops.last().unwrap();
+                let (_, exit, depth) = *self.loops.last().unwrap();
+                self.free_scopes(depth);
                 self.finish(End::Jump(exit));
             }
             Stmt::Continue(_) => {
-                let (next, _) = *self.loops.last().unwrap();
+                let (next, _, depth) = *self.loops.last().unwrap();
+                self.free_scopes(depth);
                 self.finish(End::Jump(next));
             }
             Stmt::If { cond, then, otherwise } => {
@@ -547,7 +666,7 @@ impl<'a> Translator<'a> {
                     }
                     return;
                 }
-                let c = self.expr1(cond);
+                let c = self.cond1(cond);
                 let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
                 self.go(End::Branch(c, b_then, b_else), b_then);
                 self.block(then);
@@ -560,9 +679,9 @@ impl<'a> Translator<'a> {
             Stmt::While { cond, body } => {
                 let (head, b_body, exit) = (self.new_block(), self.new_block(), self.new_block());
                 self.go(End::Jump(head), head);
-                let c = self.expr1(cond);
+                let c = self.cond1(cond);
                 self.go(End::Branch(c, b_body, exit), b_body);
-                self.loops.push((head, exit));
+                self.loops.push((head, exit, self.names.len()));
                 self.block(body);
                 self.loops.pop();
                 self.go(End::Jump(head), exit);
@@ -585,7 +704,7 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(c, test, i, bound, loc));
                 self.go(End::Branch(c, b_body, exit), b_body);
 
-                self.loops.push((next, exit));
+                self.loops.push((next, exit, self.names.len()));
                 self.names.push(HashMap::from([(counter.text.clone(), (vec![i], Type::Int))]));
                 self.block(body);
                 self.names.pop();
@@ -611,8 +730,11 @@ impl<'a> Translator<'a> {
         }
     }
 
-    /// `return v`: checks the `ensure`s with `result` = v, then exits.
+    /// `return v`: frees what the function still owns, checks the `ensure`s with
+    /// `result` = v, then exits. The parameters are borrowed: the caller frees them.
     fn exit(&mut self, v: Slots) {
+        self.free_temps(0);
+        self.free_scopes(1);
         for c in self.ensures.clone() {
             self.result = Some((v.clone(), self.ret.clone()));
             self.check(c, self.site);
@@ -629,7 +751,7 @@ impl<'a> Translator<'a> {
     ///     values: b = 0
     ///     called from divide.kova:8:11
     fn check(&mut self, c: &Contract, site: Option<(Local, Local)>) {
-        let ok = self.expr1(&c.cond);
+        let ok = self.cond1(&c.cond);
         let (fail, next) = (self.new_block(), self.new_block());
         self.go(End::Branch(ok, next, fail), fail);
 
@@ -693,10 +815,12 @@ impl<'a> Translator<'a> {
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, ty: &Type) -> Slots {
         if let Some(yes) = self.known(cond) {
-            return self.block_value(if yes { then } else { otherwise }, ty);
+            let v = self.block_value(if yes { then } else { otherwise }, ty);
+            self.track(&v, ty);
+            return v;
         }
         let dst = self.new_slots(ty);
-        let c = self.expr1(cond);
+        let c = self.cond1(cond);
         let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
         self.go(End::Branch(c, b_then, b_else), b_then);
         let v = self.block_value(then, ty);
@@ -705,6 +829,7 @@ impl<'a> Translator<'a> {
         let v = self.block_value(otherwise, ty);
         self.copy(&dst, &v);
         self.go(End::Jump(b_after), b_after);
+        self.track(&dst, ty);
         dst
     }
 
@@ -716,10 +841,15 @@ impl<'a> Translator<'a> {
             self.stmt(s);
         }
         let v = match last {
-            Stmt::Expr(e) => self.expr(e),
-            Stmt::If { cond, then, otherwise: Some(otherwise) } => self.if_value(cond, then, otherwise, ty),
+            Stmt::Expr(e) => self.owned(e),
+            Stmt::If { cond, then, otherwise: Some(otherwise) } => {
+                let v = self.if_value(cond, then, otherwise, ty);
+                self.untrack(&v);
+                v
+            }
             _ => unreachable!("block checked by the type checker"),
         };
+        self.free_scopes(self.names.len() - 1);
         self.names.pop();
         v
     }
@@ -736,10 +866,20 @@ impl<'a> Translator<'a> {
             ExprKind::Float(v) => vec![self.float_constant(*v)],
             ExprKind::Char(c) => vec![self.constant(*c as i64)],
             ExprKind::Bool(b) => vec![self.constant(*b as i64)],
+            ExprKind::Str(text) => {
+                let l = self.int_local();
+                self.emit(Inst::Text(l, text.clone()));
+                self.temps.push(l);
+                vec![l]
+            }
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
-            ExprKind::Tuple(elems) => elems.iter().flat_map(|x| self.expr(x)).collect(),
+            ExprKind::Tuple(elems) => {
+                let v: Slots = elems.iter().flat_map(|x| self.owned(x)).collect();
+                self.track(&v, &self.info.types[e.id].clone());
+                v
+            }
             ExprKind::Field(x, i) => {
                 let v = self.expr(x);
                 let (start, n) = slice_of(&self.info.types[x.id], *i);
@@ -761,8 +901,10 @@ impl<'a> Translator<'a> {
                     let (line, col) = (self.constant(l.line as i64), self.constant(l.col as i64));
                     vals.extend([line, col]);
                 }
-                let result = self.new_slots(&self.info.types[e.id].clone());
+                let ty = self.info.types[e.id].clone();
+                let result = self.new_slots(&ty);
                 self.emit(Inst::Call(result.clone(), num, vals));
+                self.track(&result, &ty);
                 result
             }
             ExprKind::Unary(UnOp::Neg, x) => {
@@ -807,6 +949,22 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(after), after);
                 vec![dst]
             }
+            ExprKind::Binary(op @ (BinOp::Plus | BinOp::Eq | BinOp::Ne), a, b) if self.info.types[a.id] == Type::String => {
+                let (va, vb) = (self.expr1(a), self.expr1(b));
+                let dst = self.int_local();
+                if *op == BinOp::Plus {
+                    self.emit(Inst::Str(dst, StrOp::Concat, vec![va, vb]));
+                    self.temps.push(dst);
+                    return vec![dst];
+                }
+                self.emit(Inst::Str(dst, StrOp::Eq, vec![va, vb]));
+                if *op == BinOp::Eq {
+                    return vec![dst];
+                }
+                let ne = self.int_local();
+                self.emit(Inst::Not(ne, dst));
+                vec![ne]
+            }
             ExprKind::Binary(op, a, b) => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
                 // The error points at the operator: the first non-blank character after `a`.
@@ -817,6 +975,18 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. } => {
                 let v = self.expr1(receiver);
+                let string = |op| match op {
+                    "length" => StrOp::Length,
+                    _ => StrOp::Clone,
+                };
+                if self.info.types[receiver.id] == Type::String {
+                    let (dst, op) = (self.int_local(), string(name.text.as_str()));
+                    self.emit(Inst::Str(dst, op, vec![v]));
+                    if op == StrOp::Clone {
+                        self.temps.push(dst);
+                    }
+                    return vec![dst];
+                }
                 let conversion = match (&self.info.types[receiver.id], name.text.as_str()) {
                     (Type::Int, "to_float") => Conversion::IntToFloat,
                     (Type::Float, "to_int") => Conversion::FloatToInt,
@@ -853,7 +1023,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(a, names);
             names_in(b, names);
         }
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::InMode { .. } => {}
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } => {}
     }
 }
 
@@ -871,10 +1041,11 @@ fn value_pieces(v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
             }
             m.push(Piece::Text(")".into()));
         }
-        Type::Char => {
-            m.push(Piece::Text("'".into()));
-            m.push(Piece::Value(v[0], Show::Char));
-            m.push(Piece::Text("'".into()));
+        Type::Char | Type::String => {
+            let quote = if *ty == Type::Char { "'" } else { "\"" };
+            m.push(Piece::Text(quote.into()));
+            m.push(Piece::Value(v[0], Show::of(ty)));
+            m.push(Piece::Text(quote.into()));
         }
         _ => m.push(Piece::Value(v[0], Show::of(ty))),
     }

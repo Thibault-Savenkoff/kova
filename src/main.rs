@@ -9,6 +9,7 @@ mod kir;
 mod lexer;
 mod locale;
 mod lsp;
+mod ownership;
 mod parser;
 mod types;
 
@@ -121,7 +122,9 @@ fn analyze(source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>) {
     // Syntax errors: stop here, otherwise the type checker would invent more of them
     // (a variable whose `let` is unreadable would be "unknown" everywhere).
     if diags.is_empty() {
-        let (info, d) = types::check(&file, nb_exprs, source);
+        let (mut info, d) = types::check(&file, nb_exprs, source);
+        // Ownership only on a well-typed program: it relies on the types.
+        let d = if d.is_empty() { ownership::check(&file, &mut info, source) } else { d };
         if d.is_empty() {
             return (file, Some(info), d);
         }

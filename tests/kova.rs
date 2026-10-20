@@ -20,7 +20,8 @@ fn kova(lang: &str) -> Command {
 }
 fn program(path: impl AsRef<std::ffi::OsStr>, lang: &str) -> Command {
     let mut c = Command::new(path);
-    c.env("KOVA_LANG", lang).env_remove("LC_ALL").env_remove("LC_MESSAGES").env_remove("LANG");
+    // KOVA_LEAKS: a String never freed makes the program fail (code 102), in run and in build.
+    c.env("KOVA_LANG", lang).env("KOVA_LEAKS", "1").env_remove("LC_ALL").env_remove("LC_MESSAGES").env_remove("LANG");
     c
 }
 
@@ -181,8 +182,24 @@ fn command_line() {
 
     languages();
     modes();
+    leak_counter();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
+}
+
+/// The leak check really counts: the same number of Strings is made in run and in build.
+fn leak_counter() {
+    let count = |c: &mut Command| {
+        let out = c.env("KOVA_LEAKS", "count").output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        text(&out.stderr)
+    };
+    let run = count(kova(LANG).args(["run", "tests/ok/strings.kova"]));
+    assert_eq!(run, "Strings made: 25\n");
+    let exe = std::env::temp_dir().join(format!("kova-leaks-{}", std::process::id()));
+    assert!(kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).status().unwrap().success());
+    assert_eq!(count(&mut program(&exe, LANG)), run);
+    let _ = std::fs::remove_file(&exe);
 }
 
 /// `if mode = build`: each mode translates only its own branch.

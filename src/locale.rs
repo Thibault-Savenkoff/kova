@@ -40,6 +40,9 @@ pub const RUNTIME: &[&str] = &[
     "contract_violated",
     "contract_values",
     "contract_called_from",
+    // `KOVA_LEAKS` (runtime.c reads them at indexes 7 and 8).
+    "leak_allocated",
+    "leak_live",
 ];
 
 /// A piece of a translated text.
@@ -256,6 +259,7 @@ mod tests {
             assert!(holes(&cats[0][*key]).is_empty(), "`{key}` is used by the C runtime: no holes");
         }
         assert_eq!(RUNTIME[0], "error_prefix", "runtime.c reads the prefix at index 0");
+        assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "runtime.c reads them at 7 and 8");
         let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
         let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
         assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");

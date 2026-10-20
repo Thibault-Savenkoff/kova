@@ -1,0 +1,5 @@
+fn main {
+    let name: String := "you"
+    print("hello {name}")
+}
+// error: interpolation `{…}` arrives in milestone J3 (write `\{` for a brace)

@@ -40,6 +40,9 @@ static int language(void) {
     return 0;
 }
 
+// Numbers of the texts in `locale::RUNTIME` (src/locale.rs), checked by a test there.
+enum { LEAK_ALLOCATED = 7, LEAK_LIVE = 8 };
+
 static const char *text(int64_t i) {
     return kova_texts[language() * kova_nb_texts + i];
 }
@@ -153,8 +156,66 @@ static void write_char(FILE *f, uint32_t c) {
     }
 }
 
+// ---- Strings ----
+// A String is a block `length + bytes` (UTF-8, no final 0), passed around by its address.
+// 0 = no String: freeing it does nothing (a moved variable holds 0, src/kir.rs).
+
+typedef struct {
+    int64_t length;
+    char bytes[];
+} String;
+
+static int64_t allocated, live;
+
+static String *new_string(int64_t n) {
+    String *s = malloc(sizeof(String) + n);
+    if (!s) abort();
+    s->length = n;
+    allocated++;
+    live++;
+    return s;
+}
+
+int64_t kova_str_new(const char *bytes, int64_t n) {
+    String *s = new_string(n);
+    memcpy(s->bytes, bytes, n);
+    return (int64_t)s;
+}
+
+void kova_str_free(int64_t s) {
+    if (!s) return;
+    free((String *)s);
+    live--;
+}
+
+int64_t kova_str_concat(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    String *s = new_string(x->length + y->length);
+    memcpy(s->bytes, x->bytes, x->length);
+    memcpy(s->bytes + x->length, y->bytes, y->length);
+    return (int64_t)s;
+}
+
+int64_t kova_str_eq(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    return x->length == y->length && memcmp(x->bytes, y->bytes, x->length) == 0;
+}
+
+// The number of characters: the bytes that don't continue a UTF-8 character (10xxxxxx).
+int64_t kova_str_length(int64_t a) {
+    String *x = (String *)a;
+    int64_t n = 0;
+    for (int64_t i = 0; i < x->length; i++) n += ((unsigned char)x->bytes[i] & 0xC0) != 0x80;
+    return n;
+}
+
+int64_t kova_str_clone(int64_t a) {
+    String *x = (String *)a;
+    return kova_str_new(x->bytes, x->length);
+}
+
 // Same order as `Show` in src/kir.rs.
-enum { INT, BOOL, FLOAT, CHAR };
+enum { INT, BOOL, FLOAT, CHAR, STRING };
 
 static void write_value(FILE *f, int64_t value, int64_t show) {
     double x;
@@ -163,6 +224,7 @@ static void write_value(FILE *f, int64_t value, int64_t show) {
     case BOOL: fputs(value ? "true" : "false", f); break;
     case FLOAT: memcpy(&x, &value, sizeof x); write_float(f, x); break;
     case CHAR: write_char(f, (uint32_t)value); break;
+    case STRING: fwrite(((String *)value)->bytes, 1, ((String *)value)->length, f); break;
     }
 }
 
@@ -198,7 +260,19 @@ void kova_fail(void) {
     exit(101);
 }
 
+// With KOVA_LEAKS set (the test runner sets it): a String never freed is an error (code 102);
+// `KOVA_LEAKS=count` also prints how many were made. Same as `leaks` in src/interp.rs.
+static int leaks(void) {
+    const char *mode = getenv("KOVA_LEAKS");
+    if (!mode) return 0;
+    fflush(stdout);
+    if (strcmp(mode, "count") == 0) fprintf(stderr, "%s%lld\n", text(LEAK_ALLOCATED), (long long)allocated);
+    if (live == 0) return 0;
+    fprintf(stderr, "%s%s%lld\n", text(0), text(LEAK_LIVE), (long long)live);
+    return 102;
+}
+
 int main(void) {
     kova_main();
-    return 0;
+    return leaks();
 }

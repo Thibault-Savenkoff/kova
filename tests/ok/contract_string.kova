@@ -1,0 +1,15 @@
+// A String in the values of a broken contract is shown in quotes.
+fn shout(word: String) -> String
+    require word.length > 0 else "nothing to shout"
+{
+    return word + "!"
+}
+
+fn main {
+    print(shout("hey"))
+    print(shout(""))
+}
+// expect: hey!
+// code: 101
+// stderr: error: nothing to shout
+// stderr: values: word = ""

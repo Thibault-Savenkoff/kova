@@ -1,0 +1,37 @@
+// `String` (J3): literals, `+`, `+=`, `=`, `length` in characters, `clone`.
+// Every String is freed: the test runner fails a program that leaks one (KOVA_LEAKS).
+
+fn greet(name: String) -> String {
+    return "Hello " + name + "!"
+}
+
+fn main {
+    let a: String := "é😀"
+    print(a.length)
+    print("".length)
+    print(greet(a))
+    var s: String := ""
+    from i := 1 to 3 {
+        s += "x"
+    }
+    print(s)
+    print(s = "xxx")
+    print(s != "xxx")
+    let c: String := s.clone
+    s := s + "y"
+    print(c)
+    print(s)
+    write("tab:\t\"quoted\" \\ \{braces\}")
+    print("")
+    print(greet("you").length)
+}
+// expect: 2
+// expect: 0
+// expect: Hello é😀!
+// expect: xxx
+// expect: true
+// expect: false
+// expect: xxx
+// expect: xxxy
+// expect: tab:	"quoted" \ {braces}
+// expect: 10

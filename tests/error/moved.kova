@@ -1,0 +1,33 @@
+// Ownership (PLAN 2.7): a String has a single owner.
+fn keep(s: String) -> String {
+    return s
+}
+
+fn main {
+    let a: String := "a"
+    let b: String := a
+    print(a)
+
+    let c: String := "c"
+    if b.length > 0 {
+        let d: String := c
+    }
+    print(c)
+
+    let t: (String, Int) := ("t", 1)
+    let u: String := t.0
+
+    let e: String := "e"
+    from i := 1 to 3 {
+        let f: String := e
+    }
+}
+// error: `a` was moved (line 8)
+// error: use `a.clone` on line 8 if you want to keep a copy
+// error: `c` was moved (line 13)
+// error: `s` is borrowed here: it cannot be moved
+// error: give a copy: `s.clone`
+// error: `t.0` cannot be moved out of its tuple
+// error: take a copy: `t.0.clone`
+// error: `e` is moved in a loop: it would be moved again on the next turn
+// error: use `e.clone`, or give `e` a new value before the end of the loop

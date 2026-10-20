@@ -48,6 +48,20 @@ struct Runtime {
     write_label: FuncId,
     write_value: FuncId,
     fail: FuncId,
+    /// `kova_str_new`, `kova_str_free`, then one per `StrOp` (in `str_op` order).
+    str_new: FuncId,
+    str_free: FuncId,
+    str_ops: [FuncId; 4],
+}
+
+/// The runtime function of a String operation, and its number of arguments.
+fn str_op(op: StrOp) -> (usize, &'static str, usize) {
+    match op {
+        StrOp::Concat => (0, "kova_str_concat", 2),
+        StrOp::Eq => (1, "kova_str_eq", 2),
+        StrOp::Length => (2, "kova_str_length", 1),
+        StrOp::Clone => (3, "kova_str_clone", 1),
+    }
 }
 
 fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -81,8 +95,18 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         write_label: module.declare_function("kova_write_label", Linkage::Import, &signature(&ints[..1], &[]))?,
         write_value: module.declare_function("kova_write_value", Linkage::Import, &signature(&ints[..2], &[]))?,
         fail: module.declare_function("kova_fail", Linkage::Import, &signature(&[], &[]))?,
+        str_new: module.declare_function("kova_str_new", Linkage::Import, &signature(&ints[..2], &ints[..1]))?,
+        str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
+        str_ops: {
+            let mut ids = vec![];
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone] {
+                let (_, name, n) = str_op(op);
+                ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
+            }
+            ids.try_into().unwrap()
+        },
     };
-    // The texts of contract messages, a single copy of each in the executable.
+    // The texts of contract messages and String literals, a single copy of each in the executable.
     let mut data: HashMap<String, DataId> = HashMap::new();
     let mut ids = vec![];
     for (i, f) in p.functions.iter().enumerate() {
@@ -104,22 +128,34 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         let rt_print = module.declare_func_in_func(rt.print, b.func);
         let rt_fault = module.declare_func_in_func(rt.fault, b.func);
         let mut texts = HashMap::new();
-        let fails = f.blocks.iter().flat_map(|b| &b.insts).filter_map(|i| if let Inst::Fail(m) = i { Some(m) } else { None });
-        for m in fails.flatten() {
-            let t = match m {
-                Piece::Text(t) => t.as_str(),
-                Piece::File => file,
-                Piece::Value(..) | Piece::Label(_) => continue,
-            };
+        let used = f.blocks.iter().flat_map(|b| &b.insts).flat_map(|i| match i {
+            Inst::Fail(m) => m
+                .iter()
+                .filter_map(|m| match m {
+                    Piece::Text(t) => Some(t.as_str()),
+                    Piece::File => Some(file),
+                    Piece::Value(..) | Piece::Label(_) => None,
+                })
+                .collect(),
+            Inst::Text(_, t) => vec![t.as_str()],
+            _ => vec![],
+        });
+        for t in used {
             if !data.contains_key(t) {
                 let id = module.declare_data(&format!("kova_text{}", data.len()), Linkage::Local, false, false)?;
                 let mut d = DataDescription::new();
-                d.define(t.as_bytes().into());
+                // A final 0 byte: an empty text still gets an address.
+                d.define([t.as_bytes(), &[0]].concat().into());
                 module.define_data(id, &d)?;
                 data.insert(t.to_string(), id);
             }
             texts.entry(t.to_string()).or_insert_with(|| module.declare_data_in_func(data[t], b.func));
         }
+        let strings = Strings {
+            new: module.declare_func_in_func(rt.str_new, b.func),
+            free: module.declare_func_in_func(rt.str_free, b.func),
+            ops: rt.str_ops.map(|id| module.declare_func_in_func(id, b.func)),
+        };
         let fail = Fail {
             write_text: module.declare_func_in_func(rt.write_text, b.func),
             write_label: module.declare_func_in_func(rt.write_label, b.func),
@@ -128,7 +164,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             texts,
             file: file.to_string(),
         };
-        Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail, strings }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -153,6 +189,14 @@ struct Generator<'a> {
     types: Vec<Scalar>,
     rt_fault: FuncRef,
     fail: Fail,
+    strings: Strings,
+}
+
+/// The runtime functions for Strings (`kova_str_*` in `runtime/runtime.c`).
+struct Strings {
+    new: FuncRef,
+    free: FuncRef,
+    ops: [FuncRef; 4],
 }
 
 /// What is needed to write the message of a broken contract.
@@ -297,6 +341,25 @@ impl Generator<'_> {
                 for (&d, r) in d.iter().zip(results) {
                     self.b.def_var(self.vars[d], r);
                 }
+            }
+            Inst::Text(d, t) => {
+                let address = self.b.ins().symbol_value(I64, self.fail.texts[t]);
+                let n = self.b.ins().iconst(I64, t.len() as i64);
+                let call = self.b.ins().call(self.strings.new, &[address, n]);
+                let v = self.b.inst_results(call)[0];
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::Str(d, op, args) => {
+                let vals: Vec<Value> = args.iter().map(|&l| self.read(l)).collect();
+                let call = self.b.ins().call(self.strings.ops[str_op(*op).0], &vals);
+                let v = self.b.inst_results(call)[0];
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::Free(l) => {
+                let v = self.read(*l);
+                self.b.ins().call(self.strings.free, &[v]);
+                let zero = self.b.ins().iconst(I64, 0);
+                self.b.def_var(self.vars[*l], zero);
             }
             Inst::Print { value, show, newline } => {
                 let (v, show) = self.value_and_show(*value, *show);

@@ -1,4 +1,0 @@
-fn main {
-    print("bonjour")
-}
-// error: texts arrive in milestone J3 (for now: only after `else` in a contract)

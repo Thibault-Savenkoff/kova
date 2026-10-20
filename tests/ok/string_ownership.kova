@@ -1,0 +1,96 @@
+// Who frees each String (PLAN 2.7): moves, temporaries, early exits.
+// The test runner checks that nothing leaks and nothing is freed twice, in run and build.
+
+fn make_name -> String {
+    return "name"
+}
+
+fn pair(n: Int) -> (String, Int) {
+    let s: String := "pair"
+    return (s, n)
+}
+
+fn first_long(limit: Int) -> String {
+    var i: Int := 0
+    while true {
+        let word: String := "w" + "ord"
+        i += 1
+        if i < limit {
+            continue
+        }
+        if i = limit {
+            return word
+        }
+    }
+    return "never"
+}
+
+fn main {
+    // A move: `a` gives its text to `b`; only `b` frees it.
+    let a: String := "moved"
+    let b: String := a
+    print(b)
+
+    // A conditional move: freed by whoever has it at the end.
+    let c: String := "maybe"
+    if b.length > 3 {
+        let d: String := c
+        print(d)
+    }
+
+    // The value of an `if` branch is given.
+    let e: String := "left"
+    let f: String := if true { e } else { "right" }
+    print(f)
+
+    // Swap: both values change hands, none is lost.
+    var x: String := "x"
+    var y: String := "y"
+    (x, y) := (y, x)
+    print(x + y)
+
+    // A tuple holding a String, returned then taken apart; `_` frees its part at once.
+    let (s, n): (String, Int) := pair(4)
+    print(s)
+    let (_, m): (String, Int) := pair(5)
+    print(n + m)
+
+    // A result nobody keeps is freed at the end of its statement.
+    make_name
+    print(make_name.length)
+
+    // Temporaries in conditions are freed at each turn.
+    var k: Int := 0
+    while k < 3 && "abc" != "x" + "y" {
+        k += 1
+    }
+    print(k)
+
+    // `break`, `continue` and `return` free what their blocks own.
+    from i := 1 to 5 {
+        let inside: String := "loop"
+        if i = 2 {
+            continue
+        }
+        if i = 4 {
+            break
+        }
+    }
+    print(first_long(3))
+
+    // Giving a variable a new value frees the old one.
+    var t: String := "old"
+    t := "new"
+    t := t + "er"
+    print(t)
+}
+// expect: moved
+// expect: maybe
+// expect: left
+// expect: yx
+// expect: pair
+// expect: 9
+// expect: 4
+// expect: 3
+// expect: word
+// expect: newer

@@ -19,6 +19,8 @@ pub enum Type {
     Float,
     Bool,
     Char,
+    /// UTF-8 text, owned: moved when given away, freed at the end of its block (PLAN 2.7).
+    String,
     /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
     /// What a function without `->` returns.
@@ -35,6 +37,7 @@ impl Type {
             Type::Float => "Float".into(),
             Type::Bool => "Bool".into(),
             Type::Char => "Char".into(),
+            Type::String => "String".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
@@ -64,11 +67,24 @@ pub const METHODS: &[(Type, &str, Type)] = &[
     (Type::Int, "to_float", Type::Float),
     (Type::Float, "to_int", Type::Int),
     (Type::Char, "to_int", Type::Int),
+    (Type::String, "length", Type::Int),
+    (Type::String, "clone", Type::String),
 ];
+
+/// Copied when given away (like an `Int`), instead of moved (like a `String`).
+pub fn is_copy(t: &Type) -> bool {
+    match t {
+        Type::String => false,
+        Type::Tuple(ts) => ts.iter().all(is_copy),
+        _ => true,
+    }
+}
 
 pub struct Info {
     /// Type of each expression, by `Expr::id`.
     pub types: Vec<Type>,
+    /// By `Expr::id`: true if this variable is moved here (filled by `ownership.rs`).
+    pub moves: Vec<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -221,7 +237,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         c.block(&t.body, vec![]);
     }
 
-    (Info { types: c.types }, c.diags)
+    let moves = vec![false; c.types.len()];
+    (Info { types: c.types, moves }, c.diags)
 }
 
 /// The written type; `Error` if it contains an unknown name.
@@ -232,6 +249,7 @@ pub fn type_of(t: &TypeAst) -> Type {
             "Float" => Type::Float,
             "Bool" => Type::Bool,
             "Char" => Type::Char,
+            "String" => Type::String,
             _ => Type::Error,
         },
         TypeAst::Tuple(ts) => {
@@ -487,7 +505,8 @@ impl Checker<'_> {
             }
             Stmt::Assign { target, op, value } => {
                 let ty = self.target(target, &mut vec![]);
-                if op.is_some() && !matches!(ty, Type::Int | Type::Float | Type::Error) {
+                let concat = *op == Some(BinOp::Plus) && ty == Type::String;
+                if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
                     self.error(target.span(), t!("not_numeric", target = text));
                 }
@@ -582,6 +601,7 @@ impl Checker<'_> {
                 }
             },
             ExprKind::InMode { .. } => Type::Bool,
+            ExprKind::Str(_) => Type::String,
             ExprKind::Tuple(elems) => {
                 let mut ts = vec![];
                 for x in elems {
@@ -671,7 +691,8 @@ impl Checker<'_> {
                         self.expect(b, &Type::Int);
                         Type::Int
                     }
-                    Plus | Minus | Times | Div => {
+                    Plus => self.same_type(a, b, &[Type::Int, Type::Float, Type::String], "`+`"),
+                    Minus | Times | Div => {
                         self.same_type(a, b, &[Type::Int, Type::Float], &format!("`{}`", op.text()))
                     }
                 }

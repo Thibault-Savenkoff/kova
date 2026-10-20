@@ -16,9 +16,7 @@ fn h(x: Int) {
 
 fn main {
     print(f(1))
-    let s: Int := "texte"
 }
 // error: `require` goes between the function's signature and its `{`
 // error: message in quotes expected after `else`, found `oups`
 // error: interpolation `{…}` arrives in milestone J3 (write `\{` for a brace)
-// error: texts arrive in milestone J3 (for now: only after `else` in a contract)
