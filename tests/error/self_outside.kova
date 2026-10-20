@@ -1,0 +1,5 @@
+fn f(self) {
+}
+fn main {
+}
+// error: `self` is only for the methods of a `struct`

@@ -269,7 +269,7 @@ impl Parser<'_> {
                         }
                     })
                 }
-                Kind::Keyword("fn") => self.function().map(|f| functions.push(f)),
+                Kind::Keyword("fn") => self.function(false).map(|f| functions.push(f)),
                 Kind::Keyword("struct" | "copy") => self.struct_().map(|s| structs.push(s)),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
@@ -466,21 +466,25 @@ impl Parser<'_> {
         let name = self.type_name()?;
         self.skip_newlines();
         self.expect("{")?;
-        let mut fields = vec![];
+        let (mut fields, mut methods) = (vec![], vec![]);
         loop {
             self.skip_newlines();
             match self.kind() {
                 Kind::Sym("}") => break,
-                Kind::Eof | Kind::Keyword("fn" | "test" | "struct" | "copy") => {
+                Kind::Eof | Kind::Keyword("test" | "struct" | "copy") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed")));
-                    return Ok(Struct { copy, name, fields });
+                    return Ok(Struct { copy, name, fields, methods });
                 }
                 // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
                 Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
                     self.advance();
                     self.advance();
                 }
+                Kind::Keyword("fn") => match self.function(true) {
+                    Ok(f) => methods.push(f),
+                    Err(()) => self.skip_statement(),
+                },
                 _ => match self.field() {
                     Ok(f) => fields.push(f),
                     Err(()) => self.skip_statement(),
@@ -488,7 +492,7 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy, name, fields })
+        Ok(Struct { copy, name, fields, methods })
     }
 
     /// `name: String`, followed by `,`, a line break or the `}`.
@@ -520,17 +524,22 @@ impl Parser<'_> {
         Ok(Test { name: string_content(&self.text(t.span)), span: t.span, body })
     }
 
-    fn function(&mut self) -> R<Function> {
+    /// `fn name(params) -> Type`; `in_struct`: the first parameter may be `self`.
+    fn function(&mut self, in_struct: bool) -> R<Function> {
         self.advance(); // fn
         let name = self.value_name("what_function")?;
         let mut params = vec![];
         if !self.is_sym("(") {
-            return self.function_rest(name, params);
+            return self.function_rest(name, None, params);
         }
         let open = self.advance().span;
         if self.is_sym(")") {
             let span = open.to(self.token().span);
             self.diags.push(Diag::new(span, t!("empty_parens_fn", name = name.text)));
+        }
+        let receiver = self.receiver(in_struct)?;
+        if receiver.is_some() && !self.is_sym(")") {
+            self.expect(",")?;
         }
         while !self.is_sym(")") {
             let name = self.value_name("what_parameter")?;
@@ -541,11 +550,28 @@ impl Parser<'_> {
             }
         }
         self.advance(); // )
-        self.function_rest(name, params)
+        self.function_rest(name, receiver, params)
+    }
+
+    /// `self`, `var self` or `move self` at the start of the parameters.
+    fn receiver(&mut self, in_struct: bool) -> R<Option<Receiver>> {
+        let next_is_self = matches!(self.t[self.pos + 1].kind, Kind::Keyword("self"));
+        let (r, n) = match self.kind() {
+            Kind::Keyword("self") => (Receiver::Read, 1),
+            Kind::Keyword("var") if next_is_self => (Receiver::Var, 2),
+            Kind::Keyword("move") if next_is_self => (Receiver::Move, 2),
+            _ => return Ok(None),
+        };
+        let span = self.token().span.to(self.t[self.pos + n - 1].span);
+        self.pos += n;
+        if !in_struct {
+            return self.error(span, t!("self_outside_struct"));
+        }
+        Ok(Some(r))
     }
 
     /// After the parameters: `-> Type`, the contracts, the body.
-    fn function_rest(&mut self, name: Name, params: Vec<Param>) -> R<Function> {
+    fn function_rest(&mut self, name: Name, receiver: Option<Receiver>, params: Vec<Param>) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
             Some(self.type_()?)
@@ -563,7 +589,7 @@ impl Parser<'_> {
             contracts.push(self.contract(kind)?);
         }
         let body = self.block()?;
-        Ok(Function { name, params, ret, contracts, body })
+        Ok(Function { name, receiver, params, ret, contracts, body })
     }
 
     /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.
@@ -886,6 +912,7 @@ impl Parser<'_> {
             Kind::Keyword("true") => ExprKind::Bool(true),
             Kind::Keyword("false") => ExprKind::Bool(false),
             Kind::Keyword("result") => ExprKind::Result,
+            Kind::Keyword("self") => ExprKind::Var("self".into()),
             Kind::Str => {
                 let mut parts = self.text_parts(t);
                 match parts.as_mut_slice() {
@@ -947,6 +974,19 @@ impl Parser<'_> {
                 Diag::new(ty.span, t!("literal_in_heading", name = ty.text)).help(t!("literal_in_heading_help")),
             );
             return Err(());
+        }
+        // `Dog.create("Rex")`, `Dog.default`.
+        if self.is_sym(".") && self.t[self.pos + 1].kind == Kind::Ident {
+            self.advance();
+            let name = self.value_name("what_function")?;
+            let (mut args, mut end) = (vec![], name.span);
+            if self.is_sym("(") {
+                let open = self.advance().span;
+                args = self.arguments()?;
+                end = self.advance().span;
+                self.empty_parens(&args, open, end, &name.text);
+            }
+            return Ok(self.expr(ty.span.to(end), ExprKind::Static { ty, name, args }));
         }
         if !brace {
             self.diags.push(Diag::new(ty.span, t!("type_not_value", name = ty.text)).help(t!("type_not_value_help", name = ty.text)));

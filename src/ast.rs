@@ -35,10 +35,35 @@ pub struct Struct {
     pub copy: bool,
     pub name: Name,
     pub fields: Vec<Param>,
+    /// Its methods (`fn sound(self)`) and static functions (`fn create(name: String) -> Dog`).
+    pub methods: Vec<Function>,
+}
+
+/// How a method receives the value it is called on (PLAN 2.6).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Receiver {
+    /// `self`: read only.
+    Read,
+    /// `var self`: may change it (the caller's variable is updated).
+    Var,
+    /// `move self`: takes it (the caller's variable can no longer be used).
+    Move,
+}
+
+impl Receiver {
+    pub fn text(self) -> &'static str {
+        match self {
+            Receiver::Read => "self",
+            Receiver::Var => "var self",
+            Receiver::Move => "move self",
+        }
+    }
 }
 
 pub struct Function {
     pub name: Name,
+    /// `Some` for a method with `self`; `None` for a function or a static function.
+    pub receiver: Option<Receiver>,
     pub params: Vec<Param>,
     pub ret: Option<TypeAst>,
     pub contracts: Vec<Contract>,
@@ -199,6 +224,8 @@ pub enum ExprKind {
     /// `result` in an `ensure`.
     Result,
     Call { name: Name, args: Vec<Expr> },
+    /// `Dog.create("Rex")`: a struct's function without `self`.
+    Static { ty: Name, name: Name, args: Vec<Expr> },
     /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).
     Method { receiver: Box<Expr>, name: Name, args: Vec<Expr> },
     Unary(UnOp, Box<Expr>),

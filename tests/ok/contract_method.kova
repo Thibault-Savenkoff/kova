@@ -1,0 +1,22 @@
+// A broken `require` in a method: `self` in the values, the caller's location.
+struct Dog {
+    name: String
+    age: Int
+
+    fn older(self, years: Int) -> Int
+        require years >= 0 else "{self.name}: negative years"
+    {
+        return self.age + years
+    }
+}
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3 }
+    print(rex.older(1))
+    print(rex.older(-2))
+}
+// expect: 4
+// code: 101
+// stderr: error: Rex: negative years
+// stderr: values: years = -2
+// stderr: contract_method.kova:16:15

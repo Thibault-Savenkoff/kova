@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
-use crate::types::{Info, Type, is_copy};
+use crate::types::{Info, Type, is_copy, method_name, place_root};
 
 /// A visible name.
 #[derive(Clone)]
@@ -56,13 +56,27 @@ struct Owner<'a> {
     next_id: usize,
     state: State,
     loops: Vec<Loop>,
+    /// How each method receives its value (`None`: a static function), by name (`Dog.sound`).
+    receivers: HashMap<String, Option<Receiver>>,
     diags: Vec<Diag>,
 }
 
 pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
-    let mut o = Owner { src, info, scopes: vec![], next_id: 0, state: None, loops: vec![], diags: vec![] };
-    for func in &f.functions {
+    let mut receivers = HashMap::new();
+    let mut functions: Vec<&Function> = f.functions.iter().collect();
+    for s in &f.structs {
+        for m in &s.methods {
+            receivers.insert(method_name(&s.name.text, &m.name.text), m.receiver);
+            functions.push(m);
+        }
+    }
+    let mut o = Owner { src, info, scopes: vec![], next_id: 0, state: None, loops: vec![], receivers, diags: vec![] };
+    for func in functions {
         o.scopes = vec![HashMap::new()];
+        // `self` is borrowed, except in a `move self` method that owns it.
+        if let Some(r) = func.receiver {
+            o.declare("self", r != Receiver::Move);
+        }
         for p in &func.params {
             o.declare(&p.name.text, true);
         }
@@ -305,11 +319,45 @@ impl Owner<'_> {
         }
     }
 
+    /// `rex.sound`: how the struct method receives `rex` (`None`: not a struct method).
+    fn receiver(&self, receiver: &Expr, name: &Name) -> Option<Receiver> {
+        let Type::Struct(d) = &self.info.types[receiver.id] else { return None };
+        (*self.receivers.get(&method_name(&d.name, &name.text))?).or(Some(Receiver::Read))
+    }
+
+    /// `rex.rename(rex.name)`: the method changes `rex` while reading one of its Strings
+    /// (rule 2.7.5). A copied value (`rex.age`) is read before the call: allowed.
+    fn exclusive(&mut self, receiver: &Expr, method: &Name, args: &[Expr]) {
+        let Some((root, _)) = place_root(receiver, &self.info.types) else { return };
+        for a in args {
+            let same = place_root(a, &self.info.types).is_some_and(|(n, _)| n == root);
+            if same && !is_copy(&self.info.types[a.id]) {
+                let arg = &self.src[a.span.start..a.span.end];
+                self.diags.push(
+                    Diag::new(a.span, t!("exclusive_use", name = root, method = method.text))
+                        .help(t!("exclusive_use_help", arg = arg)),
+                );
+            }
+        }
+    }
+
     /// `e` is only read.
     fn borrow(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Var(name) => self.use_var(name, e.span),
-            ExprKind::Call { args, .. } => args.iter().for_each(|a| self.borrow(a)),
+            ExprKind::Call { args, .. } | ExprKind::Static { args, .. } => args.iter().for_each(|a| self.borrow(a)),
+            ExprKind::Method { receiver, name, args } if self.receiver(receiver, name).is_some() => {
+                let r = self.receiver(receiver, name).unwrap();
+                if r == Receiver::Move {
+                    self.give(receiver);
+                } else {
+                    self.borrow(receiver);
+                }
+                args.iter().for_each(|a| self.borrow(a));
+                if r == Receiver::Var {
+                    self.exclusive(receiver, name, args);
+                }
+            }
             ExprKind::Method { receiver, args, .. } => {
                 self.borrow(receiver);
                 args.iter().for_each(|a| self.borrow(a));

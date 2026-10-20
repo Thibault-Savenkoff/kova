@@ -121,6 +121,8 @@ enum VarKind {
     Var,
     Param,
     Counter,
+    /// `self` in a method.
+    Receiver(Receiver),
 }
 
 struct Variable {
@@ -129,14 +131,33 @@ struct Variable {
     span: Span,
 }
 
+#[derive(Clone)]
 struct Signature {
+    receiver: Option<Receiver>,
     params: Vec<Type>,
     ret: Type,
 }
 
+/// The name of a struct's method or static function among the functions: `Dog.sound`.
+pub fn method_name(ty: &str, name: &str) -> String {
+    format!("{ty}.{name}")
+}
+
+/// The variable at the root of a place: `rex` in `rex.dog.name` or in `t.0`;
+/// `None` for a computed value (`make_dog.name`).
+pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
+    match &e.kind {
+        ExprKind::Var(n) => Some((n, e.span)),
+        ExprKind::Field(x, _) => place_root(x, types),
+        ExprKind::Method { receiver, name, .. } if types[receiver.id].is_field(&name.text) => place_root(receiver, types),
+        _ => None,
+    }
+}
+
 struct Checker<'a> {
     src: &'a str,
-    functions: HashMap<&'a str, Signature>,
+    /// Functions, methods and static functions (`Dog.sound`).
+    functions: HashMap<String, Signature>,
     structs: Structs,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
@@ -213,7 +234,33 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         } else if c.functions.contains_key(name) {
             c.error(func.name.span, t!("function_exists", name = name));
         } else {
-            c.functions.insert(name, Signature { params, ret });
+            c.functions.insert(name.to_string(), Signature { receiver: None, params, ret });
+        }
+    }
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) != Some(&i) {
+            continue;
+        }
+        let mut seen: HashMap<&str, Span> = HashMap::new();
+        for m in &s.methods {
+            for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
+                c.report_unknown(t);
+            }
+            let params = m.params.iter().map(|p| type_of(&p.ty, &c.structs)).collect();
+            let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
+            let name = m.name.text.as_str();
+            // Uniform access: `rex.name` must mean a single thing.
+            if s.fields.iter().any(|p| p.name.text == name) {
+                c.diags.push(
+                    Diag::new(m.name.span, t!("field_and_method", name = name, type = s.name.text))
+                        .help(t!("field_and_method_help", name = name)),
+                );
+            } else if let Some(first) = seen.insert(name, m.name.span) {
+                let (line, _) = line_col(src, first.start);
+                c.error(m.name.span, t!("method_exists", name = name, type = s.name.text, line = line));
+            } else {
+                c.functions.insert(method_name(&s.name.text, name), Signature { receiver: m.receiver, params, ret });
+            }
         }
     }
 
@@ -248,28 +295,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // 3. The bodies.
     for func in &f.functions {
-        c.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
-        let mut params = HashMap::new();
-        for p in &func.params {
-            if params.contains_key(&p.name.text) {
-                c.error(p.name.span, t!("param_exists", name = p.name.text));
+        c.body(func, None);
+    }
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) == Some(&i) {
+            let ty = Type::Struct(c.structs[&s.name.text].clone());
+            for m in &s.methods {
+                c.body(m, Some(&ty));
             }
-            c.function_name(&p.name);
-            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &c.structs), kind: VarKind::Param, span: p.name.span });
-        }
-        c.scopes = vec![params];
-        // Contracts only see the parameters (and `result` in an `ensure`).
-        for k in &func.contracts {
-            c.result = (k.kind == ContractKind::Ensure).then(|| c.ret.clone());
-            c.contract(k);
-        }
-        c.result = None;
-        c.block(&func.body, vec![]);
-        if c.ret != Type::Unit && !always_returns(&func.body) {
-            c.diags.push(
-                Diag::new(func.body.close, t!("missing_return", name = func.name.text))
-                    .help(t!("missing_return_help", type = c.ret.text())),
-            );
         }
     }
 
@@ -325,6 +358,36 @@ fn always_returns(b: &Block) -> bool {
 impl Checker<'_> {
     fn error(&mut self, span: Span, msg: impl Into<String>) {
         self.diags.push(Diag::new(span, msg));
+    }
+
+    /// The body of a function; `owner` = the struct of a method.
+    fn body(&mut self, func: &Function, owner: Option<&Type>) {
+        self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
+        let mut params = HashMap::new();
+        if let (Some(ty), Some(r)) = (owner, func.receiver) {
+            params.insert("self".to_string(), Variable { ty: ty.clone(), kind: VarKind::Receiver(r), span: func.name.span });
+        }
+        for p in &func.params {
+            if params.contains_key(&p.name.text) {
+                self.error(p.name.span, t!("param_exists", name = p.name.text));
+            }
+            self.function_name(&p.name);
+            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &self.structs), kind: VarKind::Param, span: p.name.span });
+        }
+        self.scopes = vec![params];
+        // Contracts only see the parameters (and `result` in an `ensure`).
+        for k in &func.contracts {
+            self.result = (k.kind == ContractKind::Ensure).then(|| self.ret.clone());
+            self.contract(k);
+        }
+        self.result = None;
+        self.block(&func.body, vec![]);
+        if self.ret != Type::Unit && !always_returns(&func.body) {
+            self.diags.push(
+                Diag::new(func.body.close, t!("missing_return", name = func.name.text))
+                    .help(t!("missing_return_help", type = self.ret.text())),
+            );
+        }
     }
 
     /// Builds the `StructDef` of `f.structs[i]` after those of its fields' structs.
@@ -583,18 +646,7 @@ impl Checker<'_> {
                     return Type::Error;
                 };
                 let (mut ty, kind) = (var.ty.clone(), var.kind);
-                match kind {
-                    VarKind::Var => {}
-                    VarKind::Let => self.diags.push(
-                        Diag::new(name.span, t!("declared_with_let", name = n)).help(t!("declared_with_let_help", name = n)),
-                    ),
-                    VarKind::Param => self.diags.push(
-                        Diag::new(name.span, t!("param_immutable", name = n)).help(t!("param_immutable_help", name = n)),
-                    ),
-                    VarKind::Counter => {
-                        self.error(name.span, t!("counter_immutable", name = n))
-                    }
-                }
+                self.may_change(n, name.span, kind);
                 for step in fields {
                     ty = match step {
                         Step::Index(i) => self.field(ty, *i, *span),
@@ -604,6 +656,95 @@ impl Checker<'_> {
                 ty
             }
         }
+    }
+
+    /// `n` (a variable of this kind) is assigned or given to a `var self` method.
+    fn may_change(&mut self, n: &str, span: Span, kind: VarKind) {
+        match kind {
+            VarKind::Var | VarKind::Receiver(Receiver::Var) => {}
+            VarKind::Let => self.diags.push(
+                Diag::new(span, t!("declared_with_let", name = n)).help(t!("declared_with_let_help", name = n)),
+            ),
+            VarKind::Param => self.diags.push(
+                Diag::new(span, t!("param_immutable", name = n)).help(t!("param_immutable_help", name = n)),
+            ),
+            VarKind::Counter => self.error(span, t!("counter_immutable", name = n)),
+            VarKind::Receiver(r) => {
+                self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
+            }
+        }
+    }
+
+    /// `rex.rename(...)` with `var self`: `rex` must be a variable that may change.
+    fn changes(&mut self, receiver: &Expr, method: &Name) {
+        let Some((root, span)) = place_root(receiver, &self.types) else {
+            self.error(receiver.span, t!("var_method_temporary", name = method.text));
+            return;
+        };
+        if let Some(kind) = self.lookup(root).map(|v| v.kind) {
+            self.may_change(root, span, kind);
+        }
+    }
+
+    /// The arguments of a call, checked against the parameters' types.
+    fn arguments(&mut self, name: &Name, args: &[Expr], params: &[Type]) {
+        if params.len() != args.len() {
+            let msg = t!("argument_count", name = name.text, expected = params.len(), given = args.len());
+            self.error(name.span, msg);
+        }
+        for (i, a) in args.iter().enumerate() {
+            match params.get(i) {
+                Some(t) => self.expect(a, t),
+                None => {
+                    self.expr(a);
+                }
+            }
+        }
+    }
+
+    /// `rex.sound`: a method of `rex`'s struct.
+    fn method_call(&mut self, receiver: &Expr, d: &StructDef, name: &Name, args: &[Expr], sig: Signature) -> Type {
+        match sig.receiver {
+            None => self.diags.push(
+                Diag::new(name.span, t!("static_on_value", name = name.text, type = d.name))
+                    .help(t!("static_on_value_help", name = name.text, type = d.name)),
+            ),
+            Some(Receiver::Var) => self.changes(receiver, name),
+            Some(_) => {}
+        }
+        self.arguments(name, args, &sig.params);
+        sig.ret
+    }
+
+    /// `Dog.create("Rex")`: a struct's function without `self`.
+    fn static_call(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+        let found = match self.structs.get(&ty.text).cloned() {
+            None => {
+                self.error(ty.span, t!("type_unknown", name = ty.text));
+                None
+            }
+            Some(d) => match self.functions.get(&method_name(&d.name, &name.text)).cloned() {
+                None => {
+                    self.no_field(&d, name);
+                    None
+                }
+                Some(sig) => Some(sig),
+            },
+        };
+        let Some(sig) = found else {
+            args.iter().for_each(|a| {
+                self.expr(a);
+            });
+            return Type::Error;
+        };
+        if sig.receiver.is_some() {
+            self.diags.push(
+                Diag::new(name.span, t!("method_needs_value", name = name.text, type = ty.text))
+                    .help(t!("method_needs_value_help", name = name.text)),
+            );
+        }
+        self.arguments(name, args, &sig.params);
+        sig.ret
     }
 
     /// The type of `t.i` when `t` has type `ty`.
@@ -641,9 +782,13 @@ impl Checker<'_> {
         }
     }
 
-    /// `rex.color`: no such field (or method) in `Dog`.
+    /// `rex.color`: no such field or method in `Dog`.
     fn no_field(&mut self, d: &StructDef, name: &Name) {
-        let fields: Vec<String> = d.fields.iter().map(|(n, _)| format!("`{n}`")).collect();
+        let prefix = method_name(&d.name, "");
+        let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).collect();
+        methods.sort();
+        let fields: Vec<String> =
+            d.fields.iter().map(|(n, _)| n.as_str()).chain(methods).map(|n| format!("`{n}`")).collect();
         let mut diag = Diag::new(name.span, t!("no_member", type = d.name, name = name.text));
         if !fields.is_empty() {
             diag = diag.help(t!("fields_of", type = d.name, fields = fields.join(", ")));
@@ -724,7 +869,13 @@ impl Checker<'_> {
             }
             Stmt::Expr(e) => {
                 self.expr(e);
-                if !matches!(e.kind, ExprKind::Call { .. }) {
+                let call = match &e.kind {
+                    ExprKind::Call { .. } | ExprKind::Static { .. } => true,
+                    ExprKind::Method { receiver, name, .. } => matches!(&self.types[receiver.id],
+                        Type::Struct(d) if self.functions.contains_key(&method_name(&d.name, &name.text))),
+                    _ => false,
+                };
+                if !call {
                     let mut d = Diag::new(e.span, t!("does_nothing"));
                     if let ExprKind::Binary(BinOp::Eq, ..) = e.kind {
                         d = d.help(t!("eq_vs_assign"));
@@ -767,6 +918,10 @@ impl Checker<'_> {
             },
             ExprKind::Var(name) => match self.lookup(name) {
                 Some(v) => v.ty.clone(),
+                None if name == "self" => {
+                    self.error(e.span, t!("self_outside_method"));
+                    Type::Error
+                }
                 None => {
                     self.error(e.span, t!("variable_unknown", name = name));
                     Type::Error
@@ -795,8 +950,14 @@ impl Checker<'_> {
             }
             ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
             ExprKind::Call { name, args } => self.call(name, args),
+            ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                if let Type::Struct(d) = &t
+                    && let Some(sig) = self.functions.get(&method_name(&d.name, &name.text)).cloned()
+                {
+                    return self.method_call(receiver, d, name, args, sig);
+                }
                 for a in args {
                     self.expr(a);
                 }
@@ -992,18 +1153,7 @@ impl Checker<'_> {
             return Type::Error;
         };
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
-        if params.len() != args.len() {
-            let msg = t!("argument_count", name = name.text, expected = params.len(), given = args.len());
-            self.error(name.span, msg);
-        }
-        for (i, a) in args.iter().enumerate() {
-            match params.get(i) {
-                Some(t) => self.expect(a, t),
-                None => {
-                    self.expr(a);
-                }
-            }
-        }
+        self.arguments(name, args, &params);
         ret
     }
 }

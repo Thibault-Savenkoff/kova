@@ -1,0 +1,86 @@
+// Methods (PLAN 2.6): `self` reads, `var self` changes, `move self` takes; static functions.
+struct Dog {
+    name: String
+    age: Int
+
+    fn create(name: String) -> Dog {
+        return Dog { name := name.clone, age := 0 }
+    }
+
+    fn sound(self) -> String {
+        return "woof"
+    }
+
+    fn introduce(self) -> String {
+        return "{self.name} says {self.sound}"
+    }
+
+    fn older(self, years: Int) -> Int
+        require years >= 0 else "{self.name}: negative years"
+    {
+        return self.age + years
+    }
+
+    fn birthday(var self) {
+        self.age += 1
+    }
+
+    fn rename(var self, name: String) -> String {
+        let old: String := self.name.clone
+        self.name := name.clone
+        self.birthday
+        return old
+    }
+
+    fn into_name(move self) -> String {
+        let d: Dog := self
+        return d.name.clone
+    }
+
+    fn forget(move self) {
+    }
+}
+
+struct Kennel {
+    dog: Dog
+    count: Int
+
+    fn add(var self) {
+        self.count += 1
+        self.dog.birthday
+    }
+}
+
+fn main {
+    var rex: Dog := Dog.create("Rex")
+    print(rex)
+    print(rex.sound)
+    print(rex.introduce)
+    print(rex.older(5))
+    rex.birthday
+    rex.birthday
+    print(rex.age)
+    let old: String := rex.rename("Max")
+    print("{old} -> {rex}")
+
+    var k := Kennel { dog := rex, count := 0 }
+    k.add
+    k.dog.birthday
+    print(k)
+
+    let fido := Dog { name := "Fido", age := 1 }
+    print(fido.into_name)
+    Dog.create("Temp").forget
+    print(Dog.create("Bob").introduce)
+    print(Dog.create("Ann").older(1))
+}
+// expect: Dog { name: "Rex", age: 0 }
+// expect: woof
+// expect: Rex says woof
+// expect: 5
+// expect: 2
+// expect: Rex -> Dog { name: "Max", age: 3 }
+// expect: Kennel { dog: Dog { name: "Max", age: 5 }, count: 1 }
+// expect: Fido
+// expect: Bob says woof
+// expect: 1

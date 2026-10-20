@@ -140,13 +140,17 @@ fn tree(src: &str) -> File {
 fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
     let mut text = format!("fn {}", f.name.text);
     let mut params = vec![];
+    // `self` is not an argument at the call (`rex.rename(n)`): it gets no position.
+    if let Some(r) = f.receiver {
+        text += &format!("({}", r.text());
+    }
     for (i, p) in f.params.iter().enumerate() {
-        text += if i > 0 { ", " } else { "(" };
+        text += if i > 0 || f.receiver.is_some() { ", " } else { "(" };
         let start = text.encode_utf16().count() as u32;
         text += &format!("{}: {}", p.name.text, p.ty.text());
         params.push([start, text.encode_utf16().count() as u32]);
     }
-    if !f.params.is_empty() {
+    if !f.params.is_empty() || f.receiver.is_some() {
         text += ")";
     }
     if let Some(r) = &f.ret {
@@ -190,10 +194,14 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
         });
     }
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
-    let bodies = file.functions.iter().map(|f| (&f.params[..], &f.body));
-    let test_bodies = file.tests.iter().map(|t| (&[][..], &t.body));
-    if let Some((params, body)) = bodies.chain(test_bodies).find(|(_, b)| inside(b)) {
+    let bodies = file.functions.iter().map(|f| (None, &f.params[..], &f.body));
+    let methods = file.structs.iter().flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| &s.name.text), &m.params[..], &m.body)));
+    let test_bodies = file.tests.iter().map(|t| (None, &[][..], &t.body));
+    if let Some((owner, params, body)) = bodies.chain(methods).chain(test_bodies).find(|(_, _, b)| inside(b)) {
         let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.name.text.clone(), p.ty.text())).collect();
+        if let Some(ty) = owner {
+            vars.insert(0, ("self".into(), ty.clone()));
+        }
         visible(body, cursor, &mut vars);
         for (name, ty) in vars {
             items.push(CompletionItem {
@@ -310,7 +318,9 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
         let start = label.find('(').unwrap() as u32 + 1;
         (label, vec![[start, start + 5]])
     } else {
-        heading(tree(src).functions.iter().find(|f| f.name.text == name)?)
+        let file = tree(src);
+        let methods = file.structs.iter().flat_map(|s| &s.methods);
+        heading(file.functions.iter().chain(methods).find(|f| f.name.text == name)?)
     };
     let parameters = params.into_iter().map(|p| ParameterInformation { label: ParameterLabel::LabelOffsets(p), documentation: None });
     Some(SignatureHelp {

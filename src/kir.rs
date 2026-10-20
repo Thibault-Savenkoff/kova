@@ -32,10 +32,10 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Step, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Receiver, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
-use crate::types::{Info, Type, type_of};
+use crate::types::{Info, Type, method_name, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -354,24 +354,36 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 /// `tests` = true for `kova test`: each `test` block becomes one more function.
 /// `built` = true for `kova build`: the value of `mode = build`.
 pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
-    let numbers: HashMap<&str, usize> =
-        f.functions.iter().enumerate().map(|(i, f)| (f.name.text.as_str(), i)).collect();
+    // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
+    // (a test = a function without parameters, result or contracts).
+    type Source<'f> = (String, Option<(Receiver, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block);
+    let mut all: Vec<Source> =
+        f.functions.iter().map(|g| (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body)).collect();
+    let mut receivers = HashMap::new();
+    for s in &f.structs {
+        let ty = Type::Struct(info.structs[&s.name.text].clone());
+        for m in &s.methods {
+            let name = method_name(&s.name.text, &m.name.text);
+            receivers.insert(name.clone(), m.receiver);
+            all.push((name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body));
+        }
+    }
+    let n = all.len();
+    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body)));
+    let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
     // The functions that receive the call location (`main` is called by the runtime).
-    let sites: Vec<bool> =
-        f.functions.iter().map(|g| contracts && !g.contracts.is_empty() && g.name.text != "main").collect();
-    // A test = a function without parameters, result or contracts.
-    let bodies = f.functions.iter().map(|g| (g.name.text.as_str(), &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body));
-    let test_bodies = f.tests.iter().filter(|_| tests).map(|t| (t.name.as_str(), &[][..], None, &[][..], &t.body));
-    let functions = bodies
-        .chain(test_bodies)
+    let sites: Vec<bool> = all.iter().map(|g| contracts && !g.4.is_empty() && g.0 != "main").collect();
+    let functions = all
+        .iter()
         .enumerate()
-        .map(|(i, (name, params, ret, written_contracts, body))| {
+        .map(|(i, (name, receiver, params, ret, written_contracts, body))| {
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &info.structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
             let mut t = Translator {
                 src,
                 info,
                 numbers: &numbers,
+                receivers: &receivers,
                 sites: &sites,
                 contracts,
                 built,
@@ -379,6 +391,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 ret: ret.clone(),
                 result: None,
                 site: None,
+                outs: vec![],
                 names: vec![HashMap::new()],
                 locals: vec![],
                 blocks: vec![],
@@ -386,12 +399,29 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 loops: vec![],
                 temps: vec![],
             };
-            for p in params {
+            let mut returns = scalars(&ret);
+            if let Some((r, ty)) = receiver {
+                let v = t.new_slots(ty);
+                match r {
+                    // Taken: freed by the method (scope 1 is freed at each exit).
+                    Receiver::Move => t.names.push(HashMap::from([("self".to_string(), (v, ty.clone()))])),
+                    // Changed: given back to the caller at each exit, after the result.
+                    Receiver::Var => {
+                        t.outs = v.clone();
+                        returns.extend(scalars(ty));
+                        t.names[0].insert("self".to_string(), (v, ty.clone()));
+                    }
+                    Receiver::Read => {
+                        t.names[0].insert("self".to_string(), (v, ty.clone()));
+                    }
+                }
+            }
+            for p in params.iter() {
                 let ty = type_of(&p.ty, &info.structs);
                 let v = t.new_slots(&ty);
                 t.names[0].insert(p.name.text.clone(), (v, ty));
             }
-            t.site = sites.get(i).is_some_and(|&s| s).then(|| (t.int_local(), t.int_local()));
+            t.site = sites[i].then(|| (t.int_local(), t.int_local()));
             let nb_params = t.locals.len();
             t.current = t.new_block();
             for c in kept(ContractKind::Require) {
@@ -404,16 +434,15 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 t.finish(End::Unreachable);
             }
             Function {
-                name: name.to_string(),
+                name: name.clone(),
                 nb_params,
                 locals: t.locals,
-                returns: scalars(&ret),
+                returns,
                 blocks: t.blocks.into_iter().map(|(insts, end)| KBlock { insts, end: end.unwrap_or(End::Unreachable) }).collect(),
             }
         })
         .collect();
-    let n = f.functions.len();
-    let tests = f.tests.iter().filter(|_| tests).enumerate().map(|(i, t)| (t.name.clone(), n + i)).collect();
+    let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
     Program { functions, main: numbers["main"], tests }
 }
 
@@ -421,6 +450,8 @@ struct Translator<'a> {
     src: &'a str,
     info: &'a Info,
     numbers: &'a HashMap<&'a str, usize>,
+    /// How each method receives its value (`None`: a static function), by name (`Dog.sound`).
+    receivers: &'a HashMap<String, Option<Receiver>>,
     /// By function number: does it receive the call location?
     sites: &'a [bool],
     /// Keep contracts (false with `--boost`).
@@ -433,6 +464,8 @@ struct Translator<'a> {
     result: Option<(Slots, Type)>,
     /// The 2 hidden parameters: line and column of the call (see `sites`).
     site: Option<(Local, Local)>,
+    /// A `var self` method: the slots of `self`, given back after the result at each exit.
+    outs: Slots,
     /// Name → its slots and type, one table per open block.
     names: Vec<HashMap<String, (Slots, Type)>>,
     locals: Vec<Scalar>,
@@ -769,7 +802,7 @@ impl<'a> Translator<'a> {
             self.check(c, self.site);
         }
         self.result = None;
-        self.finish(End::Return(v));
+        self.finish(End::Return([v, self.outs.clone()].concat()));
     }
 
     /// Tests a contract's condition; if false: `Fail` with a message like
@@ -904,6 +937,29 @@ impl<'a> Translator<'a> {
         whole.expect("a text has at least one part")
     }
 
+    /// `results := f(vals)`, with the call location for a function that has contracts.
+    /// `outs`: slots receiving what a `var self` method gives back.
+    fn call(&mut self, name: &str, mut vals: Slots, outs: &[Local], span: Span, ty: &Type) -> Slots {
+        let num = self.numbers[name];
+        if self.sites[num] {
+            let l = self.loc(span);
+            let (line, col) = (self.constant(l.line as i64), self.constant(l.col as i64));
+            vals.extend([line, col]);
+        }
+        let result = self.new_slots(ty);
+        self.emit(Inst::Call([&result[..], outs].concat(), num, vals));
+        self.track(&result, ty);
+        result
+    }
+
+    /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
+    fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Receiver)> {
+        let Type::Struct(d) = &self.info.types[receiver.id] else { return None };
+        let q = method_name(&d.name, &name.text);
+        let r = (*self.receivers.get(&q)?).expect("static function called on a value: refused by the type checker");
+        Some((q, r))
+    }
+
     /// The value of a condition known before running: `mode = build`, `!(mode = run)`.
     fn known(&self, e: &Expr) -> Option<bool> {
         match &e.kind {
@@ -1024,17 +1080,16 @@ impl<'a> Translator<'a> {
                     }
                     return vec![];
                 }
-                let num = self.numbers[name.text.as_str()];
-                if self.sites[num] {
-                    let l = self.loc(name.span);
-                    let (line, col) = (self.constant(l.line as i64), self.constant(l.col as i64));
-                    vals.extend([line, col]);
-                }
                 let ty = self.info.types[e.id].clone();
-                let result = self.new_slots(&ty);
-                self.emit(Inst::Call(result.clone(), num, vals));
-                self.track(&result, &ty);
-                result
+                self.call(&name.text, vals, &[], name.span, &ty)
+            }
+            ExprKind::Static { ty, name, args } => {
+                let mut vals = vec![];
+                for a in args {
+                    vals.extend(self.expr(a));
+                }
+                let result = self.info.types[e.id].clone();
+                self.call(&method_name(&ty.text, &name.text), vals, &[], name.span, &result)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // A number written with `-` in front is a constant (handles `-9223372036854775808`).
@@ -1108,6 +1163,22 @@ impl<'a> Translator<'a> {
                 let (start, n) = slice_of(&ty, field_index(&ty, &name.text));
                 v[start..start + n].to_vec()
             }
+            ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
+                let (q, r) = self.method(receiver, name).unwrap();
+                let ty = self.info.types[receiver.id].clone();
+                // `move self`: the method takes the value; otherwise it borrows it.
+                let v = if r == Receiver::Move { self.owned(receiver) } else { self.expr(receiver) };
+                let mut vals = v.clone();
+                for a in args {
+                    vals.extend(self.expr(a));
+                }
+                // `var self`: the method gives back the changed value, written into the caller's place.
+                let outs = if r == Receiver::Var { self.new_slots(&ty) } else { vec![] };
+                let result = self.info.types[e.id].clone();
+                let result = self.call(&q, vals, &outs, name.span, &result);
+                self.copy(&v, &outs);
+                result
+            }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone" && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Tuple(_)) =>
             {
@@ -1159,7 +1230,9 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
     match &e.kind {
         ExprKind::Var(n) => add(n),
         ExprKind::Result => add("result"),
-        ExprKind::Call { args, .. } | ExprKind::Tuple(args) => args.iter().for_each(|a| names_in(a, names)),
+        ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Tuple(args) => {
+            args.iter().for_each(|a| names_in(a, names))
+        }
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));

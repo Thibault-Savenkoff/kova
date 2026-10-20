@@ -1,0 +1,40 @@
+struct Dog {
+    name: String
+    age: Int
+
+    fn sound(self) -> String { return "woof" }
+    fn sound(self) -> String { return "wouf" }
+    fn age(self) -> Int { return 1 }
+    fn create -> Dog { return Dog { name := "x", age := self.age } }
+    fn grow(self) { self.age += 1 }
+    fn birthday(var self) { self.age += 1 }
+    fn take(move self) { self.age := 2 }
+    fn set(var self, n: String) { self.name := n.clone }
+}
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3 }
+    print(rex.create)
+    print(Dog.sound)
+    print(Dog.bark)
+    print(Cat.create)
+    rex.birthday
+    Dog.create.birthday
+    print(rex.sound(1))
+    print(self)
+}
+// error: the method `sound` already exists in `Dog` (line 5)
+// error: `age` is both a field and a method of `Dog`
+// error: `self` only exists in a method with `self`, `var self` or `move self`
+// error: `self` cannot change in a method with `self`
+// error: write `var self` in the method's parameters if it must change
+// error: `self` cannot change in a method with `move self`
+// error: `create` has no `self`: it is not called on a value
+// error: call it with the type: `Dog.create`
+// error: `sound` works on a `Dog`: it needs a value
+// error: `Dog` has no field or method `bark`
+// error: `Dog` has `name`, `age`, `birthday`, `create`, `grow`, `set`, `sound`, `take`
+// error: unknown type `Cat`
+// error: `rex` is declared with let
+// error: `birthday` changes the value it is called on: call it on a variable
+// error: `sound` takes 0 argument(s), 1 given

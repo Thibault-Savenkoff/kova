@@ -1,0 +1,20 @@
+struct Dog {
+    name: String
+
+    fn take(move self) -> String { return "taken" }
+    fn set(var self, n: String) { self.name := n.clone }
+    fn keep(self) -> Dog { return self }
+}
+
+fn main {
+    var rex := Dog { name := "Rex" }
+    print(rex.take)
+    print(rex.name)
+    var max := Dog { name := "Max" }
+    max.set(max.name)
+    max.set(max.name + "!")
+}
+// error: `self` is borrowed here: it cannot be moved
+// error: `rex` was moved (line 11)
+// error: `max` is changed by `set`: it cannot be read by the same call
+// error: give a copy: `max.name.clone`
