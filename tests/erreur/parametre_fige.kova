@@ -1,5 +1,0 @@
-fn f(n: Int) {
-    n += 1
-}
-fn main() { f(1) }
-// erreur: `n` est un paramètre

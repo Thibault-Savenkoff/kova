@@ -1,0 +1,11 @@
+// Le parser continue après une erreur : les deux sont signalées.
+fn a() {
+    let x: Int := (1 +
+    print(2)
+}
+fn b() {
+    let := 3
+}
+fn main() {}
+// error: :5:1
+// error: :7:9

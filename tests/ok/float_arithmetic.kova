@@ -1,0 +1,44 @@
+// Calculs, comparaisons et conversions entre Int, Float et Char.
+fn moyenne(a: Float, b: Float) -> Float {
+    return (a + b) / 2.0
+}
+fn main() {
+    print(moyenne(1.0, 2.0))
+    print(10.0 - 2.5 * 2.0)
+    print(-(1.5))
+    var f: Float := 1.0
+    f += 0.5
+    f *= 4.0
+    f -= 1.0
+    f /= 2.0
+    print(f)
+    print(1.5 < 2.0 && 2.0 <= 2.0 && 3.0 > -1.0 && 1.0 != 2.0)
+    print(7.to_float())
+    print(2.99.to_int())
+    print((-2.99).to_int())
+    print(9.2e18.to_int())
+    print('Z' > 'A')
+    print('€'.to_int())
+    let c: Char := '\u{1F600}'
+    print(c)
+    write('\'')
+    write('\\')
+    write('\t')
+    print('|')
+    let moitie: Float := 1.to_float() / 2.to_float()
+    print(moitie)
+}
+// expect: 1.5
+// expect: 5.0
+// expect: -1.5
+// expect: 2.5
+// expect: true
+// expect: 7.0
+// expect: 2
+// expect: -2
+// expect: 9200000000000000000
+// expect: true
+// expect: 8364
+// expect: 😀
+// expect: '\	|
+// expect: 0.5

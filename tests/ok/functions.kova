@@ -1,0 +1,43 @@
+// main avant les autres, accolades à la ligne, accents, Bool en paramètre et en résultat.
+fn main()
+{
+    dire(3)
+    print(carré(-4))
+    print(non_et(true, false))
+    if carré(2) = 4
+    {
+        print(1)
+    }
+    else
+    {
+        print(0)
+    }
+    var n: Int := 0
+    while n < 2
+    {
+        n += 1
+    }
+    from i := 1 to 2
+    {
+        write(i)
+    }
+    print(n)
+}
+
+fn dire(x: Int) {
+    print(x)
+}
+
+fn carré(x: Int) -> Int
+{
+    return x * x
+}
+
+fn non_et(a: Bool, b: Bool) -> Bool {
+    return !(a && b)
+}
+// expect: 3
+// expect: 16
+// expect: true
+// expect: 1
+// expect: 122

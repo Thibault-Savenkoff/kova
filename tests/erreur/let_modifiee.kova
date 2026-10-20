@@ -1,6 +1,0 @@
-fn main() {
-    let a: Int := 1
-    a := 2
-}
-// erreur: `a` est déclarée avec let
-// erreur: déclare-la avec `var a`

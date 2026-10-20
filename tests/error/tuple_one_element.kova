@@ -1,0 +1,4 @@
+fn main() {
+    let un: (Int) := 1
+}
+// error: un tuple a au moins 2 éléments

@@ -1,0 +1,4 @@
+fn main() {
+    print("bonjour")
+}
+// error: les textes arrivent au jalon J3

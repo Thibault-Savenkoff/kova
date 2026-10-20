@@ -1,0 +1,85 @@
+// Entiers, booléens, priorités, divisions.
+
+fn vrai_bavard() -> Bool {
+    print(999)
+    return true
+}
+
+fn signe(x: Int) -> Int {
+    if x < 0 {
+        return -1
+    } else if x = 0 {
+        return 0
+    } else {
+        return 1
+    }
+}
+
+fn main() {
+    print(2 + 3 * 4)
+    print((2 + 3) * 4)
+    print(10 - 3 - 2)
+    print(-7 / 2)
+    print(-7 % 2)
+    print(7 % -2)
+    print(-9223372036854775808 % -1)
+    print(-9223372036854775808)
+    print(1_000_000 + 0xFF + 0b1010)
+    print(-(3))
+
+    var x: Int := 10
+    x += 5
+    x -= 3
+    x *= 2
+    x /= 4
+    print(x)
+
+    print(3 < 4 && 4 >= 4)
+    print(!(1 = 1) || 2 != 2)
+    print(true = false)
+
+    // Court-circuit : vrai_bavard() n'est jamais appelée.
+    print(false && vrai_bavard())
+    print(true || vrai_bavard())
+
+    print(signe(-5))
+    print(signe(0))
+    print(signe(42))
+
+    // Une expression peut continuer à la ligne suivante.
+    let long: Int := 1 +
+        2 +
+        3
+    let parentheses: Int := (10
+        - 4)
+    print(long * parentheses)
+    let bon: Bool := long = 6
+        && parentheses = 6
+    print(bon)
+    write(1)
+    write(true)
+    print(2)
+}
+
+// expect: 14
+// expect: 20
+// expect: 5
+// expect: -3
+// expect: -1
+// expect: 1
+// expect: 0
+// expect: -9223372036854775808
+// expect: 1000265
+// expect: -3
+// expect: 6
+// expect: true
+// expect: false
+// expect: false
+// expect: false
+// expect: true
+// expect: -1
+// expect: 0
+// expect: 1
+// expect: 36
+// expect: true
+// expect: 1true2

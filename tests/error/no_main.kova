@@ -1,0 +1,2 @@
+fn principal() {}
+// error: il manque la fonction `main`

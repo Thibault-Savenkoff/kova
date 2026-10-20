@@ -1,0 +1,13 @@
+header {
+    mode := vite
+    mode := run
+    vitesse := max
+    lock := oui
+}
+
+fn main() {
+}
+// error: `mode` vaut `run` ou `build`, pas `vite`
+// error: `mode` est déjà réglé (ligne 2)
+// error: réglage inconnu `vitesse` dans le header
+// error: `lock` vaut `false` ou `true`, pas `oui`

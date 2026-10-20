@@ -1,8 +1,0 @@
-fn main() {
-    print(-true)
-    print('a' + 'b')
-    print(true < false)
-}
-// erreur: `-` s'applique à `Int` ou `Float`, pas à `Bool`
-// erreur: `+` s'applique à `Int` ou `Float`, pas à `Char`
-// erreur: `<` s'applique à `Int` ou `Float` ou `Char`, pas à `Bool`

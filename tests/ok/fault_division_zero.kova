@@ -1,0 +1,11 @@
+fn diviser(a: Int, b: Int) -> Int {
+    return a / b
+}
+fn main() {
+    print(diviser(7, 2))
+    print(diviser(7, 0))
+}
+// expect: 3
+// code: 101
+// stderr: erreur: division par zéro
+// stderr: fault_division_zero.kova:2:14

@@ -1,0 +1,11 @@
+test "a" {
+    check 1 = 1
+}
+test "a" {
+    check x = 1
+}
+test sans_nom {
+}
+fn main() {
+}
+// error: nom du test entre guillemets attendu, trouvé `sans_nom`

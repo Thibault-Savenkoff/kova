@@ -1,9 +1,0 @@
-fn main() {
-    let inf: Float := 1e308 * 10.0
-    let nan: Float := inf - inf
-    print(nan)
-    print(nan.to_int())
-}
-// attendu: NaN
-// code: 101
-// stderr: erreur: conversion impossible

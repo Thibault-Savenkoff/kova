@@ -1,0 +1,12 @@
+test "a" {
+    check 1 = 1
+}
+test "a" {
+    check x = 1
+    return 3
+}
+fn main() {
+}
+// error: le test « a » existe déjà (ligne 1)
+// error: variable inconnue `x`
+// error: cette fonction ne renvoie rien

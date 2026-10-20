@@ -1,0 +1,54 @@
+// for, from, while, break, continue.
+
+
+fn main() {
+    // `..` exclut la fin, `..=` et `from ... to` l'incluent.
+    for i in 0..3 { write(i) }
+    print(0)
+    for i in 0..=3 { write(i) }
+    print(0)
+    from i := 1 to 3 { write(i) }
+    print(0)
+
+    // Intervalle vide : aucun tour.
+    from i := 5 to 1 { print(i) }
+    for i in 3..3 { print(i) }
+
+    // `continue` passe quand même au compteur suivant.
+    from i := 1 to 6 {
+        if i % 2 = 0 { continue }
+        write(i)
+    }
+    print(0)
+
+    // `break` sort de la boucle la plus proche.
+    var total: Int := 0
+    while true {
+        total += 1
+        if total = 4 { break }
+    }
+    print(total)
+
+    // Boucles imbriquées + même nom de compteur dans deux boucles voisines.
+    from i := 1 to 3 {
+        from j := 1 to i { write(j) }
+        write(0)
+    }
+    print(0)
+    from i := 7 to 8 { write(i) }
+    print(0)
+
+    // Une boucle qui va jusqu'au plus grand Int ne déborde pas.
+    var tours: Int := 0
+    from i := 9223372036854775806 to 9223372036854775807 { tours += 1 }
+    print(tours)
+}
+
+// expect: 0120
+// expect: 01230
+// expect: 1230
+// expect: 1350
+// expect: 4
+// expect: 1012012300
+// expect: 780
+// expect: 2

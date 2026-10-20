@@ -1,0 +1,9 @@
+fn carre(x: Int) -> Int { return x * x }
+fn main() {
+    print(carre(1, 2))
+    print(carre(true))
+    print(print(1))
+}
+// error: `carre` prend 1 argument(s), 2 donné(s)
+// error: `Int` attendu, `Bool` donné
+// error: `print` : cette expression ne donne pas de valeur à afficher

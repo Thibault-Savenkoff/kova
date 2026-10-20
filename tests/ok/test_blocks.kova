@@ -1,0 +1,20 @@
+// Les blocs `test` sont ignorés par run et build ; `kova test` les lance (voir tests/kova.rs).
+fn carre(x: Int) -> Int { return x * x }
+
+test "carré de 3" {
+    check carre(3) = 9
+}
+
+test "carré d'un négatif" {
+    let n: Int := -4
+    check carre(n) = -16 else "un carré est toujours positif"
+}
+
+test "division" {
+    print(7 / 0)
+}
+
+fn main() {
+    print(carre(5))
+}
+// expect: 25

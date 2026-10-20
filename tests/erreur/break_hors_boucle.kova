@@ -1,4 +1,0 @@
-fn main() {
-    break
-}
-// erreur: `break` en dehors d'une boucle

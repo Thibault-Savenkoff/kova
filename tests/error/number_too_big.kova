@@ -1,0 +1,7 @@
+fn main() {
+    print(9223372036854775808)
+    print(-9223372036854775809)
+}
+// error: :2:11
+// error: nombre trop grand pour un `Int`
+// error: :3:12

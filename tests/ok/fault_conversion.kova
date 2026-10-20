@@ -1,0 +1,9 @@
+// Un Float trop grand (ou NaN) ne peut pas devenir un Int.
+fn main() {
+    print(9.2e18.to_int())
+    print(9.3e18.to_int())
+}
+// expect: 9200000000000000000
+// code: 101
+// stderr: erreur: conversion impossible : ce Float ne tient pas dans un Int
+// stderr: fault_conversion.kova:4:18

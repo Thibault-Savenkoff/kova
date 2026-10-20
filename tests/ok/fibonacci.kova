@@ -26,16 +26,16 @@ fn main() {
     print(fib(25) = fib_rapide(25))
 }
 
-// attendu: 0
-// attendu: 1
-// attendu: 1
-// attendu: 2
-// attendu: 3
-// attendu: 5
-// attendu: 8
-// attendu: 13
-// attendu: 21
-// attendu: 34
-// attendu: 55
-// attendu: 2880067194370816120
-// attendu: true
+// expect: 0
+// expect: 1
+// expect: 1
+// expect: 2
+// expect: 3
+// expect: 5
+// expect: 8
+// expect: 13
+// expect: 21
+// expect: 34
+// expect: 55
+// expect: 2880067194370816120
+// expect: true

@@ -1,4 +1,0 @@
-fn main() {
-    let match: Int := 1
-}
-// erreur: `match` est un mot réservé de Kova

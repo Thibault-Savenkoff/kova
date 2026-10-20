@@ -1,0 +1,20 @@
+// La borne d'une boucle est calculée une seule fois, avant le premier tour.
+
+fn borne() -> Int {
+    print(100)
+    return 3
+}
+
+fn main() {
+    from i := 1 to borne() { print(i) }
+    for i in 0..borne() { print(i) }
+}
+
+// expect: 100
+// expect: 1
+// expect: 2
+// expect: 3
+// expect: 100
+// expect: 0
+// expect: 1
+// expect: 2

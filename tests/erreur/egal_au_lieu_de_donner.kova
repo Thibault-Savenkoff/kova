@@ -1,6 +1,0 @@
-fn main() {
-    var x: Int := 0
-    x = 5
-}
-// erreur: cette expression ne fait rien
-// erreur: pour donner une valeur, écris `:=`

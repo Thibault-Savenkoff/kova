@@ -1,9 +1,0 @@
-fn main() {
-    let a: Float := 3
-    let b: Float := 1.5 + 2
-    let c: Int := 2.0
-}
-// erreur: pour un `Float`, écris `3.0`
-// erreur: :3:27
-// erreur: Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`
-// erreur: :4:19

@@ -1,0 +1,9 @@
+fn signe(x: Int) -> Int {
+    if x < 0 {
+        return -1
+    } else if x > 0 {
+        return 1
+    }
+}
+fn main() { print(signe(2)) }
+// error: `signe` peut arriver ici sans `return`

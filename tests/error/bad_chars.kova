@@ -1,0 +1,12 @@
+fn main() {
+    print('')
+    print('ab')
+    print('\q')
+    print('\u{D800}')
+    print('\u{110000}')
+}
+// error: caractère vide
+// error: un seul caractère
+// error: échappement inconnu `\q`
+// error: `D800` n'est pas un caractère Unicode valide
+// error: `110000` n'est pas un caractère Unicode valide

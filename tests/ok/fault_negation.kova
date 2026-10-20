@@ -1,0 +1,7 @@
+fn main() {
+    let min: Int := -9223372036854775808
+    print(-min)
+}
+// code: 101
+// stderr: erreur: dépassement d'entier
+// stderr: fault_negation.kova:3:11

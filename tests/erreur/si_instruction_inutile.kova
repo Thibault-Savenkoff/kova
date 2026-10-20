@@ -1,5 +1,0 @@
-// Un `if` en instruction ne donne pas de valeur : `1` seul ne fait rien.
-fn main() {
-    if true { 1 } else { 2 }
-}
-// erreur: cette expression ne fait rien

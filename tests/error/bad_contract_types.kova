@@ -1,0 +1,20 @@
+fn f(x: Int) -> Int
+    require x
+    ensure result > y
+{
+    check result > 0
+    return x
+}
+
+fn g(x: Int)
+    ensure result = 0
+{
+}
+
+fn main() {
+    print(f(1))
+}
+// error: types différents : `Bool` attendu, `Int` donné
+// error: variable inconnue `y`
+// error: `result` ne s'utilise que dans un `ensure`
+// error: `result` n'existe pas : cette fonction ne renvoie rien

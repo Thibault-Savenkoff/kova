@@ -1,0 +1,8 @@
+fn main() {
+    print(y)
+    calculer(2)
+    let z: Texte := 1
+}
+// error: variable inconnue `y`
+// error: fonction inconnue `calculer`
+// error: type inconnu `Texte`

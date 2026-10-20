@@ -1,0 +1,9 @@
+fn main() {
+    var x: Int := 2
+    while true {
+        x *= 2
+    }
+}
+// code: 101
+// stderr: erreur: dépassement d'entier
+// stderr: fault_multiplication.kova:4:9

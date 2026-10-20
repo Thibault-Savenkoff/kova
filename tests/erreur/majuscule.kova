@@ -1,5 +1,0 @@
-fn main() {
-    let Total: Int := 0
-}
-// erreur: un nom de variable commence par une minuscule
-// erreur: écris `total`

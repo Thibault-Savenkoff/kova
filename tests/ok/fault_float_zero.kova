@@ -1,0 +1,10 @@
+// Un Float divisé par zéro est une erreur, comme pour un Int (même -0.0).
+fn main() {
+    print(1.0 / 2.0)
+    let zero: Float := -0.0
+    print(1.0 / zero)
+}
+// expect: 0.5
+// code: 101
+// stderr: erreur: division par zéro
+// stderr: fault_float_zero.kova:5:15

@@ -1,0 +1,4 @@
+fn main() {
+    let x: Int := if true { 1 }
+}
+// error: un `if` qui donne une valeur a besoin d'un `else`

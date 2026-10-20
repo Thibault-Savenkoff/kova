@@ -58,20 +58,20 @@ fn main() {
     let point: (Int, Int) := if a > 0 { (a, 0) } else { (0, a) }
     print(point.0)
 }
-// attendu: 1
-// attendu: 9
-// attendu: 2
-// attendu: 1
-// attendu: 321
-// attendu: 10
-// attendu: 1.25
-// attendu: true
-// attendu: k
-// attendu: -5
-// attendu: 1.5
-// attendu: 0
-// attendu: 101
-// attendu: 20
-// attendu: 23
-// attendu: 7
-// attendu: 3
+// expect: 1
+// expect: 9
+// expect: 2
+// expect: 1
+// expect: 321
+// expect: 10
+// expect: 1.25
+// expect: true
+// expect: k
+// expect: -5
+// expect: 1.5
+// expect: 0
+// expect: 101
+// expect: 20
+// expect: 23
+// expect: 7
+// expect: 3

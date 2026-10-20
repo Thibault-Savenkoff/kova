@@ -1,5 +1,0 @@
-fn rien() { return 3 }
-fn nombre() -> Int { return }
-fn main() {}
-// erreur: cette fonction ne renvoie rien
-// erreur: cette fonction doit renvoyer un `Int`

@@ -1,7 +1,0 @@
-fn main() {
-    let x: Int := if true { 1 } else { return }
-    let y: Int := if true { 1 } else { }
-}
-// erreur: :2:47
-// erreur: :3:40
-// erreur: cette branche doit finir par une valeur

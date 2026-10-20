@@ -7,4 +7,4 @@ header {
 fn main() {
     print(1)
 }
-// attendu: 1
+// expect: 1

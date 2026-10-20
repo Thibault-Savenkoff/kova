@@ -1,0 +1,19 @@
+fn paire() -> (Int, Int) { return (1, 2) }
+fn main() {
+    let (a, b, c): (Int, Int, Int) := paire()
+    let (d, e): Int := 3
+    let t: (Int, Int) := (1, 2)
+    print(t.2)
+    print(a.0)
+    print(t)
+    print(t = t)
+    var x: Int := 0
+    (x, x) := (1, 2)
+}
+// error: types différents : `(Int, Int, Int)` attendu, `(Int, Int)` donné
+// error: ce motif a 2 éléments, mais la valeur est un `Int`
+// error: ce tuple a 2 éléments : de `.0` à `.1`
+// error: `.0` s'applique à un tuple, pas à `Int`
+// error: `print` n'affiche pas encore les tuples
+// error: `=` ne compare pas encore des tuples
+// error: `x` reçoit deux valeurs dans la même affectation

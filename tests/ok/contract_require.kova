@@ -1,0 +1,18 @@
+// `require` raté : le message dit qui a mal appelé la fonction.
+fn diviser(a: Int, b: Int) -> Int
+    require b != 0 else "on ne peut pas diviser par zéro"
+{
+    return a / b
+}
+
+fn main() {
+    print(diviser(10, 2))
+    print(diviser(5, 0))
+}
+// expect: 5
+// code: 101
+// stderr: erreur: on ne peut pas diviser par zéro
+// stderr: contract_require.kova:3:13
+// stderr:   require b != 0
+// stderr:   valeurs : b = 0
+// stderr: contract_require.kova:10:11

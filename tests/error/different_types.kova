@@ -1,0 +1,10 @@
+fn main() {
+    let x: Int := true
+    let b: Bool := 1 + 2
+    if 3 { print(1) }
+}
+// error: :2:19
+// error: types différents : `Int` attendu, `Bool` donné
+// error: :3:20
+// error: types différents : `Bool` attendu, `Int` donné
+// error: :4:8

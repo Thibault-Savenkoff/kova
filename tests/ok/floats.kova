@@ -1,0 +1,50 @@
+// Affichage des Float et des Char : cas limites (même texte en run et en build).
+fn main() {
+    print(3.0)
+    print(0.1 + 0.2)
+    print(-0.0)
+    print(1e16)
+    print(9999999999999998.0)
+    print(1e-4)
+    print(1e-5)
+    print(5e-324)
+    print(1.7976931348623157e308)
+    print(1e308 * 10.0)
+    print(-1e308 * 10.0)
+    let inf: Float := 1e308 * 10.0
+    print(inf - inf)
+    print(inf - inf != inf - inf)
+    print(inf - inf = inf - inf)
+    print(7.to_float() / 2.0)
+    print(-7.9.to_int())
+    print((-7.9).to_int())
+    print('é')
+    print('😀')
+    print('a' < 'b')
+    print('A'.to_int())
+    write('\n')
+    print(1_000.5e3)
+}
+// expect: 3.0
+// expect: 0.30000000000000004
+// expect: -0.0
+// expect: 1e16
+// expect: 9999999999999998.0
+// expect: 0.0001
+// expect: 1e-5
+// expect: 5e-324
+// expect: 1.7976931348623157e308
+// expect: inf
+// expect: -inf
+// expect: NaN
+// expect: true
+// expect: false
+// expect: 3.5
+// expect: -7
+// expect: -7
+// expect: é
+// expect: 😀
+// expect: true
+// expect: 65
+// expect: 
+// expect: 1000500.0
