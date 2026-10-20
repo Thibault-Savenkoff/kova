@@ -1,11 +1,11 @@
-// `if` qui donne une valeur : la dernière ligne de la branche choisie.
+// `if` giving a value: the last line of the chosen branch.
 
 fn valeur_absolue(n: Int) -> Int {
     return if n < 0 { -n } else { n }
 }
 
 fn mention(note: Int) -> Int {
-    // `else if` en chaîne, accolades à la ligne (style Allman).
+    // Chained `else if`, braces on their own line (Allman style).
     let m: Int := if note >= 16
     {
         3
@@ -28,7 +28,7 @@ fn main() {
     print(mention(13))
     print(mention(5))
 
-    // Une branche peut contenir des instructions avant sa valeur.
+    // A branch may contain statements before its value.
     let x: Int := if true {
         let double: Int := 21 * 2
         print(0)
@@ -38,7 +38,7 @@ fn main() {
     }
     print(x)
 
-    // Un `if` dans une branche, et dans un argument.
+    // An `if` inside a branch, and inside an argument.
     let y: Bool := if x > 10 { if x > 100 { false } else { true } } else { false }
     print(y)
     print(if y { 1 } else { 2 } + 10)

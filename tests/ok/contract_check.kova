@@ -1,4 +1,4 @@
-// `check` raté : les tuples et les Char sont affichés comme dans le code.
+// Failed `check`: tuples and Chars are shown as in the code.
 fn main() {
     let t: (Int, Char) := (4, 'é')
     check t.0 > 0

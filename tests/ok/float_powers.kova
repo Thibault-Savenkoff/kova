@@ -1,5 +1,5 @@
-// Puissances de 2 et égalités exactes : là où l'arrondi est le plus piégeux.
-// (Vérifié contre `repr` de Python sur 8 110 valeurs.)
+// Powers of 2 and exact ties: where rounding is the trickiest.
+// (Checked against Python's `repr` on 8,110 values.)
 fn main() {
     var x: Float := 1.0
     from i := 1 to 1075 {

@@ -1,4 +1,4 @@
-// Un Float divisé par zéro est une erreur, comme pour un Int (même -0.0).
+// A Float divided by zero is an error, as for an Int (even -0.0).
 fn main() {
     print(1.0 / 2.0)
     let zero: Float := -0.0

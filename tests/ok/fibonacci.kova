@@ -1,4 +1,4 @@
-// Le jalon J1 : Fibonacci, en récursif et en boucle.
+// Milestone J1: Fibonacci, recursive and with a loop.
 
 fn fib(n: Int) -> Int {
     if n < 2 {

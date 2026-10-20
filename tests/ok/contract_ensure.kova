@@ -1,4 +1,4 @@
-// `ensure` raté : `result` et les paramètres sont affichés, même les Float et les Bool.
+// Failed `ensure`: `result` and the parameters are shown, even Floats and Bools.
 fn moyenne(a: Float, b: Float, exact: Bool) -> Float
     require a <= b
     ensure result >= a && result <= b

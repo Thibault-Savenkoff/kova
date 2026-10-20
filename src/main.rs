@@ -1,5 +1,5 @@
-// Point d'entrée : lit la ligne de commande et lance la bonne action.
-// Voir docs/PLAN.md, Partie 1 (commandes) et 2.11 (header).
+// Entry point: reads the command line and runs the right action.
+// See docs/PLAN.md, Part 1 (commands) and 2.11 (header).
 
 mod ast;
 mod codegen;
@@ -23,9 +23,9 @@ usage :
   kova lsp                             serveur de langage (pour l'éditeur)
   kova --version";
 
-enum Commande {
+enum Command {
     Run,
-    Build { sortie: Option<String>, boost: bool },
+    Build { output: Option<String>, boost: bool },
     Test,
 }
 
@@ -33,118 +33,118 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
-    let (commande, fichier) = match args.as_slice() {
+    let (command, file) = match args.as_slice() {
         ["--version" | "-V"] => {
             println!("kova {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         ["lsp"] => {
-            if let Err(e) = lsp::lancer() {
+            if let Err(e) = lsp::serve() {
                 eprintln!("erreur: kova lsp : {e}");
                 exit(1);
             }
             return;
         }
-        ["run", f] => (Some(Commande::Run), *f),
-        ["test", f] => (Some(Commande::Test), *f),
-        ["build", f, options @ ..] => match options_build(options) {
-            Some((sortie, boost)) => (Some(Commande::Build { sortie, boost }), *f),
-            None => erreur_usage(),
+        ["run", f] => (Some(Command::Run), *f),
+        ["test", f] => (Some(Command::Test), *f),
+        ["build", f, options @ ..] => match build_options(options) {
+            Some((output, boost)) => (Some(Command::Build { output, boost }), *f),
+            None => usage_error(),
         },
-        // Sans commande : le `header` du fichier choisit (run par défaut).
+        // Without a command: the file's `header` decides (run by default).
         [f] if f.ends_with(".kova") => (None, *f),
-        _ => erreur_usage(),
+        _ => usage_error(),
     };
 
-    let source = match std::fs::read_to_string(fichier) {
+    let source = match std::fs::read_to_string(file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("erreur: impossible de lire `{fichier}` : {e}");
+            eprintln!("erreur: impossible de lire `{file}` : {e}");
             exit(1);
         }
     };
 
-    let (arbre, infos, diags) = analyser(&source);
-    let Some(infos) = infos else {
+    let (tree, info, diags) = analyze(&source);
+    let Some(info) = info else {
         for d in &diags {
-            eprintln!("{}", diag::afficher(d, fichier, &source));
+            eprintln!("{}", diag::render(d, file, &source));
         }
         exit(1);
     };
 
-    // Le header : `mode` choisit la commande par défaut, `lock := true` refuse l'autre.
-    let mode = types::reglage(&arbre, &source, "mode").map_or("run", |(v, _)| v);
-    let commande = commande.unwrap_or(if mode == "build" {
-        Commande::Build { sortie: None, boost: false }
+    // The header: `mode` picks the default command, `lock := true` refuses the other one.
+    let mode = types::setting(&tree, &source, "mode").map_or("run", |(v, _)| v);
+    let command = command.unwrap_or(if mode == "build" {
+        Command::Build { output: None, boost: false }
     } else {
-        Commande::Run
+        Command::Run
     });
-    if let Some(("true", ligne)) = types::reglage(&arbre, &source, "lock") {
-        let autre = matches!((&commande, mode), (Commande::Run, "build") | (Commande::Build { .. }, "run"));
-        if autre {
-            eprintln!("erreur: ce programme est réservé à `kova {mode}` (header ligne {ligne})");
+    if let Some(("true", line)) = types::setting(&tree, &source, "lock") {
+        let other = matches!((&command, mode), (Command::Run, "build") | (Command::Build { .. }, "run"));
+        if other {
+            eprintln!("erreur: ce programme est réservé à `kova {mode}` (header ligne {line})");
             exit(1);
         }
     }
 
-    let contrats = !matches!(commande, Commande::Build { boost: true, .. });
-    let programme = kir::traduire(&arbre, &infos, &source, contrats, matches!(commande, Commande::Test));
+    let contracts = !matches!(command, Command::Build { boost: true, .. });
+    let program = kir::translate(&tree, &info, &source, contracts, matches!(command, Command::Test));
 
-    match commande {
-        Commande::Run => exit(interp::executer(&programme, fichier)),
-        Commande::Build { sortie, .. } => {
-            let sortie = sortie.unwrap_or_else(|| fichier.trim_end_matches(".kova").to_string());
-            if sortie == fichier {
-                eprintln!("erreur: l'exécutable écraserait `{fichier}` ; choisis un autre nom avec `-o`");
+    match command {
+        Command::Run => exit(interp::run(&program, file)),
+        Command::Build { output, .. } => {
+            let output = output.unwrap_or_else(|| file.trim_end_matches(".kova").to_string());
+            if output == file {
+                eprintln!("erreur: l'exécutable écraserait `{file}` ; choisis un autre nom avec `-o`");
                 exit(1);
             }
-            if let Err(e) = codegen::construire(&programme, fichier, &sortie) {
+            if let Err(e) = codegen::build(&program, file, &output) {
                 eprintln!("erreur: {e}");
                 exit(1);
             }
         }
-        Commande::Test => exit(interp::tester(&programme, fichier)),
+        Command::Test => exit(interp::test(&program, file)),
     }
 }
 
-/// Lexer + parser + typage. Lit du texte en mémoire : `kova lsp` l'appelle sur le
-/// texte pas encore sauvegardé. `Some(infos)` seulement s'il n'y a aucune erreur.
-fn analyser(source: &str) -> (ast::Fichier, Option<types::Infos>, Vec<diag::Diag>) {
-    let (jetons, mut diags) = lexer::lexer(source);
-    let (fichier, nb_exprs, d) = parser::parser(jetons, source);
+/// Lexer + parser + type checker. Reads in-memory text: `kova lsp` calls it on
+/// text that isn't saved yet. `Some(info)` only if there is no error at all.
+fn analyze(source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>) {
+    let (tokens, mut diags) = lexer::lex(source);
+    let (file, nb_exprs, d) = parser::parse(tokens, source);
     diags.extend(d);
-    // Erreurs de syntaxe : on s'arrête là, sinon le typage en inventerait d'autres
-    // (une variable dont le `let` est illisible serait « inconnue » partout).
+    // Syntax errors: stop here, otherwise the type checker would invent more of them
+    // (a variable whose `let` is unreadable would be "unknown" everywhere).
     if diags.is_empty() {
-        let (infos, d) = types::verifier(&fichier, nb_exprs, source);
+        let (info, d) = types::check(&file, nb_exprs, source);
         if d.is_empty() {
-            return (fichier, Some(infos), d);
+            return (file, Some(info), d);
         }
         diags = d;
     }
-    diags.sort_by_key(|d| d.span.debut);
-    (fichier, None, diags)
+    diags.sort_by_key(|d| d.span.start);
+    (file, None, diags)
 }
 
-/// Lit `-o sortie` et `--boost`, dans n'importe quel ordre.
-fn options_build(options: &[&str]) -> Option<(Option<String>, bool)> {
-    let (mut sortie, mut boost) = (None, false);
+/// Reads `-o output` and `--boost`, in any order.
+fn build_options(options: &[&str]) -> Option<(Option<String>, bool)> {
+    let (mut output, mut boost) = (None, false);
     let mut i = 0;
     while i < options.len() {
         match options[i] {
             "--boost" => boost = true,
             "-o" => {
-                sortie = Some(options.get(i + 1)?.to_string());
+                output = Some(options.get(i + 1)?.to_string());
                 i += 1;
             }
             _ => return None,
         }
         i += 1;
     }
-    Some((sortie, boost))
+    Some((output, boost))
 }
 
-fn erreur_usage() -> ! {
+fn usage_error() -> ! {
     eprintln!("{USAGE}");
     exit(2);
 }

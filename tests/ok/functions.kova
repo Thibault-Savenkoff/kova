@@ -1,4 +1,4 @@
-// main avant les autres, accolades à la ligne, accents, Bool en paramètre et en résultat.
+// main before the others, braces on their own line, accents, Bool as parameter and result.
 fn main()
 {
     dire(3)

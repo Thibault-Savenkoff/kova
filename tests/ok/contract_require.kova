@@ -1,4 +1,4 @@
-// `require` raté : le message dit qui a mal appelé la fonction.
+// Failed `require`: the message says who called the function wrongly.
 fn diviser(a: Int, b: Int) -> Int
     require b != 0 else "on ne peut pas diviser par zéro"
 {

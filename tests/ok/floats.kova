@@ -1,4 +1,4 @@
-// Affichage des Float et des Char : cas limites (même texte en run et en build).
+// Printing Floats and Chars: edge cases (same text in run and build).
 fn main() {
     print(3.0)
     print(0.1 + 0.2)

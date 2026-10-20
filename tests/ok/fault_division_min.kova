@@ -1,4 +1,4 @@
-// -9223372036854775808 / -1 = 9223372036854775808 : trop grand pour un Int.
+// -9223372036854775808 / -1 = 9223372036854775808: too big for an Int.
 fn main() {
     var moins_un: Int := -1
     print(-9223372036854775808 / moins_un)

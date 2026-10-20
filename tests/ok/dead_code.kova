@@ -1,4 +1,4 @@
-// Du code après `return` ou `break` est accepté (jamais exécuté).
+// Code after `return` or `break` is accepted (never executed).
 fn f(x: Int) -> Int {
     return x
     let y: Int := x + 1

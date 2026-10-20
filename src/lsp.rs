@@ -1,10 +1,10 @@
-// Serveur de langage (`kova lsp`) : l'éditeur lui envoie le texte, il répond avec
-// les erreurs, la complétion et l'aide sur les paramètres (protocole LSP).
+// Language server (`kova lsp`): the editor sends it the text, it answers with
+// errors, completion and parameter help (LSP protocol).
 //
-//   éditeur ──« voici le texte »──► kova lsp ──analyser()──► erreurs soulignées
+//   editor ──"here is the text"──► kova lsp ──analyze()──► underlined errors
 //
-// Même lexer, même parser, même typage que `kova run` : l'éditeur ne peut pas dire
-// autre chose que le compilateur.
+// Same lexer, same parser, same type checker as `kova run`: the editor cannot say
+// anything different from the compiler.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -12,13 +12,13 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Bloc, Fichier, Fonction, Instr, Motif, TypeAst};
-use crate::lexer::{Genre, lexer};
-use crate::{analyser, parser, types};
+use crate::ast::{Block, File, Function, Pattern, Stmt, TypeAst};
+use crate::lexer::{Kind, lex};
+use crate::{analyze, parser, types};
 
-pub fn lancer() -> Result<(), Box<dyn Error + Sync + Send>> {
-    let (connexion, fils) = Connection::stdio();
-    let capacites = ServerCapabilities {
+pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
+    let (connection, io_threads) = Connection::stdio();
+    let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         completion_provider: Some(CompletionOptions::default()),
         signature_help_provider: Some(SignatureHelpOptions {
@@ -27,32 +27,32 @@ pub fn lancer() -> Result<(), Box<dyn Error + Sync + Send>> {
         }),
         ..Default::default()
     };
-    connexion.initialize(serde_json::to_value(capacites)?)?;
+    connection.initialize(serde_json::to_value(capabilities)?)?;
 
-    // Le texte de chaque fichier ouvert, tel que dans l'éditeur (même pas sauvegardé).
+    // The text of each open file, as in the editor (even unsaved).
     let mut docs: HashMap<Uri, String> = HashMap::new();
-    for msg in &connexion.receiver {
+    for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
-                if connexion.handle_shutdown(&req)? {
+                if connection.handle_shutdown(&req)? {
                     break;
                 }
-                let reponse = match req.method.as_str() {
+                let response = match req.method.as_str() {
                     "textDocument/completion" => {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
-                        let items = docs.get(&doc.text_document.uri).map(|src| completer(src, decalage(src, doc.position)));
+                        let items = docs.get(&doc.text_document.uri).map(|src| complete(src, offset(src, doc.position)));
                         Response::new_ok(req.id, items)
                     }
                     "textDocument/signatureHelp" => {
                         let p: SignatureHelpParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position_params;
-                        let aide = docs.get(&doc.text_document.uri).and_then(|src| signature(src, decalage(src, doc.position)));
-                        Response::new_ok(req.id, aide)
+                        let help = docs.get(&doc.text_document.uri).and_then(|src| signature(src, offset(src, doc.position)));
+                        Response::new_ok(req.id, help)
                     }
                     _ => Response::new_err(req.id, ErrorCode::MethodNotFound as i32, "pas encore géré".into()),
                 };
-                connexion.sender.send(reponse.into())?;
+                connection.sender.send(response.into())?;
             }
             Message::Notification(n) => {
                 let uri = match n.method.as_str() {
@@ -62,7 +62,7 @@ pub fn lancer() -> Result<(), Box<dyn Error + Sync + Send>> {
                         p.text_document.uri
                     }
                     "textDocument/didChange" => {
-                        // Synchronisation « FULL » : chaque changement contient tout le texte.
+                        // "FULL" sync: each change contains the whole text.
                         let mut p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
                         if let Some(c) = p.content_changes.pop() {
                             docs.insert(p.text_document.uri.clone(), c.text);
@@ -76,52 +76,52 @@ pub fn lancer() -> Result<(), Box<dyn Error + Sync + Send>> {
                     }
                     _ => continue,
                 };
-                let diagnostics = docs.get(&uri).map_or(vec![], |src| erreurs(src));
+                let diagnostics = docs.get(&uri).map_or(vec![], |src| errors(src));
                 let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
-                connexion.sender.send(Notification::new("textDocument/publishDiagnostics".into(), params).into())?;
+                connection.sender.send(Notification::new("textDocument/publishDiagnostics".into(), params).into())?;
             }
             Message::Response(_) => {}
         }
     }
-    // Le fil qui écrit vers l'éditeur ne s'arrête qu'une fois la connexion fermée.
-    drop(connexion);
-    fils.join()?;
+    // The thread writing to the editor only stops once the connection is closed.
+    drop(connection);
+    io_threads.join()?;
     Ok(())
 }
 
-// ---- Positions : l'éditeur compte en (ligne, caractère UTF-16), le compilateur en octets ----
+// ---- Positions: the editor counts in (line, UTF-16 character), the compiler in bytes ----
 
-fn position(src: &str, octet: usize) -> Position {
-    let avant = &src[..octet.min(src.len())];
-    let debut_ligne = avant.rfind('\n').map_or(0, |i| i + 1);
+fn position(src: &str, byte: usize) -> Position {
+    let before = &src[..byte.min(src.len())];
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
     Position {
-        line: avant.matches('\n').count() as u32,
-        character: avant[debut_ligne..].encode_utf16().count() as u32,
+        line: before.matches('\n').count() as u32,
+        character: before[line_start..].encode_utf16().count() as u32,
     }
 }
 
-fn decalage(src: &str, p: Position) -> usize {
-    let debut_ligne: usize = src.split_inclusive('\n').take(p.line as usize).map(str::len).sum();
-    let mut unites = 0;
-    for (i, c) in src[debut_ligne..].char_indices() {
-        if unites >= p.character as usize || c == '\n' {
-            return debut_ligne + i;
+fn offset(src: &str, p: Position) -> usize {
+    let line_start: usize = src.split_inclusive('\n').take(p.line as usize).map(str::len).sum();
+    let mut units = 0;
+    for (i, c) in src[line_start..].char_indices() {
+        if units >= p.character as usize || c == '\n' {
+            return line_start + i;
         }
-        unites += c.len_utf16();
+        units += c.len_utf16();
     }
     src.len()
 }
 
-fn erreurs(src: &str) -> Vec<Diagnostic> {
-    analyser(src)
+fn errors(src: &str) -> Vec<Diagnostic> {
+    analyze(src)
         .2
         .into_iter()
         .map(|d| Diagnostic {
-            range: Range::new(position(src, d.span.debut), position(src, d.span.fin)),
+            range: Range::new(position(src, d.span.start), position(src, d.span.end)),
             severity: Some(DiagnosticSeverity::ERROR),
             source: Some("kova".into()),
-            message: match d.aide {
-                Some(aide) => format!("{}\naide : {aide}", d.message),
+            message: match d.help {
+                Some(help) => format!("{}\naide : {help}", d.message),
                 None => d.message,
             },
             ..Default::default()
@@ -129,65 +129,65 @@ fn erreurs(src: &str) -> Vec<Diagnostic> {
         .collect()
 }
 
-// ---- Complétion niveau 2 : variables et fonctions visibles à cet endroit ----
+// ---- Level 2 completion: variables and functions visible at this place ----
 
-fn arbre(src: &str) -> Fichier {
-    parser::parser(lexer(src).0, src).0
+fn tree(src: &str) -> File {
+    parser::parse(lex(src).0, src).0
 }
 
-/// `fn carre(x: Int) -> Int`, et la position de chaque paramètre dans ce texte.
-fn entete(f: &Fonction) -> (String, Vec<[u32; 2]>) {
-    let mut texte = format!("fn {}(", f.nom.texte);
+/// `fn square(x: Int) -> Int`, and the position of each parameter in this text.
+fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
+    let mut text = format!("fn {}(", f.name.text);
     let mut params = vec![];
     for (i, p) in f.params.iter().enumerate() {
         if i > 0 {
-            texte += ", ";
+            text += ", ";
         }
-        let debut = texte.encode_utf16().count() as u32;
-        texte += &format!("{}: {}", p.nom.texte, p.ty.texte());
-        params.push([debut, texte.encode_utf16().count() as u32]);
+        let start = text.encode_utf16().count() as u32;
+        text += &format!("{}: {}", p.name.text, p.ty.text());
+        params.push([start, text.encode_utf16().count() as u32]);
     }
-    texte += ")";
-    if let Some(r) = &f.retour {
-        texte += &format!(" -> {}", r.texte());
+    text += ")";
+    if let Some(r) = &f.ret {
+        text += &format!(" -> {}", r.text());
     }
-    (texte, params)
+    (text, params)
 }
 
-fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
-    let fichier = arbre(src);
-    if let Some(h) = &fichier.header
-        && h.debut.debut < curseur
-        && curseur <= h.fin.debut
+fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
+    let file = tree(src);
+    if let Some(h) = &file.header
+        && h.open.start < cursor
+        && cursor <= h.close.start
     {
-        return completer_header(&src[..curseur]);
+        return complete_header(&src[..cursor]);
     }
-    let mut items: Vec<CompletionItem> = types::PREDEFINIES
+    let mut items: Vec<CompletionItem> = types::BUILTINS
         .iter()
-        .map(|&nom| CompletionItem {
-            label: nom.into(),
+        .map(|&name| CompletionItem {
+            label: name.into(),
             kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(format!("fn {nom}(valeur)")),
+            detail: Some(format!("fn {name}(valeur)")),
             ..Default::default()
         })
         .collect();
-    for f in &fichier.fonctions {
+    for f in &file.functions {
         items.push(CompletionItem {
-            label: f.nom.texte.clone(),
+            label: f.name.text.clone(),
             kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(entete(f).0),
+            detail: Some(heading(f).0),
             ..Default::default()
         });
     }
-    let dedans = |b: &Bloc| b.debut.debut < curseur && curseur <= b.fin.debut;
-    let corps = fichier.fonctions.iter().map(|f| (&f.params[..], &f.corps));
-    let corps_tests = fichier.tests.iter().map(|t| (&[][..], &t.corps));
-    if let Some((params, corps)) = corps.chain(corps_tests).find(|(_, c)| dedans(c)) {
-        let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.nom.texte.clone(), p.ty.texte())).collect();
-        visibles(corps, curseur, &mut vars);
-        for (nom, ty) in vars {
+    let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
+    let bodies = file.functions.iter().map(|f| (&f.params[..], &f.body));
+    let test_bodies = file.tests.iter().map(|t| (&[][..], &t.body));
+    if let Some((params, body)) = bodies.chain(test_bodies).find(|(_, b)| inside(b)) {
+        let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.name.text.clone(), p.ty.text())).collect();
+        visible(body, cursor, &mut vars);
+        for (name, ty) in vars {
             items.push(CompletionItem {
-                label: nom,
+                label: name,
                 kind: Some(CompletionItemKind::VARIABLE),
                 detail: Some(ty),
                 ..Default::default()
@@ -197,105 +197,105 @@ fn completer(src: &str, curseur: usize) -> Vec<CompletionItem> {
     items
 }
 
-/// Dans le `header` : les clés, ou les valeurs de la clé après `:=`.
-fn completer_header(avant: &str) -> Vec<CompletionItem> {
-    let ligne = avant.rsplit('\n').next().unwrap_or("");
-    if let Some((cle, _)) = ligne.split_once(":=") {
-        let Some((_, valeurs, aide)) = types::REGLAGES.iter().find(|(c, ..)| *c == cle.trim()) else {
+/// Inside the `header`: the keys, or the values of the key after `:=`.
+fn complete_header(before: &str) -> Vec<CompletionItem> {
+    let line = before.rsplit('\n').next().unwrap_or("");
+    if let Some((key, _)) = line.split_once(":=") {
+        let Some((_, values, help)) = types::SETTINGS.iter().find(|(k, ..)| *k == key.trim()) else {
             return vec![];
         };
-        return valeurs
+        return values
             .iter()
             .enumerate()
             .map(|(i, v)| CompletionItem {
                 label: v.to_string(),
                 kind: Some(CompletionItemKind::ENUM_MEMBER),
-                detail: Some(if i == 0 { format!("{aide} (par défaut)") } else { aide.to_string() }),
+                detail: Some(if i == 0 { format!("{help} (par défaut)") } else { help.to_string() }),
                 ..Default::default()
             })
             .collect();
     }
-    types::REGLAGES
+    types::SETTINGS
         .iter()
-        .map(|(cle, valeurs, aide)| CompletionItem {
-            label: cle.to_string(),
+        .map(|(key, values, help)| CompletionItem {
+            label: key.to_string(),
             kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some(format!("{} : {aide}", valeurs.join(" | "))),
-            insert_text: Some(format!("{cle} := ")),
+            detail: Some(format!("{} : {help}", values.join(" | "))),
+            insert_text: Some(format!("{key} := ")),
             ..Default::default()
         })
         .collect()
 }
 
-/// Ajoute à `vars` les variables de `b` visibles au curseur : déclarées avant lui,
-/// dans ce bloc ou dans un bloc qui contient le curseur.
-fn visibles(b: &Bloc, curseur: usize, vars: &mut Vec<(String, String)>) {
-    let dedans = |b: &Bloc| b.debut.debut < curseur && curseur <= b.fin.debut;
-    for i in &b.instrs {
-        match i {
-            // Visible seulement après sa valeur : dans `let x: Int := x + 1`, le 2e `x` n'est pas lui.
-            Instr::Declarer { motif, ty, valeur, .. } if valeur.span.fin <= curseur => {
-                noms_motif(motif, ty.as_ref(), vars);
+/// Adds to `vars` the variables of `b` visible at the cursor: declared before it,
+/// in this block or in a block containing the cursor.
+fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
+    let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
+    for s in &b.stmts {
+        match s {
+            // Visible only after its value: in `let x: Int := x + 1`, the 2nd `x` isn't it.
+            Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
+                pattern_names(pattern, ty.as_ref(), vars);
             }
-            Instr::Si { alors, sinon, .. } => {
-                for b in std::iter::once(alors).chain(sinon).filter(|b| dedans(b)) {
-                    visibles(b, curseur, vars);
+            Stmt::If { then, otherwise, .. } => {
+                for b in std::iter::once(then).chain(otherwise).filter(|b| inside(b)) {
+                    visible(b, cursor, vars);
                 }
             }
-            Instr::TantQue { corps, .. } if dedans(corps) => visibles(corps, curseur, vars),
-            Instr::Boucle { compteur, corps, .. } if dedans(corps) => {
-                vars.push((compteur.texte.clone(), "Int".into()));
-                visibles(corps, curseur, vars);
+            Stmt::While { body, .. } if inside(body) => visible(body, cursor, vars),
+            Stmt::Loop { counter, body, .. } if inside(body) => {
+                vars.push((counter.text.clone(), "Int".into()));
+                visible(body, cursor, vars);
             }
             _ => {}
         }
     }
 }
 
-/// Les noms d'un motif avec leur type écrit : `let (a, b): (Int, Float)` → `a: Int`, `b: Float`.
-fn noms_motif(m: &Motif, ty: Option<&TypeAst>, vars: &mut Vec<(String, String)>) {
-    match (m, ty) {
-        (Motif::Nom(n), _) => vars.push((n.texte.clone(), ty.map_or(String::new(), TypeAst::texte))),
-        (Motif::Ignorer(_), _) => {}
-        (Motif::Tuple(ms, _), Some(TypeAst::Tuple(ts))) if ms.len() == ts.len() => {
-            for (m, t) in ms.iter().zip(ts) {
-                noms_motif(m, Some(t), vars);
+/// The names of a pattern with their written type: `let (a, b): (Int, Float)` → `a: Int`, `b: Float`.
+fn pattern_names(p: &Pattern, ty: Option<&TypeAst>, vars: &mut Vec<(String, String)>) {
+    match (p, ty) {
+        (Pattern::Name(n), _) => vars.push((n.text.clone(), ty.map_or(String::new(), TypeAst::text))),
+        (Pattern::Ignore(_), _) => {}
+        (Pattern::Tuple(ps, _), Some(TypeAst::Tuple(ts))) if ps.len() == ts.len() => {
+            for (p, t) in ps.iter().zip(ts) {
+                pattern_names(p, Some(t), vars);
             }
         }
-        (Motif::Tuple(ms, _), _) => ms.iter().for_each(|m| noms_motif(m, None, vars)),
+        (Pattern::Tuple(ps, _), _) => ps.iter().for_each(|p| pattern_names(p, None, vars)),
     }
 }
 
-// ---- Aide sur les paramètres : la bulle `carre(x: Int) -> Int` pendant qu'on tape l'appel ----
+// ---- Parameter help: the `square(x: Int) -> Int` bubble while typing the call ----
 
-fn signature(src: &str, curseur: usize) -> Option<SignatureHelp> {
-    // On remonte les jetons depuis le curseur jusqu'à la `(` ouverte de l'appel en cours,
-    // en comptant les `,` : ça marche même si la ligne n'est pas finie.
-    let jetons = lexer(src).0;
-    let avant: Vec<_> = jetons.iter().take_while(|j| j.span.fin <= curseur).collect();
-    let (mut profondeur, mut virgules) = (0, 0);
-    let mut nom = None;
-    for (k, j) in avant.iter().enumerate().rev() {
-        match j.genre {
-            Genre::Sym(")") => profondeur += 1,
-            Genre::Sym("(") if profondeur > 0 => profondeur -= 1,
-            Genre::Sym("(") => {
-                nom = avant.get(k.wrapping_sub(1)).filter(|p| p.genre == Genre::Ident).map(|p| &src[p.span.debut..p.span.fin]);
+fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
+    // Walk back the tokens from the cursor to the open `(` of the current call,
+    // counting the `,`: works even if the line is not finished.
+    let tokens = lex(src).0;
+    let before: Vec<_> = tokens.iter().take_while(|t| t.span.end <= cursor).collect();
+    let (mut depth, mut commas) = (0, 0);
+    let mut name = None;
+    for (k, t) in before.iter().enumerate().rev() {
+        match t.kind {
+            Kind::Sym(")") => depth += 1,
+            Kind::Sym("(") if depth > 0 => depth -= 1,
+            Kind::Sym("(") => {
+                name = before.get(k.wrapping_sub(1)).filter(|p| p.kind == Kind::Ident).map(|p| &src[p.span.start..p.span.end]);
                 break;
             }
-            Genre::Sym(",") if profondeur == 0 => virgules += 1,
-            Genre::Sym("{" | "}") | Genre::Ligne => return None,
+            Kind::Sym(",") if depth == 0 => commas += 1,
+            Kind::Sym("{" | "}") | Kind::Newline => return None,
             _ => {}
         }
     }
-    let nom = nom?;
+    let name = name?;
 
-    let (label, params) = if types::PREDEFINIES.contains(&nom) {
-        let label = format!("fn {nom}(valeur)");
-        let debut = label.find('(').unwrap() as u32 + 1;
-        (label, vec![[debut, debut + 6]])
+    let (label, params) = if types::BUILTINS.contains(&name) {
+        let label = format!("fn {name}(valeur)");
+        let start = label.find('(').unwrap() as u32 + 1;
+        (label, vec![[start, start + 6]])
     } else {
-        entete(arbre(src).fonctions.iter().find(|f| f.nom.texte == nom)?)
+        heading(tree(src).functions.iter().find(|f| f.name.text == name)?)
     };
     let parameters = params.into_iter().map(|p| ParameterInformation { label: ParameterLabel::LabelOffsets(p), documentation: None });
     Some(SignatureHelp {
@@ -303,10 +303,10 @@ fn signature(src: &str, curseur: usize) -> Option<SignatureHelp> {
             label,
             documentation: None,
             parameters: Some(parameters.collect()),
-            active_parameter: Some(virgules),
+            active_parameter: Some(commas),
         }],
         active_signature: Some(0),
-        active_parameter: Some(virgules),
+        active_parameter: Some(commas),
     })
 }
 
@@ -314,59 +314,59 @@ fn signature(src: &str, curseur: usize) -> Option<SignatureHelp> {
 mod tests {
     use super::*;
 
-    fn noms(items: &[CompletionItem]) -> Vec<&str> {
+    fn names(items: &[CompletionItem]) -> Vec<&str> {
         items.iter().filter(|i| i.kind == Some(CompletionItemKind::VARIABLE)).map(|i| i.label.as_str()).collect()
     }
 
     #[test]
-    fn positions_utf16() {
+    fn utf16_positions() {
         let src = "fn carré() {\n  é😀x\n}";
         let x = src.find('x').unwrap();
-        assert_eq!(position(src, x), Position::new(1, 5)); // é = 1 unité, 😀 = 2
-        assert_eq!(decalage(src, Position::new(1, 5)), x);
-        assert_eq!(decalage(src, Position::new(1, 99)), src.find("x\n").unwrap() + 1);
+        assert_eq!(position(src, x), Position::new(1, 5)); // é = 1 unit, 😀 = 2
+        assert_eq!(offset(src, Position::new(1, 5)), x);
+        assert_eq!(offset(src, Position::new(1, 99)), src.find("x\n").unwrap() + 1);
     }
 
     #[test]
-    fn completion_variables_visibles() {
-        let src = "fn f(n: Int) {\n  let a: Int := 1\n  if a = 1 {\n    let b: Bool := true\n    ICI\n  }\n  let c: Int := 2\n}\nfn main() {}";
-        let ici = src.find("ICI").unwrap();
-        assert_eq!(noms(&completer(src, ici)), ["n", "a", "b"]);
-        // Après le `if` : `b` n'est plus visible, `c` pas encore (on est avant).
-        let apres_si = src.find("  let c").unwrap();
-        assert_eq!(noms(&completer(src, apres_si)), ["n", "a"]);
-        // Les fonctions sont toujours proposées.
-        assert!(completer(src, ici).iter().any(|i| i.label == "main"));
+    fn completion_of_visible_variables() {
+        let src = "fn f(n: Int) {\n  let a: Int := 1\n  if a = 1 {\n    let b: Bool := true\n    HERE\n  }\n  let c: Int := 2\n}\nfn main() {}";
+        let here = src.find("HERE").unwrap();
+        assert_eq!(names(&complete(src, here)), ["n", "a", "b"]);
+        // After the `if`: `b` is no longer visible, `c` not yet (we are before it).
+        let after_if = src.find("  let c").unwrap();
+        assert_eq!(names(&complete(src, after_if)), ["n", "a"]);
+        // Functions are always offered.
+        assert!(complete(src, here).iter().any(|i| i.label == "main"));
     }
 
     #[test]
-    fn completion_header() {
+    fn header_completion() {
         let src = "header {\n    mode := b\n    \n}\nfn main() {}";
-        let etiquettes = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
-        assert_eq!(etiquettes(completer(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
-        assert_eq!(etiquettes(completer(src, src.find("    \n").unwrap() + 4)), ["mode", "lock"]);
-        // `}` pas encore tapée.
+        let labels = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
+        assert_eq!(labels(complete(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
+        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock"]);
+        // `}` not typed yet.
         let src = "header {\n  lock := ";
-        assert_eq!(etiquettes(completer(src, src.len())), ["false", "true"]);
+        assert_eq!(labels(complete(src, src.len())), ["false", "true"]);
     }
 
     #[test]
-    fn completion_dans_un_test() {
-        let src = "test \"essai\" {\n  let a: Int := 1\n  check ICI\n}\nfn main() {}";
-        assert_eq!(noms(&completer(src, src.find("ICI").unwrap())), ["a"]);
+    fn completion_in_a_test() {
+        let src = "test \"sample\" {\n  let a: Int := 1\n  check HERE\n}\nfn main() {}";
+        assert_eq!(names(&complete(src, src.find("HERE").unwrap())), ["a"]);
     }
 
     #[test]
-    fn completion_pendant_la_frappe() {
-        // `}` pas encore tapée, instruction pas finie : on propose quand même `total`.
+    fn completion_while_typing() {
+        // `}` not typed yet, statement unfinished: `total` is offered anyway.
         let src = "fn main() {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
-        assert_eq!(noms(&completer(src, src.len())), ["total", "i"]);
+        assert_eq!(names(&complete(src, src.len())), ["total", "i"]);
     }
 
     #[test]
-    fn completion_motif_tuple() {
-        let src = "fn main() {\n  let (a, (b, _)): (Int, (Float, Bool)) := (1, (2.0, true))\n  ICI\n}";
-        let items = completer(src, src.find("ICI").unwrap());
+    fn tuple_pattern_completion() {
+        let src = "fn main() {\n  let (a, (b, _)): (Int, (Float, Bool)) := (1, (2.0, true))\n  HERE\n}";
+        let items = complete(src, src.find("HERE").unwrap());
         let vars: Vec<(&str, &str)> = items
             .iter()
             .filter(|i| i.kind == Some(CompletionItemKind::VARIABLE))
@@ -376,14 +376,14 @@ mod tests {
     }
 
     #[test]
-    fn aide_parametres() {
-        let src = "fn carre(x: Int, y: Bool) -> Int { return x }\nfn main() { print(carre(1, ";
-        let aide = signature(src, src.len()).unwrap();
-        assert_eq!(aide.signatures[0].label, "fn carre(x: Int, y: Bool) -> Int");
-        assert_eq!(aide.active_parameter, Some(1));
-        let aide = signature(src, src.len() - 4).unwrap(); // juste après `carre(`
-        assert_eq!(aide.active_parameter, Some(0));
-        let aide = signature(src, src.find("carre(1").unwrap()).unwrap(); // dans `print(`
-        assert_eq!(aide.signatures[0].label, "fn print(valeur)");
+    fn parameter_help() {
+        let src = "fn square(x: Int, y: Bool) -> Int { return x }\nfn main() { print(square(1, ";
+        let help = signature(src, src.len()).unwrap();
+        assert_eq!(help.signatures[0].label, "fn square(x: Int, y: Bool) -> Int");
+        assert_eq!(help.active_parameter, Some(1));
+        let help = signature(src, src.len() - 4).unwrap(); // right after `square(`
+        assert_eq!(help.active_parameter, Some(0));
+        let help = signature(src, src.find("square(1").unwrap()).unwrap(); // inside `print(`
+        assert_eq!(help.signatures[0].label, "fn print(valeur)");
     }
 }

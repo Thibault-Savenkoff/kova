@@ -1,33 +1,33 @@
 // @ts-check
-// La ligne de commande lancée par chaque bouton. Sans dépendance à VSCode : testable avec node.
+// The command line run by each button. No dependency on VSCode: testable with node.
 
 const path = require('path');
 
-/** Met un texte entre apostrophes pour le shell : `l'été` → `'l'\''été'`. */
-function citer(texte) {
-  return `'${texte.replace(/'/g, `'\\''`)}'`;
+/** Quotes a text for the shell: `l'été` → `'l'\''été'`. */
+function quote(text) {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
  * @param {'run' | 'build' | 'test'} action
- * @param {string} fichier chemin absolu du `.kova`
- * @param {string} kova chemin de l'exécutable `kova`
+ * @param {string} file absolute path of the `.kova`
+ * @param {string} kova path of the `kova` executable
  */
-function commande(action, fichier, kova) {
-  const dossier = citer(path.dirname(fichier));
-  const nom = path.basename(fichier);
-  const k = citer(kova);
+function command(action, file, kova) {
+  const dir = quote(path.dirname(file));
+  const name = path.basename(file);
+  const k = quote(kova);
   switch (action) {
     case 'run':
-      return `cd ${dossier} && ${k} run ${citer(nom)}`;
+      return `cd ${dir} && ${k} run ${quote(name)}`;
     case 'build': {
-      // Compile, puis lance l'exécutable produit (même nom, sans `.kova`).
-      const exe = nom.replace(/\.kova$/, '');
-      return `cd ${dossier} && ${k} build ${citer(nom)} && ${citer('./' + exe)}`;
+      // Compiles, then runs the produced executable (same name, without `.kova`).
+      const exe = name.replace(/\.kova$/, '');
+      return `cd ${dir} && ${k} build ${quote(name)} && ${quote('./' + exe)}`;
     }
     case 'test':
-      return `cd ${dossier} && ${k} test ${citer(nom)}`;
+      return `cd ${dir} && ${k} test ${quote(name)}`;
   }
 }
 
-module.exports = { citer, commande };
+module.exports = { quote, command };

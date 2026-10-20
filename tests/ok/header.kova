@@ -1,4 +1,4 @@
-// Un header qui garde les valeurs par défaut : run et build marchent tous les deux.
+// A header keeping the default values: run and build both work.
 header {
     mode := run
     lock := false

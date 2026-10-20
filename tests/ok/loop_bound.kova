@@ -1,4 +1,4 @@
-// La borne d'une boucle est calculée une seule fois, avant le premier tour.
+// A loop's bound is computed only once, before the first iteration.
 
 fn borne() -> Int {
     print(100)

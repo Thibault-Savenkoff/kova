@@ -1,5 +1,5 @@
 tests/**
 *.vsix
-exemple.kova
+example.kova
 .gitignore
 package-lock.json

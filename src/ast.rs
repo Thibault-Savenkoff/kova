@@ -1,215 +1,215 @@
-// AST : l'arbre du programme, tel qu'écrit. Chaque nœud garde sa position (`Span`).
+// AST: the program tree, as written. Every node keeps its position (`Span`).
 //
-//   total := total + i   →   Affecter { nom: "total", valeur: Binaire(Plus, Var(total), Var(i)) }
+//   total := total + i   →   Assign { target: "total", value: Binary(Plus, Var(total), Var(i)) }
 
 use crate::diag::Span;
 
-pub struct Fichier {
+pub struct File {
     pub header: Option<Header>,
-    pub fonctions: Vec<Fonction>,
+    pub functions: Vec<Function>,
     pub tests: Vec<Test>,
 }
 
-/// `header { mode := build  lock := true }` : les réglages du fichier (PLAN 2.11).
+/// `header { mode := build  lock := true }`: the file's settings (PLAN 2.11).
 pub struct Header {
-    /// Le `{` et le `}`.
-    pub debut: Span,
-    pub fin: Span,
-    /// (clé, valeur) : `mode := build` → (`mode`, `build`).
-    pub reglages: Vec<(Nom, Nom)>,
+    /// The `{` and the `}`.
+    pub open: Span,
+    pub close: Span,
+    /// (key, value): `mode := build` → (`mode`, `build`).
+    pub settings: Vec<(Name, Name)>,
 }
 
-pub struct Fonction {
-    pub nom: Nom,
+pub struct Function {
+    pub name: Name,
     pub params: Vec<Param>,
-    pub retour: Option<TypeAst>,
-    pub contrats: Vec<Contrat>,
-    pub corps: Bloc,
+    pub ret: Option<TypeAst>,
+    pub contracts: Vec<Contract>,
+    pub body: Block,
 }
 
-/// `test "carré de 3" { check carre(3) = 9 }` : lancé seulement par `kova test`.
+/// `test "carré de 3" { check carre(3) = 9 }`: only run by `kova test`.
 pub struct Test {
-    pub nom: String,
-    /// Le texte `"..."`, pour les messages.
+    pub name: String,
+    /// The `"..."` text, for messages.
     pub span: Span,
-    pub corps: Bloc,
+    pub body: Block,
 }
 
-/// `require b != 0 else "message"` ou `ensure result >= 0`.
-pub struct Contrat {
-    pub genre: GenreContrat,
+/// `require b != 0 else "message"` or `ensure result >= 0`.
+pub struct Contract {
+    pub kind: ContractKind,
     pub cond: Expr,
     pub message: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum GenreContrat {
-    /// Vérifié avant chaque appel.
+pub enum ContractKind {
+    /// Checked before each call.
     Require,
-    /// Vérifié à chaque sortie ; `result` = la valeur renvoyée.
+    /// Checked at each exit; `result` = the returned value.
     Ensure,
-    /// Vérifié à l'endroit où il est écrit.
+    /// Checked where it is written.
     Check,
 }
 
-impl GenreContrat {
-    pub fn mot(self) -> &'static str {
+impl ContractKind {
+    pub fn keyword(self) -> &'static str {
         match self {
-            GenreContrat::Require => "require",
-            GenreContrat::Ensure => "ensure",
-            GenreContrat::Check => "check",
+            ContractKind::Require => "require",
+            ContractKind::Ensure => "ensure",
+            ContractKind::Check => "check",
         }
     }
 }
 
-/// Un type tel qu'écrit : `Int`, `(Int, Float)`, `((Int, Int), Bool)`.
+/// A type as written: `Int`, `(Int, Float)`, `((Int, Int), Bool)`.
 pub enum TypeAst {
-    Nom(Nom),
+    Name(Name),
     Tuple(Vec<TypeAst>),
 }
 
 impl TypeAst {
-    /// Le type comme dans le code : `(Int, Float)`.
-    pub fn texte(&self) -> String {
+    /// The type as in the code: `(Int, Float)`.
+    pub fn text(&self) -> String {
         match self {
-            TypeAst::Nom(n) => n.texte.clone(),
-            TypeAst::Tuple(ts) => format!("({})", ts.iter().map(TypeAst::texte).collect::<Vec<_>>().join(", ")),
+            TypeAst::Name(n) => n.text.clone(),
+            TypeAst::Tuple(ts) => format!("({})", ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
         }
     }
 }
 
-/// Ce qui reçoit une valeur dans un `let` : `x`, `(a, b)`, `(a, _)`.
-pub enum Motif {
-    Nom(Nom),
-    Tuple(Vec<Motif>, Span),
-    /// `_` : la valeur est ignorée.
-    Ignorer(Span),
+/// What receives a value in a `let`: `x`, `(a, b)`, `(a, _)`.
+pub enum Pattern {
+    Name(Name),
+    Tuple(Vec<Pattern>, Span),
+    /// `_`: the value is ignored.
+    Ignore(Span),
 }
 
-/// Ce qui reçoit une valeur dans `:=` : `x`, `t.0`, `(a, b)`.
-pub enum Cible {
-    /// Une variable, suivie de numéros de champ : `t.1.0` = `nom: t, champs: [1, 0]`.
-    Lieu { nom: Nom, champs: Vec<usize>, span: Span },
-    Tuple(Vec<Cible>, Span),
+/// What receives a value in `:=`: `x`, `t.0`, `(a, b)`.
+pub enum Target {
+    /// A variable, followed by field numbers: `t.1.0` = `name: t, fields: [1, 0]`.
+    Place { name: Name, fields: Vec<usize>, span: Span },
+    Tuple(Vec<Target>, Span),
 }
 
-impl Cible {
+impl Target {
     pub fn span(&self) -> Span {
         match self {
-            Cible::Lieu { span, .. } | Cible::Tuple(_, span) => *span,
+            Target::Place { span, .. } | Target::Tuple(_, span) => *span,
         }
     }
 }
 
-/// Un nom et sa position (variable, fonction ou type).
+/// A name and its position (variable, function or type).
 #[derive(Clone)]
-pub struct Nom {
-    pub texte: String,
+pub struct Name {
+    pub text: String,
     pub span: Span,
 }
 
 pub struct Param {
-    pub nom: Nom,
+    pub name: Name,
     pub ty: TypeAst,
 }
 
-pub struct Bloc {
-    /// Position de la `{` ouvrante.
-    pub debut: Span,
-    pub instrs: Vec<Instr>,
-    /// Position de la `}` fermante (pour « il manque un return »).
-    pub fin: Span,
+pub struct Block {
+    /// Position of the opening `{`.
+    pub open: Span,
+    pub stmts: Vec<Stmt>,
+    /// Position of the closing `}` (for "missing return").
+    pub close: Span,
 }
 
-pub enum Instr {
-    /// `let x: Int := 5`, `var (a, b): (Int, Int) := f()` (`var` si `modifiable`).
-    Declarer { modifiable: bool, motif: Motif, ty: Option<TypeAst>, valeur: Expr },
-    /// `x := 5`, `(a, b) := (b, a)`, ou `x += 5` (`op` = `Some(Plus)`).
-    Affecter { cible: Cible, op: Option<OpBin>, valeur: Expr },
-    Retour { valeur: Option<Expr>, span: Span },
+pub enum Stmt {
+    /// `let x: Int := 5`, `var (a, b): (Int, Int) := f()` (`var` if `mutable`).
+    Declare { mutable: bool, pattern: Pattern, ty: Option<TypeAst>, value: Expr },
+    /// `x := 5`, `(a, b) := (b, a)`, or `x += 5` (`op` = `Some(Plus)`).
+    Assign { target: Target, op: Option<BinOp>, value: Expr },
+    Return { value: Option<Expr>, span: Span },
     /// `check cond else "message"`.
-    Verifier(Contrat),
-    Sortir(Span),
-    Continuer(Span),
-    Si { cond: Expr, alors: Bloc, sinon: Option<Bloc> },
-    TantQue { cond: Expr, corps: Bloc },
-    /// `for i in a..b` (`inclus` = false) et `for i in a..=b` / `from i := a to b` (`inclus` = true).
-    Boucle { compteur: Nom, debut: Expr, fin: Expr, inclus: bool, corps: Bloc },
+    Check(Contract),
+    Break(Span),
+    Continue(Span),
+    If { cond: Expr, then: Block, otherwise: Option<Block> },
+    While { cond: Expr, body: Block },
+    /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` / `from i := a to b` (`inclusive` = true).
+    Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
     Expr(Expr),
 }
 
 pub struct Expr {
-    /// Numéro unique : sert d'index dans la table des types (`types::Infos`).
+    /// Unique number: index in the type table (`types::Info`).
     pub id: usize,
     pub span: Span,
-    pub genre: ExprGenre,
+    pub kind: ExprKind,
 }
 
-pub enum ExprGenre {
-    Entier(u64),
-    Flottant(f64),
-    Caractere(char),
+pub enum ExprKind {
+    Int(u64),
+    Float(f64),
+    Char(char),
     Bool(bool),
     Var(String),
-    /// `result` dans un `ensure`.
-    Resultat,
-    Appel { nom: Nom, args: Vec<Expr> },
-    /// `x.to_float()` : méthode prédéfinie (J2 : seulement les conversions).
-    Methode { recu: Box<Expr>, nom: Nom, args: Vec<Expr> },
-    Unaire(OpUn, Box<Expr>),
-    Binaire(OpBin, Box<Expr>, Box<Expr>),
+    /// `result` in an `ensure`.
+    Result,
+    Call { name: Name, args: Vec<Expr> },
+    /// `x.to_float()`: built-in method (J2: only conversions).
+    Method { receiver: Box<Expr>, name: Name, args: Vec<Expr> },
+    Unary(UnOp, Box<Expr>),
+    Binary(BinOp, Box<Expr>, Box<Expr>),
     /// `(1, 2.5)`
     Tuple(Vec<Expr>),
     /// `t.0`
-    Champ(Box<Expr>, usize),
-    /// `if c { 1 } else { 2 }` qui donne une valeur : la dernière ligne de la branche choisie.
-    Si { cond: Box<Expr>, alors: Bloc, sinon: Bloc },
+    Field(Box<Expr>, usize),
+    /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.
+    If { cond: Box<Expr>, then: Block, otherwise: Block },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum OpUn {
-    Moins,
-    Non,
+pub enum UnOp {
+    Neg,
+    Not,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum OpBin {
-    Ou,
-    Et,
-    Egal,
-    Different,
-    Inf,
-    InfEgal,
-    Sup,
-    SupEgal,
-    Intervalle,
-    IntervalleInclus,
+pub enum BinOp {
+    Or,
+    And,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Range,
+    RangeInclusive,
     Plus,
-    Moins,
-    Fois,
-    Divise,
-    Reste,
+    Minus,
+    Times,
+    Div,
+    Rem,
 }
 
-impl OpBin {
-    pub fn texte(self) -> &'static str {
-        use OpBin::*;
+impl BinOp {
+    pub fn text(self) -> &'static str {
+        use BinOp::*;
         match self {
-            Ou => "||",
-            Et => "&&",
-            Egal => "=",
-            Different => "!=",
-            Inf => "<",
-            InfEgal => "<=",
-            Sup => ">",
-            SupEgal => ">=",
-            Intervalle => "..",
-            IntervalleInclus => "..=",
+            Or => "||",
+            And => "&&",
+            Eq => "=",
+            Ne => "!=",
+            Lt => "<",
+            Le => "<=",
+            Gt => ">",
+            Ge => ">=",
+            Range => "..",
+            RangeInclusive => "..=",
             Plus => "+",
-            Moins => "-",
-            Fois => "*",
-            Divise => "/",
-            Reste => "%",
+            Minus => "-",
+            Times => "*",
+            Div => "/",
+            Rem => "%",
         }
     }
 }

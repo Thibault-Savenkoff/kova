@@ -1,5 +1,5 @@
-// Fichier qui utilise toute la syntaxe de Kova, pour vérifier les couleurs.
-/* Commentaire de bloc /* imbriqué */ toujours commentaire */
+// File using all of Kova's syntax, to check the colors.
+/* Block comment /* nested */ still a comment */
 
 header {
     mode := build

@@ -1,4 +1,4 @@
-// Les blocs `test` sont ignorés par run et build ; `kova test` les lance (voir tests/kova.rs).
+// `test` blocks are ignored by run and build; `kova test` runs them (see tests/kova.rs).
 fn carre(x: Int) -> Int { return x * x }
 
 test "carré de 3" {

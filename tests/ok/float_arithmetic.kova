@@ -1,4 +1,4 @@
-// Calculs, comparaisons et conversions entre Int, Float et Char.
+// Arithmetic, comparisons and conversions between Int, Float and Char.
 fn moyenne(a: Float, b: Float) -> Float {
     return (a + b) / 2.0
 }

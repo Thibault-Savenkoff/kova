@@ -1,4 +1,4 @@
-// Un dépassement arrête le programme (code 101) ; ce qui a été affiché avant reste affiché.
+// An overflow stops the program (code 101); what was printed before stays printed.
 fn main() {
     var x: Int := 9223372036854775806
     print(x)

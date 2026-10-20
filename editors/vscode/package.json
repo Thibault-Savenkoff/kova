@@ -29,8 +29,8 @@
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icones/kova.svg",
-          "dark": "./icones/kova.svg"
+          "light": "./icons/kova.svg",
+          "dark": "./icons/kova.svg"
         }
       }
     ],
@@ -103,7 +103,7 @@
     "configuration": {
       "title": "Kova",
       "properties": {
-        "kova.chemin": {
+        "kova.path": {
           "type": "string",
           "default": "kova",
           "description": "Chemin de l'exécutable `kova` (par défaut : celui du PATH). Recharge la fenêtre après un changement."
@@ -112,7 +112,7 @@
     }
   },
   "scripts": {
-    "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova' && node tests/commandes.test.js",
+    "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova' && node tests/commands.test.js",
     "package": "vsce package --skip-license --allow-missing-repository"
   },
   "devDependencies": {

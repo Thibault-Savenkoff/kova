@@ -1,16 +1,16 @@
-// Vérification : noms connus, types corrects, règles de `let`/`var`.
+// Type checking: known names, correct types, `let`/`var` rules.
 //
-// Kova ne devine (presque) rien : il vérifie que ce qui est écrit est cohérent.
+// Kova guesses (almost) nothing: it checks that what is written is consistent.
 //
 //   let x: Int := true    →  erreur: types différents : `Int` attendu, `Bool` donné
-//   a := 2  (a en let)    →  erreur: `a` est déclarée avec let
+//   a := 2  (a is a let)  →  erreur: `a` est déclarée avec let
 //
-// Le résultat : le type de chaque expression (indexé par `Expr::id`).
+// The result: the type of each expression (indexed by `Expr::id`).
 
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::diag::{Diag, Span, ligne_colonne};
+use crate::diag::{Diag, Span, line_col};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
@@ -18,443 +18,443 @@ pub enum Type {
     Float,
     Bool,
     Char,
-    /// `(Int, Float)` : au moins 2 éléments.
+    /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
-    /// Ce que renvoie une fonction sans `->`.
-    Rien,
-    /// Type inconnu à cause d'une erreur déjà signalée : on ne la répète pas.
-    Erreur,
+    /// What a function without `->` returns.
+    Unit,
+    /// Unknown type because of an error already reported: it is not repeated.
+    Error,
 }
 
 impl Type {
-    /// Le type comme dans le code : `Int`, `(Int, Float)`.
-    pub fn texte(&self) -> String {
+    /// The type as in the code: `Int`, `(Int, Float)`.
+    pub fn text(&self) -> String {
         match self {
             Type::Int => "Int".into(),
             Type::Float => "Float".into(),
             Type::Bool => "Bool".into(),
             Type::Char => "Char".into(),
-            Type::Tuple(ts) => format!("({})", ts.iter().map(Type::texte).collect::<Vec<_>>().join(", ")),
-            Type::Rien => "rien".into(),
-            Type::Erreur => "?".into(),
+            Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
+            Type::Unit => "rien".into(),
+            Type::Error => "?".into(),
         }
     }
 }
 
-/// Les clés du `header` et leurs valeurs permises ; la première est la valeur par défaut.
-pub const REGLAGES: &[(&str, &[&str], &str)] = &[
+/// The `header` keys and their allowed values; the first one is the default.
+pub const SETTINGS: &[(&str, &[&str], &str)] = &[
     ("mode", &["run", "build"], "ce que fait `kova fichier.kova`"),
     ("lock", &["false", "true"], "true : l'autre commande est refusée"),
 ];
 
-/// La valeur d'un réglage du `header` (vérifié), et sa ligne ; `None` si absent.
-pub fn reglage<'a>(f: &'a Fichier, src: &str, cle: &str) -> Option<(&'a str, usize)> {
-    let (_, v) = f.header.as_ref()?.reglages.iter().find(|(c, _)| c.texte == cle)?;
-    Some((v.texte.as_str(), ligne_colonne(src, v.span.debut).0))
+/// The value of a (checked) `header` setting, and its line; `None` if absent.
+pub fn setting<'a>(f: &'a File, src: &str, key: &str) -> Option<(&'a str, usize)> {
+    let (_, v) = f.header.as_ref()?.settings.iter().find(|(k, _)| k.text == key)?;
+    Some((v.text.as_str(), line_col(src, v.span.start).0))
 }
 
-/// Les fonctions prédéfinies : `print(x)` passe à la ligne, `write(x)` non.
-pub const PREDEFINIES: &[&str] = &["print", "write"];
+/// Built-in functions: `print(x)` ends the line, `write(x)` doesn't.
+pub const BUILTINS: &[&str] = &["print", "write"];
 
-/// Les méthodes prédéfinies (J2 : les conversions) : (type du receveur, nom, résultat).
-pub const METHODES: &[(Type, &str, Type)] = &[
+/// Built-in methods (J2: conversions): (receiver type, name, result).
+pub const METHODS: &[(Type, &str, Type)] = &[
     (Type::Int, "to_float", Type::Float),
     (Type::Float, "to_int", Type::Int),
     (Type::Char, "to_int", Type::Int),
 ];
 
-pub struct Infos {
-    /// Type de chaque expression, par `Expr::id`.
+pub struct Info {
+    /// Type of each expression, by `Expr::id`.
     pub types: Vec<Type>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Sorte {
+enum VarKind {
     Let,
     Var,
     Param,
-    Compteur,
+    Counter,
 }
 
 struct Variable {
     ty: Type,
-    sorte: Sorte,
+    kind: VarKind,
     span: Span,
 }
 
 struct Signature {
     params: Vec<Type>,
-    retour: Type,
+    ret: Type,
 }
 
-struct Verif<'a> {
+struct Checker<'a> {
     src: &'a str,
-    fonctions: HashMap<&'a str, Signature>,
-    /// Une table par bloc ouvert, de l'extérieur vers l'intérieur.
-    portees: Vec<HashMap<String, Variable>>,
-    retour: Type,
-    /// Le type de `result` : `Some` seulement dans un `ensure`.
-    resultat: Option<Type>,
-    boucles: usize,
+    functions: HashMap<&'a str, Signature>,
+    /// One table per open block, from outside to inside.
+    scopes: Vec<HashMap<String, Variable>>,
+    ret: Type,
+    /// The type of `result`: `Some` only inside an `ensure`.
+    result: Option<Type>,
+    loops: usize,
     types: Vec<Type>,
     diags: Vec<Diag>,
 }
 
-pub fn verifier(f: &Fichier, nb_exprs: usize, src: &str) -> (Infos, Vec<Diag>) {
-    let mut v = Verif {
+pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
+    let mut c = Checker {
         src,
-        fonctions: HashMap::new(),
-        portees: vec![],
-        retour: Type::Rien,
-        resultat: None,
-        boucles: 0,
-        types: vec![Type::Erreur; nb_exprs],
+        functions: HashMap::new(),
+        scopes: vec![],
+        ret: Type::Unit,
+        result: None,
+        loops: 0,
+        types: vec![Type::Error; nb_exprs],
         diags: vec![],
     };
 
-    // 0. Le header.
-    let mut vus: HashMap<&str, Span> = HashMap::new();
-    for (cle, valeur) in f.header.iter().flat_map(|h| &h.reglages) {
-        let Some((_, permises, _)) = REGLAGES.iter().find(|(c, ..)| *c == cle.texte) else {
-            let cles: Vec<String> = REGLAGES.iter().map(|(c, ..)| format!("`{c}`")).collect();
-            v.diags.push(
-                Diag::new(cle.span, format!("réglage inconnu `{}` dans le header", cle.texte))
-                    .aide(format!("réglages possibles : {}", cles.join(", "))),
+    // 0. The header.
+    let mut seen: HashMap<&str, Span> = HashMap::new();
+    for (key, value) in f.header.iter().flat_map(|h| &h.settings) {
+        let Some((_, allowed, _)) = SETTINGS.iter().find(|(k, ..)| *k == key.text) else {
+            let keys: Vec<String> = SETTINGS.iter().map(|(k, ..)| format!("`{k}`")).collect();
+            c.diags.push(
+                Diag::new(key.span, format!("réglage inconnu `{}` dans le header", key.text))
+                    .help(format!("réglages possibles : {}", keys.join(", "))),
             );
             continue;
         };
-        if let Some(premier) = vus.insert(&cle.texte, cle.span) {
-            let (ligne, _) = ligne_colonne(src, premier.debut);
-            v.erreur(cle.span, format!("`{}` est déjà réglé (ligne {ligne})", cle.texte));
+        if let Some(first) = seen.insert(&key.text, key.span) {
+            let (line, _) = line_col(src, first.start);
+            c.error(key.span, format!("`{}` est déjà réglé (ligne {line})", key.text));
         }
-        if !permises.contains(&valeur.texte.as_str()) {
-            let permises: Vec<String> = permises.iter().map(|p| format!("`{p}`")).collect();
-            v.erreur(valeur.span, format!("`{}` vaut {}, pas `{}`", cle.texte, permises.join(" ou "), valeur.texte));
+        if !allowed.contains(&value.text.as_str()) {
+            let allowed: Vec<String> = allowed.iter().map(|a| format!("`{a}`")).collect();
+            c.error(value.span, format!("`{}` vaut {}, pas `{}`", key.text, allowed.join(" ou "), value.text));
         }
     }
 
-    // 1. Les signatures d'abord : on peut appeler une fonction écrite plus bas.
-    for fonc in &f.fonctions {
-        for t in fonc.params.iter().map(|p| &p.ty).chain(&fonc.retour) {
-            v.signaler_inconnus(t);
+    // 1. Signatures first: a function written further down can be called.
+    for func in &f.functions {
+        for t in func.params.iter().map(|p| &p.ty).chain(&func.ret) {
+            c.report_unknown(t);
         }
-        let params = fonc.params.iter().map(|p| type_de(&p.ty)).collect();
-        let retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
-        let nom = fonc.nom.texte.as_str();
-        if PREDEFINIES.contains(&nom) {
-            v.erreur(fonc.nom.span, format!("`{nom}` est une fonction prédéfinie"));
-        } else if v.fonctions.contains_key(nom) {
-            v.erreur(fonc.nom.span, format!("la fonction `{nom}` existe déjà"));
+        let params = func.params.iter().map(|p| type_of(&p.ty)).collect();
+        let ret = func.ret.as_ref().map_or(Type::Unit, type_of);
+        let name = func.name.text.as_str();
+        if BUILTINS.contains(&name) {
+            c.error(func.name.span, format!("`{name}` est une fonction prédéfinie"));
+        } else if c.functions.contains_key(name) {
+            c.error(func.name.span, format!("la fonction `{name}` existe déjà"));
         } else {
-            v.fonctions.insert(nom, Signature { params, retour });
+            c.functions.insert(name, Signature { params, ret });
         }
     }
 
-    // 2. `fn main()` : obligatoire, sans paramètre ni résultat.
-    match f.fonctions.iter().find(|f| f.nom.texte == "main") {
-        None => v.erreur(Span::new(0, 0), "il manque la fonction `main`"),
-        Some(m) if !m.params.is_empty() || m.retour.is_some() => {
-            v.diags.push(Diag::new(m.nom.span, "`main` ne prend pas de paramètre et ne renvoie rien"));
+    // 2. `fn main()`: required, without parameters or result.
+    match f.functions.iter().find(|f| f.name.text == "main") {
+        None => c.error(Span::new(0, 0), "il manque la fonction `main`"),
+        Some(m) if !m.params.is_empty() || m.ret.is_some() => {
+            c.diags.push(Diag::new(m.name.span, "`main` ne prend pas de paramètre et ne renvoie rien"));
         }
         _ => {}
     }
 
-    // 3. Les corps.
-    for fonc in &f.fonctions {
-        v.retour = fonc.retour.as_ref().map_or(Type::Rien, type_de);
+    // 3. The bodies.
+    for func in &f.functions {
+        c.ret = func.ret.as_ref().map_or(Type::Unit, type_of);
         let mut params = HashMap::new();
-        for p in &fonc.params {
-            if params.contains_key(&p.nom.texte) {
-                v.erreur(p.nom.span, format!("le paramètre `{}` existe déjà", p.nom.texte));
+        for p in &func.params {
+            if params.contains_key(&p.name.text) {
+                c.error(p.name.span, format!("le paramètre `{}` existe déjà", p.name.text));
             }
-            params.insert(p.nom.texte.clone(), Variable { ty: type_de(&p.ty), sorte: Sorte::Param, span: p.nom.span });
+            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty), kind: VarKind::Param, span: p.name.span });
         }
-        v.portees = vec![params];
-        // Les contrats ne voient que les paramètres (et `result` dans un `ensure`).
-        for c in &fonc.contrats {
-            v.resultat = (c.genre == GenreContrat::Ensure).then(|| v.retour.clone());
-            v.attendre(&c.cond, &Type::Bool);
+        c.scopes = vec![params];
+        // Contracts only see the parameters (and `result` in an `ensure`).
+        for k in &func.contracts {
+            c.result = (k.kind == ContractKind::Ensure).then(|| c.ret.clone());
+            c.expect(&k.cond, &Type::Bool);
         }
-        v.resultat = None;
-        v.bloc(&fonc.corps, vec![]);
-        if v.retour != Type::Rien && !termine(&fonc.corps) {
-            v.diags.push(
-                Diag::new(fonc.corps.fin, format!("`{}` peut arriver ici sans `return`", fonc.nom.texte))
-                    .aide(format!("la fonction doit renvoyer un `{}` dans tous les cas", v.retour.texte())),
+        c.result = None;
+        c.block(&func.body, vec![]);
+        if c.ret != Type::Unit && !always_returns(&func.body) {
+            c.diags.push(
+                Diag::new(func.body.close, format!("`{}` peut arriver ici sans `return`", func.name.text))
+                    .help(format!("la fonction doit renvoyer un `{}` dans tous les cas", c.ret.text())),
             );
         }
     }
 
-    // 4. Les tests : vérifiés même par `kova run`, pour que les erreurs se voient tout de suite.
-    let mut noms: HashMap<&str, Span> = HashMap::new();
+    // 4. Tests: checked even by `kova run`, so that errors show up right away.
+    let mut names: HashMap<&str, Span> = HashMap::new();
     for t in &f.tests {
-        if let Some(premier) = noms.insert(&t.nom, t.span) {
-            let (ligne, _) = ligne_colonne(src, premier.debut);
-            v.erreur(t.span, format!("le test « {} » existe déjà (ligne {ligne})", t.nom));
+        if let Some(first) = names.insert(&t.name, t.span) {
+            let (line, _) = line_col(src, first.start);
+            c.error(t.span, format!("le test « {} » existe déjà (ligne {line})", t.name));
         }
-        v.retour = Type::Rien;
-        v.portees = vec![];
-        v.bloc(&t.corps, vec![]);
+        c.ret = Type::Unit;
+        c.scopes = vec![];
+        c.block(&t.body, vec![]);
     }
 
-    (Infos { types: v.types }, v.diags)
+    (Info { types: c.types }, c.diags)
 }
 
-/// Le type écrit ; `Erreur` s'il contient un nom inconnu.
-pub fn type_de(t: &TypeAst) -> Type {
+/// The written type; `Error` if it contains an unknown name.
+pub fn type_of(t: &TypeAst) -> Type {
     match t {
-        TypeAst::Nom(n) => match n.texte.as_str() {
+        TypeAst::Name(n) => match n.text.as_str() {
             "Int" => Type::Int,
             "Float" => Type::Float,
             "Bool" => Type::Bool,
             "Char" => Type::Char,
-            _ => Type::Erreur,
+            _ => Type::Error,
         },
         TypeAst::Tuple(ts) => {
-            let ts: Vec<Type> = ts.iter().map(type_de).collect();
-            if ts.contains(&Type::Erreur) { Type::Erreur } else { Type::Tuple(ts) }
+            let ts: Vec<Type> = ts.iter().map(type_of).collect();
+            if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
         }
     }
 }
 
-/// Le bloc se termine-t-il toujours par un `return` ?
-fn termine(b: &Bloc) -> bool {
-    b.instrs.iter().any(|i| match i {
-        Instr::Retour { .. } => true,
-        Instr::Si { alors, sinon: Some(sinon), .. } => termine(alors) && termine(sinon),
+/// Does the block always end with a `return`?
+fn always_returns(b: &Block) -> bool {
+    b.stmts.iter().any(|s| match s {
+        Stmt::Return { .. } => true,
+        Stmt::If { then, otherwise: Some(otherwise), .. } => always_returns(then) && always_returns(otherwise),
         _ => false,
     })
 }
 
-impl Verif<'_> {
-    fn erreur(&mut self, span: Span, msg: impl Into<String>) {
+impl Checker<'_> {
+    fn error(&mut self, span: Span, msg: impl Into<String>) {
         self.diags.push(Diag::new(span, msg));
     }
 
-    fn signaler_inconnus(&mut self, t: &TypeAst) {
+    fn report_unknown(&mut self, t: &TypeAst) {
         match t {
-            TypeAst::Nom(n) if type_de(t) == Type::Erreur => self.erreur(n.span, format!("type inconnu `{}`", n.texte)),
-            TypeAst::Nom(_) => {}
-            TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.signaler_inconnus(t)),
+            TypeAst::Name(n) if type_of(t) == Type::Error => self.error(n.span, format!("type inconnu `{}`", n.text)),
+            TypeAst::Name(_) => {}
+            TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
         }
     }
 
-    fn type_ecrit(&mut self, t: &TypeAst) -> Type {
-        self.signaler_inconnus(t);
-        type_de(t)
+    fn written_type(&mut self, t: &TypeAst) -> Type {
+        self.report_unknown(t);
+        type_of(t)
     }
 
-    fn chercher(&self, nom: &str) -> Option<&Variable> {
-        self.portees.iter().rev().find_map(|p| p.get(nom))
+    fn lookup(&self, name: &str) -> Option<&Variable> {
+        self.scopes.iter().rev().find_map(|s| s.get(name))
     }
 
-    /// Déclare une variable. Refusé si le nom est encore visible (même bloc ou bloc englobant).
-    fn declarer(&mut self, nom: &Nom, ty: Type, sorte: Sorte) {
-        if let Some(ancienne) = self.chercher(&nom.texte) {
-            let (ligne, _) = ligne_colonne(self.src, ancienne.span.debut);
+    /// Declares a variable. Refused if the name is still visible (same block or enclosing block).
+    fn declare(&mut self, name: &Name, ty: Type, kind: VarKind) {
+        if let Some(old) = self.lookup(&name.text) {
+            let (line, _) = line_col(self.src, old.span.start);
             self.diags.push(
-                Diag::new(nom.span, format!("`{}` existe déjà (ligne {ligne})", nom.texte))
-                    .aide("choisis un autre nom : un nom encore visible ne peut pas être redéclaré"),
+                Diag::new(name.span, format!("`{}` existe déjà (ligne {line})", name.text))
+                    .help("choisis un autre nom : un nom encore visible ne peut pas être redéclaré"),
             );
             return;
         }
-        let v = Variable { ty, sorte, span: nom.span };
-        self.portees.last_mut().unwrap().insert(nom.texte.clone(), v);
+        let v = Variable { ty, kind, span: name.span };
+        self.scopes.last_mut().unwrap().insert(name.text.clone(), v);
     }
 
-    /// Déclare les noms d'un motif : `(a, b)` reçoit un `(Int, Float)` → `a: Int`, `b: Float`.
-    fn lier(&mut self, m: &Motif, ty: &Type, sorte: Sorte) {
-        match (m, ty) {
-            (Motif::Nom(n), _) => self.declarer(n, ty.clone(), sorte),
-            (Motif::Ignorer(_), _) => {}
-            (Motif::Tuple(ms, _), Type::Tuple(ts)) if ms.len() == ts.len() => {
-                for (m, t) in ms.iter().zip(ts) {
-                    self.lier(m, t, sorte);
+    /// Declares the names of a pattern: `(a, b)` receiving an `(Int, Float)` → `a: Int`, `b: Float`.
+    fn bind(&mut self, p: &Pattern, ty: &Type, kind: VarKind) {
+        match (p, ty) {
+            (Pattern::Name(n), _) => self.declare(n, ty.clone(), kind),
+            (Pattern::Ignore(_), _) => {}
+            (Pattern::Tuple(ps, _), Type::Tuple(ts)) if ps.len() == ts.len() => {
+                for (p, t) in ps.iter().zip(ts) {
+                    self.bind(p, t, kind);
                 }
             }
-            (Motif::Tuple(ms, span), _) => {
-                if *ty != Type::Erreur {
-                    let msg = format!("ce motif a {} éléments, mais la valeur est un `{}`", ms.len(), ty.texte());
-                    self.erreur(*span, msg);
+            (Pattern::Tuple(ps, span), _) => {
+                if *ty != Type::Error {
+                    let msg = format!("ce motif a {} éléments, mais la valeur est un `{}`", ps.len(), ty.text());
+                    self.error(*span, msg);
                 }
-                for m in ms {
-                    self.lier(m, &Type::Erreur, sorte);
+                for p in ps {
+                    self.bind(p, &Type::Error, kind);
                 }
             }
         }
     }
 
-    /// Vérifie un bloc ; `avant` = variables à déclarer au début (le compteur d'une boucle).
-    fn bloc(&mut self, b: &Bloc, avant: Vec<(&Nom, Type, Sorte)>) {
-        self.portees.push(HashMap::new());
-        for (nom, ty, sorte) in avant {
-            self.declarer(nom, ty, sorte);
+    /// Checks a block; `before` = variables to declare at its start (a loop counter).
+    fn block(&mut self, b: &Block, before: Vec<(&Name, Type, VarKind)>) {
+        self.scopes.push(HashMap::new());
+        for (name, ty, kind) in before {
+            self.declare(name, ty, kind);
         }
-        for i in &b.instrs {
-            self.instr(i);
+        for s in &b.stmts {
+            self.stmt(s);
         }
-        self.portees.pop();
+        self.scopes.pop();
     }
 
-    /// Vérifie que `e` est du type `attendu`.
-    fn attendre(&mut self, e: &Expr, attendu: &Type) {
+    /// Checks that `e` has type `expected`.
+    fn expect(&mut self, e: &Expr, expected: &Type) {
         let t = self.expr(e);
-        if t != *attendu && t != Type::Erreur && *attendu != Type::Erreur {
-            let msg = format!("types différents : `{}` attendu, `{}` donné", attendu.texte(), t.texte());
+        if t != *expected && t != Type::Error && *expected != Type::Error {
+            let msg = format!("types différents : `{}` attendu, `{}` donné", expected.text(), t.text());
             let mut d = Diag::new(e.span, msg);
-            if let (Type::Float, ExprGenre::Entier(v)) = (attendu, &e.genre) {
-                d = d.aide(format!("pour un `Float`, écris `{v}.0`"));
-            } else if matches!((attendu, &t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
-                d = d.aide("Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`");
+            if let (Type::Float, ExprKind::Int(v)) = (expected, &e.kind) {
+                d = d.help(format!("pour un `Float`, écris `{v}.0`"));
+            } else if matches!((expected, &t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
+                d = d.help("Kova ne convertit jamais tout seul : utilise `.to_float()` ou `.to_int()`");
             }
             self.diags.push(d);
         }
     }
 
-    /// Vérifie que `e` a un des types `permis` ; renvoie son type.
-    fn parmi(&mut self, e: &Expr, permis: &[Type], quoi: &str) -> Type {
+    /// Checks that `e` has one of the `allowed` types; returns its type.
+    fn one_of(&mut self, e: &Expr, allowed: &[Type], what: &str) -> Type {
         let t = self.expr(e);
-        if t == Type::Erreur || permis.contains(&t) {
+        if t == Type::Error || allowed.contains(&t) {
             return t;
         }
-        let noms: Vec<String> = permis.iter().map(|t| format!("`{}`", t.texte())).collect();
-        self.erreur(e.span, format!("{quoi} s'applique à {}, pas à `{}`", noms.join(" ou "), t.texte()));
-        Type::Erreur
+        let names: Vec<String> = allowed.iter().map(|t| format!("`{}`", t.text())).collect();
+        self.error(e.span, format!("{what} s'applique à {}, pas à `{}`", names.join(" ou "), t.text()));
+        Type::Error
     }
 
-    /// Le type d'une cible de `:=`, en vérifiant qu'elle peut changer.
-    /// `vues` : les lieux déjà rencontrés dans la même cible (`(a, a) := …` est refusé).
-    fn cible(&mut self, c: &Cible, vues: &mut Vec<(String, Vec<usize>)>) -> Type {
-        match c {
-            Cible::Tuple(cs, _) => {
-                let ts: Vec<Type> = cs.iter().map(|c| self.cible(c, vues)).collect();
-                if ts.contains(&Type::Erreur) { Type::Erreur } else { Type::Tuple(ts) }
+    /// The type of a `:=` target, checking that it may change.
+    /// `seen`: the places already met in the same target (`(a, a) := …` is refused).
+    fn target(&mut self, t: &Target, seen: &mut Vec<(String, Vec<usize>)>) -> Type {
+        match t {
+            Target::Tuple(ts, _) => {
+                let types: Vec<Type> = ts.iter().map(|t| self.target(t, seen)).collect();
+                if types.contains(&Type::Error) { Type::Error } else { Type::Tuple(types) }
             }
-            Cible::Lieu { nom, champs, span } => {
-                let n = &nom.texte;
-                // `t` et `t.0` dans la même cible : la même case recevrait deux valeurs.
-                let chevauche = vues.iter().any(|(m, ch)| m == n && (ch.starts_with(champs) || champs.starts_with(ch)));
-                if chevauche {
-                    self.erreur(*span, format!("`{}` reçoit deux valeurs dans la même affectation", &self.src[span.debut..span.fin]));
+            Target::Place { name, fields, span } => {
+                let n = &name.text;
+                // `t` and `t.0` in the same target: the same slot would receive two values.
+                let overlaps = seen.iter().any(|(m, f)| m == n && (f.starts_with(fields) || fields.starts_with(f)));
+                if overlaps {
+                    self.error(*span, format!("`{}` reçoit deux valeurs dans la même affectation", &self.src[span.start..span.end]));
                 }
-                vues.push((n.clone(), champs.clone()));
-                let Some(var) = self.chercher(n) else {
-                    self.erreur(nom.span, format!("variable inconnue `{n}`"));
-                    return Type::Erreur;
+                seen.push((n.clone(), fields.clone()));
+                let Some(var) = self.lookup(n) else {
+                    self.error(name.span, format!("variable inconnue `{n}`"));
+                    return Type::Error;
                 };
-                let (mut ty, sorte) = (var.ty.clone(), var.sorte);
-                match sorte {
-                    Sorte::Var => {}
-                    Sorte::Let => self.diags.push(
-                        Diag::new(nom.span, format!("`{n}` est déclarée avec let"))
-                            .aide(format!("déclare-la avec `var {n}` si elle doit changer")),
+                let (mut ty, kind) = (var.ty.clone(), var.kind);
+                match kind {
+                    VarKind::Var => {}
+                    VarKind::Let => self.diags.push(
+                        Diag::new(name.span, format!("`{n}` est déclarée avec let"))
+                            .help(format!("déclare-la avec `var {n}` si elle doit changer")),
                     ),
-                    Sorte::Param => self.diags.push(
-                        Diag::new(nom.span, format!("`{n}` est un paramètre : il ne peut pas changer"))
-                            .aide(format!("copie-le d'abord : `var {n}2: ... := {n}`")),
+                    VarKind::Param => self.diags.push(
+                        Diag::new(name.span, format!("`{n}` est un paramètre : il ne peut pas changer"))
+                            .help(format!("copie-le d'abord : `var {n}2: ... := {n}`")),
                     ),
-                    Sorte::Compteur => {
-                        self.erreur(nom.span, format!("`{n}` est un compteur de boucle : il ne peut pas changer"))
+                    VarKind::Counter => {
+                        self.error(name.span, format!("`{n}` est un compteur de boucle : il ne peut pas changer"))
                     }
                 }
-                for &i in champs {
-                    ty = self.champ(ty, i, *span);
+                for &i in fields {
+                    ty = self.field(ty, i, *span);
                 }
                 ty
             }
         }
     }
 
-    /// Le type de `t.i` quand `t` est de type `ty`.
-    fn champ(&mut self, ty: Type, i: usize, span: Span) -> Type {
+    /// The type of `t.i` when `t` has type `ty`.
+    fn field(&mut self, ty: Type, i: usize, span: Span) -> Type {
         match ty {
             Type::Tuple(ts) if i < ts.len() => ts[i].clone(),
             Type::Tuple(ts) => {
                 let msg = format!("ce tuple a {} éléments : de `.0` à `.{}`", ts.len(), ts.len() - 1);
-                self.erreur(span, msg);
-                Type::Erreur
+                self.error(span, msg);
+                Type::Error
             }
-            Type::Erreur => Type::Erreur,
-            autre => {
-                self.erreur(span, format!("`.{i}` s'applique à un tuple, pas à `{}`", autre.texte()));
-                Type::Erreur
+            Type::Error => Type::Error,
+            other => {
+                self.error(span, format!("`.{i}` s'applique à un tuple, pas à `{}`", other.text()));
+                Type::Error
             }
         }
     }
 
-    fn instr(&mut self, i: &Instr) {
-        match i {
-            Instr::Declarer { modifiable, motif, ty, valeur } => {
+    fn stmt(&mut self, s: &Stmt) {
+        match s {
+            Stmt::Declare { mutable, pattern, ty, value } => {
                 let ty = match ty {
-                    Some(t) => self.type_ecrit(t),
+                    Some(t) => self.written_type(t),
                     None => {
-                        let (span, nom) = match motif {
-                            Motif::Nom(n) => (n.span, n.texte.clone()),
-                            Motif::Tuple(_, s) | Motif::Ignorer(s) => (*s, self.src[s.debut..s.fin].to_string()),
+                        let (span, name) = match pattern {
+                            Pattern::Name(n) => (n.span, n.text.clone()),
+                            Pattern::Tuple(_, s) | Pattern::Ignore(s) => (*s, self.src[s.start..s.end].to_string()),
                         };
                         self.diags.push(
-                            Diag::new(span, format!("il faut écrire le type de `{nom}`"))
-                                .aide(format!("par exemple `{nom}: Int`")),
+                            Diag::new(span, format!("il faut écrire le type de `{name}`"))
+                                .help(format!("par exemple `{name}: Int`")),
                         );
-                        Type::Erreur
+                        Type::Error
                     }
                 };
-                self.attendre(valeur, &ty);
-                self.lier(motif, &ty, if *modifiable { Sorte::Var } else { Sorte::Let });
+                self.expect(value, &ty);
+                self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
-            Instr::Affecter { cible, op, valeur } => {
-                let ty = self.cible(cible, &mut vec![]);
-                if op.is_some() && !matches!(ty, Type::Int | Type::Float | Type::Erreur) {
-                    let texte = &self.src[cible.span().debut..cible.span().fin];
-                    self.erreur(cible.span(), format!("`{texte}` n'est ni un `Int` ni un `Float`"));
+            Stmt::Assign { target, op, value } => {
+                let ty = self.target(target, &mut vec![]);
+                if op.is_some() && !matches!(ty, Type::Int | Type::Float | Type::Error) {
+                    let text = &self.src[target.span().start..target.span().end];
+                    self.error(target.span(), format!("`{text}` n'est ni un `Int` ni un `Float`"));
                 }
-                self.attendre(valeur, &ty);
+                self.expect(value, &ty);
             }
-            Instr::Retour { valeur, span } => match (valeur, self.retour.clone()) {
-                (None, Type::Rien | Type::Erreur) => {}
-                (None, t) => self.erreur(*span, format!("cette fonction doit renvoyer un `{}`", t.texte())),
-                (Some(e), Type::Rien) => {
+            Stmt::Return { value, span } => match (value, self.ret.clone()) {
+                (None, Type::Unit | Type::Error) => {}
+                (None, t) => self.error(*span, format!("cette fonction doit renvoyer un `{}`", t.text())),
+                (Some(e), Type::Unit) => {
                     self.expr(e);
                     self.diags.push(
                         Diag::new(e.span, "cette fonction ne renvoie rien")
-                            .aide("ajoute `-> Type` après les paramètres pour renvoyer une valeur"),
+                            .help("ajoute `-> Type` après les paramètres pour renvoyer une valeur"),
                     );
                 }
-                (Some(e), t) => self.attendre(e, &t),
+                (Some(e), t) => self.expect(e, &t),
             },
-            Instr::Verifier(c) => self.attendre(&c.cond, &Type::Bool),
-            Instr::Sortir(span) | Instr::Continuer(span) => {
-                if self.boucles == 0 {
-                    let mot = if matches!(i, Instr::Sortir(_)) { "break" } else { "continue" };
-                    self.erreur(*span, format!("`{mot}` en dehors d'une boucle"));
+            Stmt::Check(k) => self.expect(&k.cond, &Type::Bool),
+            Stmt::Break(span) | Stmt::Continue(span) => {
+                if self.loops == 0 {
+                    let word = if matches!(s, Stmt::Break(_)) { "break" } else { "continue" };
+                    self.error(*span, format!("`{word}` en dehors d'une boucle"));
                 }
             }
-            Instr::Si { cond, alors, sinon } => {
-                self.attendre(cond, &Type::Bool);
-                self.bloc(alors, vec![]);
-                if let Some(s) = sinon {
-                    self.bloc(s, vec![]);
+            Stmt::If { cond, then, otherwise } => {
+                self.expect(cond, &Type::Bool);
+                self.block(then, vec![]);
+                if let Some(o) = otherwise {
+                    self.block(o, vec![]);
                 }
             }
-            Instr::TantQue { cond, corps } => {
-                self.attendre(cond, &Type::Bool);
-                self.boucles += 1;
-                self.bloc(corps, vec![]);
-                self.boucles -= 1;
+            Stmt::While { cond, body } => {
+                self.expect(cond, &Type::Bool);
+                self.loops += 1;
+                self.block(body, vec![]);
+                self.loops -= 1;
             }
-            Instr::Boucle { compteur, debut, fin, corps, .. } => {
-                self.attendre(debut, &Type::Int);
-                self.attendre(fin, &Type::Int);
-                self.boucles += 1;
-                self.bloc(corps, vec![(compteur, Type::Int, Sorte::Compteur)]);
-                self.boucles -= 1;
+            Stmt::Loop { counter, start, end, body, .. } => {
+                self.expect(start, &Type::Int);
+                self.expect(end, &Type::Int);
+                self.loops += 1;
+                self.block(body, vec![(counter, Type::Int, VarKind::Counter)]);
+                self.loops -= 1;
             }
-            Instr::Expr(e) => {
+            Stmt::Expr(e) => {
                 self.expr(e);
-                if !matches!(e.genre, ExprGenre::Appel { .. }) {
+                if !matches!(e.kind, ExprKind::Call { .. }) {
                     let mut d = Diag::new(e.span, "cette expression ne fait rien");
-                    if let ExprGenre::Binaire(OpBin::Egal, ..) = e.genre {
-                        d = d.aide("`=` compare ; pour donner une valeur, écris `:=`");
+                    if let ExprKind::Binary(BinOp::Eq, ..) = e.kind {
+                        d = d.help("`=` compare ; pour donner une valeur, écris `:=`");
                     }
                     self.diags.push(d);
                 }
@@ -463,137 +463,137 @@ impl Verif<'_> {
     }
 
     fn expr(&mut self, e: &Expr) -> Type {
-        let t = self.expr_genre(e);
+        let t = self.expr_kind(e);
         self.types[e.id] = t.clone();
         t
     }
 
-    fn expr_genre(&mut self, e: &Expr) -> Type {
-        match &e.genre {
-            ExprGenre::Entier(v) => {
+    fn expr_kind(&mut self, e: &Expr) -> Type {
+        match &e.kind {
+            ExprKind::Int(v) => {
                 if *v > i64::MAX as u64 {
-                    self.erreur(e.span, "nombre trop grand pour un `Int` (maximum 9223372036854775807)");
+                    self.error(e.span, "nombre trop grand pour un `Int` (maximum 9223372036854775807)");
                 }
                 Type::Int
             }
-            ExprGenre::Flottant(_) => Type::Float,
-            ExprGenre::Caractere(_) => Type::Char,
-            ExprGenre::Bool(_) => Type::Bool,
-            ExprGenre::Resultat => match &self.resultat {
-                Some(Type::Rien) => {
-                    self.erreur(e.span, "`result` n'existe pas : cette fonction ne renvoie rien");
-                    Type::Erreur
+            ExprKind::Float(_) => Type::Float,
+            ExprKind::Char(_) => Type::Char,
+            ExprKind::Bool(_) => Type::Bool,
+            ExprKind::Result => match &self.result {
+                Some(Type::Unit) => {
+                    self.error(e.span, "`result` n'existe pas : cette fonction ne renvoie rien");
+                    Type::Error
                 }
                 Some(t) => t.clone(),
                 None => {
                     self.diags.push(
                         Diag::new(e.span, "`result` ne s'utilise que dans un `ensure`")
-                            .aide("`ensure result >= 0` vérifie la valeur renvoyée par la fonction"),
+                            .help("`ensure result >= 0` vérifie la valeur renvoyée par la fonction"),
                     );
-                    Type::Erreur
+                    Type::Error
                 }
             },
-            ExprGenre::Var(nom) => match self.chercher(nom) {
+            ExprKind::Var(name) => match self.lookup(name) {
                 Some(v) => v.ty.clone(),
                 None => {
-                    self.erreur(e.span, format!("variable inconnue `{nom}`"));
-                    Type::Erreur
+                    self.error(e.span, format!("variable inconnue `{name}`"));
+                    Type::Error
                 }
             },
-            ExprGenre::Tuple(elems) => {
+            ExprKind::Tuple(elems) => {
                 let mut ts = vec![];
                 for x in elems {
                     let t = self.expr(x);
-                    if t == Type::Rien {
-                        self.erreur(x.span, "cette expression ne donne pas de valeur à mettre dans un tuple");
+                    if t == Type::Unit {
+                        self.error(x.span, "cette expression ne donne pas de valeur à mettre dans un tuple");
                     }
                     ts.push(t);
                 }
-                if ts.iter().any(|t| matches!(t, Type::Erreur | Type::Rien)) { Type::Erreur } else { Type::Tuple(ts) }
+                if ts.iter().any(|t| matches!(t, Type::Error | Type::Unit)) { Type::Error } else { Type::Tuple(ts) }
             }
-            ExprGenre::Champ(x, i) => {
+            ExprKind::Field(x, i) => {
                 let t = self.expr(x);
-                self.champ(t, *i, e.span)
+                self.field(t, *i, e.span)
             }
-            ExprGenre::Appel { nom, args } => self.appel(nom, args),
-            ExprGenre::Methode { recu, nom, args } => {
-                let t = self.expr(recu);
+            ExprKind::Call { name, args } => self.call(name, args),
+            ExprKind::Method { receiver, name, args } => {
+                let t = self.expr(receiver);
                 for a in args {
                     self.expr(a);
                 }
-                if t == Type::Erreur {
-                    return Type::Erreur;
+                if t == Type::Error {
+                    return Type::Error;
                 }
-                let Some((_, _, resultat)) = METHODES.iter().find(|(r, n, _)| *r == t && *n == nom.texte) else {
-                    let connues: Vec<String> =
-                        METHODES.iter().filter(|(r, ..)| *r == t).map(|(_, n, _)| format!("`{n}`")).collect();
-                    let mut d = Diag::new(nom.span, format!("`{}` n'a pas de méthode `{}`", t.texte(), nom.texte));
-                    if !connues.is_empty() {
-                        d = d.aide(format!("méthodes de `{}` : {}", t.texte(), connues.join(", ")));
+                let Some((_, _, result)) = METHODS.iter().find(|(r, n, _)| *r == t && *n == name.text) else {
+                    let known: Vec<String> =
+                        METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, _)| format!("`{n}`")).collect();
+                    let mut d = Diag::new(name.span, format!("`{}` n'a pas de méthode `{}`", t.text(), name.text));
+                    if !known.is_empty() {
+                        d = d.help(format!("méthodes de `{}` : {}", t.text(), known.join(", ")));
                     }
                     self.diags.push(d);
-                    return Type::Erreur;
+                    return Type::Error;
                 };
                 if !args.is_empty() {
-                    self.erreur(nom.span, format!("`{}` ne prend pas d'argument", nom.texte));
+                    self.error(name.span, format!("`{}` ne prend pas d'argument", name.text));
                 }
-                resultat.clone()
+                result.clone()
             }
-            ExprGenre::Unaire(OpUn::Moins, x) => {
-                // `-9223372036854775808` : le seul cas où le nombre seul serait trop grand.
-                if let ExprGenre::Entier(v) = x.genre
+            ExprKind::Unary(UnOp::Neg, x) => {
+                // `-9223372036854775808`: the only case where the number alone would be too big.
+                if let ExprKind::Int(v) = x.kind
                     && v == 1 << 63
                 {
                     self.types[x.id] = Type::Int;
                     return Type::Int;
                 }
-                self.parmi(x, &[Type::Int, Type::Float], "`-`")
+                self.one_of(x, &[Type::Int, Type::Float], "`-`")
             }
-            ExprGenre::Unaire(OpUn::Non, x) => {
-                self.attendre(x, &Type::Bool);
+            ExprKind::Unary(UnOp::Not, x) => {
+                self.expect(x, &Type::Bool);
                 Type::Bool
             }
-            ExprGenre::Si { cond, alors, sinon } => self.si_valeur(cond, alors, sinon),
-            ExprGenre::Binaire(op, a, b) => {
-                use OpBin::*;
+            ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
+            ExprKind::Binary(op, a, b) => {
+                use BinOp::*;
                 match op {
-                    Ou | Et => {
-                        self.attendre(a, &Type::Bool);
-                        self.attendre(b, &Type::Bool);
+                    Or | And => {
+                        self.expect(a, &Type::Bool);
+                        self.expect(b, &Type::Bool);
                         Type::Bool
                     }
-                    Egal | Different => {
+                    Eq | Ne => {
                         let ta = self.expr(a);
                         match ta {
-                            Type::Rien => self.erreur(a.span, "cette expression ne renvoie rien"),
+                            Type::Unit => self.error(a.span, "cette expression ne renvoie rien"),
                             Type::Tuple(_) => self.diags.push(
-                                Diag::new(e.span, format!("`{}` ne compare pas encore des tuples", op.texte()))
-                                    .aide("compare les éléments un par un : `t.0 = u.0 && t.1 = u.1`"),
+                                Diag::new(e.span, format!("`{}` ne compare pas encore des tuples", op.text()))
+                                    .help("compare les éléments un par un : `t.0 = u.0 && t.1 = u.1`"),
                             ),
                             _ => {}
                         }
-                        self.attendre(b, &ta);
+                        self.expect(b, &ta);
                         Type::Bool
                     }
-                    Inf | InfEgal | Sup | SupEgal => {
-                        let t = self.parmi(a, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.texte()));
-                        self.attendre(b, &t);
+                    Lt | Le | Gt | Ge => {
+                        let t = self.one_of(a, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.text()));
+                        self.expect(b, &t);
                         Type::Bool
                     }
-                    Intervalle | IntervalleInclus => {
+                    Range | RangeInclusive => {
                         self.expr(a);
                         self.expr(b);
-                        self.erreur(e.span, format!("`{}` ne s'utilise que dans `for`", op.texte()));
-                        Type::Erreur
+                        self.error(e.span, format!("`{}` ne s'utilise que dans `for`", op.text()));
+                        Type::Error
                     }
-                    Reste => {
-                        self.attendre(a, &Type::Int);
-                        self.attendre(b, &Type::Int);
+                    Rem => {
+                        self.expect(a, &Type::Int);
+                        self.expect(b, &Type::Int);
                         Type::Int
                     }
-                    Plus | Moins | Fois | Divise => {
-                        let t = self.parmi(a, &[Type::Int, Type::Float], &format!("`{}`", op.texte()));
-                        self.attendre(b, &t);
+                    Plus | Minus | Times | Div => {
+                        let t = self.one_of(a, &[Type::Int, Type::Float], &format!("`{}`", op.text()));
+                        self.expect(b, &t);
                         t
                     }
                 }
@@ -601,84 +601,84 @@ impl Verif<'_> {
         }
     }
 
-    fn si_valeur(&mut self, cond: &Expr, alors: &Bloc, sinon: &Bloc) -> Type {
-        self.attendre(cond, &Type::Bool);
-        let (a, b) = (self.bloc_valeur(alors), self.bloc_valeur(sinon));
-        if a != b && a != Type::Erreur && b != Type::Erreur {
-            let msg = format!("les deux branches doivent donner le même type : `{}` et `{}`", a.texte(), b.texte());
-            self.erreur(sinon.debut, msg);
-            return Type::Erreur;
+    fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) -> Type {
+        self.expect(cond, &Type::Bool);
+        let (a, b) = (self.block_value(then), self.block_value(otherwise));
+        if a != b && a != Type::Error && b != Type::Error {
+            let msg = format!("les deux branches doivent donner le même type : `{}` et `{}`", a.text(), b.text());
+            self.error(otherwise.open, msg);
+            return Type::Error;
         }
         a
     }
 
-    /// Le type d'un bloc qui donne une valeur : celui de sa dernière ligne.
-    fn bloc_valeur(&mut self, b: &Bloc) -> Type {
-        self.portees.push(HashMap::new());
-        let (dernier, avant) = match b.instrs.split_last() {
-            Some((d, a)) => (Some(d), a),
+    /// The type of a block giving a value: that of its last line.
+    fn block_value(&mut self, b: &Block) -> Type {
+        self.scopes.push(HashMap::new());
+        let (last, before) = match b.stmts.split_last() {
+            Some((l, b)) => (Some(l), b),
             None => (None, &[][..]),
         };
-        for i in avant {
-            self.instr(i);
+        for s in before {
+            self.stmt(s);
         }
-        let ty = match dernier {
-            Some(Instr::Expr(e)) => self.expr(e),
-            Some(Instr::Si { cond, alors, sinon: Some(sinon) }) => self.si_valeur(cond, alors, sinon),
-            autre => {
-                if let Some(i) = autre {
-                    self.instr(i);
+        let ty = match last {
+            Some(Stmt::Expr(e)) => self.expr(e),
+            Some(Stmt::If { cond, then, otherwise: Some(otherwise) }) => self.if_value(cond, then, otherwise),
+            other => {
+                if let Some(s) = other {
+                    self.stmt(s);
                 }
                 self.diags.push(
-                    Diag::new(b.fin, "cette branche doit finir par une valeur")
-                        .aide("la dernière ligne d'une branche est la valeur du `if`"),
+                    Diag::new(b.close, "cette branche doit finir par une valeur")
+                        .help("la dernière ligne d'une branche est la valeur du `if`"),
                 );
-                Type::Erreur
+                Type::Error
             }
         };
-        self.portees.pop();
+        self.scopes.pop();
         ty
     }
 
-    fn appel(&mut self, nom: &Nom, args: &[Expr]) -> Type {
-        if PREDEFINIES.contains(&nom.texte.as_str()) {
+    fn call(&mut self, name: &Name, args: &[Expr]) -> Type {
+        if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
-                self.erreur(nom.span, format!("`{}` prend exactement 1 argument", nom.texte));
+                self.error(name.span, format!("`{}` prend exactement 1 argument", name.text));
             }
             for a in args {
                 match self.expr(a) {
-                    Type::Rien => {
-                        self.erreur(a.span, format!("`{}` : cette expression ne donne pas de valeur à afficher", nom.texte))
+                    Type::Unit => {
+                        self.error(a.span, format!("`{}` : cette expression ne donne pas de valeur à afficher", name.text))
                     }
                     Type::Tuple(_) => self.diags.push(
-                        Diag::new(a.span, format!("`{}` n'affiche pas encore les tuples", nom.texte))
-                            .aide("affiche les éléments un par un : `print(t.0)`"),
+                        Diag::new(a.span, format!("`{}` n'affiche pas encore les tuples", name.text))
+                            .help("affiche les éléments un par un : `print(t.0)`"),
                     ),
                     _ => {}
                 }
             }
-            return Type::Rien;
+            return Type::Unit;
         }
-        let Some(sig) = self.fonctions.get(nom.texte.as_str()) else {
-            self.erreur(nom.span, format!("fonction inconnue `{}`", nom.texte));
+        let Some(sig) = self.functions.get(name.text.as_str()) else {
+            self.error(name.span, format!("fonction inconnue `{}`", name.text));
             args.iter().for_each(|a| {
                 self.expr(a);
             });
-            return Type::Erreur;
+            return Type::Error;
         };
-        let (params, retour) = (sig.params.clone(), sig.retour.clone());
+        let (params, ret) = (sig.params.clone(), sig.ret.clone());
         if params.len() != args.len() {
-            let msg = format!("`{}` prend {} argument(s), {} donné(s)", nom.texte, params.len(), args.len());
-            self.erreur(nom.span, msg);
+            let msg = format!("`{}` prend {} argument(s), {} donné(s)", name.text, params.len(), args.len());
+            self.error(name.span, msg);
         }
         for (i, a) in args.iter().enumerate() {
             match params.get(i) {
-                Some(t) => self.attendre(a, t),
+                Some(t) => self.expect(a, t),
                 None => {
                     self.expr(a);
                 }
             }
         }
-        retour
+        ret
     }
 }

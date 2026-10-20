@@ -1,4 +1,4 @@
-// Tuples, plusieurs résultats, déstructuration, échange.
+// Tuples, several results, destructuring, swap.
 
 fn min_max(a: Int, b: Int, c: Int) -> (Int, Int) {
     var (petit, grand): (Int, Int) := (a, a)
@@ -9,7 +9,7 @@ fn min_max(a: Int, b: Int, c: Int) -> (Int, Int) {
     return (petit, grand)
 }
 
-// Beaucoup de résultats de types mélangés (le natif doit les ranger en mémoire).
+// Many results of mixed types (native code must store them in memory).
 fn statistiques(n: Int) -> (Int, Float, Bool, Char, (Int, Int)) {
     return (n * 2, n.to_float() / 4.0, n > 3, 'k', (n, -n))
 }
@@ -29,7 +29,7 @@ fn main() {
     print(a)
     print(b)
 
-    // Échange à trois : tout est lu avant d'être écrit.
+    // Three-way swap: everything is read before being written.
     var c: Int := 3
     (a, b, c) := (c, a, b)
     write(a)

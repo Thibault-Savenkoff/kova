@@ -1,4 +1,4 @@
-// Un `if` en instruction ne donne pas de valeur : `1` seul ne fait rien.
+// An `if` statement gives no value: `1` alone does nothing.
 fn main() {
     if true { 1 } else { 2 }
 }

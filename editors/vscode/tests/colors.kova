@@ -1,4 +1,4 @@
-// SYNTAX TEST "source.kova" "Couleurs de Kova"
+// SYNTAX TEST "source.kova" "Kova colors"
 
 fn carré(x: Int) -> Int {
 // <-- storage.type.function.kova
@@ -57,9 +57,9 @@ fn carré(x: Int) -> Int {
 //                     ^^ keyword.operator.logical.kova
 //                        ^ keyword.operator.logical.kova
 }
-/* bloc /* imbriqué */ toujours commentaire */ let
-//                     ^^^^^^^^ comment.block.kova
-//                                             ^^^ storage.type.kova
+/* block /* nested */ still a comment */ let
+//                    ^^^^^ comment.block.kova
+//                                       ^^^ storage.type.kova
 struct Chien : Animal {
 // <------ storage.type.kova
 //     ^^^^^ entity.name.type.kova

@@ -1,4 +1,4 @@
-// Contrats respectés : rien ne change, même avec la récursion et plusieurs `return`.
+// Kept contracts: nothing changes, even with recursion and several `return`s.
 fn fib(n: Int) -> Int
     require n >= 0
     ensure result >= n - 1

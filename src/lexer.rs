@@ -1,80 +1,80 @@
-// Lexer : découpe le texte en jetons (mots, nombres, symboles).
+// Lexer: cuts the text into tokens (words, numbers, symbols).
 //
-//   "let x: Int := 5"  →  [Cle(let)] [Ident] [Sym(:)] [Type] [Sym(:=)] [Entier(5)]
+//   "let x: Int := 5"  →  [Keyword(let)] [Ident] [Sym(:)] [Type] [Sym(:=)] [Int(5)]
 //
-// Il ajoute aussi les fins de ligne (`Ligne`) qui terminent les instructions,
-// en suivant les règles de docs/PLAN.md 2.1 (« Fins de ligne »).
+// It also adds the line ends (`Newline`) that end statements,
+// following the rules of docs/PLAN.md 2.1 (« Fins de ligne »).
 
 use crate::diag::{Diag, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Genre {
-    /// Nom en minuscule : variable, fonction (`total`, `carré`).
+pub enum Kind {
+    /// Lowercase name: variable, function (`total`, `carré`).
     Ident,
-    /// Nom en majuscule : type (`Int`, `Chien`).
+    /// Uppercase name: type (`Int`, `Chien`).
     Type,
-    Entier(u64),
-    Flottant(f64),
-    Caractere(char),
-    /// `"..."` ; le contenu se relit avec `contenu_texte`.
-    Texte,
-    /// Mot-clé (`fn`, `let`, …).
-    Cle(&'static str),
-    /// Symbole (`:=`, `+`, `{`, …).
+    Int(u64),
+    Float(f64),
+    Char(char),
+    /// `"..."`; the content is read back with `string_content`.
+    Str,
+    /// Keyword (`fn`, `let`, …).
+    Keyword(&'static str),
+    /// Symbol (`:=`, `+`, `{`, …).
     Sym(&'static str),
-    /// Fin d'instruction.
-    Ligne,
-    /// Fin du fichier.
-    Fin,
+    /// End of statement.
+    Newline,
+    /// End of file.
+    Eof,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Jeton {
-    pub genre: Genre,
+pub struct Token {
+    pub kind: Kind,
     pub span: Span,
 }
 
-const MOTS_CLES: &[&str] = &[
+const KEYWORDS: &[&str] = &[
     "fn", "let", "var", "move", "return", "if", "else", "while", "for", "in", "from", "to", "match",
     "struct", "enum", "interface", "import", "public", "private", "require", "ensure", "check",
     "result", "self", "true", "false", "none", "ok", "err", "and", "or", "copy", "any", "break",
     "continue", "header", "test",
 ];
 
-/// Du plus long au plus court, pour que `..=` gagne sur `..` puis `.`.
-const SYMBOLES: &[&str] = &[
+/// Longest first, so that `..=` wins over `..` then `.`.
+const SYMBOLS: &[&str] = &[
     "..=", ":=", "+=", "-=", "*=", "/=", "->", "=>", "!=", "<=", ">=", "&&", "||", "..", "+", "-", "*",
     "/", "%", "=", "<", ">", "!", "(", ")", "[", "]", "{", "}", ",", ":", ".", "?",
 ];
 
-/// Une ligne qui finit par un de ces jetons continue sur la suivante.
-fn continue_apres(g: Genre) -> bool {
-    matches!(g, Genre::Sym(s) if !matches!(s, ")" | "]" | "}" | "?" | "!"))
+/// A line ending with one of these tokens continues on the next one.
+fn continues_after(k: Kind) -> bool {
+    matches!(k, Kind::Sym(s) if !matches!(s, ")" | "]" | "}" | "?" | "!"))
 }
 
-/// Une ligne qui commence par un de ces jetons continue la précédente.
-fn continue_avant(g: Genre) -> bool {
-    matches!(g, Genre::Sym("." | "&&" | "||" | ")" | "]" | "}"))
+/// A line starting with one of these tokens continues the previous one.
+fn continues_before(k: Kind) -> bool {
+    matches!(k, Kind::Sym("." | "&&" | "||" | ")" | "]" | "}"))
 }
 
-pub fn lexer(source: &str) -> (Vec<Jeton>, Vec<Diag>) {
-    let (bruts, diags) = jetons_bruts(source);
-    (ajouter_lignes(bruts), diags)
+pub fn lex(source: &str) -> (Vec<Token>, Vec<Diag>) {
+    let (raw, diags) = raw_tokens(source);
+    (add_newlines(raw), diags)
 }
 
-/// Les jetons sans les `Ligne`, chacun avec « y a-t-il un retour à la ligne juste avant ? ».
-fn jetons_bruts(source: &str) -> (Vec<(Jeton, bool)>, Vec<Diag>) {
-    let mut jetons = vec![];
+/// The tokens without `Newline`, each with "is there a line break just before?".
+fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
+    let mut tokens = vec![];
     let mut diags = vec![];
-    let mut nouvelle_ligne = false;
+    let mut new_line = false;
     let mut i = 0;
 
     while let Some(c) = source[i..].chars().next() {
-        let debut = i;
-        let reste = &source[i..];
+        let start = i;
+        let rest = &source[i..];
 
         if c == '\n' {
-            nouvelle_ligne = true;
+            new_line = true;
             i += 1;
             continue;
         }
@@ -82,14 +82,14 @@ fn jetons_bruts(source: &str) -> (Vec<(Jeton, bool)>, Vec<Diag>) {
             i += c.len_utf8();
             continue;
         }
-        if reste.starts_with("//") {
-            i += reste.find('\n').unwrap_or(reste.len());
+        if rest.starts_with("//") {
+            i += rest.find('\n').unwrap_or(rest.len());
             continue;
         }
-        if reste.starts_with("/*") {
-            match fin_commentaire(reste) {
+        if rest.starts_with("/*") {
+            match comment_end(rest) {
                 Some(n) => {
-                    nouvelle_ligne |= reste[..n].contains('\n');
+                    new_line |= rest[..n].contains('\n');
                     i += n;
                 }
                 None => {
@@ -100,75 +100,75 @@ fn jetons_bruts(source: &str) -> (Vec<(Jeton, bool)>, Vec<Diag>) {
             continue;
         }
 
-        let genre = if c.is_alphabetic() || c == '_' {
-            let n = reste.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(reste.len());
-            let mot = &reste[..n];
+        let kind = if c.is_alphabetic() || c == '_' {
+            let n = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+            let word = &rest[..n];
             i += n;
-            if let Some(cle) = MOTS_CLES.iter().find(|&&k| k == mot) {
-                Genre::Cle(cle)
+            if let Some(k) = KEYWORDS.iter().find(|&&k| k == word) {
+                Kind::Keyword(k)
             } else if c.is_uppercase() {
-                Genre::Type
+                Kind::Type
             } else {
-                Genre::Ident
+                Kind::Ident
             }
         } else if c.is_ascii_digit() {
-            // Après un `.`, pas de virgule : `t.0.1` = deux numéros de champ, pas `0.1`.
-            let apres_point = matches!(jetons.last(), Some((Jeton { genre: Genre::Sym("."), .. }, _)));
-            let n = longueur_nombre(reste, !apres_point);
+            // After a `.`, no decimal point: `t.0.1` = two field numbers, not `0.1`.
+            let after_dot = matches!(tokens.last(), Some((Token { kind: Kind::Sym("."), .. }, _)));
+            let n = number_len(rest, !after_dot);
             i += n;
-            match lire_nombre(&reste[..n]) {
-                Ok(g) => g,
+            match read_number(&rest[..n]) {
+                Ok(k) => k,
                 Err(msg) => {
-                    diags.push(Diag::new(Span::new(debut, i), msg));
-                    Genre::Entier(0)
+                    diags.push(Diag::new(Span::new(start, i), msg));
+                    Kind::Int(0)
                 }
             }
         } else if c == '\'' {
-            let (n, resultat) = lire_caractere(reste);
+            let (n, result) = read_char(rest);
             i += n;
-            match resultat {
-                Ok(c) => Genre::Caractere(c),
+            match result {
+                Ok(c) => Kind::Char(c),
                 Err(msg) => {
-                    diags.push(Diag::new(Span::new(debut, i), msg));
-                    Genre::Caractere(' ')
+                    diags.push(Diag::new(Span::new(start, i), msg));
+                    Kind::Char(' ')
                 }
             }
         } else if c == '"' {
-            let (n, erreurs) = lire_texte(reste);
-            for (k, msg) in erreurs {
-                diags.push(Diag::new(Span::new(debut + k, debut + k + 1), msg));
+            let (n, errors) = read_string(rest);
+            for (k, msg) in errors {
+                diags.push(Diag::new(Span::new(start + k, start + k + 1), msg));
             }
             i += n;
-            Genre::Texte
-        } else if let Some(s) = SYMBOLES.iter().find(|s| reste.starts_with(**s)) {
+            Kind::Str
+        } else if let Some(s) = SYMBOLS.iter().find(|s| rest.starts_with(**s)) {
             i += s.len();
-            Genre::Sym(s)
+            Kind::Sym(s)
         } else {
             i += c.len_utf8();
             let msg = format!("caractère inattendu `{c}`");
-            diags.push(Diag::new(Span::new(debut, i), msg));
+            diags.push(Diag::new(Span::new(start, i), msg));
             continue;
         };
 
-        jetons.push((Jeton { genre, span: Span::new(debut, i) }, nouvelle_ligne));
-        nouvelle_ligne = false;
+        tokens.push((Token { kind, span: Span::new(start, i) }, new_line));
+        new_line = false;
     }
-    jetons.push((Jeton { genre: Genre::Fin, span: Span::new(source.len(), source.len()) }, true));
-    (jetons, diags)
+    tokens.push((Token { kind: Kind::Eof, span: Span::new(source.len(), source.len()) }, true));
+    (tokens, diags)
 }
 
-/// Longueur d'un commentaire `/* ... */` (imbricable) au début de `s`.
-fn fin_commentaire(s: &str) -> Option<usize> {
-    let mut profondeur = 0;
+/// Length of a (nestable) `/* ... */` comment at the start of `s`.
+fn comment_end(s: &str) -> Option<usize> {
+    let mut depth = 0;
     let mut i = 0;
     while i < s.len() {
         if s[i..].starts_with("/*") {
-            profondeur += 1;
+            depth += 1;
             i += 2;
         } else if s[i..].starts_with("*/") {
-            profondeur -= 1;
+            depth -= 1;
             i += 2;
-            if profondeur == 0 {
+            if depth == 0 {
                 return Some(i);
             }
         } else {
@@ -178,12 +178,12 @@ fn fin_commentaire(s: &str) -> Option<usize> {
     None
 }
 
-/// Longueur du nombre au début de `s` : `42`, `0xFF`, `3.14`, `1e-9`, `2.5E+3`.
-/// Avec `virgule` = false, on s'arrête avant un `.` (numéro de champ de tuple).
-fn longueur_nombre(s: &str, virgule: bool) -> usize {
-    let o = s.as_bytes();
-    let chiffres = |mut i: usize| {
-        while i < o.len() && (o[i].is_ascii_alphanumeric() || o[i] == b'_') && !matches!(o[i], b'e' | b'E') {
+/// Length of the number at the start of `s`: `42`, `0xFF`, `3.14`, `1e-9`, `2.5E+3`.
+/// With `fraction` = false, stops before a `.` (tuple field number).
+fn number_len(s: &str, fraction: bool) -> usize {
+    let b = s.as_bytes();
+    let digits = |mut i: usize| {
+        while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') && !matches!(b[i], b'e' | b'E') {
             i += 1;
         }
         i
@@ -191,97 +191,99 @@ fn longueur_nombre(s: &str, virgule: bool) -> usize {
     if s.starts_with("0x") || s.starts_with("0b") {
         return s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(s.len());
     }
-    let mut i = chiffres(0);
-    // `1..10` reste un intervalle : il faut un chiffre juste après le `.`.
-    if virgule && i + 1 < o.len() && o[i] == b'.' && o[i + 1].is_ascii_digit() {
-        i = chiffres(i + 1);
+    let mut i = digits(0);
+    // `1..10` stays a range: a digit is needed right after the `.`.
+    if fraction && i + 1 < b.len() && b[i] == b'.' && b[i + 1].is_ascii_digit() {
+        i = digits(i + 1);
     }
-    if i < o.len() && matches!(o[i], b'e' | b'E') {
-        let j = if matches!(o.get(i + 1), Some(b'+' | b'-')) { i + 2 } else { i + 1 };
-        if o.get(j).is_some_and(u8::is_ascii_digit) {
-            i = chiffres(j);
+    if i < b.len() && matches!(b[i], b'e' | b'E') {
+        let j = if matches!(b.get(i + 1), Some(b'+' | b'-')) { i + 2 } else { i + 1 };
+        if b.get(j).is_some_and(u8::is_ascii_digit) {
+            i = digits(j);
         }
     }
-    // Lettres collées (`12abc`) : on les prend, `lire_nombre` signalera l'erreur.
+    // Glued letters (`12abc`): taken too, `read_number` reports the error.
     i + s[i..].find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(s.len() - i)
 }
 
-fn lire_nombre(texte: &str) -> Result<Genre, String> {
-    let decimal = !texte.starts_with("0x") && !texte.starts_with("0b");
-    if decimal && texte.contains(['.', 'e', 'E']) {
-        let propre = texte.replace('_', "");
-        return match propre.parse::<f64>() {
-            Ok(v) if v.is_infinite() => Err(format!("nombre trop grand `{texte}`")),
-            Ok(v) => Ok(Genre::Flottant(v)),
-            Err(_) => Err(format!("nombre mal écrit `{texte}`")),
+fn read_number(text: &str) -> Result<Kind, String> {
+    let decimal = !text.starts_with("0x") && !text.starts_with("0b");
+    if decimal && text.contains(['.', 'e', 'E']) {
+        let clean = text.replace('_', "");
+        return match clean.parse::<f64>() {
+            Ok(v) if v.is_infinite() => Err(format!("nombre trop grand `{text}`")),
+            Ok(v) => Ok(Kind::Float(v)),
+            Err(_) => Err(format!("nombre mal écrit `{text}`")),
         };
     }
-    lire_entier(texte).map(Genre::Entier)
+    read_int(text).map(Kind::Int)
 }
 
-/// `'a'`, `'\n'`, `'\u{1F600}'`. Renvoie la longueur lue et le caractère.
-fn lire_caractere(s: &str) -> (usize, Result<char, String>) {
-    let fin_ligne = s.find('\n').unwrap_or(s.len());
-    let mut it = s[1..fin_ligne].char_indices();
-    let resultat = match it.next() {
+/// `'a'`, `'\n'`, `'\u{1F600}'`. Returns the length read and the character.
+fn read_char(s: &str) -> (usize, Result<char, String>) {
+    let line_end = s.find('\n').unwrap_or(s.len());
+    let mut it = s[1..line_end].char_indices();
+    let result = match it.next() {
         None | Some((_, '\'')) => Err("caractère vide : écris par exemple `'a'`".to_string()),
-        Some((_, '\\')) => echappement(&mut it),
+        Some((_, '\\')) => escape(&mut it),
         Some((_, c)) => Ok(c),
     };
     match it.next() {
-        Some((k, '\'')) => (k + 2, resultat),
+        Some((k, '\'')) => (k + 2, result),
         _ => {
-            let n = s[1..fin_ligne].find('\'').map_or(fin_ligne, |k| k + 2);
-            (n, resultat.and(Err("un caractère s'écrit entre `'` : un seul caractère, comme `'a'`".to_string())))
+            let n = s[1..line_end].find('\'').map_or(line_end, |k| k + 2);
+            (n, result.and(Err("un caractère s'écrit entre `'` : un seul caractère, comme `'a'`".to_string())))
         }
     }
 }
 
-/// `"..."` au début de `s` : sa longueur, et les erreurs (position dans `s`, message).
-fn lire_texte(s: &str) -> (usize, Vec<(usize, String)>) {
-    let mut erreurs = vec![];
+/// `"..."` at the start of `s`: its length, and the errors (position in `s`, message).
+fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
+    let mut errors = vec![];
+    let mut interpolation_reported = false;
     let mut it = s.char_indices().skip(1).peekable();
     while let Some((k, c)) = it.next() {
         match c {
-            '"' => return (k + 1, erreurs),
+            '"' => return (k + 1, errors),
             '\n' => break,
             '\\' => {
-                let mut reste = s[k + 1..].char_indices();
-                if let Err(msg) = echappement(&mut reste) {
-                    erreurs.push((k, msg));
+                let mut rest = s[k + 1..].char_indices();
+                if let Err(msg) = escape(&mut rest) {
+                    errors.push((k, msg));
                 }
-                // Avance d'autant de caractères que l'échappement en a lu.
-                let lu = reste.next().map_or(s.len() - k - 1, |(j, _)| j);
-                while it.peek().is_some_and(|&(j, _)| j <= k + lu) {
+                // Skip as many characters as the escape read.
+                let read = rest.next().map_or(s.len() - k - 1, |(j, _)| j);
+                while it.peek().is_some_and(|&(j, _)| j <= k + read) {
                     it.next();
                 }
             }
-            // Une seule erreur par texte : `{x}` en donnerait sinon deux.
-            '{' | '}' if !erreurs.iter().any(|(_, m)| m.starts_with("l'interpolation")) => {
-                erreurs.push((k, "l'interpolation `{…}` arrive au jalon J3 (écris `\\{` pour une accolade)".into()))
+            // One error per string: `{x}` would otherwise give two.
+            '{' | '}' if !interpolation_reported => {
+                interpolation_reported = true;
+                errors.push((k, "l'interpolation `{…}` arrive au jalon J3 (écris `\\{` pour une accolade)".into()))
             }
             _ => {}
         }
     }
     let n = s.find('\n').unwrap_or(s.len());
-    erreurs.push((0, "texte jamais fermé : il manque le `\"` de fin".into()));
-    (n, erreurs)
+    errors.push((0, "texte jamais fermé : il manque le `\"` de fin".into()));
+    (n, errors)
 }
 
-/// Le contenu d'un jeton `Texte` (`"a\nb"` → `a`, retour à la ligne, `b`), déjà vérifié par le lexer.
-pub fn contenu_texte(jeton: &str) -> String {
-    let interieur = jeton.strip_prefix('"').unwrap_or(jeton);
-    let interieur = interieur.strip_suffix('"').unwrap_or(interieur);
-    let mut texte = String::new();
-    let mut it = interieur.char_indices();
+/// The content of a `Str` token (`"a\nb"` → `a`, line break, `b`), already checked by the lexer.
+pub fn string_content(token: &str) -> String {
+    let inner = token.strip_prefix('"').unwrap_or(token);
+    let inner = inner.strip_suffix('"').unwrap_or(inner);
+    let mut text = String::new();
+    let mut it = inner.char_indices();
     while let Some((_, c)) = it.next() {
-        texte.push(if c == '\\' { echappement(&mut it).unwrap_or('?') } else { c });
+        text.push(if c == '\\' { escape(&mut it).unwrap_or('?') } else { c });
     }
-    texte
+    text
 }
 
-/// Lit ce qui suit un `\` : `n t r 0 \\ " ' { }` ou `u{1F600}`.
-pub fn echappement(it: &mut std::str::CharIndices) -> Result<char, String> {
+/// Reads what follows a `\`: `n t r 0 \\ " ' { }` or `u{1F600}`.
+pub fn escape(it: &mut std::str::CharIndices) -> Result<char, String> {
     Ok(match it.next().map(|(_, c)| c) {
         Some('n') => '\n',
         Some('t') => '\t',
@@ -308,46 +310,46 @@ pub fn echappement(it: &mut std::str::CharIndices) -> Result<char, String> {
 }
 
 /// `42`, `1_000_000`, `0xFF`, `0b1010`.
-fn lire_entier(texte: &str) -> Result<u64, String> {
-    let (chiffres, base) = if let Some(h) = texte.strip_prefix("0x") {
+fn read_int(text: &str) -> Result<u64, String> {
+    let (digits, base) = if let Some(h) = text.strip_prefix("0x") {
         (h, 16)
-    } else if let Some(b) = texte.strip_prefix("0b") {
+    } else if let Some(b) = text.strip_prefix("0b") {
         (b, 2)
     } else {
-        (texte, 10)
+        (text, 10)
     };
-    let chiffres = chiffres.replace('_', "");
-    if chiffres.is_empty() || !chiffres.chars().all(|c| c.is_digit(base)) {
-        return Err(format!("nombre mal écrit `{texte}`"));
+    let digits = digits.replace('_', "");
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(base)) {
+        return Err(format!("nombre mal écrit `{text}`"));
     }
-    u64::from_str_radix(&chiffres, base).map_err(|_| format!("nombre trop grand `{texte}`"))
+    u64::from_str_radix(&digits, base).map_err(|_| format!("nombre trop grand `{text}`"))
 }
 
-/// Ajoute les `Ligne` qui terminent les instructions (PLAN 2.1, règles 1 à 3).
-fn ajouter_lignes(bruts: Vec<(Jeton, bool)>) -> Vec<Jeton> {
-    let mut sortie: Vec<Jeton> = vec![];
-    // Parenthèses ouvertes : dans `(` et `[`, les retours à la ligne ne comptent pas.
-    let mut ouverts: Vec<&str> = vec![];
+/// Adds the `Newline` tokens that end statements (PLAN 2.1, rules 1 to 3).
+fn add_newlines(raw: Vec<(Token, bool)>) -> Vec<Token> {
+    let mut out: Vec<Token> = vec![];
+    // Open brackets: inside `(` and `[`, line breaks don't count.
+    let mut open: Vec<&str> = vec![];
 
-    for (j, nouvelle_ligne) in bruts {
-        let dans_accolades = matches!(ouverts.last(), None | Some(&"{"));
-        if let Some(prec) = sortie.last()
-            && nouvelle_ligne
-            && dans_accolades
-            && prec.genre != Genre::Ligne
-            && !continue_apres(prec.genre)
-            && !continue_avant(j.genre)
+    for (t, new_line) in raw {
+        let in_braces = matches!(open.last(), None | Some(&"{"));
+        if let Some(prev) = out.last()
+            && new_line
+            && in_braces
+            && prev.kind != Kind::Newline
+            && !continues_after(prev.kind)
+            && !continues_before(t.kind)
         {
-            sortie.push(Jeton { genre: Genre::Ligne, span: Span::new(prec.span.fin, prec.span.fin) });
+            out.push(Token { kind: Kind::Newline, span: Span::new(prev.span.end, prev.span.end) });
         }
-        match j.genre {
-            Genre::Sym(s @ ("(" | "[" | "{")) => ouverts.push(s),
-            Genre::Sym(")" | "]" | "}") => {
-                ouverts.pop();
+        match t.kind {
+            Kind::Sym(s @ ("(" | "[" | "{")) => open.push(s),
+            Kind::Sym(")" | "]" | "}") => {
+                open.pop();
             }
             _ => {}
         }
-        sortie.push(j);
+        out.push(t);
     }
-    sortie
+    out
 }

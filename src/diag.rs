@@ -1,21 +1,21 @@
-// Messages d'erreur : une position dans le texte + un message.
-// Le compilateur renvoie une liste de `Diag` au lieu de s'arrêter :
-// `kova run` les affiche, `kova lsp` les enverra à l'éditeur.
+// Error messages: a position in the text + a message.
+// The compiler returns a list of `Diag` instead of stopping:
+// `kova run` prints them, `kova lsp` sends them to the editor.
 
-/// Un morceau du texte source, en octets : `source[debut..fin]`.
+/// A piece of the source text, in bytes: `source[start..end]`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Span {
-    pub debut: usize,
-    pub fin: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Span {
-    pub fn new(debut: usize, fin: usize) -> Span {
-        Span { debut, fin }
+    pub fn new(start: usize, end: usize) -> Span {
+        Span { start, end }
     }
-    /// Du début de `self` à la fin de `autre`.
-    pub fn jusqua(self, autre: Span) -> Span {
-        Span::new(self.debut, autre.fin)
+    /// From the start of `self` to the end of `other`.
+    pub fn to(self, other: Span) -> Span {
+        Span::new(self.start, other.end)
     }
 }
 
@@ -23,28 +23,28 @@ impl Span {
 pub struct Diag {
     pub message: String,
     pub span: Span,
-    pub aide: Option<String>,
+    pub help: Option<String>,
 }
 
 impl Diag {
     pub fn new(span: Span, message: impl Into<String>) -> Diag {
-        Diag { message: message.into(), span, aide: None }
+        Diag { message: message.into(), span, help: None }
     }
-    pub fn aide(mut self, aide: impl Into<String>) -> Diag {
-        self.aide = Some(aide.into());
+    pub fn help(mut self, help: impl Into<String>) -> Diag {
+        self.help = Some(help.into());
         self
     }
 }
 
-/// Ligne et colonne (à partir de 1, colonne en caractères) d'une position en octets.
-pub fn ligne_colonne(source: &str, pos: usize) -> (usize, usize) {
-    let avant = &source[..pos.min(source.len())];
-    let ligne = avant.matches('\n').count() + 1;
-    let debut_ligne = avant.rfind('\n').map_or(0, |i| i + 1);
-    (ligne, avant[debut_ligne..].chars().count() + 1)
+/// Line and column (from 1, column in characters) of a byte position.
+pub fn line_col(source: &str, pos: usize) -> (usize, usize) {
+    let before = &source[..pos.min(source.len())];
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    (line, before[line_start..].chars().count() + 1)
 }
 
-/// Affiche une erreur à la façon de rustc :
+/// Renders an error the way rustc does:
 ///
 /// ```text
 /// erreur: `a` est déclarée avec let
@@ -54,22 +54,22 @@ pub fn ligne_colonne(source: &str, pos: usize) -> (usize, usize) {
 ///    |     ^
 ///    = aide : ...
 /// ```
-pub fn afficher(d: &Diag, fichier: &str, source: &str) -> String {
-    let (ligne, col) = ligne_colonne(source, d.span.debut);
-    let texte_ligne = source.lines().nth(ligne - 1).unwrap_or("");
-    // Soulignement : la longueur du span, coupée en fin de ligne, au moins 1.
-    let reste = texte_ligne.chars().count().saturating_sub(col - 1);
-    let largeur = source
-        .get(d.span.debut..d.span.fin)
+pub fn render(d: &Diag, file: &str, source: &str) -> String {
+    let (line, col) = line_col(source, d.span.start);
+    let line_text = source.lines().nth(line - 1).unwrap_or("");
+    // Underline: the length of the span, cut at the end of the line, at least 1.
+    let rest = line_text.chars().count().saturating_sub(col - 1);
+    let width = source
+        .get(d.span.start..d.span.end)
         .map_or(1, |s| s.chars().count())
-        .clamp(1, reste.max(1));
-    let marge = " ".repeat(ligne.to_string().len());
+        .clamp(1, rest.max(1));
+    let margin = " ".repeat(line.to_string().len());
 
-    let mut s = format!("erreur: {}\n{marge}--> {fichier}:{ligne}:{col}\n", d.message);
-    s += &format!("{marge} |\n{ligne} | {texte_ligne}\n");
-    s += &format!("{marge} | {}{}\n", " ".repeat(col - 1), "^".repeat(largeur));
-    if let Some(aide) = &d.aide {
-        s += &format!("{marge} = aide : {aide}\n");
+    let mut s = format!("erreur: {}\n{margin}--> {file}:{line}:{col}\n", d.message);
+    s += &format!("{margin} |\n{line} | {line_text}\n");
+    s += &format!("{margin} | {}{}\n", " ".repeat(col - 1), "^".repeat(width));
+    if let Some(help) = &d.help {
+        s += &format!("{margin} = aide : {help}\n");
     }
     s
 }

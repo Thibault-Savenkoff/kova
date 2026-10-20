@@ -1,4 +1,4 @@
-// Le parser continue après une erreur : les deux sont signalées.
+// The parser continues after an error: both are reported.
 fn a() {
     let x: Int := (1 +
     print(2)

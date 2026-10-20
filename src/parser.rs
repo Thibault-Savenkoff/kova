@@ -1,44 +1,44 @@
-// Parser : transforme la liste de jetons en arbre (AST).
+// Parser: turns the token list into a tree (AST).
 //
-// Il ne s'arrête pas à la première erreur : il la note, saute jusqu'à la fin de
-// l'instruction, puis continue. On voit donc toutes les erreurs d'un coup.
+// It doesn't stop at the first error: it records it, skips to the end of the
+// statement, then continues. So all errors are seen at once.
 
 use crate::ast::*;
 use crate::diag::{Diag, Span};
-use crate::lexer::{Genre, Jeton};
+use crate::lexer::{Kind, Token, string_content};
 
-/// `Err(())` = une erreur a déjà été ajoutée à `diags` ; l'appelant se resynchronise.
+/// `Err(())` = an error was already added to `diags`; the caller resynchronizes.
 type R<T> = Result<T, ()>;
 
-/// Les opérateurs binaires, de la priorité la plus faible à la plus forte (PLAN 2.4).
-/// `false` = non chaînable (`a < b < c` est refusé).
-const NIVEAUX: &[(&[(&str, OpBin)], bool)] = &[
-    (&[("||", OpBin::Ou)], true),
-    (&[("&&", OpBin::Et)], true),
-    (&[("=", OpBin::Egal), ("!=", OpBin::Different)], false),
-    (&[("<", OpBin::Inf), ("<=", OpBin::InfEgal), (">", OpBin::Sup), (">=", OpBin::SupEgal)], false),
-    (&[("..", OpBin::Intervalle), ("..=", OpBin::IntervalleInclus)], false),
-    (&[("+", OpBin::Plus), ("-", OpBin::Moins)], true),
-    (&[("*", OpBin::Fois), ("/", OpBin::Divise), ("%", OpBin::Reste)], true),
+/// Binary operators, from lowest to highest precedence (PLAN 2.4).
+/// `false` = not chainable (`a < b < c` is refused).
+const LEVELS: &[(&[(&str, BinOp)], bool)] = &[
+    (&[("||", BinOp::Or)], true),
+    (&[("&&", BinOp::And)], true),
+    (&[("=", BinOp::Eq), ("!=", BinOp::Ne)], false),
+    (&[("<", BinOp::Lt), ("<=", BinOp::Le), (">", BinOp::Gt), (">=", BinOp::Ge)], false),
+    (&[("..", BinOp::Range), ("..=", BinOp::RangeInclusive)], false),
+    (&[("+", BinOp::Plus), ("-", BinOp::Minus)], true),
+    (&[("*", BinOp::Times), ("/", BinOp::Div), ("%", BinOp::Rem)], true),
 ];
 
-const AFFECTATIONS: &[(&str, Option<OpBin>)] = &[
+const ASSIGNMENTS: &[(&str, Option<BinOp>)] = &[
     (":=", None),
-    ("+=", Some(OpBin::Plus)),
-    ("-=", Some(OpBin::Moins)),
-    ("*=", Some(OpBin::Fois)),
-    ("/=", Some(OpBin::Divise)),
+    ("+=", Some(BinOp::Plus)),
+    ("-=", Some(BinOp::Minus)),
+    ("*=", Some(BinOp::Times)),
+    ("/=", Some(BinOp::Div)),
 ];
 
-/// Renvoie l'arbre, le nombre d'expressions (pour la table des types) et les erreurs.
-pub fn parser(jetons: Vec<Jeton>, source: &str) -> (Fichier, usize, Vec<Diag>) {
-    let mut p = Parser { j: jetons, pos: 0, src: source, diags: vec![], ids: 0 };
-    let fichier = p.fichier();
-    (fichier, p.ids, p.diags)
+/// Returns the tree, the number of expressions (for the type table) and the errors.
+pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
+    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0 };
+    let file = p.file();
+    (file, p.ids, p.diags)
 }
 
 struct Parser<'a> {
-    j: Vec<Jeton>,
+    t: Vec<Token>,
     pos: usize,
     src: &'a str,
     diags: Vec<Diag>,
@@ -46,617 +46,620 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    // ---- Outils ----
+    // ---- Tools ----
 
-    fn jeton(&self) -> Jeton {
-        self.j[self.pos]
+    fn token(&self) -> Token {
+        self.t[self.pos]
     }
-    fn genre(&self) -> Genre {
-        self.jeton().genre
+    fn kind(&self) -> Kind {
+        self.token().kind
     }
-    fn avancer(&mut self) -> Jeton {
-        let j = self.jeton();
-        if j.genre != Genre::Fin {
+    fn advance(&mut self) -> Token {
+        let t = self.token();
+        if t.kind != Kind::Eof {
             self.pos += 1;
         }
-        j
+        t
     }
-    fn est_sym(&self, s: &str) -> bool {
-        matches!(self.genre(), Genre::Sym(x) if x == s)
+    fn is_sym(&self, s: &str) -> bool {
+        matches!(self.kind(), Kind::Sym(x) if x == s)
     }
-    fn est_cle(&self, k: &str) -> bool {
-        matches!(self.genre(), Genre::Cle(x) if x == k)
+    fn is_keyword(&self, k: &str) -> bool {
+        matches!(self.kind(), Kind::Keyword(x) if x == k)
     }
-    fn sauter_lignes(&mut self) {
-        while self.genre() == Genre::Ligne {
+    fn skip_newlines(&mut self) {
+        while self.kind() == Kind::Newline {
             self.pos += 1;
         }
     }
-    fn texte(&self, span: Span) -> String {
-        self.src[span.debut..span.fin].to_string()
+    fn text(&self, span: Span) -> String {
+        self.src[span.start..span.end].to_string()
     }
-    /// Comment nommer le jeton courant dans un message.
-    fn decrire(&self) -> String {
-        match self.genre() {
-            Genre::Ligne => "une fin de ligne".into(),
-            Genre::Fin => "la fin du fichier".into(),
-            _ => format!("`{}`", self.texte(self.jeton().span)),
+    /// How to name the current token in a message.
+    fn describe(&self) -> String {
+        match self.kind() {
+            Kind::Newline => "une fin de ligne".into(),
+            Kind::Eof => "la fin du fichier".into(),
+            _ => format!("`{}`", self.text(self.token().span)),
         }
     }
-    fn erreur<T>(&mut self, span: Span, msg: impl Into<String>) -> R<T> {
+    fn error<T>(&mut self, span: Span, msg: impl Into<String>) -> R<T> {
         self.diags.push(Diag::new(span, msg));
         Err(())
     }
-    fn attendre(&mut self, s: &str) -> R<Span> {
-        if self.est_sym(s) {
-            return Ok(self.avancer().span);
+    fn expect(&mut self, s: &str) -> R<Span> {
+        if self.is_sym(s) {
+            return Ok(self.advance().span);
         }
-        let msg = format!("`{s}` attendu, trouvé {}", self.decrire());
-        self.erreur(self.jeton().span, msg)
+        let msg = format!("`{s}` attendu, trouvé {}", self.describe());
+        self.error(self.token().span, msg)
     }
-    fn expr(&mut self, span: Span, genre: ExprGenre) -> Expr {
+    fn expr(&mut self, span: Span, kind: ExprKind) -> Expr {
         self.ids += 1;
-        Expr { id: self.ids - 1, span, genre }
+        Expr { id: self.ids - 1, span, kind }
     }
 
-    /// Un nom de variable ou de fonction : minuscule obligatoire.
-    fn nom_valeur(&mut self, quoi: &str) -> R<Nom> {
-        let j = self.jeton();
-        match j.genre {
-            Genre::Ident => {
-                self.avancer();
-                Ok(Nom { texte: self.texte(j.span), span: j.span })
+    /// A variable or function name: lowercase required.
+    fn value_name(&mut self, what: &str) -> R<Name> {
+        let t = self.token();
+        match t.kind {
+            Kind::Ident => {
+                self.advance();
+                Ok(Name { text: self.text(t.span), span: t.span })
             }
-            Genre::Type => {
-                let t = self.texte(j.span);
-                let mut c = t.chars();
-                let minuscule: String = c.next().unwrap().to_lowercase().chain(c).collect();
+            Kind::Type => {
+                let text = self.text(t.span);
+                let mut c = text.chars();
+                let lowercase: String = c.next().unwrap().to_lowercase().chain(c).collect();
                 self.diags.push(
-                    Diag::new(j.span, format!("un nom de {quoi} commence par une minuscule"))
-                        .aide(format!("écris `{minuscule}` (la majuscule est réservée aux types)")),
+                    Diag::new(t.span, format!("un nom de {what} commence par une minuscule"))
+                        .help(format!("écris `{lowercase}` (la majuscule est réservée aux types)")),
                 );
                 Err(())
             }
-            Genre::Cle(k) => {
+            Kind::Keyword(k) => {
                 let msg = format!("`{k}` est un mot réservé de Kova : il ne peut pas servir de nom");
-                self.erreur(j.span, msg)
+                self.error(t.span, msg)
             }
             _ => {
-                let msg = format!("nom de {quoi} attendu, trouvé {}", self.decrire());
-                self.erreur(j.span, msg)
+                let msg = format!("nom de {what} attendu, trouvé {}", self.describe());
+                self.error(t.span, msg)
             }
         }
     }
 
-    /// Un nom de type : majuscule obligatoire.
-    fn nom_type(&mut self) -> R<Nom> {
-        let j = self.jeton();
-        match j.genre {
-            Genre::Type => {
-                self.avancer();
-                Ok(Nom { texte: self.texte(j.span), span: j.span })
+    /// A type name: uppercase required.
+    fn type_name(&mut self) -> R<Name> {
+        let t = self.token();
+        match t.kind {
+            Kind::Type => {
+                self.advance();
+                Ok(Name { text: self.text(t.span), span: t.span })
             }
-            Genre::Ident => self.erreur(j.span, "un nom de type commence par une majuscule"),
+            Kind::Ident => self.error(t.span, "un nom de type commence par une majuscule"),
             _ => {
-                let msg = format!("type attendu, trouvé {}", self.decrire());
-                self.erreur(j.span, msg)
+                let msg = format!("type attendu, trouvé {}", self.describe());
+                self.error(t.span, msg)
             }
         }
     }
 
-    /// `Int` ou `(Int, Float)`.
+    /// `Int` or `(Int, Float)`.
     fn type_(&mut self) -> R<TypeAst> {
-        if !self.est_sym("(") {
-            return Ok(TypeAst::Nom(self.nom_type()?));
+        if !self.is_sym("(") {
+            return Ok(TypeAst::Name(self.type_name()?));
         }
-        let debut = self.avancer().span;
+        let open = self.advance().span;
         let mut types = vec![self.type_()?];
-        while self.est_sym(",") {
-            self.avancer();
+        while self.is_sym(",") {
+            self.advance();
             types.push(self.type_()?);
         }
-        let fin = self.attendre(")")?;
+        let close = self.expect(")")?;
         if types.len() < 2 {
-            return self.erreur(debut.jusqua(fin), "un tuple a au moins 2 éléments");
+            return self.error(open.to(close), "un tuple a au moins 2 éléments");
         }
         Ok(TypeAst::Tuple(types))
     }
 
-    /// `x`, `_` ou `(a, b)`.
-    fn motif(&mut self) -> R<Motif> {
-        if self.genre() == Genre::Ident && self.texte(self.jeton().span) == "_" {
-            return Ok(Motif::Ignorer(self.avancer().span));
+    /// `x`, `_` or `(a, b)`.
+    fn pattern(&mut self) -> R<Pattern> {
+        if self.kind() == Kind::Ident && self.text(self.token().span) == "_" {
+            return Ok(Pattern::Ignore(self.advance().span));
         }
-        if !self.est_sym("(") {
-            return Ok(Motif::Nom(self.nom_valeur("variable")?));
+        if !self.is_sym("(") {
+            return Ok(Pattern::Name(self.value_name("variable")?));
         }
-        let debut = self.avancer().span;
-        let mut motifs = vec![self.motif()?];
-        while self.est_sym(",") {
-            self.avancer();
-            motifs.push(self.motif()?);
+        let open = self.advance().span;
+        let mut patterns = vec![self.pattern()?];
+        while self.is_sym(",") {
+            self.advance();
+            patterns.push(self.pattern()?);
         }
-        let fin = self.attendre(")")?;
-        if motifs.len() < 2 {
-            return self.erreur(debut.jusqua(fin), "un tuple a au moins 2 éléments");
+        let close = self.expect(")")?;
+        if patterns.len() < 2 {
+            return self.error(open.to(close), "un tuple a au moins 2 éléments");
         }
-        Ok(Motif::Tuple(motifs, debut.jusqua(fin)))
+        Ok(Pattern::Tuple(patterns, open.to(close)))
     }
 
-    /// `x`, `t.0` ou `(a, b)` à gauche de `:=` : on relit l'expression déjà lue.
-    fn cible(&mut self, e: Expr) -> R<Cible> {
+    /// `x`, `t.0` or `(a, b)` left of `:=`: re-reads the expression already parsed.
+    fn target(&mut self, e: Expr) -> R<Target> {
         let span = e.span;
-        match e.genre {
-            ExprGenre::Var(nom) => Ok(Cible::Lieu { nom: Nom { texte: nom, span }, champs: vec![], span }),
-            ExprGenre::Champ(base, i) => match self.cible(*base)? {
-                Cible::Lieu { nom, mut champs, .. } => {
-                    champs.push(i);
-                    Ok(Cible::Lieu { nom, champs, span })
+        match e.kind {
+            ExprKind::Var(name) => Ok(Target::Place { name: Name { text: name, span }, fields: vec![], span }),
+            ExprKind::Field(base, i) => match self.target(*base)? {
+                Target::Place { name, mut fields, .. } => {
+                    fields.push(i);
+                    Ok(Target::Place { name, fields, span })
                 }
-                Cible::Tuple(..) => self.erreur(span, "on ne peut donner une valeur qu'à une variable"),
+                Target::Tuple(..) => self.error(span, "on ne peut donner une valeur qu'à une variable"),
             },
-            ExprGenre::Tuple(elems) => {
-                let cibles = elems.into_iter().map(|e| self.cible(e)).collect::<R<Vec<_>>>()?;
-                Ok(Cible::Tuple(cibles, span))
+            ExprKind::Tuple(elems) => {
+                let targets = elems.into_iter().map(|e| self.target(e)).collect::<R<Vec<_>>>()?;
+                Ok(Target::Tuple(targets, span))
             }
-            _ => self.erreur(span, "on ne peut donner une valeur qu'à une variable"),
+            _ => self.error(span, "on ne peut donner une valeur qu'à une variable"),
         }
     }
 
-    // ---- Fichier et fonctions ----
+    // ---- File and functions ----
 
-    fn fichier(&mut self) -> Fichier {
-        let (mut header, mut fonctions, mut tests) = (None, vec![], vec![]);
+    fn file(&mut self) -> File {
+        let (mut header, mut functions, mut tests) = (None, vec![], vec![]);
         loop {
-            self.sauter_lignes();
-            let lu = match self.genre() {
-                Genre::Fin => break,
-                Genre::Cle("header") => {
-                    let premier = header.is_none() && fonctions.is_empty() && tests.is_empty();
-                    if !premier {
-                        let span = self.jeton().span;
+            self.skip_newlines();
+            let read = match self.kind() {
+                Kind::Eof => break,
+                Kind::Keyword("header") => {
+                    let first = header.is_none() && functions.is_empty() && tests.is_empty();
+                    if !first {
+                        let span = self.token().span;
                         self.diags.push(Diag::new(span, "le `header` doit être la première déclaration du fichier"));
                     }
                     self.header().map(|h| {
-                        if premier {
+                        if first {
                             header = Some(h);
                         }
                     })
                 }
-                Genre::Cle("fn") => self.fonction().map(|f| fonctions.push(f)),
-                Genre::Cle("test") => self.test().map(|t| tests.push(t)),
+                Kind::Keyword("fn") => self.function().map(|f| functions.push(f)),
+                Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 _ => {
-                    let msg = format!("`fn` ou `test` attendu, trouvé {}", self.decrire());
-                    self.erreur(self.jeton().span, msg)
+                    let msg = format!("`fn` ou `test` attendu, trouvé {}", self.describe());
+                    self.error(self.token().span, msg)
                 }
             };
-            if lu.is_err() {
-                self.aller_au_prochain_fn();
+            if read.is_err() {
+                self.skip_to_next_fn();
             }
         }
-        Fichier { header, fonctions, tests }
+        File { header, functions, tests }
     }
 
-    /// `header { clé := valeur ... }` ; les clés et les valeurs sont vérifiées par le typage.
+    /// `header { key := value ... }`; keys and values are checked by the type checker.
     fn header(&mut self) -> R<Header> {
-        self.avancer(); // header
-        self.sauter_lignes();
-        let debut = self.attendre("{")?;
-        let mut reglages = vec![];
+        self.advance(); // header
+        self.skip_newlines();
+        let open = self.expect("{")?;
+        let mut settings = vec![];
         loop {
-            self.sauter_lignes();
-            if self.est_sym("}") {
+            self.skip_newlines();
+            if self.is_sym("}") {
                 break;
             }
-            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn" | "test")) {
-                let span = self.jeton().span;
+            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test")) {
+                let span = self.token().span;
                 self.diags.push(Diag::new(span, "`}` manquante à la fin du `header`"));
-                return Ok(Header { debut, fin: span, reglages });
+                return Ok(Header { open, close: span, settings });
             }
-            match self.reglage() {
-                Ok(r) => reglages.push(r),
-                Err(()) => self.fin_instruction(),
+            match self.setting() {
+                Ok(s) => settings.push(s),
+                Err(()) => self.skip_statement(),
             }
         }
-        let fin = self.avancer().span;
-        Ok(Header { debut, fin, reglages })
+        let close = self.advance().span;
+        Ok(Header { open, close, settings })
     }
 
-    /// `mode := build` : une clé, `:=`, un seul mot.
-    fn reglage(&mut self) -> R<(Nom, Nom)> {
-        let cle = self.nom_valeur("réglage")?;
-        self.attendre(":=")?;
-        let j = self.jeton();
-        if !matches!(j.genre, Genre::Ident | Genre::Cle(_)) {
-            let msg = format!("valeur du réglage attendue (un mot comme `build` ou `true`), trouvé {}", self.decrire());
-            return self.erreur(j.span, msg);
+    /// `mode := build`: a key, `:=`, a single word.
+    fn setting(&mut self) -> R<(Name, Name)> {
+        let key = self.value_name("réglage")?;
+        self.expect(":=")?;
+        let t = self.token();
+        if !matches!(t.kind, Kind::Ident | Kind::Keyword(_)) {
+            let msg = format!("valeur du réglage attendue (un mot comme `build` ou `true`), trouvé {}", self.describe());
+            return self.error(t.span, msg);
         }
-        self.avancer();
-        if !matches!(self.genre(), Genre::Ligne | Genre::Sym("}")) {
-            let msg = format!("un réglage par ligne : fin de ligne attendue, trouvé {}", self.decrire());
-            return self.erreur(self.jeton().span, msg);
+        self.advance();
+        if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+            let msg = format!("un réglage par ligne : fin de ligne attendue, trouvé {}", self.describe());
+            return self.error(self.token().span, msg);
         }
-        Ok((cle, Nom { texte: self.texte(j.span), span: j.span }))
+        Ok((key, Name { text: self.text(t.span), span: t.span }))
     }
 
-    fn aller_au_prochain_fn(&mut self) {
-        self.avancer();
-        while !matches!(self.genre(), Genre::Cle("fn" | "test") | Genre::Fin) {
-            self.avancer();
+    fn skip_to_next_fn(&mut self) {
+        self.advance();
+        while !matches!(self.kind(), Kind::Keyword("fn" | "test") | Kind::Eof) {
+            self.advance();
         }
     }
 
     fn test(&mut self) -> R<Test> {
-        self.avancer(); // test
-        let j = self.jeton();
-        if j.genre != Genre::Texte {
-            let msg = format!("nom du test entre guillemets attendu, trouvé {}", self.decrire());
-            self.diags.push(Diag::new(j.span, msg).aide("exemple : `test \"carré de 3\" { check carre(3) = 9 }`"));
+        self.advance(); // test
+        let t = self.token();
+        if t.kind != Kind::Str {
+            let msg = format!("nom du test entre guillemets attendu, trouvé {}", self.describe());
+            self.diags.push(Diag::new(t.span, msg).help("exemple : `test \"carré de 3\" { check carre(3) = 9 }`"));
             return Err(());
         }
-        self.avancer();
-        self.sauter_lignes();
-        let corps = self.bloc()?;
-        Ok(Test { nom: crate::lexer::contenu_texte(&self.texte(j.span)), span: j.span, corps })
+        self.advance();
+        self.skip_newlines();
+        let body = self.block()?;
+        Ok(Test { name: string_content(&self.text(t.span)), span: t.span, body })
     }
 
-    fn fonction(&mut self) -> R<Fonction> {
-        self.avancer(); // fn
-        let nom = self.nom_valeur("fonction")?;
-        self.attendre("(")?;
+    fn function(&mut self) -> R<Function> {
+        self.advance(); // fn
+        let name = self.value_name("fonction")?;
+        self.expect("(")?;
         let mut params = vec![];
-        while !self.est_sym(")") {
-            let nom = self.nom_valeur("paramètre")?;
-            self.attendre(":")?;
-            params.push(Param { nom, ty: self.type_()? });
-            if !self.est_sym(")") {
-                self.attendre(",")?;
+        while !self.is_sym(")") {
+            let name = self.value_name("paramètre")?;
+            self.expect(":")?;
+            params.push(Param { name, ty: self.type_()? });
+            if !self.is_sym(")") {
+                self.expect(",")?;
             }
         }
-        self.avancer(); // )
-        let retour = if self.est_sym("->") {
-            self.avancer();
+        self.advance(); // )
+        let ret = if self.is_sym("->") {
+            self.advance();
             Some(self.type_()?)
         } else {
             None
         };
-        let mut contrats = vec![];
+        let mut contracts = vec![];
         loop {
-            self.sauter_lignes();
-            let genre = match self.genre() {
-                Genre::Cle("require") => GenreContrat::Require,
-                Genre::Cle("ensure") => GenreContrat::Ensure,
+            self.skip_newlines();
+            let kind = match self.kind() {
+                Kind::Keyword("require") => ContractKind::Require,
+                Kind::Keyword("ensure") => ContractKind::Ensure,
                 _ => break,
             };
-            contrats.push(self.contrat(genre)?);
+            contracts.push(self.contract(kind)?);
         }
-        let corps = self.bloc()?;
-        Ok(Fonction { nom, params, retour, contrats, corps })
+        let body = self.block()?;
+        Ok(Function { name, params, ret, contracts, body })
     }
 
-    /// `require cond`, `ensure cond` ou `check cond`, avec `else "message"` facultatif.
-    fn contrat(&mut self, genre: GenreContrat) -> R<Contrat> {
-        self.avancer(); // require, ensure ou check
+    /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.
+    fn contract(&mut self, kind: ContractKind) -> R<Contract> {
+        self.advance(); // require, ensure or check
         let cond = self.expression()?;
-        // `else` peut être à la ligne suivante.
-        let avant = self.pos;
-        self.sauter_lignes();
-        if !self.est_cle("else") {
-            self.pos = avant;
-            return Ok(Contrat { genre, cond, message: None });
+        // `else` may be on the next line.
+        let before = self.pos;
+        self.skip_newlines();
+        if !self.is_keyword("else") {
+            self.pos = before;
+            return Ok(Contract { kind, cond, message: None });
         }
-        self.avancer();
-        let j = self.jeton();
-        if j.genre != Genre::Texte {
-            let msg = format!("message entre guillemets attendu après `else`, trouvé {}", self.decrire());
-            self.diags.push(Diag::new(j.span, msg).aide(format!("exemple : `{} b != 0 else \"b ne doit pas valoir 0\"`", genre.mot())));
+        self.advance();
+        let t = self.token();
+        if t.kind != Kind::Str {
+            let msg = format!("message entre guillemets attendu après `else`, trouvé {}", self.describe());
+            let help = format!("exemple : `{} b != 0 else \"b ne doit pas valoir 0\"`", kind.keyword());
+            self.diags.push(Diag::new(t.span, msg).help(help));
             return Err(());
         }
-        self.avancer();
-        Ok(Contrat { genre, cond, message: Some(crate::lexer::contenu_texte(&self.texte(j.span))) })
+        self.advance();
+        Ok(Contract { kind, cond, message: Some(string_content(&self.text(t.span))) })
     }
 
-    // ---- Blocs et instructions ----
+    // ---- Blocks and statements ----
 
-    fn bloc(&mut self) -> R<Bloc> {
-        let debut = self.attendre("{")?;
-        let mut instrs = vec![];
+    fn block(&mut self) -> R<Block> {
+        let open = self.expect("{")?;
+        let mut stmts = vec![];
         loop {
-            self.sauter_lignes();
-            if self.est_sym("}") {
+            self.skip_newlines();
+            if self.is_sym("}") {
                 break;
             }
-            // `}` oubliée (souvent : en train de taper) : on garde ce qui a été lu.
-            if matches!(self.genre(), Genre::Fin | Genre::Cle("fn" | "test")) {
-                let span = self.jeton().span;
+            // Forgotten `}` (often: while typing): keep what was read.
+            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test")) {
+                let span = self.token().span;
                 self.diags.push(Diag::new(span, "`}` manquante à la fin du bloc"));
-                return Ok(Bloc { debut, instrs, fin: span });
+                return Ok(Block { open, stmts, close: span });
             }
-            match self.instr() {
-                Ok(i) => {
-                    instrs.push(i);
-                    if !matches!(self.genre(), Genre::Ligne | Genre::Sym("}") | Genre::Fin) {
-                        let msg = format!("fin d'instruction attendue, trouvé {}", self.decrire());
-                        let _: R<()> = self.erreur(self.jeton().span, msg);
-                        self.fin_instruction();
+            match self.stmt() {
+                Ok(s) => {
+                    stmts.push(s);
+                    if !matches!(self.kind(), Kind::Newline | Kind::Sym("}") | Kind::Eof) {
+                        let msg = format!("fin d'instruction attendue, trouvé {}", self.describe());
+                        let _: R<()> = self.error(self.token().span, msg);
+                        self.skip_statement();
                     }
                 }
-                Err(()) => self.fin_instruction(),
+                Err(()) => self.skip_statement(),
             }
         }
-        let fin = self.avancer().span;
-        Ok(Bloc { debut, instrs, fin })
+        let close = self.advance().span;
+        Ok(Block { open, stmts, close })
     }
 
-    /// Après une erreur : saute jusqu'à la fin de l'instruction (fin de ligne ou `}` du bloc).
-    /// Seules les accolades comptent : le lexer n'émet pas de `Ligne` dans `( )` et `[ ]`.
-    fn fin_instruction(&mut self) {
-        let mut profondeur = 0;
+    /// After an error: skips to the end of the statement (line end or the block's `}`).
+    /// Only braces count: the lexer emits no `Newline` inside `( )` and `[ ]`.
+    fn skip_statement(&mut self) {
+        let mut depth = 0;
         loop {
-            match self.genre() {
-                Genre::Fin => return,
-                Genre::Ligne | Genre::Sym("}") if profondeur == 0 => return,
-                Genre::Sym("{") => profondeur += 1,
-                Genre::Sym("}") => profondeur -= 1,
+            match self.kind() {
+                Kind::Eof => return,
+                Kind::Newline | Kind::Sym("}") if depth == 0 => return,
+                Kind::Sym("{") => depth += 1,
+                Kind::Sym("}") => depth -= 1,
                 _ => {}
             }
-            self.avancer();
+            self.advance();
         }
     }
 
-    fn instr(&mut self) -> R<Instr> {
-        let debut = self.jeton().span;
-        match self.genre() {
-            Genre::Cle(k @ ("let" | "var")) => {
-                self.avancer();
-                let motif = self.motif()?;
-                let ty = if self.est_sym(":") {
-                    self.avancer();
+    fn stmt(&mut self) -> R<Stmt> {
+        let start = self.token().span;
+        match self.kind() {
+            Kind::Keyword(k @ ("let" | "var")) => {
+                self.advance();
+                let pattern = self.pattern()?;
+                let ty = if self.is_sym(":") {
+                    self.advance();
                     Some(self.type_()?)
                 } else {
                     None
                 };
-                self.attendre(":=")?;
-                Ok(Instr::Declarer { modifiable: k == "var", motif, ty, valeur: self.expression()? })
+                self.expect(":=")?;
+                Ok(Stmt::Declare { mutable: k == "var", pattern, ty, value: self.expression()? })
             }
-            Genre::Cle("return") => {
-                self.avancer();
-                let valeur = if matches!(self.genre(), Genre::Ligne | Genre::Sym("}") | Genre::Fin) {
+            Kind::Keyword("return") => {
+                self.advance();
+                let value = if matches!(self.kind(), Kind::Newline | Kind::Sym("}") | Kind::Eof) {
                     None
                 } else {
                     Some(self.expression()?)
                 };
-                Ok(Instr::Retour { valeur, span: debut })
+                Ok(Stmt::Return { value, span: start })
             }
-            Genre::Cle("break") => Ok(Instr::Sortir(self.avancer().span)),
-            Genre::Cle("continue") => Ok(Instr::Continuer(self.avancer().span)),
-            Genre::Cle("if") => self.si(),
-            Genre::Cle("check") => Ok(Instr::Verifier(self.contrat(GenreContrat::Check)?)),
-            Genre::Cle(k @ ("require" | "ensure")) => {
+            Kind::Keyword("break") => Ok(Stmt::Break(self.advance().span)),
+            Kind::Keyword("continue") => Ok(Stmt::Continue(self.advance().span)),
+            Kind::Keyword("if") => self.if_stmt(),
+            Kind::Keyword("check") => Ok(Stmt::Check(self.contract(ContractKind::Check)?)),
+            Kind::Keyword(k @ ("require" | "ensure")) => {
                 let msg = format!("`{k}` s'écrit entre la signature de la fonction et son `{{`");
-                self.diags.push(Diag::new(debut, msg).aide("à l'intérieur d'une fonction, utilise `check`"));
+                self.diags.push(Diag::new(start, msg).help("à l'intérieur d'une fonction, utilise `check`"));
                 Err(())
             }
-            Genre::Cle("while") => {
-                self.avancer();
+            Kind::Keyword("while") => {
+                self.advance();
                 let cond = self.expression()?;
-                self.sauter_lignes();
-                Ok(Instr::TantQue { cond, corps: self.bloc()? })
+                self.skip_newlines();
+                Ok(Stmt::While { cond, body: self.block()? })
             }
-            Genre::Cle("for") => {
-                self.avancer();
-                let compteur = self.nom_valeur("variable")?;
-                if !self.est_cle("in") {
-                    let msg = format!("`in` attendu, trouvé {}", self.decrire());
-                    return self.erreur(self.jeton().span, msg);
+            Kind::Keyword("for") => {
+                self.advance();
+                let counter = self.value_name("variable")?;
+                if !self.is_keyword("in") {
+                    let msg = format!("`in` attendu, trouvé {}", self.describe());
+                    return self.error(self.token().span, msg);
                 }
-                self.avancer();
+                self.advance();
                 let e = self.expression()?;
-                let ExprGenre::Binaire(op @ (OpBin::Intervalle | OpBin::IntervalleInclus), debut, fin) = e.genre
-                else {
+                let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = e.kind else {
                     self.diags.push(
                         Diag::new(e.span, "en J1, `for` ne parcourt que des intervalles")
-                            .aide("exemple : `for i in 0..10` (sans 10) ou `for i in 0..=10` (avec 10)"),
+                            .help("exemple : `for i in 0..10` (sans 10) ou `for i in 0..=10` (avec 10)"),
                     );
                     return Err(());
                 };
-                self.sauter_lignes();
-                let corps = self.bloc()?;
-                Ok(Instr::Boucle { compteur, debut: *debut, fin: *fin, inclus: op == OpBin::IntervalleInclus, corps })
+                self.skip_newlines();
+                let body = self.block()?;
+                Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
             }
-            Genre::Cle("from") => {
-                self.avancer();
-                let compteur = self.nom_valeur("variable")?;
-                self.attendre(":=")?;
-                let debut = self.expression()?;
-                if !self.est_cle("to") {
-                    let msg = format!("`to` attendu, trouvé {}", self.decrire());
-                    return self.erreur(self.jeton().span, msg);
+            Kind::Keyword("from") => {
+                self.advance();
+                let counter = self.value_name("variable")?;
+                self.expect(":=")?;
+                let start = self.expression()?;
+                if !self.is_keyword("to") {
+                    let msg = format!("`to` attendu, trouvé {}", self.describe());
+                    return self.error(self.token().span, msg);
                 }
-                self.avancer();
-                let fin = self.expression()?;
-                self.sauter_lignes();
-                Ok(Instr::Boucle { compteur, debut, fin, inclus: true, corps: self.bloc()? })
+                self.advance();
+                let end = self.expression()?;
+                self.skip_newlines();
+                Ok(Stmt::Loop { counter, start, end, inclusive: true, body: self.block()? })
             }
             _ => {
                 let e = self.expression()?;
-                let Some(&(_, op)) = AFFECTATIONS.iter().find(|(s, _)| self.est_sym(s)) else {
-                    return Ok(Instr::Expr(e));
+                let Some(&(_, op)) = ASSIGNMENTS.iter().find(|(s, _)| self.is_sym(s)) else {
+                    return Ok(Stmt::Expr(e));
                 };
-                let cible = self.cible(e)?;
-                self.avancer();
-                Ok(Instr::Affecter { cible, op, valeur: self.expression()? })
+                let target = self.target(e)?;
+                self.advance();
+                Ok(Stmt::Assign { target, op, value: self.expression()? })
             }
         }
     }
 
-    fn si(&mut self) -> R<Instr> {
-        self.avancer(); // if
+    fn if_stmt(&mut self) -> R<Stmt> {
+        self.advance(); // if
         let cond = self.expression()?;
-        self.sauter_lignes();
-        let alors = self.bloc()?;
-        // `else` peut être à la ligne suivante : on regarde après les fins de ligne.
-        let avant = self.pos;
-        self.sauter_lignes();
-        if !self.est_cle("else") {
-            self.pos = avant;
-            return Ok(Instr::Si { cond, alors, sinon: None });
+        self.skip_newlines();
+        let then = self.block()?;
+        // `else` may be on the next line: look past the line ends.
+        let before = self.pos;
+        self.skip_newlines();
+        if !self.is_keyword("else") {
+            self.pos = before;
+            return Ok(Stmt::If { cond, then, otherwise: None });
         }
-        self.avancer();
-        self.sauter_lignes();
-        let sinon = if self.est_cle("if") {
-            // `else if` = un bloc `else` qui contient juste un `if`.
-            let debut = self.jeton().span;
-            let si = self.si()?;
-            Bloc { debut, instrs: vec![si], fin: self.j[self.pos - 1].span }
+        self.advance();
+        self.skip_newlines();
+        let otherwise = if self.is_keyword("if") {
+            // `else if` = an `else` block containing just an `if`.
+            let open = self.token().span;
+            let inner = self.if_stmt()?;
+            Block { open, stmts: vec![inner], close: self.t[self.pos - 1].span }
         } else {
-            self.bloc()?
+            self.block()?
         };
-        Ok(Instr::Si { cond, alors, sinon: Some(sinon) })
+        Ok(Stmt::If { cond, then, otherwise: Some(otherwise) })
     }
 
-    /// `if` dans une expression : le `else` est obligatoire (il faut une valeur dans tous les cas).
-    fn si_expr(&mut self) -> R<Expr> {
-        let debut = self.avancer().span; // if
+    /// `if` in an expression: `else` is required (there must be a value in every case).
+    fn if_expr(&mut self) -> R<Expr> {
+        let start = self.advance().span; // if
         let cond = self.expression()?;
-        self.sauter_lignes();
-        let alors = self.bloc()?;
-        self.sauter_lignes();
-        if !self.est_cle("else") {
+        self.skip_newlines();
+        let then = self.block()?;
+        self.skip_newlines();
+        if !self.is_keyword("else") {
             self.diags.push(
-                Diag::new(debut, "un `if` qui donne une valeur a besoin d'un `else`")
-                    .aide("ajoute `else { ... }` : la valeur doit exister dans tous les cas"),
+                Diag::new(start, "un `if` qui donne une valeur a besoin d'un `else`")
+                    .help("ajoute `else { ... }` : la valeur doit exister dans tous les cas"),
             );
             return Err(());
         }
-        self.avancer();
-        self.sauter_lignes();
-        let sinon = if self.est_cle("if") {
-            let debut = self.jeton().span;
-            let e = self.si_expr()?;
-            Bloc { debut, fin: Span::new(e.span.fin, e.span.fin), instrs: vec![Instr::Expr(e)] }
+        self.advance();
+        self.skip_newlines();
+        let otherwise = if self.is_keyword("if") {
+            let open = self.token().span;
+            let e = self.if_expr()?;
+            Block { open, close: Span::new(e.span.end, e.span.end), stmts: vec![Stmt::Expr(e)] }
         } else {
-            self.bloc()?
+            self.block()?
         };
-        let span = debut.jusqua(sinon.fin);
-        Ok(self.expr(span, ExprGenre::Si { cond: Box::new(cond), alors, sinon }))
+        let span = start.to(otherwise.close);
+        Ok(self.expr(span, ExprKind::If { cond: Box::new(cond), then, otherwise }))
     }
 
     // ---- Expressions ----
 
     fn expression(&mut self) -> R<Expr> {
-        self.niveau(0)
+        self.level(0)
     }
 
-    fn niveau(&mut self, n: usize) -> R<Expr> {
-        let Some(&(ops, chainable)) = NIVEAUX.get(n) else {
-            return self.unaire();
+    fn level(&mut self, n: usize) -> R<Expr> {
+        let Some(&(ops, chainable)) = LEVELS.get(n) else {
+            return self.unary();
         };
-        let mut gauche = self.niveau(n + 1)?;
-        let mut deja = false;
-        while let Some(&(s, op)) = ops.iter().find(|(s, _)| self.est_sym(s)) {
-            if deja && !chainable {
-                let span = self.jeton().span;
+        let mut left = self.level(n + 1)?;
+        let mut seen = false;
+        while let Some(&(s, op)) = ops.iter().find(|(s, _)| self.is_sym(s)) {
+            if seen && !chainable {
+                let span = self.token().span;
                 self.diags.push(
                     Diag::new(span, format!("`{s}` ne peut pas s'enchaîner"))
-                        .aide("pour `a < b < c`, écris `a < b && b < c`"),
+                        .help("pour `a < b < c`, écris `a < b && b < c`"),
                 );
                 return Err(());
             }
-            self.avancer();
-            let droite = self.niveau(n + 1)?;
-            let span = gauche.span.jusqua(droite.span);
-            gauche = self.expr(span, ExprGenre::Binaire(op, Box::new(gauche), Box::new(droite)));
-            deja = true;
+            self.advance();
+            let right = self.level(n + 1)?;
+            let span = left.span.to(right.span);
+            left = self.expr(span, ExprKind::Binary(op, Box::new(left), Box::new(right)));
+            seen = true;
         }
-        Ok(gauche)
+        Ok(left)
     }
 
-    fn unaire(&mut self) -> R<Expr> {
-        let op = match self.genre() {
-            Genre::Sym("-") => OpUn::Moins,
-            Genre::Sym("!") => OpUn::Non,
-            _ => return self.primaire(),
+    fn unary(&mut self) -> R<Expr> {
+        let op = match self.kind() {
+            Kind::Sym("-") => UnOp::Neg,
+            Kind::Sym("!") => UnOp::Not,
+            _ => return self.primary(),
         };
-        let debut = self.avancer().span;
-        let e = self.unaire()?;
-        Ok(self.expr(debut.jusqua(e.span), ExprGenre::Unaire(op, Box::new(e))))
+        let start = self.advance().span;
+        let e = self.unary()?;
+        Ok(self.expr(start.to(e.span), ExprKind::Unary(op, Box::new(e))))
     }
 
-    /// Un atome suivi de ses suffixes : `x.to_float()`.
-    fn primaire(&mut self) -> R<Expr> {
-        let mut e = self.atome()?;
-        while self.est_sym(".") {
-            self.avancer();
-            if let Genre::Entier(i) = self.genre() {
-                let fin = self.avancer().span;
-                e = self.expr(e.span.jusqua(fin), ExprGenre::Champ(Box::new(e), i as usize));
+    /// An atom followed by its suffixes: `x.to_float()`.
+    fn primary(&mut self) -> R<Expr> {
+        let mut e = self.atom()?;
+        while self.is_sym(".") {
+            self.advance();
+            if let Kind::Int(i) = self.kind() {
+                let end = self.advance().span;
+                e = self.expr(e.span.to(end), ExprKind::Field(Box::new(e), i as usize));
                 continue;
             }
-            let nom = self.nom_valeur("méthode")?;
-            self.attendre("(")?;
+            let name = self.value_name("méthode")?;
+            self.expect("(")?;
             let args = self.arguments()?;
-            let fin = self.avancer().span;
-            e = self.expr(e.span.jusqua(fin), ExprGenre::Methode { recu: Box::new(e), nom, args });
+            let end = self.advance().span;
+            e = self.expr(e.span.to(end), ExprKind::Method { receiver: Box::new(e), name, args });
         }
         Ok(e)
     }
 
-    /// Les arguments d'un appel, après la `(` ; s'arrête sur la `)` sans la consommer.
+    /// The arguments of a call, after the `(`; stops at the `)` without consuming it.
     fn arguments(&mut self) -> R<Vec<Expr>> {
         let mut args = vec![];
-        while !self.est_sym(")") {
+        while !self.is_sym(")") {
             args.push(self.expression()?);
-            if !self.est_sym(")") {
-                self.attendre(",")?;
+            if !self.is_sym(")") {
+                self.expect(",")?;
             }
         }
         Ok(args)
     }
 
-    fn atome(&mut self) -> R<Expr> {
-        let j = self.jeton();
-        let genre = match j.genre {
-            Genre::Entier(v) => ExprGenre::Entier(v),
-            Genre::Flottant(v) => ExprGenre::Flottant(v),
-            Genre::Caractere(c) => ExprGenre::Caractere(c),
-            Genre::Cle("true") => ExprGenre::Bool(true),
-            Genre::Cle("false") => ExprGenre::Bool(false),
-            Genre::Cle("result") => ExprGenre::Resultat,
-            Genre::Texte => return self.erreur(j.span, "les textes arrivent au jalon J3 (pour l'instant : seulement après `else` dans un contrat)"),
-            Genre::Ident => {
-                let nom = self.nom_valeur("variable")?;
-                if !self.est_sym("(") {
-                    return Ok(self.expr(nom.span, ExprGenre::Var(nom.texte)));
-                }
-                self.avancer();
-                let args = self.arguments()?;
-                let fin = self.avancer().span;
-                return Ok(self.expr(nom.span.jusqua(fin), ExprGenre::Appel { nom, args }));
+    fn atom(&mut self) -> R<Expr> {
+        let t = self.token();
+        let kind = match t.kind {
+            Kind::Int(v) => ExprKind::Int(v),
+            Kind::Float(v) => ExprKind::Float(v),
+            Kind::Char(c) => ExprKind::Char(c),
+            Kind::Keyword("true") => ExprKind::Bool(true),
+            Kind::Keyword("false") => ExprKind::Bool(false),
+            Kind::Keyword("result") => ExprKind::Result,
+            Kind::Str => {
+                let msg = "les textes arrivent au jalon J3 (pour l'instant : seulement après `else` dans un contrat)";
+                return self.error(t.span, msg);
             }
-            Genre::Cle("if") => return self.si_expr(),
-            Genre::Sym("(") => {
-                self.avancer();
-                let e = self.expression()?;
-                if !self.est_sym(",") {
-                    let fin = self.attendre(")")?;
-                    return Ok(Expr { span: j.span.jusqua(fin), ..e });
+            Kind::Ident => {
+                let name = self.value_name("variable")?;
+                if !self.is_sym("(") {
+                    return Ok(self.expr(name.span, ExprKind::Var(name.text)));
                 }
-                // `(a, b)` : un tuple.
+                self.advance();
+                let args = self.arguments()?;
+                let end = self.advance().span;
+                return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
+            }
+            Kind::Keyword("if") => return self.if_expr(),
+            Kind::Sym("(") => {
+                self.advance();
+                let e = self.expression()?;
+                if !self.is_sym(",") {
+                    let end = self.expect(")")?;
+                    return Ok(Expr { span: t.span.to(end), ..e });
+                }
+                // `(a, b)`: a tuple.
                 let mut elems = vec![e];
-                while self.est_sym(",") {
-                    self.avancer();
+                while self.is_sym(",") {
+                    self.advance();
                     elems.push(self.expression()?);
                 }
-                let fin = self.attendre(")")?;
-                return Ok(self.expr(j.span.jusqua(fin), ExprGenre::Tuple(elems)));
+                let end = self.expect(")")?;
+                return Ok(self.expr(t.span.to(end), ExprKind::Tuple(elems)));
             }
             _ => {
-                let msg = format!("expression attendue, trouvé {}", self.decrire());
-                return self.erreur(j.span, msg);
+                let msg = format!("expression attendue, trouvé {}", self.describe());
+                return self.error(t.span, msg);
             }
         };
-        self.avancer();
-        Ok(self.expr(j.span, genre))
+        self.advance();
+        Ok(self.expr(t.span, kind))
     }
 }

@@ -1,4 +1,4 @@
-// Entiers, booléens, priorités, divisions.
+// Integers, booleans, precedence, divisions.
 
 fn vrai_bavard() -> Bool {
     print(999)
@@ -38,7 +38,7 @@ fn main() {
     print(!(1 = 1) || 2 != 2)
     print(true = false)
 
-    // Court-circuit : vrai_bavard() n'est jamais appelée.
+    // Short circuit: vrai_bavard() is never called.
     print(false && vrai_bavard())
     print(true || vrai_bavard())
 
@@ -46,7 +46,7 @@ fn main() {
     print(signe(0))
     print(signe(42))
 
-    // Une expression peut continuer à la ligne suivante.
+    // An expression may continue on the next line.
     let long: Int := 1 +
         2 +
         3

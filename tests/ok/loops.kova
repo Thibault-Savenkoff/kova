@@ -2,7 +2,7 @@
 
 
 fn main() {
-    // `..` exclut la fin, `..=` et `from ... to` l'incluent.
+    // `..` excludes the end, `..=` and `from ... to` include it.
     for i in 0..3 { write(i) }
     print(0)
     for i in 0..=3 { write(i) }
@@ -10,18 +10,18 @@ fn main() {
     from i := 1 to 3 { write(i) }
     print(0)
 
-    // Intervalle vide : aucun tour.
+    // Empty range: no iteration.
     from i := 5 to 1 { print(i) }
     for i in 3..3 { print(i) }
 
-    // `continue` passe quand même au compteur suivant.
+    // `continue` still moves on to the next counter value.
     from i := 1 to 6 {
         if i % 2 = 0 { continue }
         write(i)
     }
     print(0)
 
-    // `break` sort de la boucle la plus proche.
+    // `break` exits the innermost loop.
     var total: Int := 0
     while true {
         total += 1
@@ -29,7 +29,7 @@ fn main() {
     }
     print(total)
 
-    // Boucles imbriquées + même nom de compteur dans deux boucles voisines.
+    // Nested loops + same counter name in two sibling loops.
     from i := 1 to 3 {
         from j := 1 to i { write(j) }
         write(0)
@@ -38,7 +38,7 @@ fn main() {
     from i := 7 to 8 { write(i) }
     print(0)
 
-    // Une boucle qui va jusqu'au plus grand Int ne déborde pas.
+    // A loop going up to the largest Int doesn't overflow.
     var tours: Int := 0
     from i := 9223372036854775806 to 9223372036854775807 { tours += 1 }
     print(tours)
