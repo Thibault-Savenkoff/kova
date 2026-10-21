@@ -5,10 +5,17 @@ use std::io::{BufWriter, Stdout, Write};
 use crate::kir::*;
 use crate::locale::{self, t};
 
-/// The Strings of the running program; a String's slot holds its number here (0 = none).
+/// What a String or List slot points to.
+enum Object {
+    Str(String),
+    /// `length` elements, their slots one after the other (`width` slots each).
+    List { width: usize, length: usize, slots: Vec<i64> },
+}
+
+/// The Strings and Lists of the running program; their slot holds their number here (0 = none).
 #[derive(Default)]
 struct Heap {
-    strings: Vec<Option<String>>,
+    objects: Vec<Option<Object>>,
     /// Numbers of freed Strings, to reuse.
     free: Vec<usize>,
     allocated: usize,
@@ -17,28 +24,41 @@ struct Heap {
 
 impl Heap {
     fn make(&mut self, s: String) -> i64 {
+        self.add(Object::Str(s))
+    }
+    fn add(&mut self, o: Object) -> i64 {
         self.allocated += 1;
         self.live += 1;
-        if self.strings.is_empty() {
-            self.strings.push(None); // number 0 = no String
+        if self.objects.is_empty() {
+            self.objects.push(None); // number 0 = nothing
         }
         match self.free.pop() {
             Some(i) => {
-                self.strings[i] = Some(s);
+                self.objects[i] = Some(o);
                 i as i64
             }
             None => {
-                self.strings.push(Some(s));
-                self.strings.len() as i64 - 1
+                self.objects.push(Some(o));
+                self.objects.len() as i64 - 1
             }
         }
     }
     fn get(&self, h: i64) -> &str {
-        self.strings[h as usize].as_deref().expect("String used after being freed")
+        match &self.objects[h as usize] {
+            Some(Object::Str(s)) => s,
+            _ => panic!("String used after being freed"),
+        }
+    }
+    /// The List `h`: (width of an element, its length, its slots).
+    fn list(&mut self, h: i64) -> (usize, &mut usize, &mut Vec<i64>) {
+        match &mut self.objects[h as usize] {
+            Some(Object::List { width, length, slots }) => (*width, length, slots),
+            _ => panic!("List used after being freed"),
+        }
     }
     fn release(&mut self, h: i64) {
         if h != 0 {
-            self.strings[h as usize].take().expect("String freed twice");
+            self.objects[h as usize].take().expect("freed twice");
             self.free.push(h as usize);
             self.live -= 1;
         }
@@ -170,9 +190,41 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         }
                     }
                 }
-                Inst::Free(l) => {
+                Inst::Free(l) | Inst::ListFree(l) => {
                     heap.release(locals[*l]);
                     locals[*l] = 0;
+                }
+                Inst::ListNew(d, width) => {
+                    locals[*d] = heap.add(Object::List { width: *width, length: 0, slots: vec![] });
+                }
+                // 0 = a List emptied by a move: its helper (`Drop`) still asks its length.
+                Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.list(locals[*l]).1 as i64 },
+                Inst::ListCheck(l, i, loc) => {
+                    let length = *heap.list(locals[*l]).1 as i64;
+                    if !(0..length).contains(&locals[*i]) {
+                        return Err(fault(Fault::Index, loc));
+                    }
+                }
+                Inst::ListLoad(d, l, i, k) => {
+                    let (width, _, slots) = heap.list(locals[*l]);
+                    locals[*d] = slots[locals[*i] as usize * width + k];
+                }
+                Inst::ListStore(l, i, k, v) => {
+                    let value = locals[*v];
+                    let (width, _, slots) = heap.list(locals[*l]);
+                    slots[locals[*i] as usize * width + k] = value;
+                }
+                Inst::ListGrow(d, l) => {
+                    let (width, length, slots) = heap.list(locals[*l]);
+                    slots.resize(slots.len() + width, 0);
+                    *length += 1;
+                    locals[*d] = *length as i64 - 1;
+                }
+                Inst::ListRemove(l, i) => {
+                    let i = locals[*i] as usize;
+                    let (width, length, slots) = heap.list(locals[*l]);
+                    slots.drain(i * width..(i + 1) * width);
+                    *length -= 1;
                 }
                 Inst::Print { value, show, newline } => {
                     let _ = write!(out, "{}", text(locals[*value], *show, heap));

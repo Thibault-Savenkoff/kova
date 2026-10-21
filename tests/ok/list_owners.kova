@@ -1,0 +1,58 @@
+// Lists whose elements own something: Strings, structs, other Lists; all freed, copied and shown.
+struct Dog {
+    name: String
+    tricks: List<String>
+}
+
+fn keep(l: move List<String>) -> Int {
+    return l.length
+}
+
+fn longest(l: List<String>) -> String {
+    var best: String := ""
+    var i: Int := 0
+    while i < l.length {
+        if l[i].length > best.length {
+            best := l[i].clone
+        }
+        i += 1
+    }
+    return best
+}
+
+fn main {
+    var words: List<String> := ["a", "bbb", "cc"]
+    print(words)
+    print(longest(words))
+    words.add("dddd")
+    let w: String := "e"
+    words.add(move w)
+    print(words.remove(0))
+    print("{words} {words.length}")
+    let backup: List<String> := words.clone
+    print(keep(move words))
+    print(backup)
+    let rex: Dog := Dog { name := "Rex", tricks := ["sit", "roll"] }
+    print(rex)
+    let dogs: List<Dog> := [rex, Dog { name := "Max", tricks := [] }]
+    print(dogs)
+    print(dogs[0].tricks[1])
+    let grid: List<List<String>> := [["x", "o"], [], ["o"]]
+    print(grid)
+    let g2: List<List<String>> := grid.clone
+    print(g2[0])
+    let pairs: List<(String, Int)> := [("one", 1), ("two", 2)]
+    print(pairs[1])
+}
+// expect: ["a", "bbb", "cc"]
+// expect: bbb
+// expect: a
+// expect: ["bbb", "cc", "dddd", "e"] 4
+// expect: 4
+// expect: ["bbb", "cc", "dddd", "e"]
+// expect: Dog { name: "Rex", tricks: ["sit", "roll"] }
+// expect: [Dog { name: "Rex", tricks: ["sit", "roll"] }, Dog { name: "Max", tricks: [] }]
+// expect: roll
+// expect: [["x", "o"], [], ["o"]]
+// expect: ["x", "o"]
+// expect: ("two", 2)

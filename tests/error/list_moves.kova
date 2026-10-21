@@ -1,0 +1,26 @@
+fn take(l: move List<String>) -> Int {
+    return l.length
+}
+
+fn clear(l: var List<String>) -> Int {
+    l := []
+    return 0
+}
+
+fn show(s: String, n: Int) {
+}
+
+fn main {
+    let words: List<String> := ["a"]
+    let s: String := words[0]
+    var l: List<String> := ["x"]
+    show(l[0], clear(var l))
+    print("{l[0]}{take(move l)}")
+    let k: List<String> := l
+    print(l)
+}
+// error: `words[0]` is an element of a List: it cannot be moved out
+// error: give a copy with `words[0].clone`, or take it out with `words.remove(0)`
+// error: `l` is still read by this expression: it cannot be changed in it
+// error: `l` is still read by this expression: it cannot be moved in it
+// error: `l` was moved (line 19)

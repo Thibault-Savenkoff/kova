@@ -1,0 +1,36 @@
+struct Dog {
+    age: Int
+
+    fn birthday(var self) {
+        self.age += 1
+    }
+}
+
+fn main {
+    let a: List<Int> := [1, true]
+    print([])
+    let n: Int := 3
+    print(n[0])
+    let l: List<Int> := [1]
+    print(l[true])
+    l.add(2)
+    print(l = l)
+    let m: Map<Int> := 3
+    let x: List<Int, Int> := [1]
+    print(l.size)
+    var dogs: List<Dog> := [Dog { age := 1 }]
+    dogs[0].birthday
+    var words: List<String> := ["a"]
+    words.add(words[0])
+}
+// error: different types: `Int` expected, `Bool` given
+// error: an empty list needs its type
+// error: `[ ]` applies to a List, not to `Int`
+// error: `l` is declared with let
+// error: `=` does not compare Lists yet
+// error: unknown generic type `Map`: only `List<T>` exists for now
+// error: `List` takes one type, not 2: `List<Int>`
+// error: `List<Int>` has no method `size`
+// error: `length`, `add`, `remove`, `clone`
+// error: changing a List element this way is not built yet: use `remove` and `add`
+// error: `add` takes this argument: write `move words[0]`

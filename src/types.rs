@@ -26,6 +26,8 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// A `struct`: its slots are those of its fields, in order (like a tuple).
     Struct(Rc<StructDef>),
+    /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
+    List(Box<Type>),
     /// What a function without `->` returns.
     Unit,
     /// Unknown type because of an error already reported: it is not repeated.
@@ -48,6 +50,7 @@ impl Type {
             Type::String => "String".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(d) => d.name.clone(),
+            Type::List(t) => format!("List<{}>", t.text()),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
@@ -100,10 +103,10 @@ pub const METHODS: &[(Type, &str, Type)] = &[
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
 pub fn is_copy(t: &Type) -> bool {
     match t {
-        Type::String => false,
+        Type::String | Type::List(_) => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
-        _ => true,
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
 
@@ -148,9 +151,18 @@ pub fn method_name(ty: &str, name: &str) -> String {
 pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     match &e.kind {
         ExprKind::Var(n) => Some((n, e.span)),
-        ExprKind::Field(x, _) => place_root(x, types),
+        ExprKind::Field(x, _) | ExprKind::Index(x, _) => place_root(x, types),
         ExprKind::Method { receiver, name, .. } if types[receiver.id].is_field(&name.text) => place_root(receiver, types),
         _ => None,
+    }
+}
+
+/// `l[0].age`: a place inside a List element.
+fn through_index(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Index(..) => true,
+        ExprKind::Field(x, _) | ExprKind::Method { receiver: x, .. } => through_index(x),
+        _ => false,
     }
 }
 
@@ -343,6 +355,11 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             let ts: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
             if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
         }
+        TypeAst::Generic(n, ts) if n.text == "List" && ts.len() == 1 => match type_of(&ts[0], structs) {
+            Type::Error => Type::Error,
+            t => Type::List(Box::new(t)),
+        },
+        TypeAst::Generic(..) => Type::Error,
     }
 }
 
@@ -432,6 +449,21 @@ impl Checker<'_> {
                 let ts: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
                 if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
             }
+            TypeAst::Generic(n, ts) => {
+                // ponytail: `struct Node { kids: List<Node> }` would need a type that refers to itself.
+                if let [TypeAst::Name(e)] = &ts[..]
+                    && decls.get(e.text.as_str()).is_some_and(|j| open.contains(j))
+                {
+                    self.error(e.span, t!("list_of_itself", name = e.text));
+                    return Type::Error;
+                }
+                let mut inner = vec![];
+                self.generic(n, ts, |c, t| inner.push(c.field_type(f, decls, t, open)));
+                match &inner[..] {
+                    [t] if n.text == "List" && *t != Type::Error => Type::List(Box::new(t.clone())),
+                    _ => Type::Error,
+                }
+            }
             TypeAst::Name(n) => {
                 if let Some(t) = primitive(&n.text) {
                     return t;
@@ -459,7 +491,18 @@ impl Checker<'_> {
             TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
+            TypeAst::Generic(n, ts) => self.generic(n, ts, |c, t| c.report_unknown(t)),
         }
+    }
+
+    /// `List<T>` is the only generic type for now (J5: the others); `each` checks `T`.
+    fn generic(&mut self, n: &Name, ts: &[TypeAst], mut each: impl FnMut(&mut Self, &TypeAst)) {
+        if n.text != "List" {
+            self.error(n.span, t!("generic_unknown", name = n.text));
+        } else if ts.len() != 1 {
+            self.error(n.span, t!("list_one_type", count = ts.len()));
+        }
+        ts.iter().for_each(|t| each(self, t));
     }
 
     fn written_type(&mut self, t: &TypeAst) -> Type {
@@ -551,6 +594,12 @@ impl Checker<'_> {
 
     /// Checks that `e` has type `expected`.
     fn expect(&mut self, e: &Expr, expected: &Type) {
+        // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
+        if let (ExprKind::List(elems), Type::List(elem)) = (&e.kind, expected) {
+            elems.iter().for_each(|x| self.expect(x, elem));
+            self.types[e.id] = expected.clone();
+            return;
+        }
         let t = self.expr(e);
         if *expected == Type::Float && t == Type::Int && self.as_float(e) {
             return;
@@ -682,6 +731,10 @@ impl Checker<'_> {
             self.error(place.span, temporary);
             return;
         };
+        if through_index(place) {
+            self.error(place.span, t!("element_change_soon"));
+            return;
+        }
         if let Some(kind) = self.lookup(root).map(|v| v.kind) {
             self.may_change(root, span, kind);
         }
@@ -738,6 +791,36 @@ impl Checker<'_> {
         }
         self.arguments(name, args, &sig.params);
         sig.ret
+    }
+
+    /// `l.length`, `l.add(x)`, `l.remove(i)` (PLAN 2.10); `None` for `clone` (shared with the other types).
+    fn list_method(&mut self, receiver: &Expr, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
+        let (params, result) = match name.text.as_str() {
+            "length" => (vec![], Type::Int),
+            "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
+            "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
+            "clone" => return None,
+            _ => {
+                let t = Type::List(Box::new(elem.clone())).text();
+                self.diags.push(
+                    Diag::new(name.span, t!("no_method", type = t, name = name.text))
+                        .help(t!("methods_of", type = t, methods = "`length`, `add`, `remove`, `clone`")),
+                );
+                args.iter().for_each(|a| {
+                    self.expr(a);
+                });
+                return Some(Type::Error);
+            }
+        };
+        if name.text != "length" {
+            self.changes(receiver, t!("var_method_temporary", name = name.text));
+        }
+        if params.is_empty() && !args.is_empty() {
+            self.error(name.span, t!("no_arguments", name = name.text));
+        } else if !params.is_empty() {
+            self.arguments(name, args, &params);
+        }
+        Some(result)
     }
 
     /// `Dog.create("Rex")`: a struct's function without `self`.
@@ -899,8 +982,11 @@ impl Checker<'_> {
                 self.expr(e);
                 let call = match &e.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
-                    ExprKind::Method { receiver, name, .. } => matches!(&self.types[receiver.id],
-                        Type::Struct(d) if self.functions.contains_key(&method_name(&d.name, &name.text))),
+                    ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
+                        Type::Struct(d) => self.functions.contains_key(&method_name(&d.name, &name.text)),
+                        Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
+                        _ => false,
+                    },
                     _ => false,
                 };
                 if !call {
@@ -981,6 +1067,38 @@ impl Checker<'_> {
                 let t = self.expr(x);
                 self.field(t, *i, e.span)
             }
+            ExprKind::List(elems) => {
+                let Some((first, others)) = elems.split_first() else {
+                    self.diags.push(Diag::new(e.span, t!("empty_list_type")).help(t!("empty_list_type_help")));
+                    return Type::Error;
+                };
+                let t = self.expr(first);
+                if t == Type::Unit {
+                    self.error(first.span, t!("tuple_no_value"));
+                }
+                others.iter().for_each(|x| self.expect(x, &t));
+                if t == Type::Error { Type::Error } else { Type::List(Box::new(t)) }
+            }
+            ExprKind::New(ty) => {
+                let t = self.written_type(ty);
+                if !matches!(t, Type::List(_) | Type::Error) {
+                    self.error(e.span, t!("new_not_generic", type = t.text()));
+                    return Type::Error;
+                }
+                t
+            }
+            ExprKind::Index(x, i) => {
+                let t = self.expr(x);
+                self.expect(i, &Type::Int);
+                match t {
+                    Type::List(elem) => *elem,
+                    Type::Error => Type::Error,
+                    t => {
+                        self.error(e.span, t!("index_not_list", type = t.text()));
+                        Type::Error
+                    }
+                }
+            }
             ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
             ExprKind::Call { name, args } => self.call(name, args),
             ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
@@ -991,6 +1109,11 @@ impl Checker<'_> {
                 {
                     return self.method_call(receiver, d, name, args, sig);
                 }
+                if let Type::List(elem) = &t
+                    && let Some(r) = self.list_method(receiver, elem, name, args)
+                {
+                    return r;
+                }
                 for a in args {
                     self.expr(a);
                 }
@@ -998,7 +1121,7 @@ impl Checker<'_> {
                     return Type::Error;
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
-                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Tuple(_)) && !t.is_field("clone") {
+                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
@@ -1063,6 +1186,7 @@ impl Checker<'_> {
                                 Diag::new(e.span, t!("struct_compare", op = op.text(), type = ta.text()))
                                     .help(t!("struct_compare_help")),
                             ),
+                            Type::List(_) => self.error(e.span, t!("list_compare", op = op.text())),
                             _ => {}
                         }
                         self.like(a, ta, b);

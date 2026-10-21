@@ -52,7 +52,29 @@ struct Runtime {
     str_new: FuncId,
     str_free: FuncId,
     str_ops: [FuncId; 5],
+    lists: [FuncId; 8],
 }
+
+/// The runtime functions for Lists (`kova_list_*` in `runtime/runtime.c`):
+/// (name, number of arguments, number of results), in the order of the `L_*` numbers.
+const LIST_FUNCTIONS: [(&str, usize, usize); 8] = [
+    ("kova_list_new", 1, 1),
+    ("kova_list_length", 1, 1),
+    ("kova_list_check", 4, 0),
+    ("kova_list_load", 3, 1),
+    ("kova_list_store", 4, 0),
+    ("kova_list_grow", 1, 1),
+    ("kova_list_remove", 2, 0),
+    ("kova_list_free", 1, 0),
+];
+const L_NEW: usize = 0;
+const L_LENGTH: usize = 1;
+const L_CHECK: usize = 2;
+const L_LOAD: usize = 3;
+const L_STORE: usize = 4;
+const L_GROW: usize = 5;
+const L_REMOVE: usize = 6;
+const L_FREE: usize = 7;
 
 /// The runtime function of a String operation, and its number of arguments.
 fn str_op(op: StrOp) -> (usize, &'static str, usize) {
@@ -89,10 +111,10 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         s.returns.extend(returns.iter().map(|&t| AbiParam::new(machine_type(t))));
         s
     };
-    let ints = [Scalar::Int; 3];
+    let ints = [Scalar::Int; 4];
     let rt = Runtime {
-        print: module.declare_function("kova_print", Linkage::Import, &signature(&ints, &[]))?,
-        fault: module.declare_function("kova_fault", Linkage::Import, &signature(&ints, &[]))?,
+        print: module.declare_function("kova_print", Linkage::Import, &signature(&ints[..3], &[]))?,
+        fault: module.declare_function("kova_fault", Linkage::Import, &signature(&ints[..3], &[]))?,
         write_text: module.declare_function("kova_write_text", Linkage::Import, &signature(&ints[..2], &[]))?,
         write_label: module.declare_function("kova_write_label", Linkage::Import, &signature(&ints[..1], &[]))?,
         write_value: module.declare_function("kova_write_value", Linkage::Import, &signature(&ints[..2], &[]))?,
@@ -104,6 +126,13 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int)] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
+            }
+            ids.try_into().unwrap()
+        },
+        lists: {
+            let mut ids = vec![];
+            for (name, n, r) in LIST_FUNCTIONS {
+                ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..r]))?);
             }
             ids.try_into().unwrap()
         },
@@ -166,7 +195,8 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             texts,
             file: file.to_string(),
         };
-        Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail, strings }.function(f, &refs, rt_print, config);
+        let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
+        Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail, strings, lists }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -192,6 +222,8 @@ struct Generator<'a> {
     rt_fault: FuncRef,
     fail: Fail,
     strings: Strings,
+    /// See `LIST_FUNCTIONS`.
+    lists: [FuncRef; 8],
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/runtime.c`).
@@ -369,6 +401,55 @@ impl Generator<'_> {
                 let zero = self.b.ins().iconst(I64, 0);
                 self.b.def_var(self.vars[*l], zero);
             }
+            Inst::ListNew(d, width) => {
+                let w = self.b.ins().iconst(I64, *width as i64);
+                let v = self.list_call(L_NEW, &[w]);
+                self.b.def_var(self.vars[*d], v.unwrap());
+            }
+            Inst::ListLength(d, l) => {
+                let l = self.read(*l);
+                let v = self.list_call(L_LENGTH, &[l]);
+                self.b.def_var(self.vars[*d], v.unwrap());
+            }
+            Inst::ListCheck(l, i, loc) => {
+                let (l, i) = (self.read(*l), self.read(*i));
+                let line = self.b.ins().iconst(I64, loc.line as i64);
+                let col = self.b.ins().iconst(I64, loc.col as i64);
+                self.list_call(L_CHECK, &[l, i, line, col]);
+            }
+            Inst::ListLoad(d, l, i, k) => {
+                let (l, i) = (self.read(*l), self.read(*i));
+                let k = self.b.ins().iconst(I64, *k as i64);
+                let mut v = self.list_call(L_LOAD, &[l, i, k]).unwrap();
+                if self.types[*d] == Scalar::Float {
+                    v = self.b.ins().bitcast(F64, MemFlagsData::new(), v);
+                }
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::ListStore(l, i, k, value) => {
+                let (l, i) = (self.read(*l), self.read(*i));
+                let k = self.b.ins().iconst(I64, *k as i64);
+                let mut v = self.read(*value);
+                if self.types[*value] == Scalar::Float {
+                    v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
+                }
+                self.list_call(L_STORE, &[l, i, k, v]);
+            }
+            Inst::ListGrow(d, l) => {
+                let l = self.read(*l);
+                let v = self.list_call(L_GROW, &[l]);
+                self.b.def_var(self.vars[*d], v.unwrap());
+            }
+            Inst::ListRemove(l, i) => {
+                let (l, i) = (self.read(*l), self.read(*i));
+                self.list_call(L_REMOVE, &[l, i]);
+            }
+            Inst::ListFree(l) => {
+                let v = self.read(*l);
+                self.list_call(L_FREE, &[v]);
+                let zero = self.b.ins().iconst(I64, 0);
+                self.b.def_var(self.vars[*l], zero);
+            }
             Inst::Print { value, show, newline } => {
                 let (v, show) = self.value_and_show(*value, *show);
                 let newline = self.b.ins().iconst(I64, *newline as i64);
@@ -397,6 +478,12 @@ impl Generator<'_> {
                 self.b.ins().call(self.fail.stop, &[]);
             }
         }
+    }
+
+    /// Calls the List function `k` of `LIST_FUNCTIONS`; its result, if it has one.
+    fn list_call(&mut self, k: usize, args: &[Value]) -> Option<Value> {
+        let call = self.b.ins().call(self.lists[k], args);
+        self.b.inst_results(call).first().copied()
     }
 
     /// A slot and its display kind, ready for the runtime.

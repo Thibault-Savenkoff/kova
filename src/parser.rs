@@ -174,7 +174,8 @@ impl Parser<'_> {
     /// `Int` or `(Int, Float)`.
     fn type_(&mut self) -> R<TypeAst> {
         if !self.is_sym("(") {
-            return Ok(TypeAst::Name(self.type_name()?));
+            let name = self.type_name()?;
+            return if self.is_sym("<") { self.type_arguments(name) } else { Ok(TypeAst::Name(name)) };
         }
         let open = self.advance().span;
         let mut types = vec![self.type_()?];
@@ -187,6 +188,18 @@ impl Parser<'_> {
             return self.error(open.to(close), t!("tuple_too_small"));
         }
         Ok(TypeAst::Tuple(types))
+    }
+
+    /// `<Int>` after `List`: a capitalized name followed by `<` opens generics (PLAN 2.3).
+    fn type_arguments(&mut self, name: Name) -> R<TypeAst> {
+        self.advance(); // <
+        let mut types = vec![self.type_()?];
+        while self.is_sym(",") {
+            self.advance();
+            types.push(self.type_()?);
+        }
+        self.expect(">")?;
+        Ok(TypeAst::Generic(name, types))
     }
 
     /// `x`, `_` or `(a, b)`.
@@ -860,7 +873,18 @@ impl Parser<'_> {
     /// An atom followed by its suffixes: `x.to_float`.
     fn primary(&mut self) -> R<Expr> {
         let mut e = self.atom()?;
-        while self.is_sym(".") {
+        loop {
+            // `scores[i]`: the `[` on the same line (otherwise it starts a list on the next one).
+            if self.is_sym("[") && !self.src[e.span.end..self.token().span.start].contains('\n') {
+                self.advance();
+                let index = self.inner_expr()?;
+                let end = self.expect("]")?;
+                e = self.expr(e.span.to(end), ExprKind::Index(Box::new(e), Box::new(index)));
+                continue;
+            }
+            if !self.is_sym(".") {
+                break;
+            }
             self.advance();
             if let Kind::Int(i) = self.kind() {
                 let end = self.advance().span;
@@ -975,6 +999,18 @@ impl Parser<'_> {
                 let end = self.expect(")")?;
                 return Ok(self.expr(t.span.to(end), ExprKind::Tuple(elems)));
             }
+            Kind::Sym("[") => {
+                self.advance();
+                let mut elems = vec![];
+                while !self.is_sym("]") {
+                    elems.push(self.inner_expr()?);
+                    if !self.is_sym("]") {
+                        self.expect(",")?;
+                    }
+                }
+                let end = self.advance().span;
+                return Ok(self.expr(t.span.to(end), ExprKind::List(elems)));
+            }
             _ => {
                 let msg = t!("expression_expected", found = self.describe());
                 return self.error(t.span, msg);
@@ -987,6 +1023,14 @@ impl Parser<'_> {
     /// An expression starting with a type name: `Dog { name := "Rex" }`.
     fn type_atom(&mut self) -> R<Expr> {
         let ty = self.type_name()?;
+        // `List<Int>()`: a generic constructor keeps its `()` (PLAN Part 4).
+        if self.is_sym("<") {
+            let start = ty.span;
+            let ty = self.type_arguments(ty)?;
+            self.expect("(")?;
+            let end = self.expect(")")?;
+            return Ok(self.expr(start.to(end), ExprKind::New(ty)));
+        }
         // The `{` of a literal is on the same line as the type name (PLAN 2.3).
         let brace = self.is_sym("{") && !self.src[ty.span.end..self.token().span.start].contains('\n');
         if brace && self.no_literal {

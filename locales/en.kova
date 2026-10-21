@@ -38,8 +38,10 @@ lang en {
     contract_violated := "contract violated"
     contract_values := "values: "
     contract_called_from := "called from "
-    leak_allocated := "Strings made: "
-    leak_live := "Strings never freed: "
+    leak_allocated := "Strings and Lists made: "
+    leak_live := "Strings and Lists never freed: "
+
+    fault_index := "index out of bounds"
 
     // ---- Lexer ----
     comment_unclosed := "`/*` comment never closed"
@@ -220,6 +222,20 @@ lang en {
     mark_not_here := "`{mark}` is only written before the argument of a function that changes or takes it"
     exclusive_twice := "`{name}` cannot be changed twice by the same call to `{method}`"
     read_then_moved := "`{name}` is still read by this expression: it cannot be moved in it"
+
+    // ---- Lists (J3) ----
+    generic_unknown := "unknown generic type `{name}`: only `List<T>` exists for now"
+    list_one_type := "`List` takes one type, not {count}: `List<Int>`"
+    list_of_itself := "a struct cannot contain a List of `{name}` yet"
+    empty_list_type := "an empty list needs its type"
+    empty_list_type_help := "put it where its type is written (`let l: List<Int> := []`), or write `List<Int>()`"
+    new_not_generic := "`{type}` is not a generic type: `()` only follows `List<T>`"
+    index_not_list := "`[ ]` applies to a List, not to `{type}`"
+    list_compare := "`{op}` does not compare Lists yet"
+    element_change_soon := "changing a List element this way is not built yet: use `remove` and `add`"
+    index_move := "`{place}` is an element of a List: it cannot be moved out"
+    index_move_help := "give a copy with `{place}.clone`, or take it out with `{list}.remove({index})`"
+    read_then_changed := "`{name}` is still read by this expression: it cannot be changed in it"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` is a translation file: `kova run {file}` checks it"

@@ -1,0 +1,11 @@
+// An index outside the List stops the program (code 101), in run and in build.
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l[2])
+    let i: Int := -1
+    print(l[i])
+}
+// expect: 3
+// code: 101
+// stderr: error: index out of bounds
+// stderr: list_index.kova:6:13

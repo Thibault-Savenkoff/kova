@@ -1,0 +1,52 @@
+// Lists (PLAN 2.10): `[a, b]`, `[]`, `List<Int>()`, `length`, `l[i]`, `add`, `remove`, `clone`.
+fn total(l: List<Int>) -> Int {
+    var sum: Int := 0
+    var i: Int := 0
+    while i < l.length {
+        sum += l[i]
+        i += 1
+    }
+    return sum
+}
+
+fn fill(l: var List<Int>, n: Int) {
+    for i in 0..n {
+        l.add(i * 10)
+    }
+}
+
+fn main {
+    let scores: List<Int> := [12, 5, 18]
+    print(scores)
+    print(scores.length)
+    print(scores[1])
+    print(total(scores))
+    var l: List<Int> := []
+    print(l)
+    fill(var l, 4)
+    print(l)
+    print(l.remove(1))
+    print(l)
+    let f: List<Float> := [1, 2.5]
+    print("floats: {f}")
+    let e: List<Int> := List<Int>()
+    print(e.length)
+    let c: List<Int> := l.clone
+    l.add(l[0])
+    print("{l} {c}")
+    var m: List<Int> := scores
+    m := [7]
+    print(m)
+}
+// expect: [12, 5, 18]
+// expect: 3
+// expect: 5
+// expect: 35
+// expect: []
+// expect: [0, 10, 20, 30]
+// expect: 10
+// expect: [0, 20, 30]
+// expect: floats: [1.0, 2.5]
+// expect: 0
+// expect: [0, 20, 30, 0] [0, 20, 30]
+// expect: [7]

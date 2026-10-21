@@ -122,10 +122,12 @@ impl ContractKind {
     }
 }
 
-/// A type as written: `Int`, `(Int, Float)`, `((Int, Int), Bool)`.
+/// A type as written: `Int`, `(Int, Float)`, `((Int, Int), Bool)`, `List<Int>`.
 pub enum TypeAst {
     Name(Name),
     Tuple(Vec<TypeAst>),
+    /// `List<Int>`: a generic type and its arguments.
+    Generic(Name, Vec<TypeAst>),
 }
 
 impl TypeAst {
@@ -134,6 +136,7 @@ impl TypeAst {
         match self {
             TypeAst::Name(n) => n.text.clone(),
             TypeAst::Tuple(ts) => format!("({})", ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
+            TypeAst::Generic(n, ts) => format!("{}<{}>", n.text, ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
         }
     }
 }
@@ -253,6 +256,12 @@ pub enum ExprKind {
     Binary(BinOp, Box<Expr>, Box<Expr>),
     /// `(1, 2.5)`
     Tuple(Vec<Expr>),
+    /// `[12, 5, 18]`: a new List.
+    List(Vec<Expr>),
+    /// `List<Int>()`: a new empty List of this type.
+    New(TypeAst),
+    /// `scores[i]`: an element of a List (a place, like a field).
+    Index(Box<Expr>, Box<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
     /// `Dog { name := "Rex", age := 3 }`: the fields in the written order.

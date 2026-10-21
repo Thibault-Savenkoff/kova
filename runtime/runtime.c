@@ -41,7 +41,7 @@ static int language(void) {
 }
 
 // Numbers of the texts in `locale::RUNTIME` (src/locale.rs), checked by a test there.
-enum { LEAK_ALLOCATED = 7, LEAK_LIVE = 8 };
+enum { LEAK_ALLOCATED = 7, LEAK_LIVE = 8, FAULT_INDEX = 9 };
 
 static const char *text(int64_t i) {
     return kova_texts[language() * kova_nb_texts + i];
@@ -212,6 +212,70 @@ int64_t kova_str_length(int64_t a) {
 int64_t kova_str_clone(int64_t a) {
     String *x = (String *)a;
     return kova_str_new(x->bytes, x->length);
+}
+
+// ---- Lists ----
+// A List is a fixed block (so its address never changes) pointing to its elements,
+// `width` slots each, one after the other. 0 = no List (moved): freeing it does nothing.
+
+typedef struct {
+    int64_t length, capacity, width;
+    int64_t *slots;
+} List;
+
+int64_t kova_list_new(int64_t width) {
+    List *l = calloc(1, sizeof(List));
+    if (!l) abort();
+    l->width = width;
+    allocated++;
+    live++;
+    return (int64_t)l;
+}
+
+int64_t kova_list_length(int64_t l) {
+    return l ? ((List *)l)->length : 0;
+}
+
+void kova_fault(int64_t fault, int64_t line, int64_t col);
+
+void kova_list_check(int64_t l, int64_t i, int64_t line, int64_t col) {
+    if (i < 0 || i >= ((List *)l)->length) kova_fault(FAULT_INDEX, line, col);
+}
+
+int64_t kova_list_load(int64_t l, int64_t i, int64_t k) {
+    List *x = (List *)l;
+    return x->slots[i * x->width + k];
+}
+
+void kova_list_store(int64_t l, int64_t i, int64_t k, int64_t v) {
+    List *x = (List *)l;
+    x->slots[i * x->width + k] = v;
+}
+
+// One more element at the end (slots set to 0); returns its index.
+int64_t kova_list_grow(int64_t l) {
+    List *x = (List *)l;
+    if (x->length == x->capacity) {
+        x->capacity = x->capacity ? 2 * x->capacity : 4;
+        x->slots = realloc(x->slots, x->capacity * x->width * sizeof(int64_t) + 1);
+        if (!x->slots) abort();
+    }
+    memset(x->slots + x->length * x->width, 0, x->width * sizeof(int64_t));
+    return x->length++;
+}
+
+void kova_list_remove(int64_t l, int64_t i) {
+    List *x = (List *)l;
+    int64_t w = x->width;
+    memmove(x->slots + i * w, x->slots + (i + 1) * w, (x->length - i - 1) * w * sizeof(int64_t));
+    x->length--;
+}
+
+void kova_list_free(int64_t l) {
+    if (!l) return;
+    free(((List *)l)->slots);
+    free((List *)l);
+    live--;
 }
 
 // Same order as `Show` in src/kir.rs.

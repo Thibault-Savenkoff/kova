@@ -43,6 +43,8 @@ pub const RUNTIME: &[&str] = &[
     // `KOVA_LEAKS` (runtime.c reads them at indexes 7 and 8).
     "leak_allocated",
     "leak_live",
+    // runtime.c: `FAULT_INDEX`.
+    "fault_index",
 ];
 
 /// A piece of a translated text.

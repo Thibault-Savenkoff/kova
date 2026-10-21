@@ -30,6 +30,7 @@
 //   - `ensure`: before each `return`, with `result` = the returned value;
 //   - `check`: where it is written.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
@@ -81,7 +82,7 @@ fn field_index(t: &Type, name: &str) -> usize {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -90,13 +91,30 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
     }
 }
 
-/// For each slot of a value of this type: does it hold a `String`?
-fn strings(t: &Type) -> Vec<bool> {
+/// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
+fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String => vec![true],
-        Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(strings).collect(),
-        _ => vec![false; scalars(t).len()],
+        Type::String | Type::List(_) => vec![Some(t.clone())],
+        Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => vec![None; scalars(t).len()],
     }
+}
+
+/// Does a value of this type own nothing (no `String`, no `List`)?
+fn plain(t: &Type) -> bool {
+    heap(t).iter().all(Option::is_none)
+}
+
+/// Functions made by the translation (not written in the program), numbered after the others.
+/// Each one receives a `List` (of the type given) in its slot 0.
+#[derive(Clone, PartialEq)]
+enum Helper {
+    /// Frees the List and what its elements own.
+    Drop(Type),
+    /// Returns a deep copy.
+    Clone(Type),
+    /// Returns its text, as `print` writes it: `[1, 2]`.
+    Show(Type),
 }
 
 pub struct Program {
@@ -128,6 +146,9 @@ pub struct Loc {
     pub col: usize,
 }
 
+/// For an operation that cannot fail (a helper's loop counter).
+const NOWHERE: Loc = Loc { line: 0, col: 0 };
+
 pub enum Inst {
     /// A constant; for a float slot, `v` holds the bits of the Float.
     Const(Local, i64),
@@ -151,6 +172,22 @@ pub enum Inst {
     Str(Local, StrOp, Slots),
     /// Frees a String, then sets its slot to 0 (freeing 0 does nothing).
     Free(Local),
+    /// `dst := a new empty List` whose elements take `width` slots (`kova_list_*` in `runtime/runtime.c`).
+    ListNew(Local, usize),
+    /// `dst := list.length`.
+    ListLength(Local, Local),
+    /// Stops with "index out of bounds" unless `0 <= index < list.length`.
+    ListCheck(Local, Local, Loc),
+    /// `dst := slot k of element index` (index checked before).
+    ListLoad(Local, Local, Local, usize),
+    /// `slot k of element index := value`.
+    ListStore(Local, Local, usize, Local),
+    /// Adds an element at the end (its slots are 0): `dst := its index`.
+    ListGrow(Local, Local),
+    /// Removes element `index` (read before); the next ones move back by one.
+    ListRemove(Local, Local),
+    /// Frees the List's block, not what its elements own (done before); then sets its slot to 0.
+    ListFree(Local),
     /// `print` (`newline` = true) or `write`.
     Print { value: Local, show: Show, newline: bool },
     /// Broken contract: writes the message to stderr and stops (code 101).
@@ -243,6 +280,7 @@ pub enum Fault {
     Overflow,
     DivisionByZero,
     BadConversion,
+    Index,
 }
 
 impl Fault {
@@ -252,6 +290,7 @@ impl Fault {
             Fault::Overflow => "fault_overflow",
             Fault::DivisionByZero => "fault_division_by_zero",
             Fault::BadConversion => "fault_bad_conversion",
+            Fault::Index => "fault_index",
         }
     }
 }
@@ -353,7 +392,7 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 /// `contracts` = false for `kova build --boost`: `require`, `ensure` and `check` disappear.
 /// `tests` = true for `kova test`: each `test` block becomes one more function.
 /// `built` = true for `kova build`: the value of `mode = build`.
-pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
+pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
     // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
     // (a test = a function without parameters, result or contracts).
     type Source<'f> = (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block);
@@ -373,33 +412,37 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
     // The functions that receive the call location (`main` is called by the runtime).
     let sites: Vec<bool> = all.iter().map(|g| contracts && !g.4.is_empty() && g.0 != "main").collect();
-    let functions = all
+    let helpers = RefCell::new(vec![]);
+    let translator = |ret: Type, ensures: Vec<&'f Contract>| Translator {
+        src,
+        info,
+        numbers: &numbers,
+        signatures: &signatures,
+        sites: &sites,
+        helpers: &helpers,
+        first_helper: all.len(),
+        contracts,
+        built,
+        ensures,
+        ret,
+        result: None,
+        site: None,
+        outs: vec![],
+        // 0: the borrowed parameters; 1: the owned ones (`move`), freed at each exit.
+        names: vec![HashMap::new(), HashMap::new()],
+        locals: vec![],
+        blocks: vec![],
+        current: 0,
+        loops: vec![],
+        temps: vec![],
+    };
+    let mut functions: Vec<Function> = all
         .iter()
         .enumerate()
         .map(|(i, (name, receiver, params, ret, written_contracts, body))| {
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &info.structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
-            let mut t = Translator {
-                src,
-                info,
-                numbers: &numbers,
-                signatures: &signatures,
-                sites: &sites,
-                contracts,
-                built,
-                ensures: kept(ContractKind::Ensure).collect(),
-                ret: ret.clone(),
-                result: None,
-                site: None,
-                outs: vec![],
-                // 0: the borrowed parameters; 1: the owned ones (`move`), freed at each exit.
-                names: vec![HashMap::new(), HashMap::new()],
-                locals: vec![],
-                blocks: vec![],
-                current: 0,
-                loops: vec![],
-                temps: vec![],
-            };
+            let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect());
             let mut returns = scalars(&ret);
             if let Some((r, ty)) = receiver {
                 let v = t.new_slots(ty);
@@ -422,15 +465,16 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
             } else {
                 t.finish(End::Unreachable);
             }
-            Function {
-                name: name.clone(),
-                nb_params,
-                locals: t.locals,
-                returns,
-                blocks: t.blocks.into_iter().map(|(insts, end)| KBlock { insts, end: end.unwrap_or(End::Unreachable) }).collect(),
-            }
+            t.function(name.clone(), nb_params, returns)
         })
         .collect();
+    // The helpers, asked for while translating (and by one another: `List<List<String>>`).
+    let mut k = 0;
+    while k < helpers.borrow().len() {
+        let h = helpers.borrow()[k].clone();
+        functions.push(translator(Type::Unit, vec![]).helper_function(&h));
+        k += 1;
+    }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
     Program { functions, main: numbers["main"], tests }
 }
@@ -444,6 +488,9 @@ struct Translator<'a> {
     signatures: &'a HashMap<String, (Option<Mode>, Vec<Mode>)>,
     /// By function number: does it receive the call location?
     sites: &'a [bool],
+    /// The helpers asked for so far: helper `k` is function `first_helper + k`.
+    helpers: &'a RefCell<Vec<Helper>>,
+    first_helper: usize,
     /// Keep contracts (false with `--boost`).
     contracts: bool,
     /// `kova build` (true) or `kova run` / `kova test` (false).
@@ -464,12 +511,160 @@ struct Translator<'a> {
     current: BlockId,
     /// For each open loop: (target of `continue`, target of `break`, number of open blocks).
     loops: Vec<(BlockId, BlockId, usize)>,
-    /// The Strings made by the current statement and not given to anyone yet:
-    /// freed at the end of the statement.
-    temps: Vec<Local>,
+    /// The Strings and Lists made by the current statement and not given to anyone yet
+    /// (with what they are, see `heap`): freed at the end of the statement.
+    temps: Vec<(Local, Type)>,
 }
 
 impl<'a> Translator<'a> {
+    fn function(self, name: String, nb_params: usize, returns: Vec<Scalar>) -> Function {
+        Function {
+            name,
+            nb_params,
+            locals: self.locals,
+            returns,
+            blocks: self.blocks.into_iter().map(|(insts, end)| KBlock { insts, end: end.unwrap_or(End::Unreachable) }).collect(),
+        }
+    }
+
+    /// The number of the function doing `h` (made later by `helper_function`).
+    fn helper(&self, h: Helper) -> usize {
+        let mut hs = self.helpers.borrow_mut();
+        let k = hs.iter().position(|x| *x == h).unwrap_or_else(|| {
+            hs.push(h);
+            hs.len() - 1
+        });
+        self.first_helper + k
+    }
+
+    fn helper_function(mut self, h: &Helper) -> Function {
+        let list = self.int_local();
+        self.current = self.new_block();
+        let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h;
+        let Type::List(elem) = ty else { unreachable!("helpers work on Lists") };
+        let (name, result) = match h {
+            Helper::Drop(_) => {
+                self.each_element(list, elem, |t, _, v| t.free_value(&v, elem));
+                self.emit(Inst::ListFree(list));
+                ("drop", vec![])
+            }
+            Helper::Clone(_) => {
+                let copy = self.int_local();
+                self.emit(Inst::ListNew(copy, scalars(elem).len()));
+                self.each_element(list, elem, |t, _, v| {
+                    let c = t.clone_value(&v, elem);
+                    t.push(copy, &c);
+                });
+                ("clone", vec![copy])
+            }
+            Helper::Show(_) => {
+                let text = self.text("[");
+                self.each_element(list, elem, |t, i, v| {
+                    // `, ` before each element but the first.
+                    let (zero, comma, next) = (t.constant(0), t.new_block(), t.new_block());
+                    let first = t.int_local();
+                    t.emit(Inst::Binary(first, Op::Eq, i, zero, NOWHERE));
+                    t.go(End::Branch(first, next, comma), comma);
+                    let sep = t.text(", ");
+                    t.append(text, sep);
+                    t.go(End::Jump(next), next);
+                    let mark = t.temps.len();
+                    let mut pieces = vec![];
+                    t.value_pieces(&v, elem, &mut pieces);
+                    let piece = t.join(pieces);
+                    t.append(text, piece);
+                    t.free_temps(mark);
+                });
+                let close = self.text("]");
+                self.append(text, close);
+                ("show", vec![text])
+            }
+        };
+        self.finish(End::Return(result.clone()));
+        let returns = result.iter().map(|_| Scalar::Int).collect();
+        self.function(format!("{name} {}", ty.text()), 1, returns)
+    }
+
+    /// Runs `body` on each element of `list` (with its index), in order.
+    fn each_element(&mut self, list: Local, elem: &Type, mut body: impl FnMut(&mut Self, Local, Slots)) {
+        let n = self.int_local();
+        self.emit(Inst::ListLength(n, list));
+        let i = self.constant(0);
+        let (head, b_body, exit) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(head), head);
+        let more = self.int_local();
+        self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
+        self.go(End::Branch(more, b_body, exit), b_body);
+        let v = self.load(list, i, elem);
+        body(self, i, v);
+        let one = self.constant(1);
+        self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+        self.go(End::Jump(head), exit);
+    }
+
+    /// The slots of element `i` (checked before): borrowed from the List.
+    fn load(&mut self, list: Local, i: Local, elem: &Type) -> Slots {
+        let v = self.new_slots(elem);
+        for (k, &d) in v.iter().enumerate() {
+            self.emit(Inst::ListLoad(d, list, i, k));
+        }
+        v
+    }
+
+    /// Adds an element at the end of `list`; it now owns what `v` owns.
+    fn push(&mut self, list: Local, v: &[Local]) {
+        let i = self.int_local();
+        self.emit(Inst::ListGrow(i, list));
+        for (k, &s) in v.iter().enumerate() {
+            self.emit(Inst::ListStore(list, i, k, s));
+        }
+    }
+
+    /// A new String holding `s`.
+    fn text(&mut self, s: &str) -> Local {
+        let l = self.int_local();
+        self.emit(Inst::Text(l, s.into()));
+        l
+    }
+
+    /// `whole := whole + piece`; both old Strings are freed.
+    fn append(&mut self, whole: Local, piece: Local) {
+        let joined = self.int_local();
+        self.emit(Inst::Str(joined, StrOp::Concat, vec![whole, piece]));
+        self.emit(Inst::Free(whole));
+        self.emit(Inst::Free(piece));
+        self.emit(Inst::Copy(whole, joined));
+    }
+
+    /// Frees what slot `l` owns (`kind`, see `heap`), then empties it.
+    fn free_slot(&mut self, l: Local, kind: &Type) {
+        match kind {
+            Type::String => self.emit(Inst::Free(l)),
+            Type::List(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
+            list => {
+                let f = self.helper(Helper::Drop(list.clone()));
+                self.emit(Inst::Call(vec![], f, vec![l]));
+                self.emit(Inst::Const(l, 0));
+            }
+        }
+    }
+
+    /// A deep copy of a value: what it owns is copied too.
+    fn clone_value(&mut self, v: &[Local], ty: &Type) -> Slots {
+        let copy = self.new_slots(ty);
+        for ((&d, &l), kind) in copy.iter().zip(v).zip(heap(ty)) {
+            match kind {
+                None => self.emit(Inst::Copy(d, l)),
+                Some(Type::String) => self.emit(Inst::Str(d, StrOp::Clone, vec![l])),
+                Some(list) => {
+                    let f = self.helper(Helper::Clone(list));
+                    self.emit(Inst::Call(vec![d], f, vec![l]));
+                }
+            }
+        }
+        copy
+    }
+
     /// A parameter (or `self`) received in these slots.
     fn parameter(&mut self, name: &str, mode: Mode, v: Slots, ty: Type, returns: &mut Vec<Scalar>) {
         match mode {
@@ -537,23 +732,22 @@ impl<'a> Translator<'a> {
 
     /// A new value (call result, `a + b`…): its Strings are temporaries until someone takes them.
     fn track(&mut self, v: &[Local], ty: &Type) {
-        let s = strings(ty);
-        self.temps.extend(v.iter().zip(s).filter(|(_, s)| *s).map(|(&l, _)| l));
+        self.temps.extend(v.iter().zip(heap(ty)).filter_map(|(&l, k)| Some((l, k?))));
     }
     fn untrack(&mut self, v: &[Local]) {
-        self.temps.retain(|l| !v.contains(l));
+        self.temps.retain(|(l, _)| !v.contains(l));
     }
     /// Frees the temporaries made since `mark`.
     fn free_temps(&mut self, mark: usize) {
-        let temps: Vec<Local> = self.temps.drain(mark..).collect();
-        for l in temps.into_iter().rev() {
-            self.emit(Inst::Free(l));
+        let temps: Vec<(Local, Type)> = self.temps.drain(mark..).collect();
+        for (l, kind) in temps.into_iter().rev() {
+            self.free_slot(l, &kind);
         }
     }
     fn free_value(&mut self, v: &[Local], ty: &Type) {
-        for (&l, s) in v.iter().zip(strings(ty)).rev() {
-            if s {
-                self.emit(Inst::Free(l));
+        for (&l, kind) in v.iter().zip(heap(ty)).rev() {
+            if let Some(kind) = kind {
+                self.free_slot(l, &kind);
             }
         }
     }
@@ -577,8 +771,8 @@ impl<'a> Translator<'a> {
         let (src, ty) = self.variable(name);
         let v = self.new_slots(&ty);
         self.copy(&v, &src);
-        for (&l, s) in src.iter().zip(strings(&ty)) {
-            if s {
+        for (&l, kind) in src.iter().zip(heap(&ty)) {
+            if kind.is_some() {
                 self.emit(Inst::Const(l, 0));
             }
         }
@@ -802,8 +996,8 @@ impl<'a> Translator<'a> {
     fn exit(&mut self, v: Slots) {
         // The temporaries of the enclosing statements (a loop bound…) are freed on this path
         // only: they stay listed, the normal path frees them at the end of their statement.
-        for l in self.temps.clone().into_iter().rev() {
-            self.emit(Inst::Free(l));
+        for (l, kind) in self.temps.clone().into_iter().rev() {
+            self.free_slot(l, &kind);
         }
         // The `ensure`s may read a `move` parameter: checked before it is freed.
         for c in self.ensures.clone() {
@@ -841,7 +1035,6 @@ impl<'a> Translator<'a> {
             }
             None => m.push(Piece::Label("contract_violated")),
         }
-        self.temps.truncate(mark);
         m.extend([
             Piece::Text("\n  --> ".into()),
             Piece::File,
@@ -863,7 +1056,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(", ".into()));
             }
             m.push(Piece::Text(format!("{name} = ")));
-            value_pieces(v, ty, &mut m);
+            self.value_pieces(v, ty, &mut m);
         }
         if !values.is_empty() {
             m.push(Piece::Text("\n".into()));
@@ -880,8 +1073,54 @@ impl<'a> Translator<'a> {
                 Piece::Text("\n".into()),
             ]);
         }
+        // The program stops: the temporaries of the message are never freed.
+        self.temps.truncate(mark);
         self.emit(Inst::Fail(m));
         self.go(End::Unreachable, next);
+    }
+
+    /// A value the way it would be written in Kova: `3`, `2.5`, `'a'`, `(1, true)`,
+    /// `Dog { name: "Rex", age: 3 }`, `[1, 2]`.
+    fn value_pieces(&mut self, v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
+        match ty {
+            Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", d.name))),
+            Type::Struct(d) => {
+                m.push(Piece::Text(format!("{} {{ ", d.name)));
+                for (i, (name, t)) in d.fields.iter().enumerate() {
+                    let sep = if i > 0 { ", " } else { "" };
+                    m.push(Piece::Text(format!("{sep}{name}: ")));
+                    let (start, n) = slice_of(ty, i);
+                    self.value_pieces(&v[start..start + n], t, m);
+                }
+                m.push(Piece::Text(" }".into()));
+            }
+            Type::Tuple(ts) => {
+                m.push(Piece::Text("(".into()));
+                for (i, t) in ts.iter().enumerate() {
+                    if i > 0 {
+                        m.push(Piece::Text(", ".into()));
+                    }
+                    let (start, n) = slice_of(ty, i);
+                    self.value_pieces(&v[start..start + n], t, m);
+                }
+                m.push(Piece::Text(")".into()));
+            }
+            // Its text is made by a helper, and freed at the end of the statement.
+            Type::List(_) => {
+                let f = self.helper(Helper::Show(ty.clone()));
+                let text = self.int_local();
+                self.emit(Inst::Call(vec![text], f, vec![v[0]]));
+                self.temps.push((text, Type::String));
+                m.push(Piece::Value(text, Show::String));
+            }
+            Type::Char | Type::String => {
+                let quote = if *ty == Type::Char { "'" } else { "\"" };
+                m.push(Piece::Text(quote.into()));
+                m.push(Piece::Value(v[0], Show::of(ty)));
+                m.push(Piece::Text(quote.into()));
+            }
+            _ => m.push(Piece::Value(v[0], Show::of(ty))),
+        }
     }
 
     /// The pieces of a part of a text: a String or a number as `print` shows it, a struct
@@ -890,10 +1129,10 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.info.types[e.id] {
-                ty @ (Type::Struct(_) | Type::Tuple(_)) => {
+                ty @ (Type::Struct(_) | Type::Tuple(_) | Type::List(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
-                    value_pieces(&v, &ty, m);
+                    self.value_pieces(&v, &ty, m);
                 }
                 ty => {
                     let show = Show::of(ty);
@@ -1060,7 +1299,7 @@ impl<'a> Translator<'a> {
             ExprKind::Str(text) => {
                 let l = self.int_local();
                 self.emit(Inst::Text(l, text.clone()));
-                self.temps.push(l);
+                self.temps.push((l, Type::String));
                 vec![l]
             }
             ExprKind::Interp(parts) => {
@@ -1069,7 +1308,7 @@ impl<'a> Translator<'a> {
                     self.part_pieces(p, &mut pieces);
                 }
                 let l = self.join(pieces);
-                self.temps.push(l);
+                self.temps.push((l, Type::String));
                 vec![l]
             }
             ExprKind::StructLit { fields, .. } => {
@@ -1086,6 +1325,28 @@ impl<'a> Translator<'a> {
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
             ExprKind::Mark(_, x) => self.expr(x),
+            ExprKind::List(_) | ExprKind::New(_) => {
+                let ty = self.info.types[e.id].clone();
+                let Type::List(elem) = &ty else { unreachable!("List checked by the type checker") };
+                let l = self.int_local();
+                self.emit(Inst::ListNew(l, scalars(elem).len()));
+                if let ExprKind::List(elems) = &e.kind {
+                    for x in elems {
+                        let v = self.owned(x);
+                        self.push(l, &v);
+                    }
+                }
+                self.track(&[l], &ty);
+                vec![l]
+            }
+            ExprKind::Index(x, i) => {
+                let list = self.expr1(x);
+                let index = self.expr1(i);
+                let loc = self.loc(i.span);
+                self.emit(Inst::ListCheck(list, index, loc));
+                let elem = self.info.types[e.id].clone();
+                self.load(list, index, &elem)
+            }
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => {
                 let v: Slots = elems.iter().flat_map(|x| self.owned(x)).collect();
@@ -1102,9 +1363,10 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.info.types[args[0].id] {
-                        ty @ (Type::Struct(_) | Type::Tuple(_)) => {
+                        ty @ (Type::Struct(_) | Type::Tuple(_) | Type::List(_)) => {
+                            let ty = ty.clone();
                             let mut pieces = vec![];
-                            value_pieces(&vals, ty, &mut pieces);
+                            self.value_pieces(&vals, &ty, &mut pieces);
                             let text = self.join(pieces);
                             self.emit(Inst::Print { value: text, show: Show::String, newline });
                             self.emit(Inst::Free(text));
@@ -1172,7 +1434,7 @@ impl<'a> Translator<'a> {
                 let dst = self.int_local();
                 if *op == BinOp::Plus {
                     self.emit(Inst::Str(dst, StrOp::Concat, vec![va, vb]));
-                    self.temps.push(dst);
+                    self.temps.push((dst, Type::String));
                     return vec![dst];
                 }
                 self.emit(Inst::Str(dst, StrOp::Eq, vec![va, vb]));
@@ -1213,16 +1475,42 @@ impl<'a> Translator<'a> {
                 self.call(&q, vals, places, name.span, &result)
             }
             ExprKind::Method { receiver, name, .. }
-                if name.text == "clone" && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Tuple(_)) =>
+                if name.text == "clone"
+                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Tuple(_) | Type::List(_)) =>
             {
                 let ty = self.info.types[receiver.id].clone();
                 let v = self.expr(receiver);
-                let copy = self.new_slots(&ty);
-                for ((&d, &l), s) in copy.iter().zip(&v).zip(strings(&ty)) {
-                    self.emit(if s { Inst::Str(d, StrOp::Clone, vec![l]) } else { Inst::Copy(d, l) });
-                }
+                let copy = self.clone_value(&v, &ty);
                 self.track(&copy, &ty);
                 copy
+            }
+            // `add` and `remove` change the List, but its slot (the address of its block) stays the same.
+            ExprKind::Method { receiver, name, args } if matches!(self.info.types[receiver.id], Type::List(_)) => {
+                let Type::List(elem) = self.info.types[receiver.id].clone() else { unreachable!() };
+                let list = self.expr1(receiver);
+                match name.text.as_str() {
+                    "length" => {
+                        let n = self.int_local();
+                        self.emit(Inst::ListLength(n, list));
+                        vec![n]
+                    }
+                    "add" => {
+                        let x = if let ExprKind::Mark(_, x) = &args[0].kind { x } else { &args[0] };
+                        let v = self.owned(x);
+                        self.push(list, &v);
+                        vec![]
+                    }
+                    "remove" => {
+                        let index = self.expr1(&args[0]);
+                        let loc = self.loc(args[0].span);
+                        self.emit(Inst::ListCheck(list, index, loc));
+                        let v = self.load(list, index, &elem);
+                        self.emit(Inst::ListRemove(list, index));
+                        self.track(&v, &elem);
+                        v
+                    }
+                    other => unreachable!("List method `{other}` checked by the type checker"),
+                }
             }
             ExprKind::Method { receiver, name, .. } => {
                 let v = self.expr1(receiver);
@@ -1234,7 +1522,7 @@ impl<'a> Translator<'a> {
                     let (dst, op) = (self.int_local(), string(name.text.as_str()));
                     self.emit(Inst::Str(dst, op, vec![v]));
                     if op == StrOp::Clone {
-                        self.temps.push(dst);
+                        self.temps.push((dst, Type::String));
                     }
                     return vec![dst];
                 }
@@ -1271,6 +1559,12 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names));
         }
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => names_in(x, names),
+        ExprKind::List(elems) => elems.iter().for_each(|a| names_in(a, names)),
+        ExprKind::Index(x, i) => {
+            names_in(x, names);
+            names_in(i, names);
+        }
+        ExprKind::New(_) => {}
         ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, v)| names_in(v, names)),
         ExprKind::If { cond, .. } => names_in(cond, names),
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {
@@ -1283,42 +1577,6 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(b, names);
         }
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } => {}
-    }
-}
-
-/// A value the way it would be written in Kova: `3`, `2.5`, `'a'`, `(1, true)`,
-/// `Dog { name: "Rex", age: 3 }`.
-fn value_pieces(v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
-    match ty {
-        Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", d.name))),
-        Type::Struct(d) => {
-            m.push(Piece::Text(format!("{} {{ ", d.name)));
-            for (i, (name, t)) in d.fields.iter().enumerate() {
-                let sep = if i > 0 { ", " } else { "" };
-                m.push(Piece::Text(format!("{sep}{name}: ")));
-                let (start, n) = slice_of(ty, i);
-                value_pieces(&v[start..start + n], t, m);
-            }
-            m.push(Piece::Text(" }".into()));
-        }
-        Type::Tuple(ts) => {
-            m.push(Piece::Text("(".into()));
-            for (i, t) in ts.iter().enumerate() {
-                if i > 0 {
-                    m.push(Piece::Text(", ".into()));
-                }
-                let (start, n) = slice_of(ty, i);
-                value_pieces(&v[start..start + n], t, m);
-            }
-            m.push(Piece::Text(")".into()));
-        }
-        Type::Char | Type::String => {
-            let quote = if *ty == Type::Char { "'" } else { "\"" };
-            m.push(Piece::Text(quote.into()));
-            m.push(Piece::Value(v[0], Show::of(ty)));
-            m.push(Piece::Text(quote.into()));
-        }
-        _ => m.push(Piece::Value(v[0], Show::of(ty))),
     }
 }
 

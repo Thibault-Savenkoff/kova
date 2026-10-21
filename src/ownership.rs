@@ -70,6 +70,9 @@ struct Owner<'a> {
 pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
     let modes = |g: &Function| (g.receiver, g.params.iter().map(|p| p.mode).collect());
     let mut signatures: HashMap<String, _> = f.functions.iter().map(|g| (g.name.text.clone(), modes(g))).collect();
+    // The List methods that change or take (PLAN 2.10).
+    signatures.insert(method_name("List", "add"), (Some(Mode::Var), vec![Mode::Move]));
+    signatures.insert(method_name("List", "remove"), (Some(Mode::Var), vec![Mode::Read]));
     let mut functions: Vec<&Function> = f.functions.iter().collect();
     for s in &f.structs {
         for m in &s.methods {
@@ -189,6 +192,12 @@ impl Owner<'_> {
 
     /// `x := ...` on a whole variable gives it a value again: it is no longer moved.
     fn assign(&mut self, t: &Target) {
+        // `show(l[0], if c { l := []  1 } else { 2 })`: `l` is still read by `show`.
+        if let Target::Place { name, span, .. } = t
+            && self.pending.contains(&self.lookup(&name.text).id)
+        {
+            self.error_at(*span, t!("read_then_changed", name = name.text));
+        }
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.assign(t)),
             Target::Place { name, fields, span } if !fields.is_empty() => self.use_var(&name.text, *span),
@@ -353,6 +362,15 @@ impl Owner<'_> {
                     Diag::new(e.span, t!("struct_field_move", place = place)).help(t!("field_move_help", place = place)),
                 );
             }
+            // PLAN 2.7.8: an element is borrowed, never moved out.
+            ExprKind::Index(list, i) => {
+                self.borrow(e);
+                let place = &self.src[e.span.start..e.span.end];
+                let (list, i) = (&self.src[list.span.start..list.span.end], &self.src[i.span.start..i.span.end]);
+                self.diags.push(
+                    Diag::new(e.span, t!("index_move", place = place)).help(t!("index_move_help", place = place, list = list, index = i)),
+                );
+            }
             _ => self.borrow(e),
         }
     }
@@ -370,10 +388,13 @@ impl Owner<'_> {
         }
     }
 
-    /// `rex.sound`: the struct method called (`Dog.sound`) and how it receives `rex`.
+    /// `rex.sound`: the method called (`Dog.sound`, `List.add`) and how it receives `rex`.
     fn method(&self, receiver: &Expr, name: &Name) -> Option<(String, Mode)> {
-        let Type::Struct(d) = &self.info.types[receiver.id] else { return None };
-        let q = method_name(&d.name, &name.text);
+        let q = match &self.info.types[receiver.id] {
+            Type::Struct(d) => method_name(&d.name, &name.text),
+            Type::List(_) => method_name("List", &name.text),
+            _ => return None,
+        };
         let r = self.signatures.get(&q)?.0.unwrap_or(Mode::Read);
         Some((q, r))
     }
@@ -387,10 +408,28 @@ impl Owner<'_> {
             let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
             uses.push((modes.get(i).copied().unwrap_or(Mode::Read), value));
         }
+        // `print("{l[0]}{pop(var l)}")`: what an unfinished operation still reads cannot change.
+        for &(mode, e) in &uses {
+            if mode == Mode::Var {
+                self.not_pending(e);
+            }
+        }
         for &(mode, e) in &uses {
             if mode == Mode::Move { self.give(e) } else { self.borrow(e) }
         }
         self.exclusive(shown, &uses);
+    }
+
+    /// `e` (a place) is about to change: an error if an operation not finished yet still reads it.
+    fn not_pending(&mut self, e: &Expr) {
+        let Some((root, span)) = place_root(e, &self.info.types) else { return };
+        if self.pending.contains(&self.lookup(root).id) {
+            self.error_at(span, t!("read_then_changed", name = root));
+        }
+    }
+
+    fn error_at(&mut self, span: Span, msg: String) {
+        self.diags.push(Diag::new(span, msg));
     }
 
     /// Rule 2.7.5: what a call changes (`var`) or takes (`move`) is used nowhere else in that call:
@@ -453,6 +492,13 @@ impl Owner<'_> {
                 args.iter().for_each(|a| self.borrow(a));
             }
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => self.borrow(x),
+            ExprKind::Index(x, i) => {
+                self.borrow(x);
+                self.borrow(i);
+            }
+            // A new List owns its elements.
+            ExprKind::List(elems) => elems.iter().for_each(|x| self.give(x)),
+            ExprKind::New(_) => {}
             ExprKind::Binary(BinOp::And | BinOp::Or, a, b) => {
                 // `b` is computed only sometimes: what it moves is "maybe moved" afterwards.
                 self.borrow(a);

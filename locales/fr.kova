@@ -38,8 +38,10 @@ lang fr {
     contract_violated := "contrat non respecté"
     contract_values := "valeurs : "
     contract_called_from := "appelé depuis "
-    leak_allocated := "Strings créés : "
-    leak_live := "Strings jamais libérés : "
+    leak_allocated := "Strings et Lists créés : "
+    leak_live := "Strings et Lists jamais libérés : "
+
+    fault_index := "indice hors de la liste"
 
     // ---- Lexer ----
     comment_unclosed := "commentaire `/*` jamais fermé"
@@ -220,6 +222,20 @@ lang fr {
     mark_not_here := "`{mark}` s'écrit seulement devant l'argument d'une fonction qui le modifie ou le prend"
     exclusive_twice := "`{name}` ne peut pas être changé deux fois par le même appel à `{method}`"
     read_then_moved := "`{name}` est encore lu par cette expression : elle ne peut pas le déplacer"
+
+    // ---- Lists (J3) ----
+    generic_unknown := "type générique inconnu `{name}` : seul `List<T>` existe pour l'instant"
+    list_one_type := "`List` prend un type, pas {count} : `List<Int>`"
+    list_of_itself := "une struct ne peut pas encore contenir une List de `{name}`"
+    empty_list_type := "une liste vide a besoin de son type"
+    empty_list_type_help := "mets-la là où son type est écrit (`let l: List<Int> := []`), ou écris `List<Int>()`"
+    new_not_generic := "`{type}` n'est pas un type générique : `()` ne suit que `List<T>`"
+    index_not_list := "`[ ]` s'applique à une List, pas à `{type}`"
+    list_compare := "`{op}` ne compare pas encore les Lists"
+    element_change_soon := "changer un élément de List ainsi n'est pas encore construit : utilise `remove` et `add`"
+    index_move := "`{place}` est un élément d'une List : on ne peut pas l'en sortir"
+    index_move_help := "donne une copie avec `{place}.clone`, ou sors-le avec `{list}.remove({index})`"
+    read_then_changed := "`{name}` est encore lu par cette expression : elle ne peut pas le changer"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` est un fichier de traductions : `kova run {file}` le vérifie"
