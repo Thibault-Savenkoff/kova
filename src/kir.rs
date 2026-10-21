@@ -450,7 +450,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         site: None,
         outs: vec![],
         // 0: the borrowed parameters; 1: the owned ones (`move`), freed at each exit.
-        names: vec![HashMap::new(), HashMap::new()],
+        names: vec![Scope::borrowed(), Scope::default()],
         locals: vec![],
         blocks: vec![],
         current: 0,
@@ -525,7 +525,7 @@ struct Translator<'a> {
     /// The slots of `var self` and of the `var` parameters, given back after the result at each exit.
     outs: Slots,
     /// Name → its slots and type, one table per open block.
-    names: Vec<HashMap<String, (Slots, Type)>>,
+    names: Vec<Scope>,
     locals: Vec<Scalar>,
     /// Blocks being built; `None` = end not set yet.
     blocks: Vec<(Vec<Inst>, Option<End>)>,
@@ -535,6 +535,20 @@ struct Translator<'a> {
     /// The Strings and Lists made by the current statement and not given to anyone yet
     /// (with what they are, see `heap`): freed at the end of the statement.
     temps: Vec<(Local, Type)>,
+}
+
+/// The names of one open block.
+#[derive(Default)]
+struct Scope {
+    /// Names that borrow their slots (borrowed parameters, `for` elements…): never freed.
+    borrowed: bool,
+    vars: HashMap<String, (Slots, Type)>,
+}
+
+impl Scope {
+    fn borrowed() -> Scope {
+        Scope { borrowed: true, vars: HashMap::new() }
+    }
 }
 
 impl<'a> Translator<'a> {
@@ -691,16 +705,16 @@ impl<'a> Translator<'a> {
         match mode {
             // Taken: freed by the function (scope 1 is freed at each exit).
             Mode::Move => {
-                self.names[1].insert(name.to_string(), (v, ty));
+                self.names[1].vars.insert(name.to_string(), (v, ty));
             }
             // Changed: given back to the caller at each exit, after the result.
             Mode::Var => {
                 self.outs.extend(&v);
                 returns.extend(scalars(&ty));
-                self.names[0].insert(name.to_string(), (v, ty));
+                self.names[0].vars.insert(name.to_string(), (v, ty));
             }
             Mode::Read => {
-                self.names[0].insert(name.to_string(), (v, ty));
+                self.names[0].vars.insert(name.to_string(), (v, ty));
             }
         }
     }
@@ -745,7 +759,7 @@ impl<'a> Translator<'a> {
         Loc { line, col }
     }
     fn variable(&self, name: &str) -> (Slots, Type) {
-        self.names.iter().rev().find_map(|t| t.get(name)).expect("variable checked by the type checker").clone()
+        self.names.iter().rev().find_map(|t| t.vars.get(name)).expect("variable checked by the type checker").clone()
     }
     fn slots_of(&self, name: &str) -> Slots {
         self.variable(name).0
@@ -772,9 +786,10 @@ impl<'a> Translator<'a> {
             }
         }
     }
-    /// Frees the variables of the blocks `names[from..]` (from the innermost).
+    /// Frees the variables of the blocks `names[from..]` (from the innermost), borrowed ones excepted.
     fn free_scopes(&mut self, from: usize) {
-        let vars: Vec<(Slots, Type)> = self.names[from..].iter().rev().flat_map(|t| t.values().cloned()).collect();
+        let vars: Vec<(Slots, Type)> =
+            self.names[from..].iter().rev().filter(|t| !t.borrowed).flat_map(|t| t.vars.values().cloned()).collect();
         for (v, ty) in vars {
             self.free_value(&v, &ty);
         }
@@ -812,7 +827,7 @@ impl<'a> Translator<'a> {
     fn bind(&mut self, p: &Pattern, slots: &[Local], ty: &Type) {
         match p {
             Pattern::Name(n) => {
-                self.names.last_mut().unwrap().insert(n.text.clone(), (slots.to_vec(), ty.clone()));
+                self.names.last_mut().unwrap().vars.insert(n.text.clone(), (slots.to_vec(), ty.clone()));
             }
             // Nobody receives this part: freed at once.
             Pattern::Ignore(_) => self.free_value(slots, ty),
@@ -926,8 +941,15 @@ impl<'a> Translator<'a> {
         dst
     }
 
+    /// Runs `body` with `name` bound to slots it borrows: no block frees them.
+    fn borrowing(&mut self, name: &str, v: Slots, ty: Type, body: &Block) {
+        self.names.push(Scope { borrowed: true, vars: HashMap::from([(name.to_string(), (v, ty))]) });
+        self.block(body);
+        self.names.pop();
+    }
+
     fn block(&mut self, b: &Block) {
-        self.names.push(HashMap::new());
+        self.names.push(Scope::default());
         for s in &b.stmts {
             self.stmt(s);
         }
@@ -1051,9 +1073,7 @@ impl<'a> Translator<'a> {
                 self.go(End::Branch(c, b_body, exit), b_body);
 
                 self.loops.push((next, exit, self.names.len()));
-                self.names.push(HashMap::from([(counter.text.clone(), (vec![i], Type::Int))]));
-                self.block(body);
-                self.names.pop();
+                self.borrowing(&counter.text, vec![i], Type::Int, body);
                 self.loops.pop();
                 self.go(End::Jump(next), next);
 
@@ -1083,10 +1103,9 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
                 self.go(End::Branch(more, b_body, exit), b_body);
                 let v = self.load(l, i, &elem);
-                // Borrowed from the List: with the borrowed parameters, a table no block frees.
-                self.names[0].insert(name.text.clone(), (v, *elem));
                 self.loops.push((next, exit, self.names.len()));
-                self.block(body);
+                // Borrowed from the List: nobody frees it.
+                self.borrowing(&name.text, v, *elem, body);
                 self.loops.pop();
                 self.go(End::Jump(next), next);
                 let one = self.constant(1);
@@ -1153,7 +1172,7 @@ impl<'a> Translator<'a> {
         let values: Vec<(String, (Slots, Type))> = names
             .into_iter()
             .filter_map(|n| {
-                let v = if n == "result" { self.result.clone() } else { self.names.iter().rev().find_map(|t| t.get(&n)).cloned() };
+                let v = if n == "result" { self.result.clone() } else { self.names.iter().rev().find_map(|t| t.vars.get(&n)).cloned() };
                 Some((n, v?))
             })
             .collect();
@@ -1374,7 +1393,7 @@ impl<'a> Translator<'a> {
 
     /// The value of a block: that of its last line (checked by the type checker).
     fn block_value(&mut self, b: &Block, ty: &Type) -> Slots {
-        self.names.push(HashMap::new());
+        self.names.push(Scope::default());
         let (last, before) = b.stmts.split_last().expect("block checked by the type checker");
         for s in before {
             self.stmt(s);

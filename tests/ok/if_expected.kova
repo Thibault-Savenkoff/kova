@@ -1,0 +1,13 @@
+// An expected type goes down into the branches of an `if`.
+fn main {
+    let c: Bool := 1 < 2
+    let l: List<Int> := if c { [] } else { [1, 2] }
+    print(l)
+    let f: Float := if c { 2 } else { 2.5 }
+    print(f)
+    let m: List<String> := if c { if 2 < 1 { ["a"] } else { [] } } else { ["b"] }
+    print(m.length)
+}
+// expect: []
+// expect: 2.0
+// expect: 0

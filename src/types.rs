@@ -593,6 +593,10 @@ impl Checker<'_> {
             self.types[e.id] = expected.clone();
             return;
         }
+        if let ExprKind::If { cond, then, otherwise } = &e.kind {
+            self.types[e.id] = self.if_value(cond, then, otherwise, Some(expected));
+            return;
+        }
         let t = self.expr(e);
         if *expected == Type::Float && t == Type::Int && self.as_float(e) {
             return;
@@ -1182,7 +1186,7 @@ impl Checker<'_> {
                 self.expect(x, &Type::Bool);
                 Type::Bool
             }
-            ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
+            ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise, None),
             ExprKind::Binary(op, a, b) => {
                 use BinOp::*;
                 match op {
@@ -1262,9 +1266,11 @@ impl Checker<'_> {
         Type::Struct(d)
     }
 
-    fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) -> Type {
+    /// `if c { a } else { b }`; with an `expected` type, each branch is checked against it,
+    /// so that `[]` or `2` take it as after a `:=`.
+    fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, expected: Option<&Type>) -> Type {
         self.expect(cond, &Type::Bool);
-        let (a, b) = (self.block_value(then), self.block_value(otherwise));
+        let (a, b) = (self.block_value(then, expected), self.block_value(otherwise, expected));
         if a != b && a != Type::Error && b != Type::Error {
             let msg = t!("branches_differ", a = a.text(), b = b.text());
             self.error(otherwise.open, msg);
@@ -1274,7 +1280,7 @@ impl Checker<'_> {
     }
 
     /// The type of a block giving a value: that of its last line.
-    fn block_value(&mut self, b: &Block) -> Type {
+    fn block_value(&mut self, b: &Block, expected: Option<&Type>) -> Type {
         self.scopes.push(HashMap::new());
         let (last, before) = match b.stmts.split_last() {
             Some((l, b)) => (Some(l), b),
@@ -1284,8 +1290,14 @@ impl Checker<'_> {
             self.stmt(s);
         }
         let ty = match last {
-            Some(Stmt::Expr(e)) => self.expr(e),
-            Some(Stmt::If { cond, then, otherwise: Some(otherwise) }) => self.if_value(cond, then, otherwise),
+            Some(Stmt::Expr(e)) => match expected {
+                Some(t) => {
+                    self.expect(e, t);
+                    t.clone()
+                }
+                None => self.expr(e),
+            },
+            Some(Stmt::If { cond, then, otherwise: Some(otherwise) }) => self.if_value(cond, then, otherwise, expected),
             other => {
                 if let Some(s) = other {
                     self.stmt(s);
