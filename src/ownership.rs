@@ -195,27 +195,11 @@ impl Owner<'_> {
 
     /// `x := ...` on a whole variable gives it a value again: it is no longer moved.
     fn assign(&mut self, t: &Target) {
-        // `show(l[0], if c { l := []  1 } else { 2 })`: `l` is still read by `show`.
-        if let Target::Place { name, span, .. } = t
-            && self.pending.contains(&self.lookup(&name.text).id)
-        {
-            let msg = self.busy(&name.text, t!("read_then_changed", name = name.text));
-            self.error_at(*span, msg);
-        }
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.assign(t)),
             Target::Place { name, fields, span } if !fields.is_empty() => {
                 self.use_var(&name.text, *span);
-                // `l[g(var l)] := 1`: the indexes are computed while `l` is being reached.
-                let mark = self.pending.len();
-                let id = self.lookup(&name.text).id;
-                self.pending.push(id);
-                for step in fields {
-                    if let Step::At(i) = step {
-                        self.borrow(i);
-                    }
-                }
-                self.pending.truncate(mark);
+                self.indexes(t);
             }
             Target::Place { name, .. } => {
                 let id = self.lookup(&name.text).id;
@@ -224,6 +208,35 @@ impl Owner<'_> {
                 }
             }
         }
+    }
+
+    /// Before an assignment: its target must not be read by an unfinished operation around it
+    /// (`show(l[0], if c { l := []  1 } else { 2 })`) nor walked by a `for` loop.
+    fn target_free(&mut self, t: &Target) {
+        match t {
+            Target::Tuple(ts, _) => ts.iter().for_each(|t| self.target_free(t)),
+            Target::Place { name, span, .. } => {
+                if self.pending.contains(&self.lookup(&name.text).id) {
+                    let msg = self.busy(&name.text, t!("read_then_changed", name = name.text));
+                    self.error_at(*span, msg);
+                }
+            }
+        }
+    }
+
+    /// The indexes of a target (`l[i] := …`), computed while its variable is being reached:
+    /// `l[g(var l)] := 1` ❌.
+    fn indexes(&mut self, t: &Target) {
+        let Target::Place { name, fields, .. } = t else { return };
+        let mark = self.pending.len();
+        let id = self.lookup(&name.text).id;
+        self.pending.push(id);
+        for step in fields {
+            if let Step::At(i) = step {
+                self.borrow(i);
+            }
+        }
+        self.pending.truncate(mark);
     }
 
     fn stmt(&mut self, s: &Stmt) {
@@ -247,11 +260,18 @@ impl Owner<'_> {
                 let ty = self.info.types[value.id].clone();
                 self.bind(pattern, &ty);
             }
+            // The value is computed first (the KIR copies it), then the target is reached:
+            // `l[0] := l[1]` ✅.
             Stmt::Assign { target, op: None, value } => {
+                self.target_free(target);
+                let mark = self.pending.len();
                 self.give(value);
+                self.pending.truncate(mark);
                 self.assign(target);
             }
             Stmt::Assign { target, op: Some(_), value } => {
+                self.target_free(target);
+                let mark = self.pending.len();
                 // `s += …` reads `s` after computing the value.
                 if let Target::Place { name, .. } = target
                     && !is_copy(&self.info.types[value.id])
@@ -260,9 +280,11 @@ impl Owner<'_> {
                     self.pending.push(id);
                 }
                 self.borrow(value);
+                self.pending.truncate(mark);
                 if let Target::Place { name, span, .. } = target {
                     self.use_var(&name.text, *span);
                 }
+                self.indexes(target);
             }
             Stmt::Return { value, .. } => {
                 if let Some(e) = value {

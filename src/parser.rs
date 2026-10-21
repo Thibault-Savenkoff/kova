@@ -514,9 +514,12 @@ impl Parser<'_> {
         let name = self.value_name("what_field")?;
         self.expect(":")?;
         let ty = self.type_()?;
+        // `tricks: List<String>` at the end of a line: the lexer took `>` for an operator
+        // that continues the line, so the line break is only in the source.
+        let line_break = self.src[self.t[self.pos - 1].span.end..self.token().span.start].contains('\n');
         if self.is_sym(",") {
             self.advance();
-        } else if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+        } else if !line_break && !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
             let msg = t!("expected_symbol", symbol = ",", found = self.describe());
             return self.error(self.token().span, msg);
         }

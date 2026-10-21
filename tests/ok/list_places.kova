@@ -12,6 +12,16 @@ struct Dog {
     }
 }
 
+struct Best {
+    items: List<Int>
+    best: Int
+
+    fn pick(var self) {
+        self.best := self.items[0]
+        self.items[0] := self.items[1]
+    }
+}
+
 fn bump(n: var Int) {
     n += 1
 }
@@ -46,6 +56,11 @@ fn main {
     t.0[0] += 1
     t.0.add(0.25)
     print(t)
+    var b: Best := Best { items := [4, 6], best := 0 }
+    b.pick
+    print(b)
+    dogs[0].age := dogs[1].age
+    print(dogs[0].age)
     var names: List<List<String>> := [["x"]]
     names[0][0] := "y"
     names[0].add("w")
@@ -56,4 +71,6 @@ fn main {
 // expect: [Dog { name: "Rexy", age: 2 }, Dog { name: "Bob", age: 9 }]
 // expect: [[1, 20], [33, 4]]
 // expect: ([2.5, 0.25], 2)
+// expect: Best { items: [6, 6], best: 4 }
+// expect: 9
 // expect: [["y", "w"]]

@@ -9,6 +9,7 @@ fn main {
         l := []
         print(take(move l))
         let s: String := w
+        l[0] += "!"
     }
 }
 // error: `l` is walked by a `for` loop: it cannot change or be moved inside it

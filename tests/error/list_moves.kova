@@ -7,6 +7,10 @@ fn clear(l: var List<String>) -> Int {
     return 0
 }
 
+fn idx(s: move String) -> Int {
+    return 0
+}
+
 fn show(s: String, n: Int) {
 }
 
@@ -20,10 +24,15 @@ fn main {
     print(l)
     var m: List<String> := ["m"]
     m[clear(var m)] := "q"
+    var n: List<Int> := [1]
+    let t: String := "t"
+    n[idx(move t)] += 1
+    print(t)
 }
 // error: `words[0]` is an element of a List: it cannot be moved out
 // error: give a copy with `words[0].clone`, or take it out with `words.remove(0)`
 // error: `l` is still read by this expression: it cannot be changed in it
 // error: `l` is still read by this expression: it cannot be moved in it
-// error: `l` was moved (line 19)
+// error: `l` was moved (line 23)
 // error: `m` is still read by this expression: it cannot be changed in it
+// error: `t` was moved (line 29)
