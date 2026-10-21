@@ -219,7 +219,7 @@ lang en {
     mark_unexpected_help := "the parameter is declared `{declared}`"
     mark_not_here := "`{mark}` is only written before the argument of a function that changes or takes it"
     exclusive_twice := "`{name}` cannot be changed twice by the same call to `{method}`"
-    exclusive_move := "`{name}` is taken by `{method}`: the same call cannot use it"
+    read_then_moved := "`{name}` is still read by this expression: it cannot be moved in it"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` is a translation file: `kova run {file}` checks it"

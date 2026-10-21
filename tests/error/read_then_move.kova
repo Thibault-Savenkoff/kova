@@ -1,0 +1,44 @@
+struct Dog {
+    name: String
+
+    fn into_name(move self) -> String {
+        let d: Dog := self
+        return d.name.clone
+    }
+}
+
+fn keep(s: move String) -> Int {
+    return s.length
+}
+
+fn back(s: move String) -> String {
+    return s
+}
+
+fn show(a: String, n: Int) {
+}
+
+fn both(a: String, b: String) {
+}
+
+fn pass(s: move String) -> String
+    ensure result.length = s.length
+{
+    return s
+}
+
+fn main {
+    let a: String := "a"
+    show(a, keep(move a))
+    let b: String := "b"
+    print("{b}{keep(move b)}")
+    var c: String := "c"
+    c += back(move c)
+    let rex: Dog := Dog { name := "Rex" }
+    both(rex.name, rex.into_name)
+}
+// error: `a` is still read by this expression: it cannot be moved in it
+// error: `b` is still read by this expression: it cannot be moved in it
+// error: `c` is still read by this expression: it cannot be moved in it
+// error: `rex` is still read by this expression: it cannot be moved in it
+// error: `s` was moved (line 27)

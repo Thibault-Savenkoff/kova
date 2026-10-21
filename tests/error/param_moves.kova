@@ -37,5 +37,5 @@ fn main {
 // error: `s` was moved (line 26)
 // error: `t` cannot be changed twice by the same call to `twice`
 // error: `t` is changed by `change_read`: it cannot be read by the same call
-// error: `t` is taken by `read_take`: the same call cannot use it
+// error: `t` is still read by this expression: it cannot be moved in it
 // error: `n` cannot be changed twice by the same call to `twice_int`

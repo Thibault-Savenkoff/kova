@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
-use crate::locale::{self, t};
+use crate::locale::t;
 use crate::types::{Info, Type, is_copy, method_name, place_root};
 
 /// A visible name.
@@ -51,6 +51,11 @@ struct Loop {
 
 struct Owner<'a> {
     src: &'a str,
+    /// The `ensure`s of the current function: they run after its body, at each exit.
+    ensures: Vec<&'a Contract>,
+    /// Non-copy variables read by an operation not finished yet (`show(s, …)`): their slots are
+    /// read only when it runs, so moving them meanwhile (`show(s, keep(move s))`) is refused.
+    pending: Vec<usize>,
     info: &'a mut Info,
     scopes: Vec<HashMap<String, Var>>,
     next_id: usize,
@@ -62,7 +67,7 @@ struct Owner<'a> {
     diags: Vec<Diag>,
 }
 
-pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
+pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
     let modes = |g: &Function| (g.receiver, g.params.iter().map(|p| p.mode).collect());
     let mut signatures: HashMap<String, _> = f.functions.iter().map(|g| (g.name.text.clone(), modes(g))).collect();
     let mut functions: Vec<&Function> = f.functions.iter().collect();
@@ -72,7 +77,18 @@ pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
             functions.push(m);
         }
     }
-    let mut o = Owner { src, info, scopes: vec![], next_id: 0, state: None, loops: vec![], signatures, diags: vec![] };
+    let mut o = Owner {
+        src,
+        ensures: vec![],
+        pending: vec![],
+        info,
+        scopes: vec![],
+        next_id: 0,
+        state: None,
+        loops: vec![],
+        signatures,
+        diags: vec![],
+    };
     for func in functions {
         o.scopes = vec![HashMap::new()];
         // `self` is borrowed, except in a `move self` method that owns it.
@@ -86,8 +102,13 @@ pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
         for c in &func.contracts {
             o.contract(c);
         }
+        o.ensures = func.contracts.iter().filter(|c| c.kind == ContractKind::Ensure).collect();
         o.block(&func.body);
+        if o.state.is_some() {
+            o.check_ensures();
+        }
     }
+    o.ensures = vec![];
     for test in &f.tests {
         o.scopes = vec![HashMap::new()];
         o.state = Some(HashMap::new());
@@ -181,6 +202,20 @@ impl Owner<'_> {
     }
 
     fn stmt(&mut self, s: &Stmt) {
+        let mark = self.pending.len();
+        self.stmt_kind(s);
+        self.pending.truncate(mark);
+    }
+
+    /// At an exit: the `ensure`s read the parameters, which must still be there
+    /// (`return s` with `ensure s.length > 0` ❌).
+    fn check_ensures(&mut self) {
+        for c in self.ensures.clone() {
+            self.contract(c);
+        }
+    }
+
+    fn stmt_kind(&mut self, s: &Stmt) {
         match s {
             Stmt::Declare { pattern, value, .. } => {
                 self.give(value);
@@ -192,6 +227,13 @@ impl Owner<'_> {
                 self.assign(target);
             }
             Stmt::Assign { target, op: Some(_), value } => {
+                // `s += …` reads `s` after computing the value.
+                if let Target::Place { name, .. } = target
+                    && !is_copy(&self.info.types[value.id])
+                {
+                    let id = self.lookup(&name.text).id;
+                    self.pending.push(id);
+                }
                 self.borrow(value);
                 if let Target::Place { name, span, .. } = target {
                     self.use_var(&name.text, *span);
@@ -200,6 +242,9 @@ impl Owner<'_> {
             Stmt::Return { value, .. } => {
                 if let Some(e) = value {
                     self.give(e);
+                }
+                if self.state.is_some() {
+                    self.check_ensures();
                 }
                 self.state = None;
             }
@@ -283,7 +328,11 @@ impl Owner<'_> {
             ExprKind::Var(name) => {
                 self.use_var(name, e.span);
                 let v = self.lookup(name);
-                if v.borrowed {
+                if self.pending.contains(&v.id) {
+                    self.diags.push(
+                        Diag::new(e.span, t!("read_then_moved", name = name)).help(t!("borrowed_move_help", name = name)),
+                    );
+                } else if v.borrowed {
                     self.diags.push(
                         Diag::new(e.span, t!("borrowed_move", name = name)).help(t!("borrowed_move_help", name = name)),
                     );
@@ -355,32 +404,44 @@ impl Owner<'_> {
                 if place_root(b, types).is_none_or(|(n, _)| n != root) {
                     continue;
                 }
-                let (key, at, other) = match (ma, mb) {
-                    // Taken first: already "`a` was moved".
-                    (Mode::Read, Mode::Read) | (Mode::Move, _) => continue,
-                    (Mode::Var, Mode::Var) => ("exclusive_twice", b, None),
-                    (Mode::Var, Mode::Move) => ("exclusive_move", b, None),
-                    (Mode::Read, m) | (m, Mode::Read) => {
+                // A `move` is already refused by "`a` was moved" or `read_then_moved` (`pending`).
+                let d = match (ma, mb) {
+                    (Mode::Var, Mode::Var) => Diag::new(b.span, t!("exclusive_twice", name = root, method = callee)),
+                    (Mode::Read, Mode::Var) | (Mode::Var, Mode::Read) => {
                         let read = if ma == Mode::Read { a } else { b };
                         if is_copy(&types[read.id]) {
                             continue;
                         }
-                        (if m == Mode::Var { "exclusive_use" } else { "exclusive_move" }, read, Some(read))
+                        let arg = &self.src[read.span.start..read.span.end];
+                        Diag::new(read.span, t!("exclusive_use", name = root, method = callee))
+                            .help(t!("exclusive_use_help", arg = arg))
                     }
+                    _ => continue,
                 };
-                let mut d = Diag::new(at.span, locale::text(key, &[("name", &root), ("method", &callee)]));
-                if let Some(r) = other {
-                    d = d.help(t!("exclusive_use_help", arg = &self.src[r.span.start..r.span.end]));
-                }
                 self.diags.push(d);
             }
         }
     }
 
-    /// `e` is only read.
+    /// `e` is only read. A place (`s`, `rex.name`) is read by the operation around it, when it
+    /// runs: until then its variable is `pending`. Any other node has used its operands when done.
     fn borrow(&mut self, e: &Expr) {
+        let mark = self.pending.len();
+        self.borrow_kind(e);
+        if place_root(e, &self.info.types).is_none() && !matches!(e.kind, ExprKind::Mark(..)) {
+            self.pending.truncate(mark);
+        }
+    }
+
+    fn borrow_kind(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Var(name) => self.use_var(name, e.span),
+            ExprKind::Var(name) => {
+                self.use_var(name, e.span);
+                if !is_copy(&self.info.types[e.id]) {
+                    let id = self.lookup(name).id;
+                    self.pending.push(id);
+                }
+            }
             ExprKind::Call { name, args } => self.arguments(&name.text, &name.text, None, args),
             ExprKind::Static { ty, name, args } => self.arguments(&method_name(&ty.text, &name.text), &name.text, None, args),
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {

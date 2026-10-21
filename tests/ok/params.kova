@@ -69,6 +69,8 @@ fn main {
     print(keep(move gone))
     print(keep("temporary"))
     print(keep(word.clone))
+    let short: String := "abc"
+    print(short.length + keep(move short))
     let maybe: String := "maybe"
     if count > 100 {
         print(keep(move maybe))
@@ -101,6 +103,7 @@ fn main {
 // expect: 4
 // expect: 9
 // expect: 4
+// expect: 6
 // expect: 6
 // expect: Dog { name: "Rex", age: 7 }
 // expect: Dog { name: "Bob", age: 7 }
