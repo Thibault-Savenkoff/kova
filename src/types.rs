@@ -482,7 +482,6 @@ impl Checker<'_> {
             let Part::Code(e) = p else { continue };
             match self.expr(e) {
                 Type::Unit => self.error(e.span, t!("interp_no_value")),
-                Type::Tuple(_) => self.diags.push(Diag::new(e.span, t!("interp_tuple")).help(t!("interp_tuple_help"))),
                 _ => {}
             }
         }
@@ -1141,9 +1140,6 @@ impl Checker<'_> {
                     Type::Unit => {
                         self.error(a.span, t!("print_no_value", name = name.text))
                     }
-                    Type::Tuple(_) => self.diags.push(
-                        Diag::new(a.span, t!("print_tuple", name = name.text)).help(t!("print_tuple_help")),
-                    ),
                     _ => {}
                 }
             }

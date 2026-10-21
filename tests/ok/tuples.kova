@@ -42,6 +42,10 @@ fn main {
     print(s.2)
     print(s.3)
     print(s.4.1)
+    print(s)
+    let chien: (String, Int) := ("Rex", 3)
+    print(chien)
+    print("got {chien}")
     let (_, quart, _, _, (n, moins_n)): (Int, Float, Bool, Char, (Int, Int)) := statistiques(6)
     print(quart)
     print(n + moins_n)
@@ -68,6 +72,9 @@ fn main {
 // expect: true
 // expect: k
 // expect: -5
+// expect: (10, 1.25, true, 'k', (5, -5))
+// expect: ("Rex", 3)
+// expect: got ("Rex", 3)
 // expect: 1.5
 // expect: 0
 // expect: 101

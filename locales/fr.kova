@@ -152,8 +152,6 @@ lang fr {
     no_arguments := "`{name}` ne prend pas d'argument"
     expression_nothing := "cette expression ne renvoie rien"
     interp_no_value := "cette expression ne donne pas de valeur à mettre dans un texte"
-    interp_tuple := "un tuple ne peut pas encore aller dans un texte"
-    interp_tuple_help := "mets ses éléments un par un : `\{t.0\} \{t.1\}`"
     tuple_compare := "`{op}` ne compare pas encore des tuples"
     tuple_compare_help := "compare les éléments un par un : `t.0 = u.0 && t.1 = u.1`"
     range_only_in_for := "`{op}` ne s'utilise que dans `for`"
@@ -162,8 +160,6 @@ lang fr {
     branch_value_help := "la dernière ligne d'une branche est la valeur du `if`"
     builtin_one_arg := "`{name}` prend exactement 1 argument"
     print_no_value := "`{name}` : cette expression ne donne pas de valeur à afficher"
-    print_tuple := "`{name}` n'affiche pas encore les tuples"
-    print_tuple_help := "affiche les éléments un par un : `print(t.0)`"
     function_unknown := "fonction inconnue `{name}`"
     argument_count := "`{name}` prend {expected} argument(s), {given} donné(s)"
 

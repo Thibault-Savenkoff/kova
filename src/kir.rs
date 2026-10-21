@@ -875,12 +875,12 @@ impl<'a> Translator<'a> {
     }
 
     /// The pieces of a part of a text: a String or a number as `print` shows it, a struct
-    /// as `Dog { name: "Rex", age: 3 }`.
+    /// as `Dog { name: "Rex", age: 3 }`, a tuple as `(1, "a")`.
     fn part_pieces(&mut self, p: &Part, m: &mut Vec<Piece>) {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.info.types[e.id] {
-                ty @ Type::Struct(_) => {
+                ty @ (Type::Struct(_) | Type::Tuple(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     value_pieces(&v, &ty, m);
@@ -1069,7 +1069,7 @@ impl<'a> Translator<'a> {
                 if let n @ ("print" | "write") = name.text.as_str() {
                     let newline = n == "print";
                     match &self.info.types[args[0].id] {
-                        ty @ Type::Struct(_) => {
+                        ty @ (Type::Struct(_) | Type::Tuple(_)) => {
                             let mut pieces = vec![];
                             value_pieces(&vals, ty, &mut pieces);
                             let text = self.join(pieces);
