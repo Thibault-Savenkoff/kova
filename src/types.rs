@@ -157,15 +157,6 @@ pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     }
 }
 
-/// `l[0].age`: a place inside a List element.
-fn through_index(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Index(..) => true,
-        ExprKind::Field(x, _) | ExprKind::Method { receiver: x, .. } => through_index(x),
-        _ => false,
-    }
-}
-
 struct Checker<'a> {
     src: &'a str,
     /// Functions, methods and static functions (`Dog.sound`).
@@ -700,6 +691,17 @@ impl Checker<'_> {
                     ty = match step {
                         Step::Index(i) => self.field(ty, *i, *span),
                         Step::Name(f) => self.named_field(ty, f),
+                        Step::At(i) => {
+                            self.expect(i, &Type::Int);
+                            match ty {
+                                Type::List(elem) => *elem,
+                                Type::Error => Type::Error,
+                                t => {
+                                    self.error(i.span, t!("index_not_list", type = t.text()));
+                                    Type::Error
+                                }
+                            }
+                        }
                     };
                 }
                 ty
@@ -731,10 +733,6 @@ impl Checker<'_> {
             self.error(place.span, temporary);
             return;
         };
-        if through_index(place) {
-            self.error(place.span, t!("element_change_soon"));
-            return;
-        }
         if let Some(kind) = self.lookup(root).map(|v| v.kind) {
             self.may_change(root, span, kind);
         }

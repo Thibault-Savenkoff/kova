@@ -200,7 +200,19 @@ impl Owner<'_> {
         }
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.assign(t)),
-            Target::Place { name, fields, span } if !fields.is_empty() => self.use_var(&name.text, *span),
+            Target::Place { name, fields, span } if !fields.is_empty() => {
+                self.use_var(&name.text, *span);
+                // `l[g(var l)] := 1`: the indexes are computed while `l` is being reached.
+                let mark = self.pending.len();
+                let id = self.lookup(&name.text).id;
+                self.pending.push(id);
+                for step in fields {
+                    if let Step::At(i) = step {
+                        self.borrow(i);
+                    }
+                }
+                self.pending.truncate(mark);
+            }
             Target::Place { name, .. } => {
                 let id = self.lookup(&name.text).id;
                 if let Some(s) = self.state.as_mut() {

@@ -1,0 +1,59 @@
+// Writing through an index: `l[i] := v`, `l[i] += 1`, `dogs[0].birthday`, `bump(var l[2])`, `grid[0][1] := 2`.
+struct Dog {
+    name: String
+    age: Int
+
+    fn birthday(var self) {
+        self.age += 1
+    }
+
+    fn rename(var self, name: move String) {
+        self.name := name
+    }
+}
+
+fn bump(n: var Int) {
+    n += 1
+}
+
+fn shout(s: var String) {
+    s += "!"
+}
+
+fn main {
+    var l: List<Int> := [1, 2, 3]
+    l[0] := 10
+    l[1] += 5
+    bump(var l[2])
+    print(l)
+    var words: List<String> := ["a", "b"]
+    words[0] := "z"
+    words[1] += "+"
+    shout(var words[0])
+    print(words)
+    var dogs: List<Dog> := [Dog { name := "Rex", age := 1 }, Dog { name := "Max", age := 5 }]
+    dogs[0].birthday
+    dogs[1].age := 9
+    dogs[1].name := "Bob"
+    dogs[0].rename("Rexy")
+    print(dogs)
+    var grid: List<List<Int>> := [[1, 2], [3]]
+    grid[0][1] := 20
+    grid[1].add(4)
+    grid[1][0] += 30
+    print(grid)
+    var t: (List<Float>, Int) := ([1.5], 2)
+    t.0[0] += 1
+    t.0.add(0.25)
+    print(t)
+    var names: List<List<String>> := [["x"]]
+    names[0][0] := "y"
+    names[0].add("w")
+    print(names)
+}
+// expect: [10, 7, 4]
+// expect: ["z!", "b+"]
+// expect: [Dog { name: "Rexy", age: 2 }, Dog { name: "Bob", age: 9 }]
+// expect: [[1, 20], [33, 4]]
+// expect: ([2.5, 0.25], 2)
+// expect: [["y", "w"]]

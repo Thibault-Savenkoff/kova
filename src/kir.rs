@@ -105,6 +105,27 @@ fn plain(t: &Type) -> bool {
     heap(t).iter().all(Option::is_none)
 }
 
+/// Where a value lives.
+#[derive(Clone)]
+enum Place {
+    /// In slots of the function: a variable, a field of one.
+    Slots(Slots),
+    /// In element `index` of a List: its slots `start..`, of these machine types.
+    Element { list: Local, index: Local, start: usize, kinds: Vec<Scalar> },
+}
+
+impl Place {
+    /// Member `(start, n)` of the value there (see `slice_of`).
+    fn narrow(self, (start, n): (usize, usize)) -> Place {
+        match self {
+            Place::Slots(s) => Place::Slots(s[start..start + n].to_vec()),
+            Place::Element { list, index, start: first, kinds } => {
+                Place::Element { list, index, start: first + start, kinds: kinds[start..start + n].to_vec() }
+            }
+        }
+    }
+}
+
 /// Functions made by the translation (not written in the program), numbered after the others.
 /// Each one receives a `List` (of the type given) in its slot 0.
 #[derive(Clone, PartialEq)]
@@ -804,26 +825,83 @@ impl<'a> Translator<'a> {
         }
     }
 
-    /// The slots designated by a `:=` target, and their type.
-    fn target_slots(&self, t: &Target) -> (Slots, Type) {
+    /// The places designated by a `:=` target, in order, with their types.
+    fn target_places(&mut self, t: &Target) -> Vec<(Place, Type)> {
         match t {
-            Target::Tuple(ts, _) => {
-                let parts: Vec<(Slots, Type)> = ts.iter().map(|t| self.target_slots(t)).collect();
-                let slots = parts.iter().flat_map(|(s, _)| s.clone()).collect();
-                (slots, Type::Tuple(parts.into_iter().map(|(_, t)| t).collect()))
-            }
+            Target::Tuple(ts, _) => ts.iter().flat_map(|t| self.target_places(t)).collect(),
             Target::Place { name, fields, .. } => {
-                let (mut slots, mut ty) = self.variable(&name.text);
+                let (slots, mut ty) = self.variable(&name.text);
+                let mut place = Place::Slots(slots);
                 for step in fields {
-                    let i = match step {
-                        Step::Index(i) => *i,
-                        Step::Name(n) => field_index(&ty, &n.text),
+                    (place, ty) = match step {
+                        Step::Index(i) => (place.narrow(slice_of(&ty, *i)), element(&ty, *i)),
+                        Step::Name(n) => {
+                            let i = field_index(&ty, &n.text);
+                            (place.narrow(slice_of(&ty, i)), element(&ty, i))
+                        }
+                        Step::At(i) => self.element_place(place, &ty, i),
                     };
-                    let (start, n) = slice_of(&ty, i);
-                    slots = slots[start..start + n].to_vec();
-                    ty = element(&ty, i);
                 }
-                (slots, ty)
+                vec![(place, ty)]
+            }
+        }
+    }
+
+    /// Where the value of `e` lives (`rex.age`, `l[i].name`), and its type. A computed value
+    /// (`make_dog.age`) lives in fresh slots.
+    fn place(&mut self, e: &Expr) -> (Place, Type) {
+        let ty = self.info.types[e.id].clone();
+        match &e.kind {
+            ExprKind::Var(name) => (Place::Slots(self.slots_of(name)), ty),
+            ExprKind::Mark(_, x) => self.place(x),
+            ExprKind::Field(x, i) => {
+                let (p, t) = self.place(x);
+                (p.narrow(slice_of(&t, *i)), ty)
+            }
+            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+                let (p, t) = self.place(receiver);
+                (p.narrow(slice_of(&t, field_index(&t, &name.text))), ty)
+            }
+            ExprKind::Index(x, i) => {
+                let (p, t) = self.place(x);
+                self.element_place(p, &t, i)
+            }
+            _ => (Place::Slots(self.expr(e)), ty),
+        }
+    }
+
+    /// Element `index` of the List at `list` (of type `ty`): the index is checked here.
+    fn element_place(&mut self, list: Place, ty: &Type, index: &Expr) -> (Place, Type) {
+        let Type::List(elem) = ty else { unreachable!("List checked by the type checker") };
+        // The address of the List's block: it does not move when the List grows.
+        let list = self.read(&list)[0];
+        let i = self.expr1(index);
+        let loc = self.loc(index.span);
+        self.emit(Inst::ListCheck(list, i, loc));
+        (Place::Element { list, index: i, start: 0, kinds: scalars(elem) }, (**elem).clone())
+    }
+
+    /// The slots of a place: its own ones, or a copy of an element's (borrowed from the List).
+    fn read(&mut self, p: &Place) -> Slots {
+        match p {
+            Place::Slots(s) => s.clone(),
+            Place::Element { list, index, start, kinds } => {
+                let v: Slots = kinds.iter().map(|&k| self.new_local(k)).collect();
+                for (k, &d) in v.iter().enumerate() {
+                    self.emit(Inst::ListLoad(d, *list, *index, start + k));
+                }
+                v
+            }
+        }
+    }
+
+    fn write(&mut self, p: &Place, v: &[Local]) {
+        match p {
+            Place::Slots(s) => self.copy(s, v),
+            Place::Element { list, index, start, .. } => {
+                for (k, &l) in v.iter().enumerate() {
+                    self.emit(Inst::ListStore(*list, *index, start + k, l));
+                }
             }
         }
     }
@@ -872,32 +950,39 @@ impl<'a> Translator<'a> {
                 self.copy(&slots, &v);
                 self.bind(pattern, &slots, &ty);
             }
-            Stmt::Assign { target, op, value } => {
-                let (slots, ty) = self.target_slots(target);
-                match op {
-                    // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
-                    None => {
-                        let v = self.owned(value);
-                        let read = self.new_slots(&ty);
-                        self.copy(&read, &v);
-                        self.free_value(&slots, &ty);
-                        self.copy(&slots, &read);
-                    }
-                    Some(BinOp::Plus) if ty == Type::String => {
-                        let v = self.expr1(value);
-                        let r = self.int_local();
-                        self.emit(Inst::Str(r, StrOp::Concat, vec![slots[0], v]));
-                        self.emit(Inst::Free(slots[0]));
-                        self.emit(Inst::Copy(slots[0], r));
-                    }
-                    Some(op) => {
-                        let v = self.expr(value);
-                        let loc = self.loc(target.span());
-                        let r = self.operation(kir_op(*op), slots[0], v[0], self.is_float(value), loc);
-                        self.emit(Inst::Copy(slots[0], r));
+            // The value first, then the places (a call in the value may change a List: `l[0] := f(var l)`).
+            Stmt::Assign { target, op, value } => match op {
+                // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
+                None => {
+                    let v = self.owned(value);
+                    let ty = self.info.types[value.id].clone();
+                    let new = self.new_slots(&ty);
+                    self.copy(&new, &v);
+                    let mut at = 0;
+                    for (place, ty) in self.target_places(target) {
+                        let n = scalars(&ty).len();
+                        let old = self.read(&place);
+                        self.free_value(&old, &ty);
+                        self.write(&place, &new[at..at + n]);
+                        at += n;
                     }
                 }
-            }
+                Some(op) => {
+                    let v = self.expr1(value);
+                    let (place, ty) = self.target_places(target).remove(0);
+                    let old = self.read(&place)[0];
+                    let r = if ty == Type::String {
+                        let r = self.int_local();
+                        self.emit(Inst::Str(r, StrOp::Concat, vec![old, v]));
+                        self.emit(Inst::Free(old));
+                        r
+                    } else {
+                        let loc = self.loc(target.span());
+                        self.operation(kir_op(*op), old, v, self.is_float(value), loc)
+                    };
+                    self.write(&place, &[r]);
+                }
+            },
             Stmt::Return { value, .. } => {
                 let v = value.as_ref().map_or(vec![], |e| self.owned(e));
                 self.exit(v);
@@ -1189,7 +1274,7 @@ impl<'a> Translator<'a> {
     /// The values of `callee`'s arguments, added to `vals`. A `move` parameter takes its
     /// argument; a `var` one changes a place: (its slots, slots for what the call gives back)
     /// goes into `places`.
-    fn arguments(&mut self, callee: &str, args: &[Expr], vals: &mut Slots, places: &mut Vec<(Slots, Slots)>) {
+    fn arguments(&mut self, callee: &str, args: &[Expr], vals: &mut Slots, places: &mut Vec<(Place, Slots)>) {
         let modes = self.signatures[callee].1.clone();
         for (a, mode) in args.iter().zip(modes) {
             let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
@@ -1197,10 +1282,11 @@ impl<'a> Translator<'a> {
                 Mode::Read => vals.extend(self.expr(value)),
                 Mode::Move => vals.extend(self.owned(value)),
                 Mode::Var => {
-                    let v = self.expr(value);
-                    let out = self.new_slots(&self.info.types[value.id].clone());
+                    let (p, ty) = self.place(value);
+                    let v = self.read(&p);
+                    let out = self.new_slots(&ty);
                     vals.extend(&v);
-                    places.push((v, out));
+                    places.push((p, out));
                 }
             }
         }
@@ -1209,7 +1295,7 @@ impl<'a> Translator<'a> {
     /// `results := f(vals)`, with the call location for a function that has contracts.
     /// `places`: what `var self` and the `var` parameters change, written back after the call
     /// (copy-in / copy-out, like Swift's `inout`).
-    fn call(&mut self, name: &str, mut vals: Slots, places: Vec<(Slots, Slots)>, span: Span, ty: &Type) -> Slots {
+    fn call(&mut self, name: &str, mut vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
         let num = self.numbers[name];
         if self.sites[num] {
             let l = self.loc(span);
@@ -1220,7 +1306,7 @@ impl<'a> Translator<'a> {
         let outs: Slots = places.iter().flat_map(|(_, out)| out.clone()).collect();
         self.emit(Inst::Call([result.clone(), outs].concat(), num, vals));
         for (place, out) in &places {
-            self.copy(place, out);
+            self.write(place, out);
         }
         self.track(&result, ty);
         result
@@ -1339,13 +1425,9 @@ impl<'a> Translator<'a> {
                 self.track(&[l], &ty);
                 vec![l]
             }
-            ExprKind::Index(x, i) => {
-                let list = self.expr1(x);
-                let index = self.expr1(i);
-                let loc = self.loc(i.span);
-                self.emit(Inst::ListCheck(list, index, loc));
-                let elem = self.info.types[e.id].clone();
-                self.load(list, index, &elem)
+            ExprKind::Index(..) => {
+                let (p, _) = self.place(e);
+                self.read(&p)
             }
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => {
@@ -1353,10 +1435,9 @@ impl<'a> Translator<'a> {
                 self.track(&v, &self.info.types[e.id].clone());
                 v
             }
-            ExprKind::Field(x, i) => {
-                let v = self.expr(x);
-                let (start, n) = slice_of(&self.info.types[x.id], *i);
-                v[start..start + n].to_vec()
+            ExprKind::Field(..) => {
+                let (p, _) = self.place(e);
+                self.read(&p)
             }
             ExprKind::Call { name, args } => {
                 if let n @ ("print" | "write") = name.text.as_str() {
@@ -1454,22 +1535,26 @@ impl<'a> Translator<'a> {
                 vec![self.operation(kir_op(*op), va, vb, self.is_float(a), loc)]
             }
             ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
-                let ty = self.info.types[receiver.id].clone();
-                let v = self.expr(receiver);
-                let (start, n) = slice_of(&ty, field_index(&ty, &name.text));
-                v[start..start + n].to_vec()
+                let (p, _) = self.place(e);
+                self.read(&p)
             }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
                 let ty = self.info.types[receiver.id].clone();
                 // `move self`: the method takes the value; otherwise it borrows it.
-                let v = if r == Mode::Move { self.owned(receiver) } else { self.expr(receiver) };
                 // `var self`: the method gives back the changed value, written into the caller's place.
                 let mut places = vec![];
-                if r == Mode::Var {
-                    places.push((v.clone(), self.new_slots(&ty)));
-                }
-                let mut vals = v;
+                let vals = match r {
+                    Mode::Move => self.owned(receiver),
+                    Mode::Read => self.expr(receiver),
+                    Mode::Var => {
+                        let (p, _) = self.place(receiver);
+                        let v = self.read(&p);
+                        places.push((p, self.new_slots(&ty)));
+                        v
+                    }
+                };
+                let mut vals = vals;
                 self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.info.types[e.id].clone();
                 self.call(&q, vals, places, name.span, &result)

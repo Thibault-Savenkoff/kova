@@ -156,18 +156,20 @@ pub enum Target {
     Tuple(Vec<Target>, Span),
 }
 
-/// One field of a place: `.0` (tuple) or `.age` (struct).
+/// One step into a place: `.0` (tuple), `.age` (struct) or `[i]` (List element).
 pub enum Step {
     Index(usize),
     Name(Name),
+    At(Expr),
 }
 
 impl Step {
-    /// The field as written after the `.`: `0`, `age`.
+    /// The step, to compare two targets: `0`, `age`; each `[i]` is different (its expression's id).
     pub fn text(&self) -> String {
         match self {
             Step::Index(i) => i.to_string(),
             Step::Name(n) => n.text.clone(),
+            Step::At(e) => format!("[{}]", e.id),
         }
     }
 }

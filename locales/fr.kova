@@ -232,7 +232,6 @@ lang fr {
     new_not_generic := "`{type}` n'est pas un type générique : `()` ne suit que `List<T>`"
     index_not_list := "`[ ]` s'applique à une List, pas à `{type}`"
     list_compare := "`{op}` ne compare pas encore les Lists"
-    element_change_soon := "changer un élément de List ainsi n'est pas encore construit : utilise `remove` et `add`"
     index_move := "`{place}` est un élément d'une List : on ne peut pas l'en sortir"
     index_move_help := "donne une copie avec `{place}.clone`, ou sors-le avec `{list}.remove({index})`"
     read_then_changed := "`{name}` est encore lu par cette expression : elle ne peut pas le changer"

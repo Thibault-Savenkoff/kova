@@ -18,9 +18,12 @@ fn main {
     print("{l[0]}{take(move l)}")
     let k: List<String> := l
     print(l)
+    var m: List<String> := ["m"]
+    m[clear(var m)] := "q"
 }
 // error: `words[0]` is an element of a List: it cannot be moved out
 // error: give a copy with `words[0].clone`, or take it out with `words.remove(0)`
 // error: `l` is still read by this expression: it cannot be changed in it
 // error: `l` is still read by this expression: it cannot be moved in it
 // error: `l` was moved (line 19)
+// error: `m` is still read by this expression: it cannot be changed in it

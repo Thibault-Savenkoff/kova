@@ -223,12 +223,13 @@ impl Parser<'_> {
         Ok(Pattern::Tuple(patterns, open.to(close)))
     }
 
-    /// `x`, `t.0`, `rex.age` or `(a, b)` left of `:=`: re-reads the expression already parsed.
+    /// `x`, `t.0`, `rex.age`, `l[i]` or `(a, b)` left of `:=`: re-reads the expression already parsed.
     fn target(&mut self, e: Expr) -> R<Target> {
         let span = e.span;
         let (base, step) = match e.kind {
             ExprKind::Var(name) => return Ok(Target::Place { name: Name { text: name, span }, fields: vec![], span }),
             ExprKind::Field(base, i) => (base, Step::Index(i)),
+            ExprKind::Index(base, i) => (base, Step::At(*i)),
             // `rex.age`: a field (checked by the type checker); `rex.age(1)` is a call.
             ExprKind::Method { receiver, name, args } if args.is_empty() => (receiver, Step::Name(name)),
             ExprKind::Tuple(elems) => {
