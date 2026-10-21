@@ -56,8 +56,9 @@ struct Owner<'a> {
     /// Non-copy variables read by an operation not finished yet (`show(s, …)`): their slots are
     /// read only when it runs, so moving them meanwhile (`show(s, keep(move s))`) is refused.
     pending: Vec<usize>,
-    /// The Lists walked by the open `for` loops (they are `pending` too): for the messages.
-    looped: Vec<usize>,
+    /// The variables frozen by an open `for` loop or `match` (they are `pending` too), with the
+    /// key of the message saying why.
+    looped: Vec<(usize, &'static str)>,
     info: &'a mut Info,
     scopes: Vec<HashMap<String, Var>>,
     next_id: usize,
@@ -166,6 +167,7 @@ impl Owner<'_> {
         match last {
             Stmt::Expr(e) => self.give(e),
             Stmt::If { cond, then, otherwise: Some(otherwise) } => self.if_value(cond, then, otherwise),
+            Stmt::Match(m) => self.match_(m, true),
             _ => unreachable!("block checked by the type checker"),
         }
         self.scopes.pop();
@@ -180,13 +182,46 @@ impl Owner<'_> {
         self.state = join(after_then, self.state.take());
     }
 
-    fn bind(&mut self, p: &Pattern, ty: &Type) {
+    /// `match x { … }` (PLAN 2.7.6). On a place, the arms borrow its fields, and `x` stays frozen
+    /// during them unless it is copied (the KIR copies it first). On a computed value, they own them.
+    fn match_(&mut self, m: &Match, value: bool) {
+        self.borrow(&m.subject);
+        let ty = self.info.types[m.subject.id].clone();
+        let Type::Enum(d) = &ty else { unreachable!("enum checked by the type checker") };
+        let root = place_root(&m.subject, &self.info.types).map(|(r, _)| self.lookup(r).id);
+        let frozen = root.filter(|_| !is_copy(&ty));
+        if let Some(id) = frozen {
+            self.looped.push((id, "match_frozen"));
+        }
+        let start = self.state.clone();
+        let mut end = if m.arms.is_empty() { start.clone() } else { None };
+        for arm in &m.arms {
+            self.state = start.clone();
+            self.scopes.push(HashMap::new());
+            if let Case::Variant { name, binds } = &arm.case {
+                let (_, fields) = d.variant(&name.text).expect("variant checked by the type checker");
+                for (p, (_, t)) in binds.iter().zip(fields) {
+                    self.bind(p, t, root.is_some());
+                }
+            }
+            if value { self.block_value(&arm.body) } else { self.block(&arm.body) }
+            self.scopes.pop();
+            end = join(end, self.state.take());
+        }
+        self.state = end;
+        if frozen.is_some() {
+            self.looped.pop();
+        }
+    }
+
+    /// Declares the names of a pattern; `borrowed`: they borrow their value (a `match` on a place).
+    fn bind(&mut self, p: &Pattern, ty: &Type, borrowed: bool) {
         match (p, ty) {
-            (Pattern::Name(n), _) => self.declare(&n.text, false),
+            (Pattern::Name(n), _) => self.declare(&n.text, borrowed),
             (Pattern::Ignore(_), _) => {}
             (Pattern::Tuple(ps, _), Type::Tuple(ts)) => {
                 for (p, t) in ps.iter().zip(ts) {
-                    self.bind(p, t);
+                    self.bind(p, t, borrowed);
                 }
             }
             (Pattern::Tuple(..), _) => unreachable!("pattern checked by the type checker"),
@@ -258,7 +293,7 @@ impl Owner<'_> {
             Stmt::Declare { pattern, value, .. } => {
                 self.give(value);
                 let ty = self.info.types[value.id].clone();
-                self.bind(pattern, &ty);
+                self.bind(pattern, &ty, false);
             }
             // The value is computed first (the KIR copies it), then the target is reached:
             // `l[0] := l[1]` ✅.
@@ -330,13 +365,14 @@ impl Owner<'_> {
                 self.borrow(list);
                 if let Some((root, _)) = place_root(list, &self.info.types) {
                     let id = self.lookup(root).id;
-                    self.looped.push(id);
+                    self.looped.push((id, "loop_frozen"));
                     self.body_of_loop(body, Some((name, true)));
                     self.looped.pop();
                 } else {
                     self.body_of_loop(body, Some((name, true)));
                 }
             }
+            Stmt::Match(m) => self.match_(m, false),
             Stmt::Expr(e) => self.borrow(e),
         }
     }
@@ -441,7 +477,7 @@ impl Owner<'_> {
     /// `rex.sound`: the method called (`Dog.sound`, `List.add`) and how it receives `rex`.
     fn method(&self, receiver: &Expr, name: &Name) -> Option<(String, Mode)> {
         let q = match &self.info.types[receiver.id] {
-            Type::Struct(d) => method_name(&d.name, &name.text),
+            t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.text(), &name.text),
             Type::List(_) => method_name("List", &name.text),
             _ => return None,
         };
@@ -479,9 +515,13 @@ impl Owner<'_> {
         }
     }
 
-    /// The message for a `pending` variable: `msg`, or "walked by a `for` loop" if it is.
+    /// The message for a `pending` variable: `msg`, or "walked by a `for` loop" (or matched) if it is.
     fn busy(&self, name: &str, msg: String) -> String {
-        if self.looped.contains(&self.lookup(name).id) { t!("loop_frozen", name = name) } else { msg }
+        let id = self.lookup(name).id;
+        match self.looped.iter().rev().find(|(v, _)| *v == id) {
+            Some((_, key)) => crate::locale::text(key, &[("name", &name)]),
+            None => msg,
+        }
     }
 
     fn error_at(&mut self, span: Span, msg: String) {
@@ -569,6 +609,8 @@ impl Owner<'_> {
             // A new tuple or struct owns its elements.
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
+            ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
+            ExprKind::Match(m) => self.match_(m, true),
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
             ExprKind::Interp(parts) => self.parts(parts.iter()),
             ExprKind::Int(_)

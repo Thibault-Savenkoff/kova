@@ -175,7 +175,7 @@ lang en {
     loop_move_help := "use `{name}.clone`, or give `{name}` a new value before the end of the loop"
 
     // ---- Structs (J3) ----
-    struct_unclosed := "missing `\}` at the end of the struct"
+    struct_unclosed := "missing `\}` at the end of `{name}`"
     type_builtin := "`{name}` is a built-in type: choose another name"
     type_exists := "the type `{name}` already exists (line {line})"
     field_exists := "the field `{name}` already exists (line {line})"
@@ -245,6 +245,26 @@ lang en {
     lang_check_missing := "  missing compared with {other}: {keys}"
     lang_check_holes := "  different `\{…\}` from {other}: {keys}"
     lang_check_ok := "  complete compared with {others}"
+
+    // ---- Enums and `match` (J4) ----
+    empty_parens_variant := "a variant without fields is written without `()`: `{name}`"
+    variant_exists := "the variant `{name}` already exists (line {line})"
+    not_enum := "`{type}` is not an enum: it has no variant `{name}`"
+    no_variant := "`{type}` has no variant `{name}`"
+    variants_of := "the variants of `{type}`: {variants}"
+    enum_literal := "`{name}` is an enum: its values are written with a variant"
+    enum_literal_help := "for example `{name}.Variant(…)`"
+    enum_compare := "`{op}` compares only enums made of copied values; `{type}` holds a String or a List"
+    enum_compare_help := "use a `match` to look at its variant"
+    match_needs_enum := "`match` works on an enum, not on `{type}`"
+    match_frozen := "`{name}` is being matched: it cannot change or be moved inside its `match`"
+    matched_immutable := "`{name}` is a field of the value matched: it cannot change"
+    case_twice := "the case `{name}` is already handled (line {line})"
+    case_after_any := "this case is never reached: `_` (line {line}) already handles every other case"
+    case_any_useless := "`_` handles nothing: every variant of `{type}` already has its case"
+    case_fields := "`{name}` has {count} field(s) ({fields}), {given} given"
+    cases_missing := "cases of `{type}` not handled: {cases}"
+    cases_missing_help := "add them, or end with `_ => …` for all the others"
 
     // ---- Editor (`kova lsp`) ----
     not_handled := "not handled yet"

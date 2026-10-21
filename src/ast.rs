@@ -31,12 +31,41 @@ pub struct Header {
 }
 
 /// `struct Dog { name: String, age: Int }`; `copy struct` = copied like an `Int` (PLAN 2.6).
+/// Also `enum Shape { Circle(radius: Float), Square(side: Float) }`: then `variants` is `Some`.
 pub struct Struct {
     pub copy: bool,
     pub name: Name,
     pub fields: Vec<Param>,
+    pub variants: Option<Vec<Variant>>,
     /// Its methods (`fn sound(self)`) and static functions (`fn create(name: String) -> Dog`).
     pub methods: Vec<Function>,
+}
+
+/// `Circle(radius: Float)` in an `enum`; `Red` has no fields.
+pub struct Variant {
+    pub name: Name,
+    pub fields: Vec<Param>,
+}
+
+/// `match shape { Circle(r) => …, Square(s) => … }`, as a statement or giving a value.
+pub struct Match {
+    pub subject: Expr,
+    pub arms: Vec<Arm>,
+    /// The `}`: where missing cases are reported.
+    pub close: Span,
+}
+
+/// `Circle(r) => 3.14 * r * r`: a single statement after `=>` becomes a block.
+pub struct Arm {
+    pub case: Case,
+    pub body: Block,
+}
+
+pub enum Case {
+    /// `Circle(r)`, `Red`: a variant (without its type's name) and what receives its fields.
+    Variant { name: Name, binds: Vec<Pattern> },
+    /// `_`: every other case.
+    Any(Span),
 }
 
 /// How a function receives a value (PLAN 2.7.4): a parameter `x: var T`, or the value
@@ -227,6 +256,7 @@ pub enum Stmt {
     Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
     /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).
     Each { name: Name, list: Expr, body: Block },
+    Match(Match),
     Expr(Expr),
 }
 
@@ -254,6 +284,8 @@ pub enum ExprKind {
     Mark(Mode, Box<Expr>),
     /// `Dog.create("Rex")`: a struct's function without `self`.
     Static { ty: Name, name: Name, args: Vec<Expr> },
+    /// `Shape.Circle(2.0)`, `Light.Red`: a new value of an enum.
+    Variant { ty: Name, name: Name, args: Vec<Expr> },
     /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).
     Method { receiver: Box<Expr>, name: Name, args: Vec<Expr> },
     Unary(UnOp, Box<Expr>),
@@ -274,6 +306,8 @@ pub enum ExprKind {
     InMode { build: bool, negated: bool },
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.
     If { cond: Box<Expr>, then: Block, otherwise: Block },
+    /// `match` giving a value: the last line of the chosen arm.
+    Match(Box<Match>),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

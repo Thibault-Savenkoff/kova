@@ -1,0 +1,9 @@
+enum Light { Red(), Green }
+
+fn main {
+    match Light.Green {
+        Green() => print(1)
+    }
+}
+// error: a variant without fields is written without `()`: `Red`
+// error: a variant without fields is written without `()`: `Green`

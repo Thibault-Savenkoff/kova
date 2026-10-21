@@ -1,0 +1,98 @@
+// Enums: methods, `match self`, mixed Float/String fields, exits from inside a `match`.
+
+enum Item {
+    Priced(label: String, amount: Float),
+    Counted(n: Int),
+    Pair(both: (Int, String)),
+
+    fn describe(self) -> String {
+        return match self {
+            Priced(l, a) => "{l} costs {a}"
+            Counted(n) => "{n} of them"
+            Pair((k, s)) => "{k} and {s}"
+        }
+    }
+
+    fn free -> Item {
+        return Item.Priced("gift", 0.0)
+    }
+}
+
+struct Shop {
+    name: String,
+    best: Item,
+}
+
+fn first_label(items: List<Item>) -> String {
+    for it in items {
+        match it {
+            Priced(l, _) => return l.clone
+            _ => {}
+        }
+    }
+    return "none"
+}
+
+fn make(i: Int) -> Item {
+    if i = 0 { return Item.Counted(7) }
+    return Item.Priced("n{i}", i.to_float / 2.0)
+}
+
+// Leaves from the middle of a `match` on a value it owns.
+fn label_or_quit(i: Int) -> String {
+    match make(i) {
+        Priced(l, _) => return l
+        Counted(n) => {
+            if n > 5 { return "many" }
+        }
+        _ => {}
+    }
+    return "other"
+}
+
+fn main {
+    let items: List<Item> := [Item.Priced("tea", 2.5), Item.Counted(3), Item.Pair((1, "one")), Item.free]
+    print(items)
+    for it in items {
+        print(it.describe)
+    }
+    print(first_label(items))
+    match items[1] {
+        Counted(n) => print(n * 10)
+        _ => print("?")
+    }
+    let shop := Shop { name := "Corner", best := Item.Priced("cake", 4.25) }
+    print(shop)
+    print("best: {shop.best}")
+    print(label_or_quit(0))
+    print(label_or_quit(3))
+    var k: Int := 0
+    while true {
+        let it: Item := make(k)
+        match it {
+            Priced(l, a) => {
+                if a > 1.0 { break }
+                print(l)
+            }
+            Counted(n) => print(n)
+            Pair(_) => continue
+        }
+        k += 1
+    }
+    print(k)
+}
+// expect: [Item.Priced(label: "tea", amount: 2.5), Item.Counted(n: 3), Item.Pair(both: (1, "one")), Item.Priced(label: "gift", amount: 0.0)]
+// expect: tea costs 2.5
+// expect: 3 of them
+// expect: 1 and one
+// expect: gift costs 0.0
+// expect: tea
+// expect: 30
+// expect: Shop { name: "Corner", best: Item.Priced(label: "cake", amount: 4.25) }
+// expect: best: Item.Priced(label: "cake", amount: 4.25)
+// expect: many
+// expect: n3
+// expect: 7
+// expect: n1
+// expect: n2
+// expect: 3

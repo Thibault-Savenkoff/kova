@@ -1,0 +1,26 @@
+enum Message { Say(text: String), Quit }
+
+fn keep(t: move String) {
+}
+
+fn main {
+    var m := Message.Say("hi")
+    match m {
+        Say(t) => keep(move t)
+        Quit => {}
+    }
+    match m {
+        Say(t) => m := Message.Quit
+        Quit => {}
+    }
+    let owned: String := match Message.Say("x") {
+        Say(t) => t
+        Quit => "none"
+    }
+    let borrowed: String := match m {
+        Say(t) => t
+        Quit => "none"
+    }
+}
+// error: `t` is borrowed
+// error: `m` is being matched: it cannot change or be moved inside its `match`

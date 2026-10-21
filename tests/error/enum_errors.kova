@@ -1,0 +1,55 @@
+enum Shape {
+    Circle(radius: Float),
+    Square(side: Float),
+    Circle(r: Float),
+}
+
+enum Named { Pet(name: String), Nobody }
+
+struct Dog { age: Int }
+
+fn main {
+    let a := Shape.Triangle(1.0)
+    let b := Dog.Big
+    let c := Shape { radius := 1.0 }
+    let d := Shape.Circle(true)
+    let n := Named.Nobody
+    print(n = Named.Nobody)
+    match 3 {
+        _ => print(1)
+    }
+    let s := Shape.Square(2.0)
+    match s {
+        Circle(r) => print(r)
+        Circle(r) => print(r)
+        Square(x, y) => print(x)
+        Hexagon => print(0)
+    }
+    match s {
+        Circle(r) => r := 2.0
+    }
+    match s {
+        _ => print(1)
+        Square(x) => print(x)
+    }
+    match s {
+        Circle => print(1)
+        Square => print(2)
+        _ => print(3)
+    }
+}
+// error: the variant `Circle` already exists (line 2)
+// error: `Shape` has no variant `Triangle`
+// error: the variants of `Shape`: `Circle`, `Square`
+// error: `Dog` is not an enum: it has no variant `Big`
+// error: `Shape` is an enum: its values are written with a variant
+// error: different types: `Float` expected, `Bool` given
+// error: `=` compares only enums made of copied values; `Named` holds a String or a List
+// error: `match` works on an enum, not on `Int`
+// error: the case `Circle` is already handled (line 23)
+// error: `Square` has 1 field(s) (`side`), 2 given
+// error: `Shape` has no variant `Hexagon`
+// error: cases of `Shape` not handled: `Square`
+// error: `r` is a field of the value matched: it cannot change
+// error: this case is never reached: `_` (line 32) already handles every other case
+// error: `_` handles nothing: every variant of `Shape` already has its case

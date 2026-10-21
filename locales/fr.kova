@@ -175,7 +175,7 @@ lang fr {
     loop_move_help := "utilise `{name}.clone`, ou redonne une valeur à `{name}` avant la fin de la boucle"
 
     // ---- Structs (J3) ----
-    struct_unclosed := "`\}` manquante à la fin de la struct"
+    struct_unclosed := "`\}` manquante à la fin de `{name}`"
     type_builtin := "`{name}` est un type de base : choisis un autre nom"
     type_exists := "le type `{name}` existe déjà (ligne {line})"
     field_exists := "le champ `{name}` existe déjà (ligne {line})"
@@ -245,6 +245,26 @@ lang fr {
     lang_check_missing := "  manquantes par rapport à {other} : {keys}"
     lang_check_holes := "  `\{…\}` différents de {other} : {keys}"
     lang_check_ok := "  complet par rapport à {others}"
+
+    // ---- Enums et `match` (J4) ----
+    empty_parens_variant := "une variante sans champs s'écrit sans `()` : `{name}`"
+    variant_exists := "la variante `{name}` existe déjà (ligne {line})"
+    not_enum := "`{type}` n'est pas un enum : il n'a pas de variante `{name}`"
+    no_variant := "`{type}` n'a pas de variante `{name}`"
+    variants_of := "les variantes de `{type}` : {variants}"
+    enum_literal := "`{name}` est un enum : ses valeurs s'écrivent avec une variante"
+    enum_literal_help := "par exemple `{name}.Variante(…)`"
+    enum_compare := "`{op}` ne compare que les enums faits de valeurs copiées ; `{type}` contient un String ou une List"
+    enum_compare_help := "utilise un `match` pour regarder sa variante"
+    match_needs_enum := "`match` s'applique à un enum, pas à `{type}`"
+    match_frozen := "`{name}` est examiné par un `match` : il ne peut pas changer ni être déplacé dedans"
+    matched_immutable := "`{name}` est un champ de la valeur examinée : il ne peut pas changer"
+    case_twice := "le cas `{name}` est déjà traité (ligne {line})"
+    case_after_any := "ce cas n'est jamais atteint : `_` (ligne {line}) traite déjà tous les autres"
+    case_any_useless := "`_` ne traite rien : chaque variante de `{type}` a déjà son cas"
+    case_fields := "`{name}` a {count} champ(s) ({fields}), {given} donné(s)"
+    cases_missing := "cas de `{type}` non traités : {cases}"
+    cases_missing_help := "ajoute-les, ou termine par `_ => …` pour tous les autres"
 
     // ---- Editor (`kova lsp`) ----
     not_handled := "pas encore géré"

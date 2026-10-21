@@ -209,7 +209,9 @@ int64_t kova_str_length(int64_t a) {
     return n;
 }
 
+// 0 (no String: a field of another variant of an enum) is copied as 0.
 int64_t kova_str_clone(int64_t a) {
+    if (!a) return 0;
     String *x = (String *)a;
     return kova_str_new(x->bytes, x->length);
 }

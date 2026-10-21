@@ -26,6 +26,8 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// A `struct`: its slots are those of its fields, in order (like a tuple).
     Struct(Rc<StructDef>),
+    /// An `enum`: one slot for the variant's number, then the fields of every variant.
+    Enum(Rc<EnumDef>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
     /// What a function without `->` returns.
@@ -50,6 +52,7 @@ impl Type {
             Type::String => "String".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(d) => d.name.clone(),
+            Type::Enum(d) => d.name.clone(),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
@@ -71,8 +74,27 @@ impl StructDef {
     }
 }
 
-/// The structs of the program, by name.
-pub type Structs = HashMap<String, Rc<StructDef>>;
+#[derive(PartialEq, Debug)]
+pub struct EnumDef {
+    pub name: String,
+    /// Each variant: its name and its fields.
+    pub variants: Vec<(String, Vec<(String, Type)>)>,
+}
+
+impl EnumDef {
+    /// The number and fields of a variant.
+    pub fn variant(&self, name: &str) -> Option<(usize, &[(String, Type)])> {
+        self.variants.iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, f))| (i, &f[..]))
+    }
+
+    /// `Circle`, `Square`: for messages.
+    fn names(&self) -> String {
+        self.variants.iter().map(|(n, _)| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// The structs and enums of the program, by name: a `Type::Struct` or a `Type::Enum`.
+pub type Structs = HashMap<String, Type>;
 
 /// The `header` keys, their allowed values (the first one is the default) and the key of their help.
 pub const SETTINGS: &[(&str, &[&str], &str)] = &[
@@ -106,6 +128,8 @@ pub fn is_copy(t: &Type) -> bool {
         Type::String | Type::List(_) => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
+        // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
+        Type::Enum(d) => d.variants.iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -126,6 +150,8 @@ enum VarKind {
     Counter,
     /// `x` in `for x in l`: borrows an element.
     Element,
+    /// `r` in `Circle(r) =>`: a field of the value matched.
+    Matched,
     /// `self` in a method.
     Receiver(Mode),
 }
@@ -304,7 +330,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) == Some(&i) {
-            let ty = Type::Struct(c.structs[&s.name.text].clone());
+            let ty = c.structs[&s.name.text].clone();
             for m in &s.methods {
                 c.body(m, Some(&ty));
             }
@@ -342,7 +368,7 @@ fn primitive(name: &str) -> Option<Type> {
 pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
         TypeAst::Name(n) => primitive(&n.text)
-            .or_else(|| structs.get(&n.text).map(|d| Type::Struct(d.clone())))
+            .or_else(|| structs.get(&n.text).cloned())
             .unwrap_or(Type::Error),
         TypeAst::Tuple(ts) => {
             let ts: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
@@ -361,6 +387,7 @@ fn always_returns(b: &Block) -> bool {
     b.stmts.iter().any(|s| match s {
         Stmt::Return { .. } => true,
         Stmt::If { then, otherwise: Some(otherwise), .. } => always_returns(then) && always_returns(otherwise),
+        Stmt::Match(m) => !m.arms.is_empty() && m.arms.iter().all(|a| always_returns(&a.body)),
         _ => false,
     })
 }
@@ -402,9 +429,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Builds the `StructDef` of `f.structs[i]` after those of its fields' structs.
-    /// `open`: the structs being built; meeting one again = it would contain itself.
-    fn define(&mut self, f: &File, decls: &HashMap<&str, usize>, i: usize, open: &mut Vec<usize>) -> Option<Rc<StructDef>> {
+    /// Builds the type of `f.structs[i]` (a struct or an enum) after those of its fields' types.
+    /// `open`: the types being built; meeting one again = it would contain itself.
+    fn define(&mut self, f: &File, decls: &HashMap<&str, usize>, i: usize, open: &mut Vec<usize>) -> Option<Type> {
         let s = &f.structs[i];
         if let Some(d) = self.structs.get(&s.name.text) {
             return Some(d.clone());
@@ -413,26 +440,53 @@ impl Checker<'_> {
             return None;
         }
         open.push(i);
+        let ty = match &s.variants {
+            None => {
+                let fields = self.fields(f, decls, &s.fields, open);
+                for (name, ty) in &fields {
+                    if s.copy && !is_copy(ty) && *ty != Type::Error {
+                        let span = s.fields.iter().find(|p| p.name.text == *name).unwrap().name.span;
+                        let msg = t!("copy_struct_field", type = s.name.text, name = name, field_type = ty.text());
+                        self.diags.push(Diag::new(span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
+                    }
+                }
+                Type::Struct(Rc::new(StructDef { name: s.name.text.clone(), fields, copy: s.copy }))
+            }
+            Some(variants) => {
+                let mut seen: HashMap<&str, Span> = HashMap::new();
+                let mut defs = vec![];
+                for v in variants {
+                    let fields = self.fields(f, decls, &v.fields, open);
+                    if let Some(first) = seen.insert(&v.name.text, v.name.span) {
+                        let (line, _) = line_col(self.src, first.start);
+                        self.error(v.name.span, t!("variant_exists", name = v.name.text, line = line));
+                    } else {
+                        defs.push((v.name.text.clone(), fields));
+                    }
+                }
+                Type::Enum(Rc::new(EnumDef { name: s.name.text.clone(), variants: defs }))
+            }
+        };
+        open.pop();
+        self.structs.insert(s.name.text.clone(), ty.clone());
+        Some(ty)
+    }
+
+    /// The fields of a struct or of a variant, each name once.
+    fn fields(&mut self, f: &File, decls: &HashMap<&str, usize>, ps: &[Param], open: &mut Vec<usize>) -> Vec<(String, Type)> {
         let mut fields: Vec<(String, Type)> = vec![];
-        for p in &s.fields {
+        for p in ps {
             let ty = self.field_type(f, decls, &p.ty, open);
-            if let Some(k) = s.fields.iter().position(|q| q.name.text == p.name.text)
-                && s.fields[k].name.span != p.name.span
+            if let Some(k) = ps.iter().position(|q| q.name.text == p.name.text)
+                && ps[k].name.span != p.name.span
             {
-                let (line, _) = line_col(self.src, s.fields[k].name.span.start);
+                let (line, _) = line_col(self.src, ps[k].name.span.start);
                 self.error(p.name.span, t!("field_exists", name = p.name.text, line = line));
                 continue;
             }
-            if s.copy && !is_copy(&ty) && ty != Type::Error {
-                let msg = t!("copy_struct_field", type = s.name.text, name = p.name.text, field_type = ty.text());
-                self.diags.push(Diag::new(p.name.span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
-            }
             fields.push((p.name.text.clone(), ty));
         }
-        open.pop();
-        let d = Rc::new(StructDef { name: s.name.text.clone(), fields, copy: s.copy });
-        self.structs.insert(s.name.text.clone(), d.clone());
-        Some(d)
+        fields
     }
 
     /// The type of a field, building the structs it uses first (see `define`).
@@ -466,7 +520,7 @@ impl Checker<'_> {
                     return Type::Error;
                 };
                 match self.define(f, decls, j, open) {
-                    Some(d) => Type::Struct(d),
+                    Some(t) => t,
                     None => {
                         self.diags.push(
                             Diag::new(n.span, t!("struct_contains_itself", name = n.text))
@@ -595,6 +649,10 @@ impl Checker<'_> {
         }
         if let ExprKind::If { cond, then, otherwise } = &e.kind {
             self.types[e.id] = self.if_value(cond, then, otherwise, Some(expected));
+            return;
+        }
+        if let ExprKind::Match(m) = &e.kind {
+            self.types[e.id] = self.match_(m, Some(expected), true);
             return;
         }
         let t = self.expr(e);
@@ -727,6 +785,7 @@ impl Checker<'_> {
             ),
             VarKind::Counter => self.error(span, t!("counter_immutable", name = n)),
             VarKind::Element => self.error(span, t!("element_immutable", name = n)),
+            VarKind::Matched => self.error(span, t!("matched_immutable", name = n)),
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
             }
@@ -785,11 +844,11 @@ impl Checker<'_> {
     }
 
     /// `rex.sound`: a method of `rex`'s struct.
-    fn method_call(&mut self, receiver: &Expr, d: &StructDef, name: &Name, args: &[Expr], sig: Signature) -> Type {
+    fn method_call(&mut self, receiver: &Expr, owner: &str, name: &Name, args: &[Expr], sig: Signature) -> Type {
         match sig.receiver {
             None => self.diags.push(
-                Diag::new(name.span, t!("static_on_value", name = name.text, type = d.name))
-                    .help(t!("static_on_value_help", name = name.text, type = d.name)),
+                Diag::new(name.span, t!("static_on_value", name = name.text, type = owner))
+                    .help(t!("static_on_value_help", name = name.text, type = owner)),
             ),
             Some(Mode::Var) => self.changes(receiver, t!("var_method_temporary", name = name.text)),
             Some(_) => {}
@@ -839,9 +898,9 @@ impl Checker<'_> {
                 self.error(ty.span, t!("type_unknown", name = ty.text));
                 None
             }
-            Some(d) => match self.functions.get(&method_name(&d.name, &name.text)).cloned() {
+            Some(t) => match self.functions.get(&method_name(&ty.text, &name.text)).cloned() {
                 None => {
-                    self.no_field(&d, name);
+                    self.no_field(&t, name);
                     None
                 }
                 Some(sig) => Some(sig),
@@ -886,7 +945,7 @@ impl Checker<'_> {
             Type::Struct(d) => match d.field(&name.text) {
                 Some((_, t)) => t.clone(),
                 None => {
-                    self.no_field(d, name);
+                    self.no_field(&ty, name);
                     Type::Error
                 }
             },
@@ -898,24 +957,28 @@ impl Checker<'_> {
         }
     }
 
-    /// `rex.color`: no such field or method in `Dog`.
-    fn no_field(&mut self, d: &StructDef, name: &Name) {
-        let prefix = method_name(&d.name, "");
+    /// `rex.color`: no such field or method in `Dog` (a struct or an enum).
+    fn no_field(&mut self, t: &Type, name: &Name) {
+        let owner = t.text();
+        let prefix = method_name(&owner, "");
         let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).collect();
         methods.sort();
-        let fields: Vec<String> =
-            d.fields.iter().map(|(n, _)| n.as_str()).chain(methods).map(|n| format!("`{n}`")).collect();
-        let mut diag = Diag::new(name.span, t!("no_member", type = d.name, name = name.text));
+        let own: Vec<&str> = match t {
+            Type::Struct(d) => d.fields.iter().map(|(n, _)| n.as_str()).collect(),
+            _ => vec![],
+        };
+        let fields: Vec<String> = own.into_iter().chain(methods).map(|n| format!("`{n}`")).collect();
+        let mut diag = Diag::new(name.span, t!("no_member", type = owner, name = name.text));
         if !fields.is_empty() {
-            diag = diag.help(t!("fields_of", type = d.name, fields = fields.join(", ")));
+            diag = diag.help(t!("fields_of", type = owner, fields = fields.join(", ")));
         }
         self.diags.push(diag);
     }
 
     fn stmt(&mut self, s: &Stmt) {
         match s {
-            // `let rex := Dog { ... }`: the type is written on the right (PLAN 2.5).
-            Stmt::Declare { mutable, pattern, ty: None, value } if matches!(value.kind, ExprKind::StructLit { .. }) => {
+            // `let rex := Dog { ... }`, `let c := Shape.Circle(2.0)`: the type is written on the right (PLAN 2.5).
+            Stmt::Declare { mutable, pattern, ty: None, value } if matches!(value.kind, ExprKind::StructLit { .. } | ExprKind::Variant { .. }) => {
                 let ty = self.expr(value);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
@@ -998,12 +1061,15 @@ impl Checker<'_> {
                 self.block(body, vec![(name, elem, VarKind::Element)]);
                 self.loops -= 1;
             }
+            Stmt::Match(m) => {
+                self.match_(m, None, false);
+            }
             Stmt::Expr(e) => {
                 self.expr(e);
                 let call = match &e.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
-                        Type::Struct(d) => self.functions.contains_key(&method_name(&d.name, &name.text)),
+                        t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.text(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
                         _ => false,
                     },
@@ -1122,12 +1188,14 @@ impl Checker<'_> {
             ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
             ExprKind::Call { name, args } => self.call(name, args),
             ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
+            ExprKind::Variant { ty, name, args } => self.variant(ty, name, args),
+            ExprKind::Match(m) => self.match_(m, None, true),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
-                if let Type::Struct(d) = &t
-                    && let Some(sig) = self.functions.get(&method_name(&d.name, &name.text)).cloned()
+                if matches!(t, Type::Struct(_) | Type::Enum(_))
+                    && let Some(sig) = self.functions.get(&method_name(&t.text(), &name.text)).cloned()
                 {
-                    return self.method_call(receiver, d, name, args, sig);
+                    return self.method_call(receiver, &t.text(), name, args, sig);
                 }
                 if let Type::List(elem) = &t
                     && let Some(r) = self.list_method(receiver, elem, name, args)
@@ -1141,15 +1209,19 @@ impl Checker<'_> {
                     return Type::Error;
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
-                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
+                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
                     return t;
                 }
+                if let Type::Enum(_) = &t {
+                    self.no_field(&t, name);
+                    return Type::Error;
+                }
                 if let Type::Struct(d) = &t {
                     let Some((_, ft)) = d.field(&name.text) else {
-                        self.no_field(d, name);
+                        self.no_field(&t, name);
                         return Type::Error;
                     };
                     if !args.is_empty() {
@@ -1207,6 +1279,10 @@ impl Checker<'_> {
                                     .help(t!("struct_compare_help")),
                             ),
                             Type::List(_) => self.error(e.span, t!("list_compare", op = op.text())),
+                            Type::Enum(_) if !is_copy(&ta) => self.diags.push(
+                                Diag::new(e.span, t!("enum_compare", op = op.text(), type = ta.text()))
+                                    .help(t!("enum_compare_help")),
+                            ),
                             _ => {}
                         }
                         self.like(a, ta, b);
@@ -1238,17 +1314,25 @@ impl Checker<'_> {
 
     /// `Dog { name := "Rex", age := 3 }`: every field exactly once, in any order.
     fn struct_literal(&mut self, ty: &Name, fields: &[(Name, Expr)]) -> Type {
-        let Some(d) = self.structs.get(&ty.text).cloned() else {
-            self.error(ty.span, t!("type_unknown", name = ty.text));
-            fields.iter().for_each(|(_, v)| {
-                self.expr(v);
-            });
-            return Type::Error;
+        let d = match self.structs.get(&ty.text).cloned() {
+            Some(Type::Struct(d)) => d,
+            other => {
+                match other {
+                    Some(_) => self.diags.push(
+                        Diag::new(ty.span, t!("enum_literal", name = ty.text)).help(t!("enum_literal_help", name = ty.text)),
+                    ),
+                    None => self.error(ty.span, t!("type_unknown", name = ty.text)),
+                }
+                fields.iter().for_each(|(_, v)| {
+                    self.expr(v);
+                });
+                return Type::Error;
+            }
         };
         let mut given: Vec<&str> = vec![];
         for (name, value) in fields {
             let Some((_, t)) = d.field(&name.text) else {
-                self.no_field(&d, name);
+                self.no_field(&Type::Struct(d.clone()), name);
                 self.expr(value);
                 continue;
             };
@@ -1264,6 +1348,137 @@ impl Checker<'_> {
             self.error(ty.span, t!("fields_missing", type = d.name, fields = missing.join(", ")));
         }
         Type::Struct(d)
+    }
+
+    /// `Shape.Circle(2.0)`: the fields in their declared order.
+    fn variant(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+        let d = match self.structs.get(&ty.text).cloned() {
+            Some(Type::Enum(d)) => Some(d),
+            Some(_) => {
+                self.error(name.span, t!("not_enum", type = ty.text, name = name.text));
+                None
+            }
+            None if primitive(&ty.text).is_some() => {
+                self.error(name.span, t!("not_enum", type = ty.text, name = name.text));
+                None
+            }
+            None => {
+                self.error(ty.span, t!("type_unknown", name = ty.text));
+                None
+            }
+        };
+        let fields = d.as_ref().map(|d| (d.variant(&name.text).map(|(_, f)| f.to_vec()), d));
+        let fields = match fields {
+            Some((Some(fields), _)) => fields,
+            Some((None, d)) => {
+                self.diags.push(
+                    Diag::new(name.span, t!("no_variant", type = d.name, name = name.text))
+                        .help(t!("variants_of", type = d.name, variants = d.names())),
+                );
+                return self.unchecked(args);
+            }
+            None => return self.unchecked(args),
+        };
+        let params: Vec<(Mode, Type)> = fields.into_iter().map(|(_, t)| (Mode::Read, t)).collect();
+        self.arguments(name, args, &params);
+        Type::Enum(d.unwrap())
+    }
+
+    /// Arguments of something unknown: checked alone, for their own errors.
+    fn unchecked(&mut self, args: &[Expr]) -> Type {
+        for a in args {
+            self.expr(a);
+        }
+        Type::Error
+    }
+
+    /// `match x { … }`; `value`: each arm gives a value (of the `expected` type if known).
+    fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
+        let t = self.expr(&m.subject);
+        let d = match &t {
+            Type::Enum(d) => Some(d.clone()),
+            Type::Error => None,
+            t => {
+                self.error(m.subject.span, t!("match_needs_enum", type = t.text()));
+                None
+            }
+        };
+        // Variant number → where its arm is.
+        let mut seen: HashMap<usize, Span> = HashMap::new();
+        let mut any: Option<Span> = None;
+        let mut result: Option<Type> = None;
+        for arm in &m.arms {
+            let span = match &arm.case {
+                Case::Variant { name, .. } => name.span,
+                Case::Any(s) => *s,
+            };
+            if let Some(a) = any {
+                let (line, _) = line_col(self.src, a.start);
+                self.error(span, t!("case_after_any", line = line));
+            }
+            self.scopes.push(HashMap::new());
+            match (&arm.case, &d) {
+                (Case::Any(s), Some(d)) => {
+                    if any.is_none() && seen.len() == d.variants.len() {
+                        self.error(*s, t!("case_any_useless", type = d.name));
+                    }
+                    any = Some(*s);
+                }
+                (Case::Any(s), None) => any = Some(*s),
+                (Case::Variant { name, binds }, d) => {
+                    let fields = match d.as_ref().map(|d| (d.variant(&name.text), d)) {
+                        Some((Some((i, fields)), _)) => {
+                            if let Some(first) = seen.insert(i, name.span) {
+                                let (line, _) = line_col(self.src, first.start);
+                                self.error(name.span, t!("case_twice", name = name.text, line = line));
+                            }
+                            // `Circle =>` without its fields: they are not needed.
+                            if !binds.is_empty() && binds.len() != fields.len() {
+                                let names: Vec<String> = fields.iter().map(|(n, _)| format!("`{n}`")).collect();
+                                self.error(name.span, t!("case_fields", name = name.text, count = fields.len(), fields = names.join(", "), given = binds.len()));
+                            }
+                            fields.iter().map(|(_, t)| t.clone()).collect()
+                        }
+                        Some((None, d)) => {
+                            self.diags.push(
+                                Diag::new(name.span, t!("no_variant", type = d.name, name = name.text))
+                                    .help(t!("variants_of", type = d.name, variants = d.names())),
+                            );
+                            vec![]
+                        }
+                        None => vec![],
+                    };
+                    for (i, p) in binds.iter().enumerate() {
+                        let ty = fields.get(i).cloned().unwrap_or(Type::Error);
+                        self.bind(p, &ty, VarKind::Matched);
+                    }
+                }
+            }
+            if value {
+                let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
+                if result.is_none() {
+                    result = Some(ty);
+                }
+            } else {
+                self.block(&arm.body, vec![]);
+            }
+            self.scopes.pop();
+        }
+        if let Some(d) = &d
+            && any.is_none()
+        {
+            let missing: Vec<String> = (0..d.variants.len())
+                .filter(|i| !seen.contains_key(i))
+                .map(|i| format!("`{}`", d.variants[i].0))
+                .collect();
+            if !missing.is_empty() {
+                self.diags.push(
+                    Diag::new(m.subject.span, t!("cases_missing", type = d.name, cases = missing.join(", ")))
+                        .help(t!("cases_missing_help")),
+                );
+            }
+        }
+        result.unwrap_or(Type::Error)
     }
 
     /// `if c { a } else { b }`; with an `expected` type, each branch is checked against it,
@@ -1298,6 +1513,7 @@ impl Checker<'_> {
                 None => self.expr(e),
             },
             Some(Stmt::If { cond, then, otherwise: Some(otherwise) }) => self.if_value(cond, then, otherwise, expected),
+            Some(Stmt::Match(m)) => self.match_(m, expected, true),
             other => {
                 if let Some(s) = other {
                     self.stmt(s);

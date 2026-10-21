@@ -1,0 +1,94 @@
+// Enums: variants with fields, match (statement and value), display, =, in Lists, clone.
+enum Shape {
+    Circle(radius: Float),
+    Square(side: Float),
+    Dot,
+}
+
+enum Light { Red, Orange, Green }
+
+enum Message {
+    Say(text: String),
+    Move(x: Int, y: Int),
+    Quit,
+}
+
+fn area(s: Shape) -> Float {
+    return match s {
+        Circle(r) => 3.0 * r * r,
+        Square(side) => side * side,
+        Dot => 0.0,
+    }
+}
+
+fn next(l: Light) -> Light {
+    match l {
+        Red => return Light.Green
+        Green => return Light.Orange
+        Orange => return Light.Red
+    }
+}
+
+fn main {
+    let c := Shape.Circle(2.0)
+    print(area(c))
+    print(area(Shape.Square(3.0)))
+    print(c)
+    print(Shape.Dot)
+    var l := Light.Red
+    print(l = Light.Red)
+    l := next(l)
+    print(l)
+    print(l != Light.Green)
+    let msgs: List<Message> := [Message.Say("hi"), Message.Move(1, 2), Message.Quit]
+    print(msgs)
+    for m in msgs {
+        match m {
+            Say(t) => print("say {t}")
+            Move(x, y) => print(x + y)
+            Quit => {
+                print("quit")
+                break
+            }
+        }
+    }
+    let twin: List<Message> := msgs.clone
+    print(twin)
+    let text: String := match Message.Say("owned") {
+        Say(t) => t,
+        _ => "other",
+    }
+    print(text)
+    var i: Int := 0
+    while i < 3 {
+        let m: Message := if i = 1 { Message.Say("loop {i}") } else { Message.Move(i, i) }
+        match m {
+            Say(t) => print(t)
+            _ => print("not say")
+        }
+        i += 1
+    }
+    var st := Light.Red
+    match st {
+        Red => st := Light.Green
+        _ => {}
+    }
+    print(st)
+}
+// expect: 12.0
+// expect: 9.0
+// expect: Shape.Circle(radius: 2.0)
+// expect: Shape.Dot
+// expect: true
+// expect: Light.Green
+// expect: false
+// expect: [Message.Say(text: "hi"), Message.Move(x: 1, y: 2), Message.Quit]
+// expect: say hi
+// expect: 3
+// expect: quit
+// expect: [Message.Say(text: "hi"), Message.Move(x: 1, y: 2), Message.Quit]
+// expect: owned
+// expect: not say
+// expect: loop 1
+// expect: not say
+// expect: Light.Green

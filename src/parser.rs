@@ -284,7 +284,7 @@ impl Parser<'_> {
                     })
                 }
                 Kind::Keyword("fn") => self.function(false).map(|f| functions.push(f)),
-                Kind::Keyword("struct" | "copy") => self.struct_().map(|s| structs.push(s)),
+                Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| structs.push(s)),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
@@ -476,7 +476,9 @@ impl Parser<'_> {
                 return self.error(self.token().span, msg);
             }
         }
-        self.advance(); // struct
+        // An enum lists variants where a struct lists fields.
+        let mut variants = self.is_keyword("enum").then(Vec::new);
+        self.advance(); // struct, enum
         let name = self.type_name()?;
         self.skip_newlines();
         self.expect("{")?;
@@ -485,10 +487,10 @@ impl Parser<'_> {
             self.skip_newlines();
             match self.kind() {
                 Kind::Sym("}") => break,
-                Kind::Eof | Kind::Keyword("test" | "struct" | "copy") => {
+                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum") => {
                     let span = self.token().span;
-                    self.diags.push(Diag::new(span, t!("struct_unclosed")));
-                    return Ok(Struct { copy, name, fields, methods });
+                    self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
+                    return Ok(Struct { copy, name, fields, variants, methods });
                 }
                 // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
                 Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
@@ -499,6 +501,10 @@ impl Parser<'_> {
                     Ok(f) => methods.push(f),
                     Err(()) => self.skip_statement(),
                 },
+                _ if variants.is_some() => match self.variant() {
+                    Ok(v) => variants.as_mut().unwrap().push(v),
+                    Err(()) => self.skip_statement(),
+                },
                 _ => match self.field() {
                     Ok(f) => fields.push(f),
                     Err(()) => self.skip_statement(),
@@ -506,7 +512,41 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy, name, fields, methods })
+        Ok(Struct { copy, name, fields, variants, methods })
+    }
+
+    /// `Circle(radius: Float)` or `Red`, followed by `,`, a line break or the `}`.
+    fn variant(&mut self) -> R<Variant> {
+        let name = self.type_name()?;
+        let mut fields = vec![];
+        if self.is_sym("(") {
+            let open = self.advance().span;
+            while !self.is_sym(")") {
+                let name = self.value_name("what_field")?;
+                self.expect(":")?;
+                fields.push(Param { name, mode: Mode::Read, ty: self.type_()? });
+                if !self.is_sym(")") {
+                    self.expect(",")?;
+                }
+            }
+            let close = self.advance().span;
+            if fields.is_empty() {
+                self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
+            }
+        }
+        self.separator()?;
+        Ok(Variant { name, fields })
+    }
+
+    /// After an item of a list between `{ }` (variant, `match` arm): `,`, a line break or the `}`.
+    fn separator(&mut self) -> R<()> {
+        if self.is_sym(",") {
+            self.advance();
+        } else if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {
+            let msg = t!("expected_symbol", symbol = ",", found = self.describe());
+            return self.error(self.token().span, msg);
+        }
+        Ok(())
     }
 
     /// `name: String`, followed by `,`, a line break or the `}`.
@@ -656,7 +696,7 @@ impl Parser<'_> {
                 break;
             }
             // Forgotten `}` (often: while typing): keep what was read.
-            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test" | "struct")) {
+            if matches!(self.kind(), Kind::Eof | Kind::Keyword("fn" | "test" | "struct" | "enum")) {
                 let span = self.token().span;
                 self.diags.push(Diag::new(span, t!("block_unclosed")));
                 return Ok(Block { open, stmts, close: span });
@@ -720,6 +760,7 @@ impl Parser<'_> {
             Kind::Keyword("break") => Ok(Stmt::Break(self.advance().span)),
             Kind::Keyword("continue") => Ok(Stmt::Continue(self.advance().span)),
             Kind::Keyword("if") => self.if_stmt(),
+            Kind::Keyword("match") => Ok(Stmt::Match(self.match_()?)),
             Kind::Keyword("check") => Ok(Stmt::Check(self.contract(ContractKind::Check)?)),
             Kind::Keyword(k @ ("require" | "ensure")) => {
                 self.diags.push(Diag::new(start, t!("contract_place", keyword = k)).help(t!("contract_place_help")));
@@ -824,6 +865,68 @@ impl Parser<'_> {
         };
         let span = start.to(otherwise.close);
         Ok(self.expr(span, ExprKind::If { cond: Box::new(cond), then, otherwise }))
+    }
+
+    /// `match x { Circle(r) => …, _ => … }`: arms separated by `,` or a line break.
+    fn match_(&mut self) -> R<Match> {
+        self.advance(); // match
+        let subject = self.heading_expr()?;
+        self.skip_newlines();
+        self.expect("{")?;
+        let saved = std::mem::replace(&mut self.no_literal, false);
+        let mut arms = vec![];
+        let close = loop {
+            self.skip_newlines();
+            if self.is_sym("}") {
+                break Ok(self.advance().span);
+            }
+            if self.kind() == Kind::Eof {
+                let span = self.token().span;
+                self.diags.push(Diag::new(span, t!("block_unclosed")));
+                break Err(());
+            }
+            match self.arm() {
+                Ok(a) => arms.push(a),
+                Err(()) => self.skip_statement(),
+            }
+        };
+        self.no_literal = saved;
+        Ok(Match { subject, arms, close: close? })
+    }
+
+    /// `Circle(r) => 3.14 * r * r` or `Red => { … }`.
+    fn arm(&mut self) -> R<Arm> {
+        let case = if self.kind() == Kind::Ident && self.text(self.token().span) == "_" {
+            Case::Any(self.advance().span)
+        } else {
+            let name = self.type_name()?;
+            let mut binds = vec![];
+            if self.is_sym("(") {
+                let open = self.advance().span;
+                while !self.is_sym(")") {
+                    binds.push(self.pattern()?);
+                    if !self.is_sym(")") {
+                        self.expect(",")?;
+                    }
+                }
+                let close = self.advance().span;
+                if binds.is_empty() {
+                    self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
+                }
+            }
+            Case::Variant { name, binds }
+        };
+        self.expect("=>")?;
+        self.skip_newlines();
+        let body = if self.is_sym("{") {
+            self.block()?
+        } else {
+            let open = self.token().span;
+            let s = self.stmt()?;
+            Block { open, stmts: vec![s], close: self.t[self.pos - 1].span }
+        };
+        self.separator()?;
+        Ok(Arm { case, body })
     }
 
     // ---- Expressions ----
@@ -985,6 +1088,10 @@ impl Parser<'_> {
                 return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
             }
             Kind::Keyword("if") => return self.if_expr(),
+            Kind::Keyword("match") => {
+                let m = self.match_()?;
+                return Ok(self.expr(t.span.to(m.close), ExprKind::Match(Box::new(m))));
+            }
             Kind::Type => return self.type_atom(),
             Kind::Sym("(") => {
                 self.advance();
@@ -1042,10 +1149,11 @@ impl Parser<'_> {
             );
             return Err(());
         }
-        // `Dog.create("Rex")`, `Dog.default`.
-        if self.is_sym(".") && self.t[self.pos + 1].kind == Kind::Ident {
+        // `Dog.create("Rex")`, `Dog.default`; an enum's variant: `Shape.Circle(2.0)`, `Light.Red`.
+        if self.is_sym(".") && matches!(self.t[self.pos + 1].kind, Kind::Ident | Kind::Type) {
             self.advance();
-            let name = self.value_name("what_function")?;
+            let variant = self.kind() == Kind::Type;
+            let name = if variant { self.type_name()? } else { self.value_name("what_function")? };
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;
@@ -1053,7 +1161,9 @@ impl Parser<'_> {
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
             }
-            return Ok(self.expr(ty.span.to(end), ExprKind::Static { ty, name, args }));
+            let span = ty.span.to(end);
+            let kind = if variant { ExprKind::Variant { ty, name, args } } else { ExprKind::Static { ty, name, args } };
+            return Ok(self.expr(span, kind));
         }
         if !brace {
             self.diags.push(Diag::new(ty.span, t!("type_not_value", name = ty.text)).help(t!("type_not_value_help", name = ty.text)));
