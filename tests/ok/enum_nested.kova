@@ -1,0 +1,35 @@
+// Enums holding Lists and other enums: display, clone of an inactive List field, no leaks.
+
+enum Shape { Circle(radius: Float), Dot }
+
+enum Wrap {
+    Inner(s: Shape),
+    Bag(xs: List<Int>),
+}
+
+enum Box {
+    Many(items: List<String>),
+    Empty,
+}
+
+fn main {
+    let a := Wrap.Inner(Shape.Circle(1.5))
+    let b := Wrap.Bag([1, 2])
+    print(a)
+    print(b)
+    print("{a} and {b}")
+    let e := Box.Empty
+    let e2: Box := e.clone
+    print(e2)
+    let boxes: List<Box> := [Box.Many(["x", "y"]), Box.Empty, Box.Many([])]
+    let twins: List<Box> := boxes.clone
+    print(twins)
+    let pair: (Wrap, Box) := (Wrap.Inner(Shape.Dot), Box.Many(["z"]))
+    print(pair)
+}
+// expect: Wrap.Inner(s: Shape.Circle(radius: 1.5))
+// expect: Wrap.Bag(xs: [1, 2])
+// expect: Wrap.Inner(s: Shape.Circle(radius: 1.5)) and Wrap.Bag(xs: [1, 2])
+// expect: Box.Empty
+// expect: [Box.Many(items: ["x", "y"]), Box.Empty, Box.Many(items: [])]
+// expect: (Wrap.Inner(s: Shape.Dot), Box.Many(items: ["z"]))

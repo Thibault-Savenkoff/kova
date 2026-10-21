@@ -12,7 +12,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, TypeAst};
+use crate::ast::{Block, Case, ExprKind, File, Function, Pattern, Stmt, TypeAst};
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
 use crate::{analyze, parser, types};
@@ -255,7 +255,9 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
             Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
                 // `let rex := Dog { ... }`: the type is the literal's.
                 let written = match (&value.kind, ty) {
-                    (ExprKind::StructLit { ty: name, .. }, None) => Some(TypeAst::Name(name.clone())),
+                    (ExprKind::StructLit { ty: name, .. } | ExprKind::Variant { ty: name, .. }, None) => {
+                        Some(TypeAst::Name(name.clone()))
+                    }
                     _ => None,
                 };
                 pattern_names(pattern, ty.as_ref().or(written.as_ref()), vars);
@@ -273,6 +275,14 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
             Stmt::Each { name, body, .. } if inside(body) => {
                 vars.push((name.text.clone(), String::new()));
                 visible(body, cursor, vars);
+            }
+            Stmt::Match(m) => {
+                for arm in m.arms.iter().filter(|a| inside(&a.body)) {
+                    if let Case::Variant { binds, .. } = &arm.case {
+                        binds.iter().for_each(|p| pattern_names(p, None, vars));
+                    }
+                    visible(&arm.body, cursor, vars);
+                }
             }
             _ => {}
         }
@@ -390,6 +400,12 @@ mod tests {
         // `}` not typed yet, statement unfinished: `total` is offered anyway.
         let src = "fn main {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
         assert_eq!(names(&complete(src, src.len())), ["total", "i"]);
+    }
+
+    #[test]
+    fn match_completion() {
+        let src = "enum S { C(r: Float), D }\nfn main {\n  let s := S.D\n  match s {\n    C(radius) => \n    D => {}\n  }\n}";
+        assert_eq!(names(&complete(src, src.find("=> ").unwrap() + 3)), ["s", "radius"]);
     }
 
     #[test]

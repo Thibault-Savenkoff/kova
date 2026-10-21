@@ -180,7 +180,7 @@ lang en {
     type_exists := "the type `{name}` already exists (line {line})"
     field_exists := "the field `{name}` already exists (line {line})"
     struct_contains_itself := "`{name}` contains itself: its size would be infinite"
-    struct_contains_itself_help := "a `List<{name}>` field will be able to hold other `{name}` values (J3, `List`)"
+    struct_contains_itself_help := "a type cannot contain itself yet, not even through a `List<{name}>`"
     copy_struct_field := "`{type}` is a `copy struct`: its field `{name}` (`{field_type}`) cannot be copied"
     copy_struct_field_help := "remove `copy`: `{type}` will then be moved, like a `String`"
     no_member := "`{type}` has no field or method `{name}`"

@@ -916,14 +916,18 @@ impl Parser<'_> {
             }
             Case::Variant { name, binds }
         };
-        self.expect("=>")?;
+        let arrow = self.expect("=>")?;
         self.skip_newlines();
         let body = if self.is_sym("{") {
             self.block()?
         } else {
-            let open = self.token().span;
-            let s = self.stmt()?;
-            Block { open, stmts: vec![s], close: self.t[self.pos - 1].span }
+            // From the `=>` to what follows the statement (`,`, line end, `}`): the editor's view of the arm.
+            // An unfinished statement (while typing) keeps the arm, so that its names are offered.
+            let s = self.stmt();
+            if s.is_err() {
+                self.skip_statement();
+            }
+            Block { open: arrow, stmts: s.into_iter().collect(), close: self.token().span }
         };
         self.separator()?;
         Ok(Arm { case, body })

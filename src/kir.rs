@@ -656,6 +656,8 @@ impl<'a> Translator<'a> {
             let (number, test) = (self.constant(i as i64), self.int_local());
             self.emit(Inst::Binary(test, Op::Eq, v[0], number, NOWHERE));
             self.go(End::Branch(test, yes, no), yes);
+            // Before the pieces: showing a List or an enum field makes a temporary text.
+            let mark = self.temps.len();
             let mut pieces = vec![Piece::Text(format!("{}.{name}", d.name))];
             let mut at = variant_slice(d, i).0;
             for (j, (field, t)) in fields.iter().enumerate() {
@@ -667,7 +669,6 @@ impl<'a> Translator<'a> {
             if !fields.is_empty() {
                 pieces.push(Piece::Text(")".into()));
             }
-            let mark = self.temps.len();
             let piece = self.join(pieces);
             self.emit(Inst::Copy(text, piece));
             self.free_temps(mark);
