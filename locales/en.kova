@@ -83,8 +83,7 @@ lang en {
     statement_end_expected := "end of statement expected, found {found}"
     contract_place := "`{keyword}` goes between the function's signature and its `\{`"
     contract_place_help := "inside a function, use `check`"
-    for_range_only := "in J1, `for` only walks over ranges"
-    for_range_help := "example: `for i in 0..10` (without 10) or `for i in 0..=10` (with 10)"
+    for_range_help := "examples: `for i in 0..10` (without 10), `for i in 0..=10` (with 10), `for x in list`"
     if_needs_else := "an `if` that gives a value needs an `else`"
     if_needs_else_help := "add `else \{ ... \}`: the value must exist in every case"
     not_chainable := "`{op}` cannot be chained"
@@ -235,6 +234,9 @@ lang en {
     index_move := "`{place}` is an element of a List: it cannot be moved out"
     index_move_help := "give a copy with `{place}.clone`, or take it out with `{list}.remove({index})`"
     read_then_changed := "`{name}` is still read by this expression: it cannot be changed in it"
+    loop_frozen := "`{name}` is walked by a `for` loop: it cannot change or be moved inside it"
+    element_immutable := "`{name}` borrows an element of the List: it cannot change"
+    for_needs_list := "`for` walks over a range or a List, not over `{type}`"
 
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` is a translation file: `kova run {file}` checks it"

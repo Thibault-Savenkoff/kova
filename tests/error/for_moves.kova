@@ -1,0 +1,15 @@
+fn take(l: move List<String>) -> Int {
+    return l.length
+}
+
+fn main {
+    var l: List<String> := ["a"]
+    for w in l {
+        l.add("b")
+        l := []
+        print(take(move l))
+        let s: String := w
+    }
+}
+// error: `l` is walked by a `for` loop: it cannot change or be moved inside it
+// error: `w` is borrowed here: it cannot be moved

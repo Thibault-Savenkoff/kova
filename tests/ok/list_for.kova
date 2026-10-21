@@ -1,0 +1,74 @@
+// `for x in l`: each element, borrowed; `break`, `continue`, `return` inside; nested loops.
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn total(l: List<Int>) -> Int {
+    var sum: Int := 0
+    for x in l {
+        sum += x
+    }
+    return sum
+}
+
+fn first_long(words: List<String>) -> String {
+    for w in words {
+        if w.length > 2 {
+            return w.clone
+        }
+    }
+    return "none"
+}
+
+fn make -> List<String> {
+    return ["p", "q"]
+}
+
+fn main {
+    print(total([1, 2, 3]))
+    let words: List<String> := ["a", "abc", "de", "fghi"]
+    print(first_long(words))
+    var count: Int := 0
+    for w in words {
+        if w = "de" {
+            break
+        }
+        count += 1
+    }
+    print(count)
+    for w in words {
+        if w.length = 1 {
+            continue
+        }
+        write("{w},")
+    }
+    print("")
+    let dogs: List<Dog> := [Dog { name := "Rex", age := 3 }, Dog { name := "Max", age := 5 }]
+    var ages: Int := 0
+    for d in dogs {
+        ages += d.age
+        print(d.name)
+    }
+    print(ages)
+    for s in make {
+        write(s)
+    }
+    print("")
+    let grid: List<List<Int>> := [[1, 2], [3]]
+    for row in grid {
+        for x in row {
+            write(x)
+        }
+    }
+    print("")
+}
+// expect: 6
+// expect: abc
+// expect: 2
+// expect: abc,de,fghi,
+// expect: Rex
+// expect: Max
+// expect: 8
+// expect: pq
+// expect: 123

@@ -1070,6 +1070,29 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(i, Op::Plus, i, one, loc));
                 self.go(End::Jump(head), exit);
             }
+            Stmt::Each { name, list, body } => {
+                let Type::List(elem) = self.info.types[list.id].clone() else { unreachable!("List checked by the type checker") };
+                // The List cannot change during the loop (`ownership.rs`): its length is read once.
+                let l = self.expr1(list);
+                let n = self.int_local();
+                self.emit(Inst::ListLength(n, l));
+                let i = self.constant(0);
+                let (head, b_body, next, exit) = (self.new_block(), self.new_block(), self.new_block(), self.new_block());
+                self.go(End::Jump(head), head);
+                let more = self.int_local();
+                self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
+                self.go(End::Branch(more, b_body, exit), b_body);
+                let v = self.load(l, i, &elem);
+                // Borrowed from the List: with the borrowed parameters, a table no block frees.
+                self.names[0].insert(name.text.clone(), (v, *elem));
+                self.loops.push((next, exit, self.names.len()));
+                self.block(body);
+                self.loops.pop();
+                self.go(End::Jump(next), next);
+                let one = self.constant(1);
+                self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+                self.go(End::Jump(head), exit);
+            }
             Stmt::Expr(e) => {
                 self.expr(e);
             }

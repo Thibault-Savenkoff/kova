@@ -56,6 +56,8 @@ struct Owner<'a> {
     /// Non-copy variables read by an operation not finished yet (`show(s, …)`): their slots are
     /// read only when it runs, so moving them meanwhile (`show(s, keep(move s))`) is refused.
     pending: Vec<usize>,
+    /// The Lists walked by the open `for` loops (they are `pending` too): for the messages.
+    looped: Vec<usize>,
     info: &'a mut Info,
     scopes: Vec<HashMap<String, Var>>,
     next_id: usize,
@@ -84,6 +86,7 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
         src,
         ensures: vec![],
         pending: vec![],
+        looped: vec![],
         info,
         scopes: vec![],
         next_id: 0,
@@ -196,7 +199,8 @@ impl Owner<'_> {
         if let Target::Place { name, span, .. } = t
             && self.pending.contains(&self.lookup(&name.text).id)
         {
-            self.error_at(*span, t!("read_then_changed", name = name.text));
+            let msg = self.busy(&name.text, t!("read_then_changed", name = name.text));
+            self.error_at(*span, msg);
         }
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.assign(t)),
@@ -297,7 +301,19 @@ impl Owner<'_> {
             Stmt::Loop { counter, start, end, body, .. } => {
                 self.borrow(start);
                 self.borrow(end);
-                self.body_of_loop(body, Some(counter));
+                self.body_of_loop(body, Some((counter, false)));
+            }
+            // The List stays `pending` during the whole loop: frozen (PLAN 2.7.9).
+            Stmt::Each { name, list, body } => {
+                self.borrow(list);
+                if let Some((root, _)) = place_root(list, &self.info.types) {
+                    let id = self.lookup(root).id;
+                    self.looped.push(id);
+                    self.body_of_loop(body, Some((name, true)));
+                    self.looped.pop();
+                } else {
+                    self.body_of_loop(body, Some((name, true)));
+                }
             }
             Stmt::Expr(e) => self.borrow(e),
         }
@@ -305,13 +321,14 @@ impl Owner<'_> {
 
     /// The body runs again and again: a variable from outside the loop that is still moved
     /// at the end of the body (or at a `continue`) would be moved again on the next turn.
-    fn body_of_loop(&mut self, body: &Block, counter: Option<&Name>) {
+    /// `counter`: the loop's variable, and whether it borrows (`for x in l`).
+    fn body_of_loop(&mut self, body: &Block, counter: Option<(&Name, bool)>) {
         let entry = self.state.clone();
         let depth = self.scopes.len();
         self.loops.push(Loop { depth, breaks: None, continues: None });
         self.scopes.push(HashMap::new());
-        if let Some(c) = counter {
-            self.declare(&c.text, false);
+        if let Some((c, borrowed)) = counter {
+            self.declare(&c.text, borrowed);
         }
         self.block(body);
         self.scopes.pop();
@@ -350,9 +367,8 @@ impl Owner<'_> {
                 self.use_var(name, e.span);
                 let v = self.lookup(name);
                 if self.pending.contains(&v.id) {
-                    self.diags.push(
-                        Diag::new(e.span, t!("read_then_moved", name = name)).help(t!("borrowed_move_help", name = name)),
-                    );
+                    let msg = self.busy(name, t!("read_then_moved", name = name));
+                    self.diags.push(Diag::new(e.span, msg).help(t!("borrowed_move_help", name = name)));
                 } else if v.borrowed {
                     self.diags.push(
                         Diag::new(e.span, t!("borrowed_move", name = name)).help(t!("borrowed_move_help", name = name)),
@@ -436,8 +452,14 @@ impl Owner<'_> {
     fn not_pending(&mut self, e: &Expr) {
         let Some((root, span)) = place_root(e, &self.info.types) else { return };
         if self.pending.contains(&self.lookup(root).id) {
-            self.error_at(span, t!("read_then_changed", name = root));
+            let msg = self.busy(root, t!("read_then_changed", name = root));
+            self.error_at(span, msg);
         }
+    }
+
+    /// The message for a `pending` variable: `msg`, or "walked by a `for` loop" if it is.
+    fn busy(&self, name: &str, msg: String) -> String {
+        if self.looped.contains(&self.lookup(name).id) { t!("loop_frozen", name = name) } else { msg }
     }
 
     fn error_at(&mut self, span: Span, msg: String) {

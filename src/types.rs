@@ -124,6 +124,8 @@ enum VarKind {
     Var,
     Param,
     Counter,
+    /// `x` in `for x in l`: borrows an element.
+    Element,
     /// `self` in a method.
     Receiver(Mode),
 }
@@ -720,6 +722,7 @@ impl Checker<'_> {
                 Diag::new(span, t!("param_immutable", name = n)).help(t!("param_immutable_help", name = n)),
             ),
             VarKind::Counter => self.error(span, t!("counter_immutable", name = n)),
+            VarKind::Element => self.error(span, t!("element_immutable", name = n)),
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
             }
@@ -974,6 +977,21 @@ impl Checker<'_> {
                 self.expect(end, &Type::Int);
                 self.loops += 1;
                 self.block(body, vec![(counter, Type::Int, VarKind::Counter)]);
+                self.loops -= 1;
+            }
+            Stmt::Each { name, list, body } => {
+                let elem = match self.expr(list) {
+                    Type::List(elem) => *elem,
+                    Type::Error => Type::Error,
+                    t => {
+                        self.diags.push(
+                            Diag::new(list.span, t!("for_needs_list", type = t.text())).help(t!("for_range_help")),
+                        );
+                        Type::Error
+                    }
+                };
+                self.loops += 1;
+                self.block(body, vec![(name, elem, VarKind::Element)]);
                 self.loops -= 1;
             }
             Stmt::Expr(e) => {

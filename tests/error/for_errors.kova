@@ -1,0 +1,12 @@
+fn main {
+    let l: List<Int> := [1]
+    for x in l {
+        x := 2
+    }
+    let n: Int := 3
+    for y in n {
+    }
+}
+// error: `x` borrows an element of the List: it cannot change
+// error: `for` walks over a range or a List, not over `Int`
+// error: examples: `for i in 0..10` (without 10), `for i in 0..=10` (with 10), `for x in list`

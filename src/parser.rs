@@ -737,15 +737,14 @@ impl Parser<'_> {
                 }
                 self.advance();
                 let e = self.heading_expr()?;
-                let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = e.kind else {
-                    self.diags.push(
-                        Diag::new(e.span, t!("for_range_only")).help(t!("for_range_help")),
-                    );
-                    return Err(());
-                };
                 self.skip_newlines();
                 let body = self.block()?;
-                Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
+                match e.kind {
+                    ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) => {
+                        Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
+                    }
+                    _ => Ok(Stmt::Each { name: counter, list: e, body }),
+                }
             }
             Kind::Keyword("from") => {
                 self.advance();

@@ -225,6 +225,8 @@ pub enum Stmt {
     While { cond: Expr, body: Block },
     /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` / `from i := a to b` (`inclusive` = true).
     Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
+    /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).
+    Each { name: Name, list: Expr, body: Block },
     Expr(Expr),
 }
 
