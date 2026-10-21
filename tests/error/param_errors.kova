@@ -1,0 +1,39 @@
+fn bump(n: var Int) {
+    n += 1
+}
+
+fn keep(s: move String) -> Int {
+    return s.length
+}
+
+fn show(s: String) {
+    print(s)
+}
+
+fn change(s: move String) {
+    s := "y"
+}
+
+fn main {
+    var n: Int := 1
+    let k: Int := 2
+    let s: String := "a"
+    bump(n)
+    bump(var k)
+    bump(var 3)
+    print(keep(s))
+    show(move s)
+    print(keep(var s))
+    print(var n)
+}
+// error: `s` is a parameter: it cannot change
+// error: `bump` may change this argument: write `var n`
+// error: `k` is declared with let
+// error: `bump` changes this argument: it must be a variable
+// error: `keep` takes this argument: write `move s`
+// error: `s` can no longer be used afterwards; to keep it, give a copy: `s.clone`
+// error: `show` does not receive this argument with `move`: remove `move`
+// error: the parameter is declared `String`
+// error: `keep` does not receive this argument with `var`: remove `var`
+// error: the parameter is declared `move String`
+// error: `var` is only written before the argument of a function that changes or takes it

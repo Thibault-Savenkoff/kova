@@ -210,6 +210,17 @@ lang en {
     no_static := "`{type}` has no function `{type}.{name}`"
     exclusive_use_help := "give a copy: `{arg}.clone`"
 
+    // ---- Ownership of parameters (J3) ----
+    var_mark_missing := "`{name}` may change this argument: write `var {arg}`"
+    var_arg_temporary := "`{name}` changes this argument: it must be a variable"
+    move_mark_missing := "`{name}` takes this argument: write `move {arg}`"
+    move_mark_missing_help := "`{arg}` can no longer be used afterwards; to keep it, give a copy: `{arg}.clone`"
+    mark_unexpected := "`{name}` does not receive this argument with `{mark}`: remove `{mark}`"
+    mark_unexpected_help := "the parameter is declared `{declared}`"
+    mark_not_here := "`{mark}` is only written before the argument of a function that changes or takes it"
+    exclusive_twice := "`{name}` cannot be changed twice by the same call to `{method}`"
+    exclusive_move := "`{name}` is taken by `{method}`: the same call cannot use it"
+
     // ---- Translation files (`kova run fr.kova`) ----
     lang_file_not_program := "`{file}` is a translation file: `kova run {file}` checks it"
     lang_check_count := "{file}: {count} key(s)"

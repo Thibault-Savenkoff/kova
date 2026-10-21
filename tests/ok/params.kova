@@ -1,0 +1,109 @@
+// Parameters (PLAN 2.7.4): `x: T` reads, `x: var T` changes the caller's variable,
+// `x: move T` takes it. The marker is repeated at the call: `f(var a)`, `f(move a)`.
+struct Dog {
+    name: String
+    age: Int
+
+    fn rename(var self, name: move String) {
+        self.name := name
+    }
+
+    fn reset(d: var Dog) {
+        d.age := 0
+    }
+}
+
+fn bump(n: var Int) {
+    n += 1
+}
+
+fn shout(s: var String) {
+    s := s + "!"
+}
+
+fn swap(a: var String, b: var String) {
+    let t: String := a.clone
+    a := b.clone
+    b := t
+}
+
+fn keep(s: move String) -> Int {
+    return s.length
+}
+
+fn adopt(d: move Dog) -> Dog {
+    return d
+}
+
+fn grow(d: var Dog, years: Int) {
+    d.age += years
+    bump(var d.age)
+}
+
+fn label(s: move String, n: Int) -> String
+    ensure result.length > s.length
+{
+    return "{s}{n}"
+}
+
+fn main {
+    var count: Int := 1
+    bump(var count)
+    print(count)
+    for i in 0..3 {
+        bump(var count)
+    }
+    print(count)
+
+    var word: String := "hi"
+    shout(var word)
+    shout(var word)
+    print(word)
+
+    var a: String := "left"
+    var b: String := "right"
+    swap(var a, var b)
+    print("{a} {b}")
+
+    let gone: String := "four"
+    print(keep(move gone))
+    print(keep("temporary"))
+    print(keep(word.clone))
+    let maybe: String := "maybe"
+    if count > 100 {
+        print(keep(move maybe))
+    }
+
+    var rex: Dog := Dog { name := "Rex", age := 3 }
+    grow(var rex, 2)
+    print(rex.age)
+    bump(var rex.age)
+    print(rex)
+    rex.rename("Max")
+    let n: String := "Bob"
+    rex.rename(move n)
+    let bob: Dog := adopt(move rex)
+    print(bob)
+    var other: Dog := bob
+    Dog.reset(var other)
+    print(other.age)
+
+    var pair: (String, Int) := ("x", 1)
+    bump(var pair.1)
+    shout(var pair.0)
+    print(pair)
+    print(label("a", count))
+}
+// expect: 2
+// expect: 5
+// expect: hi!!
+// expect: right left
+// expect: 4
+// expect: 9
+// expect: 4
+// expect: 6
+// expect: Dog { name: "Rex", age: 7 }
+// expect: Dog { name: "Bob", age: 7 }
+// expect: 0
+// expect: ("x!", 2)
+// expect: a5

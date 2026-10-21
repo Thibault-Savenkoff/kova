@@ -1,0 +1,41 @@
+fn keep(s: move String) -> Int {
+    return s.length
+}
+
+fn steal(s: var String) -> Int {
+    return keep(move s)
+}
+
+fn twice(a: var String, b: var String) {
+}
+
+fn change_read(a: var String, b: String) {
+}
+
+fn read_take(a: String, b: move String) {
+}
+
+fn change_copy(a: var Int, b: Int) {
+}
+
+fn twice_int(a: var Int, b: var Int) {
+}
+
+fn main {
+    var s: String := "a"
+    print(keep(move s))
+    print(s)
+    var t: String := "t"
+    twice(var t, var t)
+    change_read(var t, t)
+    read_take(t, move t)
+    var n: Int := 1
+    change_copy(var n, n)
+    twice_int(var n, var n)
+}
+// error: `s` is borrowed here: it cannot be moved
+// error: `s` was moved (line 26)
+// error: `t` cannot be changed twice by the same call to `twice`
+// error: `t` is changed by `change_read`: it cannot be read by the same call
+// error: `t` is taken by `read_take`: the same call cannot use it
+// error: `n` cannot be changed twice by the same call to `twice_int`

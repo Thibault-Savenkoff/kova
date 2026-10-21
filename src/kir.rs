@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Receiver, Step, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
 use crate::types::{Info, Type, method_name, type_of};
@@ -356,18 +356,18 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
     // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
     // (a test = a function without parameters, result or contracts).
-    type Source<'f> = (String, Option<(Receiver, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block);
+    type Source<'f> = (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block);
     let mut all: Vec<Source> =
         f.functions.iter().map(|g| (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body)).collect();
-    let mut receivers = HashMap::new();
     for s in &f.structs {
         let ty = Type::Struct(info.structs[&s.name.text].clone());
         for m in &s.methods {
             let name = method_name(&s.name.text, &m.name.text);
-            receivers.insert(name.clone(), m.receiver);
             all.push((name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body));
         }
     }
+    let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> =
+        all.iter().map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect()))).collect();
     let n = all.len();
     all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body)));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
@@ -383,7 +383,7 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 src,
                 info,
                 numbers: &numbers,
-                receivers: &receivers,
+                signatures: &signatures,
                 sites: &sites,
                 contracts,
                 built,
@@ -392,7 +392,8 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
                 result: None,
                 site: None,
                 outs: vec![],
-                names: vec![HashMap::new()],
+                // 0: the borrowed parameters; 1: the owned ones (`move`), freed at each exit.
+                names: vec![HashMap::new(), HashMap::new()],
                 locals: vec![],
                 blocks: vec![],
                 current: 0,
@@ -402,24 +403,12 @@ pub fn translate(f: &ast::File, info: &Info, src: &str, contracts: bool, tests: 
             let mut returns = scalars(&ret);
             if let Some((r, ty)) = receiver {
                 let v = t.new_slots(ty);
-                match r {
-                    // Taken: freed by the method (scope 1 is freed at each exit).
-                    Receiver::Move => t.names.push(HashMap::from([("self".to_string(), (v, ty.clone()))])),
-                    // Changed: given back to the caller at each exit, after the result.
-                    Receiver::Var => {
-                        t.outs = v.clone();
-                        returns.extend(scalars(ty));
-                        t.names[0].insert("self".to_string(), (v, ty.clone()));
-                    }
-                    Receiver::Read => {
-                        t.names[0].insert("self".to_string(), (v, ty.clone()));
-                    }
-                }
+                t.parameter("self", *r, v, ty.clone(), &mut returns);
             }
             for p in params.iter() {
                 let ty = type_of(&p.ty, &info.structs);
                 let v = t.new_slots(&ty);
-                t.names[0].insert(p.name.text.clone(), (v, ty));
+                t.parameter(&p.name.text, p.mode, v, ty, &mut returns);
             }
             t.site = sites[i].then(|| (t.int_local(), t.int_local()));
             let nb_params = t.locals.len();
@@ -450,8 +439,9 @@ struct Translator<'a> {
     src: &'a str,
     info: &'a Info,
     numbers: &'a HashMap<&'a str, usize>,
-    /// How each method receives its value (`None`: a static function), by name (`Dog.sound`).
-    receivers: &'a HashMap<String, Option<Receiver>>,
+    /// How each function receives its value (`None`: not a method) and its parameters,
+    /// by name (`f`, `Dog.sound`).
+    signatures: &'a HashMap<String, (Option<Mode>, Vec<Mode>)>,
     /// By function number: does it receive the call location?
     sites: &'a [bool],
     /// Keep contracts (false with `--boost`).
@@ -464,7 +454,7 @@ struct Translator<'a> {
     result: Option<(Slots, Type)>,
     /// The 2 hidden parameters: line and column of the call (see `sites`).
     site: Option<(Local, Local)>,
-    /// A `var self` method: the slots of `self`, given back after the result at each exit.
+    /// The slots of `var self` and of the `var` parameters, given back after the result at each exit.
     outs: Slots,
     /// Name → its slots and type, one table per open block.
     names: Vec<HashMap<String, (Slots, Type)>>,
@@ -480,6 +470,25 @@ struct Translator<'a> {
 }
 
 impl<'a> Translator<'a> {
+    /// A parameter (or `self`) received in these slots.
+    fn parameter(&mut self, name: &str, mode: Mode, v: Slots, ty: Type, returns: &mut Vec<Scalar>) {
+        match mode {
+            // Taken: freed by the function (scope 1 is freed at each exit).
+            Mode::Move => {
+                self.names[1].insert(name.to_string(), (v, ty));
+            }
+            // Changed: given back to the caller at each exit, after the result.
+            Mode::Var => {
+                self.outs.extend(&v);
+                returns.extend(scalars(&ty));
+                self.names[0].insert(name.to_string(), (v, ty));
+            }
+            Mode::Read => {
+                self.names[0].insert(name.to_string(), (v, ty));
+            }
+        }
+    }
+
     fn new_local(&mut self, s: Scalar) -> Local {
         self.locals.push(s);
         self.locals.len() - 1
@@ -796,12 +805,13 @@ impl<'a> Translator<'a> {
         for l in self.temps.clone().into_iter().rev() {
             self.emit(Inst::Free(l));
         }
-        self.free_scopes(1);
+        // The `ensure`s may read a `move` parameter: checked before it is freed.
         for c in self.ensures.clone() {
             self.result = Some((v.clone(), self.ret.clone()));
             self.check(c, self.site);
         }
         self.result = None;
+        self.free_scopes(1);
         self.finish(End::Return([v, self.outs.clone()].concat()));
     }
 
@@ -937,9 +947,30 @@ impl<'a> Translator<'a> {
         whole.expect("a text has at least one part")
     }
 
+    /// The values of `callee`'s arguments, added to `vals`. A `move` parameter takes its
+    /// argument; a `var` one changes a place: (its slots, slots for what the call gives back)
+    /// goes into `places`.
+    fn arguments(&mut self, callee: &str, args: &[Expr], vals: &mut Slots, places: &mut Vec<(Slots, Slots)>) {
+        let modes = self.signatures[callee].1.clone();
+        for (a, mode) in args.iter().zip(modes) {
+            let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
+            match mode {
+                Mode::Read => vals.extend(self.expr(value)),
+                Mode::Move => vals.extend(self.owned(value)),
+                Mode::Var => {
+                    let v = self.expr(value);
+                    let out = self.new_slots(&self.info.types[value.id].clone());
+                    vals.extend(&v);
+                    places.push((v, out));
+                }
+            }
+        }
+    }
+
     /// `results := f(vals)`, with the call location for a function that has contracts.
-    /// `outs`: slots receiving what a `var self` method gives back.
-    fn call(&mut self, name: &str, mut vals: Slots, outs: &[Local], span: Span, ty: &Type) -> Slots {
+    /// `places`: what `var self` and the `var` parameters change, written back after the call
+    /// (copy-in / copy-out, like Swift's `inout`).
+    fn call(&mut self, name: &str, mut vals: Slots, places: Vec<(Slots, Slots)>, span: Span, ty: &Type) -> Slots {
         let num = self.numbers[name];
         if self.sites[num] {
             let l = self.loc(span);
@@ -947,16 +978,20 @@ impl<'a> Translator<'a> {
             vals.extend([line, col]);
         }
         let result = self.new_slots(ty);
-        self.emit(Inst::Call([&result[..], outs].concat(), num, vals));
+        let outs: Slots = places.iter().flat_map(|(_, out)| out.clone()).collect();
+        self.emit(Inst::Call([result.clone(), outs].concat(), num, vals));
+        for (place, out) in &places {
+            self.copy(place, out);
+        }
         self.track(&result, ty);
         result
     }
 
     /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
-    fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Receiver)> {
+    fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Mode)> {
         let Type::Struct(d) = &self.info.types[receiver.id] else { return None };
         let q = method_name(&d.name, &name.text);
-        let r = (*self.receivers.get(&q)?).expect("static function called on a value: refused by the type checker");
+        let r = self.signatures.get(&q)?.0.expect("static function called on a value: refused by the type checker");
         Some((q, r))
     }
 
@@ -1050,6 +1085,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
+            ExprKind::Mark(_, x) => self.expr(x),
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => {
                 let v: Slots = elems.iter().flat_map(|x| self.owned(x)).collect();
@@ -1062,11 +1098,8 @@ impl<'a> Translator<'a> {
                 v[start..start + n].to_vec()
             }
             ExprKind::Call { name, args } => {
-                let mut vals = vec![];
-                for a in args {
-                    vals.extend(self.expr(a));
-                }
                 if let n @ ("print" | "write") = name.text.as_str() {
+                    let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.info.types[args[0].id] {
                         ty @ (Type::Struct(_) | Type::Tuple(_)) => {
@@ -1080,16 +1113,17 @@ impl<'a> Translator<'a> {
                     }
                     return vec![];
                 }
+                let (mut vals, mut places) = (vec![], vec![]);
+                self.arguments(&name.text, args, &mut vals, &mut places);
                 let ty = self.info.types[e.id].clone();
-                self.call(&name.text, vals, &[], name.span, &ty)
+                self.call(&name.text, vals, places, name.span, &ty)
             }
             ExprKind::Static { ty, name, args } => {
-                let mut vals = vec![];
-                for a in args {
-                    vals.extend(self.expr(a));
-                }
+                let q = method_name(&ty.text, &name.text);
+                let (mut vals, mut places) = (vec![], vec![]);
+                self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.info.types[e.id].clone();
-                self.call(&method_name(&ty.text, &name.text), vals, &[], name.span, &result)
+                self.call(&q, vals, places, name.span, &result)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // A number written with `-` in front is a constant (handles `-9223372036854775808`).
@@ -1167,17 +1201,16 @@ impl<'a> Translator<'a> {
                 let (q, r) = self.method(receiver, name).unwrap();
                 let ty = self.info.types[receiver.id].clone();
                 // `move self`: the method takes the value; otherwise it borrows it.
-                let v = if r == Receiver::Move { self.owned(receiver) } else { self.expr(receiver) };
-                let mut vals = v.clone();
-                for a in args {
-                    vals.extend(self.expr(a));
-                }
+                let v = if r == Mode::Move { self.owned(receiver) } else { self.expr(receiver) };
                 // `var self`: the method gives back the changed value, written into the caller's place.
-                let outs = if r == Receiver::Var { self.new_slots(&ty) } else { vec![] };
+                let mut places = vec![];
+                if r == Mode::Var {
+                    places.push((v.clone(), self.new_slots(&ty)));
+                }
+                let mut vals = v;
+                self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.info.types[e.id].clone();
-                let result = self.call(&q, vals, &outs, name.span, &result);
-                self.copy(&v, &outs);
-                result
+                self.call(&q, vals, places, name.span, &result)
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone" && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Tuple(_)) =>
@@ -1237,7 +1270,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));
         }
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => names_in(x, names),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => names_in(x, names),
         ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, v)| names_in(v, names)),
         ExprKind::If { cond, .. } => names_in(cond, names),
         ExprKind::Interp(parts) => parts.iter().for_each(|p| {

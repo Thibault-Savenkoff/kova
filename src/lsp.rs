@@ -147,7 +147,7 @@ fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
     for (i, p) in f.params.iter().enumerate() {
         text += if i > 0 || f.receiver.is_some() { ", " } else { "(" };
         let start = text.encode_utf16().count() as u32;
-        text += &format!("{}: {}", p.name.text, p.ty.text());
+        text += &format!("{}: {}", p.name.text, p.ty_text());
         params.push([start, text.encode_utf16().count() as u32]);
     }
     if !f.params.is_empty() || f.receiver.is_some() {
@@ -198,7 +198,7 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
     let methods = file.structs.iter().flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| &s.name.text), &m.params[..], &m.body)));
     let test_bodies = file.tests.iter().map(|t| (None, &[][..], &t.body));
     if let Some((owner, params, body)) = bodies.chain(methods).chain(test_bodies).find(|(_, _, b)| inside(b)) {
-        let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.name.text.clone(), p.ty.text())).collect();
+        let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.name.text.clone(), p.ty_text())).collect();
         if let Some(ty) = owner {
             vars.insert(0, ("self".into(), ty.clone()));
         }

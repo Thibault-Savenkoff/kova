@@ -122,7 +122,7 @@ enum VarKind {
     Param,
     Counter,
     /// `self` in a method.
-    Receiver(Receiver),
+    Receiver(Mode),
 }
 
 struct Variable {
@@ -133,8 +133,8 @@ struct Variable {
 
 #[derive(Clone)]
 struct Signature {
-    receiver: Option<Receiver>,
-    params: Vec<Type>,
+    receiver: Option<Mode>,
+    params: Vec<(Mode, Type)>,
     ret: Type,
 }
 
@@ -226,7 +226,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         for t in func.params.iter().map(|p| &p.ty).chain(&func.ret) {
             c.report_unknown(t);
         }
-        let params = func.params.iter().map(|p| type_of(&p.ty, &c.structs)).collect();
+        let params = func.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
         let ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
         let name = func.name.text.as_str();
         if BUILTINS.contains(&name) {
@@ -246,7 +246,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
                 c.report_unknown(t);
             }
-            let params = m.params.iter().map(|p| type_of(&p.ty, &c.structs)).collect();
+            let params = m.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
             let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
             let name = m.name.text.as_str();
             // Uniform access: `rex.name` must mean a single thing.
@@ -372,7 +372,9 @@ impl Checker<'_> {
                 self.error(p.name.span, t!("param_exists", name = p.name.text));
             }
             self.function_name(&p.name);
-            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &self.structs), kind: VarKind::Param, span: p.name.span });
+            // `x: var T` changes like a `var`; `x: move T` cannot change, like `move self`.
+            let kind = if p.mode == Mode::Var { VarKind::Var } else { VarKind::Param };
+            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &self.structs), kind, span: p.name.span });
         }
         self.scopes = vec![params];
         // Contracts only see the parameters (and `result` in an `ensure`).
@@ -480,9 +482,8 @@ impl Checker<'_> {
     fn parts(&mut self, parts: &[Part]) {
         for p in parts {
             let Part::Code(e) = p else { continue };
-            match self.expr(e) {
-                Type::Unit => self.error(e.span, t!("interp_no_value")),
-                _ => {}
+            if self.expr(e) == Type::Unit {
+                self.error(e.span, t!("interp_no_value"));
             }
         }
     }
@@ -660,7 +661,7 @@ impl Checker<'_> {
     /// `n` (a variable of this kind) is assigned or given to a `var self` method.
     fn may_change(&mut self, n: &str, span: Span, kind: VarKind) {
         match kind {
-            VarKind::Var | VarKind::Receiver(Receiver::Var) => {}
+            VarKind::Var | VarKind::Receiver(Mode::Var) => {}
             VarKind::Let => self.diags.push(
                 Diag::new(span, t!("declared_with_let", name = n)).help(t!("declared_with_let_help", name = n)),
             ),
@@ -674,10 +675,11 @@ impl Checker<'_> {
         }
     }
 
-    /// `rex.rename(...)` with `var self`: `rex` must be a variable that may change.
-    fn changes(&mut self, receiver: &Expr, method: &Name) {
-        let Some((root, span)) = place_root(receiver, &self.types) else {
-            self.error(receiver.span, t!("var_method_temporary", name = method.text));
+    /// `rex.rename(...)` with `var self`, or `f(var a)`: the place must be a variable that may
+    /// change (or one of its fields). `temporary`: the error for a computed value.
+    fn changes(&mut self, place: &Expr, temporary: String) {
+        let Some((root, span)) = place_root(place, &self.types) else {
+            self.error(place.span, temporary);
             return;
         };
         if let Some(kind) = self.lookup(root).map(|v| v.kind) {
@@ -685,18 +687,41 @@ impl Checker<'_> {
         }
     }
 
-    /// The arguments of a call, checked against the parameters' types.
-    fn arguments(&mut self, name: &Name, args: &[Expr], params: &[Type]) {
+    /// The arguments of a call, checked against the parameters: their types, and the markers
+    /// of rule 2.7.4 (`var a` for `x: var T`, `move a` for `x: move T`).
+    fn arguments(&mut self, name: &Name, args: &[Expr], params: &[(Mode, Type)]) {
         if params.len() != args.len() {
             let msg = t!("argument_count", name = name.text, expected = params.len(), given = args.len());
             self.error(name.span, msg);
         }
         for (i, a) in args.iter().enumerate() {
-            match params.get(i) {
-                Some(t) => self.expect(a, t),
-                None => {
-                    self.expr(a);
+            let Some((mode, t)) = params.get(i) else {
+                self.expr(a);
+                continue;
+            };
+            let (mark, value) = match &a.kind {
+                ExprKind::Mark(m, x) => (*m, &**x),
+                _ => (Mode::Read, a),
+            };
+            self.expect(value, t);
+            self.types[a.id] = self.types[value.id].clone();
+            let arg = &self.src[value.span.start..value.span.end];
+            match (mode, mark) {
+                (Mode::Var, Mode::Var) => self.changes(value, t!("var_arg_temporary", name = name.text)),
+                (Mode::Var, _) => self.error(a.span, t!("var_mark_missing", name = name.text, arg = arg)),
+                (_, Mode::Var) | (Mode::Read, Mode::Move) => {
+                    let declared = format!("{} {}", mode.word(), t.text());
+                    self.diags.push(
+                        Diag::new(a.span, t!("mark_unexpected", name = name.text, mark = mark.word()))
+                            .help(t!("mark_unexpected_help", declared = declared.trim_start())),
+                    );
                 }
+                // A computed value (`keep(make_name)`) is given without a marker.
+                (Mode::Move, Mode::Read) if !is_copy(t) && place_root(value, &self.types).is_some() => self.diags.push(
+                    Diag::new(a.span, t!("move_mark_missing", name = name.text, arg = arg))
+                        .help(t!("move_mark_missing_help", arg = arg)),
+                ),
+                _ => {}
             }
         }
     }
@@ -708,7 +733,7 @@ impl Checker<'_> {
                 Diag::new(name.span, t!("static_on_value", name = name.text, type = d.name))
                     .help(t!("static_on_value_help", name = name.text, type = d.name)),
             ),
-            Some(Receiver::Var) => self.changes(receiver, name),
+            Some(Mode::Var) => self.changes(receiver, t!("var_method_temporary", name = name.text)),
             Some(_) => {}
         }
         self.arguments(name, args, &sig.params);
@@ -897,6 +922,11 @@ impl Checker<'_> {
 
     fn expr_kind(&mut self, e: &Expr) -> Type {
         match &e.kind {
+            // Allowed only as an argument (`arguments`).
+            ExprKind::Mark(m, x) => {
+                self.error(e.span, t!("mark_not_here", mark = m.word()));
+                self.expr(x)
+            }
             ExprKind::Int(v) => {
                 if *v > i64::MAX as u64 {
                     self.error(e.span, t!("int_too_big"));
@@ -1136,11 +1166,8 @@ impl Checker<'_> {
                 self.error(name.span, t!("builtin_one_arg", name = name.text));
             }
             for a in args {
-                match self.expr(a) {
-                    Type::Unit => {
-                        self.error(a.span, t!("print_no_value", name = name.text))
-                    }
-                    _ => {}
+                if self.expr(a) == Type::Unit {
+                    self.error(a.span, t!("print_no_value", name = name.text));
                 }
             }
             return Type::Unit;

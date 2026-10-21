@@ -506,7 +506,7 @@ impl Parser<'_> {
             let msg = t!("expected_symbol", symbol = ",", found = self.describe());
             return self.error(self.token().span, msg);
         }
-        Ok(Param { name, ty })
+        Ok(Param { name, mode: Mode::Read, ty })
     }
 
     fn test(&mut self) -> R<Test> {
@@ -544,7 +544,8 @@ impl Parser<'_> {
         while !self.is_sym(")") {
             let name = self.value_name("what_parameter")?;
             self.expect(":")?;
-            params.push(Param { name, ty: self.type_()? });
+            let mode = self.mode();
+            params.push(Param { name, mode, ty: self.type_()? });
             if !self.is_sym(")") {
                 self.expect(",")?;
             }
@@ -554,12 +555,12 @@ impl Parser<'_> {
     }
 
     /// `self`, `var self` or `move self` at the start of the parameters.
-    fn receiver(&mut self, in_struct: bool) -> R<Option<Receiver>> {
+    fn receiver(&mut self, in_struct: bool) -> R<Option<Mode>> {
         let next_is_self = matches!(self.t[self.pos + 1].kind, Kind::Keyword("self"));
         let (r, n) = match self.kind() {
-            Kind::Keyword("self") => (Receiver::Read, 1),
-            Kind::Keyword("var") if next_is_self => (Receiver::Var, 2),
-            Kind::Keyword("move") if next_is_self => (Receiver::Move, 2),
+            Kind::Keyword("self") => (Mode::Read, 1),
+            Kind::Keyword("var") if next_is_self => (Mode::Var, 2),
+            Kind::Keyword("move") if next_is_self => (Mode::Move, 2),
             _ => return Ok(None),
         };
         let span = self.token().span.to(self.t[self.pos + n - 1].span);
@@ -570,8 +571,19 @@ impl Parser<'_> {
         Ok(Some(r))
     }
 
+    /// `var` or `move` before a parameter's type or an argument; `Read` if neither.
+    fn mode(&mut self) -> Mode {
+        let mode = match self.kind() {
+            Kind::Keyword("var") => Mode::Var,
+            Kind::Keyword("move") => Mode::Move,
+            _ => return Mode::Read,
+        };
+        self.advance();
+        mode
+    }
+
     /// After the parameters: `-> Type`, the contracts, the body.
-    fn function_rest(&mut self, name: Name, receiver: Option<Receiver>, params: Vec<Param>) -> R<Function> {
+    fn function_rest(&mut self, name: Name, receiver: Option<Mode>, params: Vec<Param>) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
             Some(self.type_()?)
@@ -872,7 +884,15 @@ impl Parser<'_> {
     fn arguments(&mut self) -> R<Vec<Expr>> {
         let mut args = vec![];
         while !self.is_sym(")") {
-            args.push(self.inner_expr()?);
+            let start = self.token().span;
+            let arg = match self.mode() {
+                Mode::Read => self.inner_expr()?,
+                mode => {
+                    let value = self.inner_expr()?;
+                    self.expr(start.to(value.span), ExprKind::Mark(mode, Box::new(value)))
+                }
+            };
+            args.push(arg);
             if !self.is_sym(")") {
                 self.expect(",")?;
             }

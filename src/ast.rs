@@ -39,23 +39,33 @@ pub struct Struct {
     pub methods: Vec<Function>,
 }
 
-/// How a method receives the value it is called on (PLAN 2.6).
+/// How a function receives a value (PLAN 2.7.4): a parameter `x: var T`, or the value
+/// a method is called on (`var self`).
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Receiver {
-    /// `self`: read only.
+pub enum Mode {
+    /// `self`, `x: T`: read only.
     Read,
-    /// `var self`: may change it (the caller's variable is updated).
+    /// `var self`, `x: var T`: may change it (the caller's variable is updated).
     Var,
-    /// `move self`: takes it (the caller's variable can no longer be used).
+    /// `move self`, `x: move T`: takes it (the caller's variable can no longer be used).
     Move,
 }
 
-impl Receiver {
+impl Mode {
+    /// As written before a type or an argument: ``, `var`, `move`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Mode::Read => "",
+            Mode::Var => "var",
+            Mode::Move => "move",
+        }
+    }
+    /// As written for a method: `self`, `var self`, `move self`.
     pub fn text(self) -> &'static str {
         match self {
-            Receiver::Read => "self",
-            Receiver::Var => "var self",
-            Receiver::Move => "move self",
+            Mode::Read => "self",
+            Mode::Var => "var self",
+            Mode::Move => "move self",
         }
     }
 }
@@ -63,7 +73,7 @@ impl Receiver {
 pub struct Function {
     pub name: Name,
     /// `Some` for a method with `self`; `None` for a function or a static function.
-    pub receiver: Option<Receiver>,
+    pub receiver: Option<Mode>,
     pub params: Vec<Param>,
     pub ret: Option<TypeAst>,
     pub contracts: Vec<Contract>,
@@ -174,9 +184,18 @@ pub struct Name {
     pub span: Span,
 }
 
+/// A parameter `x: var T` or a struct's field (always `Read`).
 pub struct Param {
     pub name: Name,
+    pub mode: Mode,
     pub ty: TypeAst,
+}
+
+impl Param {
+    /// The type as declared: `String`, `var String`.
+    pub fn ty_text(&self) -> String {
+        format!("{} {}", self.mode.word(), self.ty.text()).trim_start().to_string()
+    }
 }
 
 pub struct Block {
@@ -224,6 +243,8 @@ pub enum ExprKind {
     /// `result` in an `ensure`.
     Result,
     Call { name: Name, args: Vec<Expr> },
+    /// `var a` or `move a` in a call's arguments (never `Read`).
+    Mark(Mode, Box<Expr>),
     /// `Dog.create("Rex")`: a struct's function without `self`.
     Static { ty: Name, name: Name, args: Vec<Expr> },
     /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).

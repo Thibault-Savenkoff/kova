@@ -5,8 +5,8 @@
 //   print(a)                // error: `a` was moved (line 2)
 //
 // A value is moved where it is *given*: `let`, `:=`, `return`, a tuple element or struct field, the value
-// of an `if` branch. Everywhere else (a call argument, an operand, `print`) it is only
-// borrowed. Copyable types (`Int`, `(Int, Bool)`…) are copied instead (`types::is_copy`).
+// of an `if` branch, a `move` parameter. Everywhere else (a call argument, an operand, `print`) it
+// is only borrowed. Copyable types (`Int`, `(Int, Bool)`…) are copied instead (`types::is_copy`).
 //
 // This pass is the only one that decides: it marks each move in `Info::moves`, and the
 // KIR empties exactly those variables (so the end of their block frees nothing twice).
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
-use crate::locale::t;
+use crate::locale::{self, t};
 use crate::types::{Info, Type, is_copy, method_name, place_root};
 
 /// A visible name.
@@ -56,29 +56,31 @@ struct Owner<'a> {
     next_id: usize,
     state: State,
     loops: Vec<Loop>,
-    /// How each method receives its value (`None`: a static function), by name (`Dog.sound`).
-    receivers: HashMap<String, Option<Receiver>>,
+    /// How each function receives its value (`None`: not a method) and its parameters,
+    /// by name (`f`, `Dog.sound`).
+    signatures: HashMap<String, (Option<Mode>, Vec<Mode>)>,
     diags: Vec<Diag>,
 }
 
 pub fn check(f: &File, info: &mut Info, src: &str) -> Vec<Diag> {
-    let mut receivers = HashMap::new();
+    let modes = |g: &Function| (g.receiver, g.params.iter().map(|p| p.mode).collect());
+    let mut signatures: HashMap<String, _> = f.functions.iter().map(|g| (g.name.text.clone(), modes(g))).collect();
     let mut functions: Vec<&Function> = f.functions.iter().collect();
     for s in &f.structs {
         for m in &s.methods {
-            receivers.insert(method_name(&s.name.text, &m.name.text), m.receiver);
+            signatures.insert(method_name(&s.name.text, &m.name.text), modes(m));
             functions.push(m);
         }
     }
-    let mut o = Owner { src, info, scopes: vec![], next_id: 0, state: None, loops: vec![], receivers, diags: vec![] };
+    let mut o = Owner { src, info, scopes: vec![], next_id: 0, state: None, loops: vec![], signatures, diags: vec![] };
     for func in functions {
         o.scopes = vec![HashMap::new()];
         // `self` is borrowed, except in a `move self` method that owns it.
         if let Some(r) = func.receiver {
-            o.declare("self", r != Receiver::Move);
+            o.declare("self", r != Mode::Move);
         }
         for p in &func.params {
-            o.declare(&p.name.text, true);
+            o.declare(&p.name.text, p.mode != Mode::Move);
         }
         o.state = Some(HashMap::new());
         for c in &func.contracts {
@@ -319,24 +321,58 @@ impl Owner<'_> {
         }
     }
 
-    /// `rex.sound`: how the struct method receives `rex` (`None`: not a struct method).
-    fn receiver(&self, receiver: &Expr, name: &Name) -> Option<Receiver> {
+    /// `rex.sound`: the struct method called (`Dog.sound`) and how it receives `rex`.
+    fn method(&self, receiver: &Expr, name: &Name) -> Option<(String, Mode)> {
         let Type::Struct(d) = &self.info.types[receiver.id] else { return None };
-        (*self.receivers.get(&method_name(&d.name, &name.text))?).or(Some(Receiver::Read))
+        let q = method_name(&d.name, &name.text);
+        let r = self.signatures.get(&q)?.0.unwrap_or(Mode::Read);
+        Some((q, r))
     }
 
-    /// `rex.rename(rex.name)`: the method changes `rex` while reading one of its Strings
-    /// (rule 2.7.5). A copied value (`rex.age`) is read before the call: allowed.
-    fn exclusive(&mut self, receiver: &Expr, method: &Name, args: &[Expr]) {
-        let Some((root, _)) = place_root(receiver, &self.info.types) else { return };
-        for a in args {
-            let same = place_root(a, &self.info.types).is_some_and(|(n, _)| n == root);
-            if same && !is_copy(&self.info.types[a.id]) {
-                let arg = &self.src[a.span.start..a.span.end];
-                self.diags.push(
-                    Diag::new(a.span, t!("exclusive_use", name = root, method = method.text))
-                        .help(t!("exclusive_use_help", arg = arg)),
-                );
+    /// A call to `callee` (`shown` in messages), after its receiver if it is a method:
+    /// a `move` parameter takes its argument, the others borrow it.
+    fn arguments(&mut self, callee: &str, shown: &str, receiver: Option<(Mode, &Expr)>, args: &[Expr]) {
+        let modes = self.signatures.get(callee).map(|(_, m)| m.clone()).unwrap_or_default();
+        let mut uses: Vec<(Mode, &Expr)> = receiver.into_iter().collect();
+        for (i, a) in args.iter().enumerate() {
+            let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
+            uses.push((modes.get(i).copied().unwrap_or(Mode::Read), value));
+        }
+        for &(mode, e) in &uses {
+            if mode == Mode::Move { self.give(e) } else { self.borrow(e) }
+        }
+        self.exclusive(shown, &uses);
+    }
+
+    /// Rule 2.7.5: what a call changes (`var`) or takes (`move`) is used nowhere else in that call:
+    /// `rex.rename(rex.name)` ❌, `swap(var a, var a)` ❌. A copied value is read before the call:
+    /// `rex.set_age(rex.age + 1)` ✅.
+    fn exclusive(&mut self, callee: &str, uses: &[(Mode, &Expr)]) {
+        let types = &self.info.types;
+        for (j, &(mb, b)) in uses.iter().enumerate() {
+            for &(ma, a) in &uses[..j] {
+                let Some((root, _)) = place_root(a, types) else { continue };
+                if place_root(b, types).is_none_or(|(n, _)| n != root) {
+                    continue;
+                }
+                let (key, at, other) = match (ma, mb) {
+                    // Taken first: already "`a` was moved".
+                    (Mode::Read, Mode::Read) | (Mode::Move, _) => continue,
+                    (Mode::Var, Mode::Var) => ("exclusive_twice", b, None),
+                    (Mode::Var, Mode::Move) => ("exclusive_move", b, None),
+                    (Mode::Read, m) | (m, Mode::Read) => {
+                        let read = if ma == Mode::Read { a } else { b };
+                        if is_copy(&types[read.id]) {
+                            continue;
+                        }
+                        (if m == Mode::Var { "exclusive_use" } else { "exclusive_move" }, read, Some(read))
+                    }
+                };
+                let mut d = Diag::new(at.span, locale::text(key, &[("name", &root), ("method", &callee)]));
+                if let Some(r) = other {
+                    d = d.help(t!("exclusive_use_help", arg = &self.src[r.span.start..r.span.end]));
+                }
+                self.diags.push(d);
             }
         }
     }
@@ -345,24 +381,17 @@ impl Owner<'_> {
     fn borrow(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Var(name) => self.use_var(name, e.span),
-            ExprKind::Call { args, .. } | ExprKind::Static { args, .. } => args.iter().for_each(|a| self.borrow(a)),
-            ExprKind::Method { receiver, name, args } if self.receiver(receiver, name).is_some() => {
-                let r = self.receiver(receiver, name).unwrap();
-                if r == Receiver::Move {
-                    self.give(receiver);
-                } else {
-                    self.borrow(receiver);
-                }
-                args.iter().for_each(|a| self.borrow(a));
-                if r == Receiver::Var {
-                    self.exclusive(receiver, name, args);
-                }
+            ExprKind::Call { name, args } => self.arguments(&name.text, &name.text, None, args),
+            ExprKind::Static { ty, name, args } => self.arguments(&method_name(&ty.text, &name.text), &name.text, None, args),
+            ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
+                let (q, r) = self.method(receiver, name).unwrap();
+                self.arguments(&q, &name.text, Some((r, receiver)), args);
             }
             ExprKind::Method { receiver, args, .. } => {
                 self.borrow(receiver);
                 args.iter().for_each(|a| self.borrow(a));
             }
-            ExprKind::Unary(_, x) | ExprKind::Field(x, _) => self.borrow(x),
+            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => self.borrow(x),
             ExprKind::Binary(BinOp::And | BinOp::Or, a, b) => {
                 // `b` is computed only sometimes: what it moves is "maybe moved" afterwards.
                 self.borrow(a);
