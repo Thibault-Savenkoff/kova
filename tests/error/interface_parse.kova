@@ -1,0 +1,7 @@
+interface Animal {
+    name: String
+    fn sound(self) -> String
+}
+
+fn main {}
+// error: an interface contains only methods (`fn`), found `name`

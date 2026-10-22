@@ -8,6 +8,7 @@ pub struct File {
     pub header: Option<Header>,
     pub functions: Vec<Function>,
     pub structs: Vec<Struct>,
+    pub interfaces: Vec<Interface>,
     pub tests: Vec<Test>,
     /// `lang fr { ... }`: only in a translation file (PLAN 2.13).
     pub langs: Vec<Lang>,
@@ -35,10 +36,20 @@ pub struct Header {
 pub struct Struct {
     pub copy: bool,
     pub name: Name,
+    /// `struct Dog : Animal, Aging`: the interfaces it follows.
+    pub interfaces: Vec<Name>,
     pub fields: Vec<Param>,
     pub variants: Option<Vec<Variant>>,
     /// Its methods (`fn sound(self)`) and static functions (`fn create(name: String) -> Dog`).
     pub methods: Vec<Function>,
+}
+
+/// `interface Animal { fn sound(self) -> String … }`: what a type promises (PLAN 2.6).
+pub struct Interface {
+    pub name: Name,
+    /// Each method, and whether it has a body (a default method, used when the type doesn't
+    /// write its own); without a body, its `body` is empty.
+    pub methods: Vec<(Function, bool)>,
 }
 
 /// `Circle(radius: Float)` in an `enum`; `Red` has no fields.

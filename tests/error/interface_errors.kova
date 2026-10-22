@@ -1,0 +1,61 @@
+interface Animal {
+    fn sound(self) -> String
+    fn hello(self) -> String { return "hi {self.sound}" }
+    fn make -> Int
+    fn sound(self) -> String
+    fn checked(self, n: Int) -> Int
+        require n > 0
+    fn bad(self) -> String { return self.fly }
+    fn equal(self, other: Self) -> Bool { return self = other }
+}
+
+interface Aging {
+    fn age(var self)
+    fn older(self) {
+        self.age
+    }
+}
+
+interface Pet {
+    fn hello(self) -> String { return "pet" }
+}
+
+interface Bee {}
+
+struct Dog : Animal, Pet, Animal {
+    fn sound(self) -> Int { return 1 }
+}
+
+struct Fish : Nope, Dog {
+    fn checked(self, n: Int) -> Int { return n }
+}
+
+struct Bee : Animal {
+    hello: Int
+    fn sound(self) -> String { return "bzz" }
+    fn checked(self, n: Int) -> Int { return n }
+}
+
+fn f(a: Animal, b: Self) {}
+
+fn main {}
+// error: `make` has no `self`: an interface lists methods called on a value
+// error: the method `sound` already exists in `Animal` (line 2)
+// error: contracts on interface methods (`require` / `ensure` on `checked`) come later
+// error: `Self` has no method `fly`
+// error: help: methods of `Self`: `bad`, `checked`, `equal`, `hello`, `make`, `sound`, `clone`
+// error: `=` does not compare structs (`Self`) yet
+// error: the type `Bee` already exists (line 33)
+// error: `sound` is not written as `Animal` asks
+// error: `Animal` asks for `fn sound(self) -> String` (`Self` = this type)
+// error: `Dog` follows `Animal` but has no method `checked`
+// error: add `fn checked(self, n: Int) -> Int { … }` (`Self` = this type)
+// error: `hello` comes from both `Animal` and `Pet`
+// error: write `hello` in `Dog` to choose
+// error: `Animal` is already listed (line 25)
+// error: unknown interface `Nope`
+// error: `Dog` is a type, not an interface: a struct follows only interfaces
+// error: `hello` is both a field and a method of `Bee`
+// error: `Animal` is an interface, not a type
+// error: `Self` exists only inside an interface or a struct
+// error: `self` cannot change in a method with `self`

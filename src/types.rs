@@ -34,6 +34,9 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
+    /// A type known only by what it promises: `Self` in an interface. Replaced by the real type
+    /// (`Dog`) in the KIR, one copy of the function per real type (`substitute`).
+    Param(Rc<ParamDef>),
     /// What a function without `->` returns.
     Unit,
     /// Unknown type because of an error already reported: it is not repeated.
@@ -60,9 +63,30 @@ impl Type {
             Type::Optional(t) => format!("{}?", t.text()),
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
+            Type::Param(p) => p.name.clone(),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
+    }
+}
+
+/// `Self` in `interface Animal`: its name and the interfaces it follows (`Animal`).
+#[derive(PartialEq, Debug)]
+pub struct ParamDef {
+    pub name: String,
+    pub bounds: Vec<String>,
+}
+
+/// `t` with each `Type::Param` named in `s` replaced by its type: `List<Self>` → `List<Dog>`.
+pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
+    let sub = |t: &Type| Box::new(substitute(t, s));
+    match t {
+        Type::Param(p) => s.iter().find(|(n, _)| *n == p.name).map_or_else(|| t.clone(), |(_, t)| t.clone()),
+        Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, s)).collect()),
+        Type::Optional(t) => Type::Optional(sub(t)),
+        Type::Result(t, e) => Type::Result(sub(t), sub(e)),
+        Type::List(t) => Type::List(sub(t)),
+        _ => t.clone(),
     }
 }
 
@@ -183,6 +207,8 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Enum(d) => d.variants.iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
         Type::Optional(t) => is_copy(t),
         Type::Result(t, e) => is_copy(t) && is_copy(e),
+        // Checked once for every real type: as if it were owned.
+        Type::Param(_) => false,
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -195,6 +221,9 @@ pub struct Info {
     /// By `Expr::id`: true if this `T` value goes where a `T?` is expected (`let x: Int? := 5`).
     pub wraps: Vec<bool>,
     pub structs: Structs,
+    /// The default methods a type takes from its interfaces: (type, interface number in
+    /// `File::interfaces`, method number), for `Dog.introduce`.
+    pub defaults: Vec<(String, usize, usize)>,
 }
 
 impl Info {
@@ -227,11 +256,32 @@ struct Variable {
     span: Span,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Signature {
     receiver: Option<Mode>,
     params: Vec<(Mode, Type)>,
     ret: Type,
+}
+
+impl Signature {
+    fn substitute(&self, s: &[(String, Type)]) -> Signature {
+        let params = self.params.iter().map(|(m, t)| (*m, substitute(t, s))).collect();
+        Signature { receiver: self.receiver, params, ret: substitute(&self.ret, s) }
+    }
+}
+
+/// A function's heading as written: `fn less(self, other: Self) -> Bool`.
+pub fn heading_text(f: &Function) -> String {
+    let mode = |m: Mode| match m {
+        Mode::Read => "",
+        Mode::Var => "var ",
+        Mode::Move => "move ",
+    };
+    let mut params: Vec<String> = f.receiver.iter().map(|&m| format!("{}self", mode(m))).collect();
+    params.extend(f.params.iter().map(|p| format!("{}: {}{}", p.name.text, mode(p.mode), p.ty.text())));
+    let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
+    let ret = f.ret.as_ref().map_or(String::new(), |t| format!(" -> {}", t.text()));
+    format!("fn {}{params}{ret}", f.name.text)
 }
 
 /// The name of a struct's method or static function among the functions: `Dog.sound`.
@@ -255,6 +305,10 @@ struct Checker<'a> {
     /// Functions, methods and static functions (`Dog.sound`).
     functions: HashMap<String, Signature>,
     structs: Structs,
+    /// Interface name → its number in `File::interfaces`; its methods are in `functions`
+    /// (`Animal.sound`), with `Self` as a `Type::Param`.
+    interfaces: HashMap<String, usize>,
+    defaults: Vec<(String, usize, usize)>,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
     ret: Type,
@@ -273,6 +327,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         src,
         functions: HashMap::new(),
         structs: Structs::new(),
+        interfaces: HashMap::new(),
+        defaults: vec![],
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -314,13 +370,24 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
-        if primitive(name).is_some() || c.structs.contains_key(name) {
+        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" {
             c.error(s.name.span, t!("type_builtin", name = name));
         } else if let Some(&j) = decls.get(name) {
             let (line, _) = line_col(src, f.structs[j].name.span.start);
             c.error(s.name.span, t!("type_exists", name = name, line = line));
         } else {
             decls.insert(name, i);
+        }
+    }
+    for (i, it) in f.interfaces.iter().enumerate() {
+        let name = it.name.text.as_str();
+        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" {
+            c.error(it.name.span, t!("type_builtin", name = name));
+        } else if let Some(span) = decls.get(name).map(|&j| f.structs[j].name.span).or(c.interfaces.get(name).map(|&j| f.interfaces[j].name.span)) {
+            let (line, _) = line_col(src, span.start);
+            c.error(it.name.span, t!("type_exists", name = name, line = line));
+        } else {
+            c.interfaces.insert(name.to_string(), i);
         }
     }
     for (i, s) in f.structs.iter().enumerate() {
@@ -348,6 +415,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             continue;
         }
         let mut seen: HashMap<&str, Span> = HashMap::new();
+        let me = c.structs[&s.name.text].clone();
+        c.structs.insert("Self".into(), me);
         for m in &s.methods {
             for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
                 c.report_unknown(t);
@@ -367,6 +436,42 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             } else {
                 c.functions.insert(method_name(&s.name.text, name), Signature { receiver: m.receiver, params, ret });
             }
+        }
+        c.structs.remove("Self");
+    }
+    // The interfaces' methods, `Animal.sound`, with `Self` standing for the type that follows it.
+    for (i, it) in f.interfaces.iter().enumerate() {
+        if c.interfaces.get(it.name.text.as_str()) != Some(&i) {
+            continue;
+        }
+        c.structs.insert("Self".into(), self_param(&it.name.text));
+        let mut seen: HashMap<&str, Span> = HashMap::new();
+        for (m, _) in &it.methods {
+            for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
+                c.report_unknown(t);
+            }
+            let name = m.name.text.as_str();
+            if m.receiver.is_none() {
+                c.diags.push(Diag::new(m.name.span, t!("interface_static", name = name)).help(t!("interface_static_help", name = name)));
+            }
+            if !m.contracts.is_empty() {
+                c.error(m.name.span, t!("interface_contract", name = name));
+            }
+            if let Some(first) = seen.insert(name, m.name.span) {
+                let (line, _) = line_col(src, first.start);
+                c.error(m.name.span, t!("method_exists", name = name, type = it.name.text, line = line));
+                continue;
+            }
+            let params = m.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
+            let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
+            c.functions.insert(method_name(&it.name.text, name), Signature { receiver: m.receiver, params, ret });
+        }
+        c.structs.remove("Self");
+    }
+    // `struct Dog : Animal`: Dog writes each method Animal asks for, or takes its default one.
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) == Some(&i) {
+            c.conforms(f, s);
         }
     }
 
@@ -406,9 +511,22 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) == Some(&i) {
             let ty = c.structs[&s.name.text].clone();
+            c.structs.insert("Self".into(), ty.clone());
             for m in &s.methods {
                 c.body(m, Some(&ty));
             }
+            c.structs.remove("Self");
+        }
+    }
+    // A default method is checked once, for every type that will take it: `self` is a `Self`.
+    for (i, it) in f.interfaces.iter().enumerate() {
+        if c.interfaces.get(it.name.text.as_str()) == Some(&i) {
+            let me = self_param(&it.name.text);
+            c.structs.insert("Self".into(), me.clone());
+            for (m, _) in it.methods.iter().filter(|(_, body)| *body) {
+                c.body(m, Some(&me));
+            }
+            c.structs.remove("Self");
         }
     }
 
@@ -425,7 +543,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     let moves = vec![false; c.types.len()];
-    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs }, c.diags)
+    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults: c.defaults }, c.diags)
+}
+
+/// `Self` inside `interface Animal`.
+fn self_param(interface: &str) -> Type {
+    Type::Param(Rc::new(ParamDef { name: "Self".into(), bounds: vec![interface.to_string()] }))
 }
 
 fn primitive(name: &str) -> Option<Type> {
@@ -481,6 +604,71 @@ impl Checker<'_> {
     }
 
     /// The body of a function; `owner` = the struct of a method.
+    /// Checks that `s` has every method of the interfaces it follows, as they are written
+    /// there (with `Self` = `s`), and gives it their default methods.
+    fn conforms(&mut self, f: &File, s: &Struct) {
+        let me = self.structs[&s.name.text].clone();
+        let sub = [("Self".to_string(), me)];
+        let mut followed: HashMap<&str, Span> = HashMap::new();
+        // Default method name → the interface that gives it.
+        let mut given: HashMap<&str, &str> = HashMap::new();
+        for n in &s.interfaces {
+            let Some(&k) = self.interfaces.get(n.text.as_str()) else {
+                let msg = if self.structs.contains_key(&n.text) || primitive(&n.text).is_some() {
+                    t!("not_interface", name = n.text)
+                } else {
+                    t!("interface_unknown", name = n.text)
+                };
+                self.error(n.span, msg);
+                continue;
+            };
+            if let Some(first) = followed.insert(&n.text, n.span) {
+                let (line, _) = line_col(self.src, first.start);
+                self.error(n.span, t!("interface_twice", name = n.text, line = line));
+                continue;
+            }
+            let it = &f.interfaces[k];
+            let mut asked: Vec<&str> = vec![];
+            for (j, (m, body)) in it.methods.iter().enumerate() {
+                // Already reported in the interface: a method without `self`, written twice.
+                if m.receiver.is_none() || asked.contains(&m.name.text.as_str()) {
+                    continue;
+                }
+                asked.push(&m.name.text);
+                let Some(want) = self.functions.get(&method_name(&it.name.text, &m.name.text)) else { continue };
+                let want = want.substitute(&sub);
+                let mine = method_name(&s.name.text, &m.name.text);
+                let heading = heading_text(m);
+                if let Some(w) = s.methods.iter().find(|w| w.name.text == m.name.text) {
+                    if self.functions.get(&mine).is_some_and(|g| *g != want) {
+                        self.diags.push(
+                            Diag::new(w.name.span, t!("interface_signature", name = m.name.text, interface = it.name.text))
+                                .help(t!("interface_signature_help", interface = it.name.text, heading = heading)),
+                        );
+                    }
+                } else if !body {
+                    self.diags.push(
+                        Diag::new(n.span, t!("interface_missing", type = s.name.text, name = m.name.text, interface = it.name.text))
+                            .help(t!("interface_missing_help", heading = heading)),
+                    );
+                } else if let Some(other) = given.insert(&m.name.text, &it.name.text) {
+                    self.diags.push(
+                        Diag::new(n.span, t!("interface_conflict", name = m.name.text, first = other, second = it.name.text))
+                            .help(t!("interface_conflict_help", name = m.name.text, type = s.name.text)),
+                    );
+                } else if s.fields.iter().any(|p| p.name.text == m.name.text) {
+                    self.diags.push(
+                        Diag::new(n.span, t!("field_and_method", name = m.name.text, type = s.name.text))
+                            .help(t!("field_and_method_help", name = m.name.text)),
+                    );
+                } else {
+                    self.functions.insert(mine, want);
+                    self.defaults.push((s.name.text.clone(), k, j));
+                }
+            }
+        }
+    }
+
     fn body(&mut self, func: &Function, owner: Option<&Type>) {
         self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
         let mut params = HashMap::new();
@@ -633,6 +821,12 @@ impl Checker<'_> {
 
     fn report_unknown(&mut self, t: &TypeAst) {
         match t {
+            TypeAst::Name(n) if n.text == "Self" && !self.structs.contains_key("Self") => {
+                self.diags.push(Diag::new(n.span, t!("self_type_outside")).help(t!("self_type_outside_help")));
+            }
+            TypeAst::Name(n) if self.interfaces.contains_key(&n.text) => self.diags.push(
+                Diag::new(n.span, t!("interface_as_type", name = n.text)).help(t!("interface_as_type_help", name = n.text)),
+            ),
             TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
@@ -1250,6 +1444,7 @@ impl Checker<'_> {
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.text(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
+                        Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         _ => false,
                     },
                     _ => false,
@@ -1420,6 +1615,13 @@ impl Checker<'_> {
                 {
                     return r;
                 }
+                // `self.sound` in a default method: what the interface promises.
+                if let Type::Param(p) = &t
+                    && let Some((b, sig)) =
+                        p.bounds.iter().find_map(|b| Some((b.clone(), self.functions.get(&method_name(b, &name.text))?.clone())))
+                {
+                    return self.method_call(receiver, &b, name, args, sig);
+                }
                 for a in args {
                     self.expr(a);
                 }
@@ -1428,7 +1630,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_))
+                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Param(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -1438,6 +1640,20 @@ impl Checker<'_> {
                 }
                 if let Type::Enum(_) = &t {
                     self.no_field(&t, name);
+                    return Type::Error;
+                }
+                if let Type::Param(p) = &t {
+                    let prefixes: Vec<String> = p.bounds.iter().map(|b| format!("{b}.")).collect();
+                    let mut known: Vec<String> = (self.functions.keys())
+                        .filter_map(|k| prefixes.iter().find_map(|pre| k.strip_prefix(pre.as_str())))
+                        .map(|n| format!("`{n}`"))
+                        .collect();
+                    known.sort();
+                    known.push("`clone`".into());
+                    self.diags.push(
+                        Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
+                            .help(t!("methods_of", type = t.text(), methods = known.join(", "))),
+                    );
                     return Type::Error;
                 }
                 if let Type::Struct(d) = &t {
@@ -1514,7 +1730,7 @@ impl Checker<'_> {
                             Type::Tuple(_) => self.diags.push(
                                 Diag::new(e.span, t!("tuple_compare", op = op.text())).help(t!("tuple_compare_help")),
                             ),
-                            Type::Struct(_) => self.diags.push(
+                            Type::Struct(_) | Type::Param(_) => self.diags.push(
                                 Diag::new(e.span, t!("struct_compare", op = op.text(), type = ta.text()))
                                     .help(t!("struct_compare_help")),
                             ),

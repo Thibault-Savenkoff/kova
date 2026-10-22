@@ -1,0 +1,21 @@
+interface Animal {
+    fn sound(self) -> String
+    fn give(self) -> Self {
+        return self
+    }
+    fn keep(move self) -> Self {
+        return self
+    }
+}
+
+struct Dog : Animal {
+    fn sound(self) -> String { return "woof" }
+}
+
+fn main {
+    let rex := Dog {}
+    let other: Dog := rex.keep
+    print(rex.sound)
+}
+// error: `self` is borrowed here: it cannot be moved
+// error: `rex` was moved

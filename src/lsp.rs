@@ -203,12 +203,16 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
     }
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
     let bodies = file.functions.iter().map(|f| (None, &f.params[..], &f.body));
-    let methods = file.structs.iter().flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| &s.name.text), &m.params[..], &m.body)));
+    let methods = (file.structs.iter())
+        .flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| s.name.text.clone()), &m.params[..], &m.body)));
+    // In a default method, `self` is a `Self`.
+    let defaults = (file.interfaces.iter())
+        .flat_map(|i| i.methods.iter().map(|(m, _)| (m.receiver.map(|_| "Self".to_string()), &m.params[..], &m.body)));
     let test_bodies = file.tests.iter().map(|t| (None, &[][..], &t.body));
-    if let Some((owner, params, body)) = bodies.chain(methods).chain(test_bodies).find(|(_, _, b)| inside(b)) {
+    if let Some((owner, params, body)) = bodies.chain(methods).chain(defaults).chain(test_bodies).find(|(_, _, b)| inside(b)) {
         let mut vars: Vec<(String, String)> = params.iter().map(|p| (p.name.text.clone(), p.ty_text())).collect();
         if let Some(ty) = owner {
-            vars.insert(0, ("self".into(), ty.clone()));
+            vars.insert(0, ("self".into(), ty));
         }
         visible(body, cursor, &mut vars);
         for (name, ty) in vars {
@@ -345,7 +349,7 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
         (text.to_string(), if close > open { vec![[open as u32, close as u32]] } else { vec![] })
     } else {
         let file = tree(src);
-        let methods = file.structs.iter().flat_map(|s| &s.methods);
+        let methods = file.structs.iter().flat_map(|s| &s.methods).chain(file.interfaces.iter().flat_map(|i| i.methods.iter().map(|(m, _)| m)));
         heading(file.functions.iter().chain(methods).find(|f| f.name.text == name)?)
     };
     let parameters = params.into_iter().map(|p| ParameterInformation { label: ParameterLabel::LabelOffsets(p), documentation: None });
@@ -399,6 +403,12 @@ mod tests {
         // `}` not typed yet.
         let src = "header {\n  lock := ";
         assert_eq!(labels(complete(src, src.len())), ["false", "true"]);
+    }
+
+    #[test]
+    fn completion_in_a_default_method() {
+        let src = "interface A {\n  fn s(self) -> Int\n  fn d(self, n: Int) -> Int {\n    HERE\n  }\n}\nfn main {}";
+        assert_eq!(names(&complete(src, src.find("HERE").unwrap())), ["self", "n"]);
     }
 
     #[test]

@@ -36,7 +36,7 @@ use std::collections::HashMap;
 use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
-use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, type_of};
+use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -107,6 +107,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         Type::Result(ok, err) => std::iter::once(Scalar::Int).chain(scalars(err)).chain(scalars(ok)).collect(),
         Type::Unit => vec![],
         Type::Error => unreachable!("erroneous type after type checking"),
+        Type::Param(_) => unreachable!("`Self` replaced by the real type (`Translator::ty`)"),
     }
 }
 
@@ -119,7 +120,9 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => vec![None; scalars(t).len()],
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error | Type::Param(_) => {
+            vec![None; scalars(t).len()]
+        }
     }
 }
 
@@ -461,27 +464,36 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
     // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
     // (a test = a function without parameters, result or contracts).
-    type Source<'f> = (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block);
-    let mut all: Vec<Source> =
-        f.functions.iter().map(|g| (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body)).collect();
+    // The last element: the type `Self` stands for (a struct's methods, the default methods it takes).
+    type Source<'f> =
+        (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block, Option<Type>);
+    let mut all: Vec<Source> = (f.functions.iter())
+        .map(|g| (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, None))
+        .collect();
+    let method = |ty: &Type, owner: &str, m: &'f ast::Function| -> Source<'f> {
+        let name = method_name(owner, &m.name.text);
+        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, Some(ty.clone()))
+    };
     for s in &f.structs {
         let ty = info.structs[&s.name.text].clone();
-        for m in &s.methods {
-            let name = method_name(&s.name.text, &m.name.text);
-            all.push((name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body));
-        }
+        all.extend(s.methods.iter().map(|m| method(&ty, &s.name.text, m)));
+    }
+    // One copy of a default method for each type taking it: `Dog.introduce`, `Cat.introduce`.
+    for (owner, k, j) in &info.defaults {
+        all.push(method(&info.structs[owner], owner, &f.interfaces[*k].methods[*j].0));
     }
     let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> =
         all.iter().map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect()))).collect();
     let n = all.len();
-    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body)));
+    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, None)));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
     // The functions that receive the call location (`main` is called by the runtime).
     let sites: Vec<bool> = all.iter().map(|g| contracts && !g.4.is_empty() && g.0 != "main").collect();
     let helpers = RefCell::new(vec![]);
-    let translator = |ret: Type, ensures: Vec<&'f Contract>| Translator {
+    let translator = |ret: Type, ensures: Vec<&'f Contract>, subst: Vec<(String, Type)>| Translator {
         src,
         info,
+        subst,
         numbers: &numbers,
         signatures: &signatures,
         sites: &sites,
@@ -505,17 +517,20 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let mut functions: Vec<Function> = all
         .iter()
         .enumerate()
-        .map(|(i, (name, receiver, params, ret, written_contracts, body))| {
-            let ret = ret.map_or(Type::Unit, |t| type_of(t, &info.structs));
+        .map(|(i, (name, receiver, params, ret, written_contracts, body, me))| {
+            let mut structs = info.structs.clone();
+            let subst: Vec<(String, Type)> = me.iter().map(|t| ("Self".to_string(), t.clone())).collect();
+            structs.extend(subst.iter().cloned());
+            let ret = ret.map_or(Type::Unit, |t| type_of(t, &structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
-            let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect());
+            let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect(), subst);
             let mut returns = scalars(&ret);
             if let Some((r, ty)) = receiver {
                 let v = t.new_slots(ty);
                 t.parameter("self", *r, v, ty.clone(), &mut returns);
             }
             for p in params.iter() {
-                let ty = type_of(&p.ty, &info.structs);
+                let ty = type_of(&p.ty, &structs);
                 let v = t.new_slots(&ty);
                 t.parameter(&p.name.text, p.mode, v, ty, &mut returns);
             }
@@ -538,7 +553,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let mut k = 0;
     while k < helpers.borrow().len() {
         let h = helpers.borrow()[k].clone();
-        functions.push(translator(Type::Unit, vec![]).helper_function(&h));
+        functions.push(translator(Type::Unit, vec![], vec![]).helper_function(&h));
         k += 1;
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
@@ -548,6 +563,8 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
 struct Translator<'a> {
     src: &'a str,
     info: &'a Info,
+    /// What each `Type::Param` stands for in this copy of the function (`Self` → `Dog`).
+    subst: Vec<(String, Type)>,
     numbers: &'a HashMap<&'a str, usize>,
     /// How each function receives its value (`None`: not a method) and its parameters,
     /// by name (`f`, `Dog.sound`).
@@ -599,12 +616,12 @@ impl Scope {
 impl<'a> Translator<'a> {
     /// The type of `e`'s value.
     fn ty(&self, e: &Expr) -> Type {
-        self.info.types[e.id].clone()
+        substitute(&self.info.types[e.id], &self.subst)
     }
 
     /// The type of the value `e` gives where it goes (`types::Info::given`).
     fn given(&self, e: &Expr) -> Type {
-        self.info.given(e)
+        substitute(&self.info.given(e), &self.subst)
     }
 
     fn function(self, name: String, nb_params: usize, returns: Vec<Scalar>) -> Function {

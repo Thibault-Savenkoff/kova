@@ -83,6 +83,20 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
             functions.push(m);
         }
     }
+    // The interfaces' methods (`Animal.sound`), their default bodies (checked once),
+    // and the default methods a type takes (`Dog.introduce`).
+    for it in &f.interfaces {
+        for (m, body) in &it.methods {
+            signatures.insert(method_name(&it.name.text, &m.name.text), modes(m));
+            if *body {
+                functions.push(m);
+            }
+        }
+    }
+    for (ty, k, j) in &info.defaults {
+        let m = &f.interfaces[*k].methods[*j].0;
+        signatures.insert(method_name(ty, &m.name.text), modes(m));
+    }
     let mut o = Owner {
         src,
         ensures: vec![],
@@ -495,6 +509,7 @@ impl Owner<'_> {
         let q = match &self.info.types[receiver.id] {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.text(), &name.text),
             Type::List(_) => method_name("List", &name.text),
+            Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,
         };
         let r = self.signatures.get(&q)?.0.unwrap_or(Mode::Read);

@@ -57,7 +57,7 @@ pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
         .chain(["read_line".to_string()])
         .collect();
-    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false };
+    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false, in_interface: false, bodiless: false };
     let file = p.file();
     (file, p.ids, p.diags)
 }
@@ -71,6 +71,9 @@ struct Parser<'a> {
     no_params: HashSet<String>,
     /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
     no_literal: bool,
+    /// In an `interface`: a method may have no body (`function_rest` then sets `bodiless`).
+    in_interface: bool,
+    bodiless: bool,
 }
 
 impl Parser<'_> {
@@ -296,6 +299,7 @@ impl Parser<'_> {
 
     fn file(&mut self) -> File {
         let (mut header, mut functions, mut structs, mut tests, mut langs) = (None, vec![], vec![], vec![], vec![]);
+        let mut interfaces = vec![];
         loop {
             self.skip_newlines();
             let read = match self.kind() {
@@ -314,6 +318,7 @@ impl Parser<'_> {
                 }
                 Kind::Keyword("fn") => self.function(false).map(|f| functions.push(f)),
                 Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| structs.push(s)),
+                Kind::Keyword("interface") => self.interface().map(|i| interfaces.push(i)),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
@@ -326,7 +331,7 @@ impl Parser<'_> {
                 self.skip_to_next_fn();
             }
         }
-        File { header, functions, structs, tests, langs }
+        File { header, functions, structs, interfaces, tests, langs }
     }
 
     /// `header { key := value ... }`; keys and values are checked by the type checker.
@@ -373,7 +378,9 @@ impl Parser<'_> {
 
     fn skip_to_next_fn(&mut self) {
         self.advance();
-        while !matches!(self.kind(), Kind::Keyword("fn" | "test" | "struct" | "copy") | Kind::Eof) && !self.at_lang() {
+        while !matches!(self.kind(), Kind::Keyword("fn" | "test" | "struct" | "copy" | "enum" | "interface") | Kind::Eof)
+            && !self.at_lang()
+        {
             self.advance();
         }
     }
@@ -509,6 +516,15 @@ impl Parser<'_> {
         let mut variants = self.is_keyword("enum").then(Vec::new);
         self.advance(); // struct, enum
         let name = self.type_name()?;
+        let mut interfaces = vec![];
+        if self.is_sym(":") {
+            self.advance();
+            interfaces.push(self.type_name()?);
+            while self.is_sym(",") {
+                self.advance();
+                interfaces.push(self.type_name()?);
+            }
+        }
         self.skip_newlines();
         self.expect("{")?;
         let (mut fields, mut methods) = (vec![], vec![]);
@@ -516,10 +532,10 @@ impl Parser<'_> {
             self.skip_newlines();
             match self.kind() {
                 Kind::Sym("}") => break,
-                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum") => {
+                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
-                    return Ok(Struct { copy, name, fields, variants, methods });
+                    return Ok(Struct { copy, name, interfaces, fields, variants, methods });
                 }
                 // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
                 Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
@@ -541,7 +557,43 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy, name, fields, variants, methods })
+        Ok(Struct { copy, name, interfaces, fields, variants, methods })
+    }
+
+    /// `interface Animal { fn sound(self) -> String … }`: signatures, and default methods with a body.
+    fn interface(&mut self) -> R<Interface> {
+        self.advance(); // interface
+        let name = self.type_name()?;
+        self.skip_newlines();
+        self.expect("{")?;
+        let mut methods = vec![];
+        loop {
+            self.skip_newlines();
+            match self.kind() {
+                Kind::Sym("}") => break,
+                Kind::Keyword("fn") => {
+                    self.in_interface = true;
+                    let f = self.function(true);
+                    self.in_interface = false;
+                    match f {
+                        Ok(f) => methods.push((f, !std::mem::take(&mut self.bodiless))),
+                        Err(()) => self.skip_statement(),
+                    }
+                }
+                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
+                    let span = self.token().span;
+                    self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
+                    return Ok(Interface { name, methods });
+                }
+                _ => {
+                    let msg = t!("interface_item", found = self.describe());
+                    self.diags.push(Diag::new(self.token().span, msg));
+                    self.skip_statement();
+                }
+            }
+        }
+        self.advance(); // }
+        Ok(Interface { name, methods })
     }
 
     /// `Circle(radius: Float)` or `Red`, followed by `,`, a line break or the `}`.
@@ -685,6 +737,13 @@ impl Parser<'_> {
                 _ => break,
             };
             contracts.push(self.contract(kind)?);
+        }
+        // In an interface, a method without a body: the types following it write theirs.
+        if self.in_interface && matches!(self.kind(), Kind::Keyword("fn") | Kind::Sym("}")) {
+            self.bodiless = true;
+            let at = self.token().span;
+            let body = Block { open: at, stmts: vec![], close: at };
+            return Ok(Function { name, receiver, params, ret, contracts, body });
         }
         let body = self.block()?;
         Ok(Function { name, receiver, params, ret, contracts, body })

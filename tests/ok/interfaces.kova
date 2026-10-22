@@ -1,0 +1,81 @@
+// Interfaces: what a type promises, and default methods written once for all of them.
+interface Animal {
+    fn sound(self) -> String
+    fn introduce(self) -> String {
+        return "I go {self.sound}"
+    }
+    // A default method calls the others, even other default ones.
+    fn twice(self) -> String {
+        return "{self.introduce}, {self.introduce}"
+    }
+    fn same_sound(self, other: Self) -> Bool {
+        return self.sound = other.sound
+    }
+    fn twin(self) -> Self {
+        return self.clone
+    }
+}
+
+interface Aging {
+    fn birthday(var self)
+    fn years(self) -> Int
+    fn grow(var self, n: Int) {
+        from i := 1 to n {
+            self.birthday
+        }
+    }
+}
+
+struct Dog : Animal, Aging {
+    name: String
+    age: Int
+    fn sound(self) -> String { return "woof" }
+    fn birthday(var self) { self.age += 1 }
+    fn years(self) -> Int { return self.age }
+}
+
+// Cat writes its own `introduce`; `Self` in its methods is `Cat`.
+struct Cat : Animal {
+    lives: Int
+    fn sound(self) -> String { return "meow" }
+    fn introduce(self) -> String { return "I am a cat with {self.lives} lives" }
+    fn more(self, other: Self) -> Int { return self.lives + other.lives }
+}
+
+enum Bird : Animal {
+    Crow,
+    Owl(name: String),
+    fn sound(self) -> String {
+        return match self {
+            Crow => "caw"
+            Owl(n) => "hoot from {n}"
+        }
+    }
+}
+
+fn main {
+    var rex := Dog { name := "Rex", age := 3 }
+    print(rex.introduce)
+    print(rex.twice)
+    rex.grow(2)
+    print(rex.years)
+    let fido := Dog { name := "Fido", age := 1 }
+    print(rex.same_sound(fido))
+    print(rex.twin.name)
+    let tom := Cat { lives := 9 }
+    print(tom.introduce)
+    print(tom.twice)
+    print(tom.more(tom))
+    print(Bird.Owl("Hedwig").introduce)
+    print(Bird.Crow.twice)
+}
+// expect: I go woof
+// expect: I go woof, I go woof
+// expect: 5
+// expect: true
+// expect: Rex
+// expect: I am a cat with 9 lives
+// expect: I am a cat with 9 lives, I am a cat with 9 lives
+// expect: 18
+// expect: I go hoot from Hedwig
+// expect: I go caw, I go caw
