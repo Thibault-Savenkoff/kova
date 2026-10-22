@@ -1,5 +1,6 @@
 // Language server (`kova lsp`): the editor sends it the text, it answers with
-// errors, completion, parameter help, types on hover, definitions (LSP protocol).
+// errors, completion, parameter help, types on hover, definitions, renaming, quick fixes
+// and test buttons (LSP protocol).
 //
 //   editor ──"here is the text"──► kova lsp ──analyze()──► underlined errors
 //
@@ -15,7 +16,7 @@ use lsp_types::*;
 use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, Struct, TypeAst};
 use crate::diag::Span;
 use crate::types::Type;
-use crate::lexer::{Kind, lex};
+use crate::lexer::{KEYWORDS, Kind, Token, lex};
 use crate::locale::{self, t};
 use crate::{analyze, diag, parser, types};
 
@@ -27,6 +28,9 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        rename_provider: Some(OneOf::Left(true)),
+        code_lens_provider: Some(CodeLensOptions { resolve_provider: Some(false) }),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             ..Default::default()
@@ -50,7 +54,12 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let path = file_path(&doc.text_document.uri);
                         let items = docs.get(&doc.text_document.uri).map(|src| {
                             let cursor = offset(src, doc.position);
-                            (members(&path, src, cursor).or_else(|| literal_fields(&path, src, cursor))).unwrap_or_else(|| complete(src, cursor))
+                            (import_files(&path, src, cursor))
+                                .or_else(|| members(&path, src, cursor))
+                                .or_else(|| literal_fields(&path, src, cursor))
+                                .or_else(|| match_cases(&path, src, cursor))
+                                .or_else(|| promised(&path, src, cursor))
+                                .unwrap_or_else(|| complete(src, cursor))
                         });
                         Response::new_ok(req.id, items)
                     }
@@ -67,6 +76,25 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let uri = &doc.text_document.uri;
                         let place = docs.get(uri).and_then(|src| definition(uri, src, offset(src, doc.position)));
                         Response::new_ok(req.id, place.map(GotoDefinitionResponse::Scalar))
+                    }
+                    "textDocument/codeAction" => {
+                        let p: CodeActionParams = serde_json::from_value(req.params)?;
+                        let uri = &p.text_document.uri;
+                        Response::new_ok(req.id, docs.get(uri).map(|src| add_cases(uri, src, p.range)))
+                    }
+                    "textDocument/rename" => {
+                        let p: RenameParams = serde_json::from_value(req.params)?;
+                        let doc = &p.text_document_position;
+                        let uri = &doc.text_document.uri;
+                        match docs.get(uri).map(|src| rename(uri, src, offset(src, doc.position), &p.new_name)) {
+                            Some(Err(why)) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
+                            edit => Response::new_ok(req.id, edit.and_then(Result::ok).flatten()),
+                        }
+                    }
+                    "textDocument/codeLens" => {
+                        let p: CodeLensParams = serde_json::from_value(req.params)?;
+                        let uri = &p.text_document.uri;
+                        Response::new_ok(req.id, docs.get(uri).map(|src| lenses(uri, src)))
                     }
                     "textDocument/inlayHint" => {
                         let p: InlayHintParams = serde_json::from_value(req.params)?;
@@ -245,11 +273,85 @@ fn hover(path: &str, src: &str, cursor: usize) -> Option<Hover> {
 /// Ctrl+click: where the name under the cursor is declared, maybe in an imported file.
 fn definition(uri: &Uri, src: &str, cursor: usize) -> Option<Location> {
     let (_, info, sources) = info(&file_path(uri), src)?;
-    let decl = seen_at(&info, src, cursor)?.decl;
-    let k = sources.file_of(decl.start);
+    location(uri, &sources, seen_at(&info, src, cursor)?.decl)
+}
+
+/// Where `span` is: in this file (`uri`) or in a file it imports.
+fn location(uri: &Uri, sources: &diag::Sources, span: Span) -> Option<Location> {
+    let k = sources.file_of(span.start);
     let (start, text) = (sources.files[k].1, sources.file_text(k));
     let uri = if k == 0 { uri.clone() } else { file_uri(&sources.files[k].0)? };
-    Some(Location::new(uri, Range::new(position(text, decl.start - start), position(text, decl.end - start))))
+    Some(Location::new(uri, Range::new(position(text, span.start - start), position(text, span.end - start))))
+}
+
+/// F2: the new name everywhere the name under the cursor is used, in this file and the files it
+/// imports. `Err`: why the new name is refused.
+fn rename(uri: &Uri, src: &str, cursor: usize, new: &str) -> Result<Option<WorkspaceEdit>, String> {
+    let Some((_, info, sources)) = info(&file_path(uri), src) else { return Ok(None) };
+    let Some(seen) = seen_at(&info, src, cursor) else { return Ok(None) };
+    // `geo.distance`: only `distance` changes.
+    let written = &sources.text[seen.span.start..seen.span.end];
+    let old = written.rsplit('.').next().unwrap_or(written);
+    if old == "self" {
+        return Err(t!("rename_self"));
+    }
+    let capital = |w: &str| w.starts_with(char::is_uppercase);
+    let first = new.chars().next();
+    if !new.chars().all(is_word) || first.is_none_or(|c| c.is_ascii_digit()) || capital(new) != capital(old) || KEYWORDS.contains(&new) {
+        return Err(t!("rename_invalid", name = new));
+    }
+    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+    let mut done = vec![];
+    for s in info.seen.iter().filter(|s| s.decl == seen.decl) {
+        let span = Span::new(s.span.end.saturating_sub(old.len()), s.span.end);
+        if done.contains(&span) || sources.text.get(span.start..span.end) != Some(old) {
+            continue;
+        }
+        done.push(span);
+        if let Some(place) = location(uri, &sources, span) {
+            changes.entry(place.uri).or_default().push(TextEdit::new(place.range, new.into()));
+        }
+    }
+    Ok(Some(WorkspaceEdit { changes: Some(changes), ..Default::default() }))
+}
+
+/// The light bulb on a `match` that forgets cases: "Add the missing cases", each as `Case => {}`.
+fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
+    let (from, to) = (offset(src, range.start), offset(src, range.end));
+    let Some((_, info, _)) = info(&file_path(uri), src) else { return vec![] };
+    let around = (info.matches.iter())
+        .filter(|(s, cases)| !cases.is_empty() && s.end <= src.len() && s.start <= to && from <= s.end)
+        .min_by_key(|(s, _)| s.end - s.start);
+    let Some((span, cases)) = around else { return vec![] };
+    let close = span.end - 1;
+    let line = src[..close].rfind('\n').map_or(0, |i| i + 1);
+    let indent: String = src[line..].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+    let arms: String = cases.iter().map(|c| format!("{indent}    {c} => {{}}\n")).collect();
+    // The `}` alone on its line: the cases go above it; `match s { … }` on one line: before it.
+    let (at, text) = if src[line..close].trim().is_empty() { (line, arms) } else { (close, format!("\n{arms}{indent}")) };
+    let edit = TextEdit::new(Range::new(position(src, at), position(src, at)), text);
+    vec![CodeActionOrCommand::CodeAction(CodeAction {
+        title: t!("action_add_cases"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(WorkspaceEdit { changes: Some(HashMap::from([(uri.clone(), vec![edit])])), ..Default::default() }),
+        is_preferred: Some(true),
+        ..Default::default()
+    })]
+}
+
+/// "▶ Run this test" above each `test`: the extension's `kova.runTest` runs `kova test file "name"`.
+fn lenses(uri: &Uri, src: &str) -> Vec<CodeLens> {
+    (tree(src).tests.iter())
+        .map(|t| CodeLens {
+            range: Range::new(position(src, t.span.start), position(src, t.span.end)),
+            command: Some(Command {
+                title: t!("lens_run_test"),
+                command: "kova.runTest".into(),
+                arguments: Some(vec![serde_json::json!(uri.as_str()), serde_json::json!(t.name)]),
+            }),
+            data: None,
+        })
+        .collect()
 }
 
 /// The types nobody wrote, in grey after the name: `for score in scores` → `score: Int`.
@@ -279,8 +381,11 @@ fn is_word(c: char) -> bool {
 /// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
 fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
     let dot = src[..cursor].trim_end_matches(is_word).strip_suffix('.')?.len();
-    // `1.5` being typed: a number, not a method.
     let before = &src[..dot];
+    if let Some(items) = statics(path, src, &before[before.trim_end_matches(|c: char| is_word(c) || c == '.').len()..]) {
+        return Some(items);
+    }
+    // `1.5` being typed: a number, not a method.
     let digits = before.trim_end_matches(|c: char| c.is_ascii_digit());
     if digits.len() < before.len() && !digits.ends_with(is_word) && !digits.ends_with('.') {
         return Some(vec![]);
@@ -294,6 +399,128 @@ fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> 
         .filter(|&i| info.spans[i].end == dot && info.spans[i].start < dot)
         .min_by_key(|&i| dot - info.spans[i].start);
     Some(id.map_or(vec![], |id| members_of(&file, &info.types[id], cut.len())))
+}
+
+/// `geo.` → what the module `geometry` shows; `Dog.` or `geo.Shape.` → the type's static
+/// functions and variants. `None` when `chain` (`geo`, `geo.Shape`, `rex.owner`) is a value.
+fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
+    let parts: Vec<&str> = chain.split('.').collect();
+    let module = tree(src).imports.into_iter().find(|i| i.alias.text == parts[0]).map(|i| i.module.text);
+    let name = match (&module, parts.as_slice()) {
+        (Some(m), [_]) => m.clone(),
+        (Some(m), [_, ty]) if ty.starts_with(char::is_uppercase) => format!("{m}.{ty}"),
+        (None, [ty]) if ty.starts_with(char::is_uppercase) => ty.to_string(),
+        _ => return None,
+    };
+    let (file, _, _, _) = analyze(path, src);
+    let hidden = |n: &str| file.private.iter().any(|(p, at)| p == n && at.start > src.len());
+    let item = |label: &str, kind, detail: String| CompletionItem {
+        label: label.into(),
+        kind: Some(kind),
+        detail: Some(detail),
+        ..Default::default()
+    };
+    let mut items = vec![];
+    if parts.len() == 1 && module.is_some() {
+        // Its own names: `geometry.distance`, not the methods `geometry.Point.length`.
+        let prefix = format!("{name}.");
+        let own = |n: &str| n.strip_prefix(&prefix).is_some_and(|rest| !rest.contains('.')) && !hidden(n);
+        for f in file.functions.iter().filter(|f| own(&f.name.text)) {
+            items.push(item(&f.name.text[prefix.len()..], CompletionItemKind::FUNCTION, types::heading_text(f).replacen(&prefix, "", 1)));
+        }
+        for s in file.structs.iter().filter(|s| own(&s.name.text)) {
+            let (kind, word) = if s.variants.is_some() { (CompletionItemKind::ENUM, "enum") } else { (CompletionItemKind::STRUCT, "struct") };
+            items.push(item(&s.name.text[prefix.len()..], kind, format!("{word} {}", s.name.text)));
+        }
+        for i in file.interfaces.iter().filter(|i| own(&i.name.text)) {
+            items.push(item(&i.name.text[prefix.len()..], CompletionItemKind::INTERFACE, format!("interface {}", i.name.text)));
+        }
+        return Some(items);
+    }
+    let s = file.structs.iter().find(|s| s.name.text == name)?;
+    let statics = s.methods.iter().filter(|m| m.receiver.is_none() && !hidden(&types::method_name(&name, &m.name.text)));
+    items.extend(statics.map(|m| item(&m.name.text, CompletionItemKind::FUNCTION, types::heading_text(m))));
+    for v in s.variants.iter().flatten() {
+        let fields: Vec<String> = v.fields.iter().map(|f| format!("{}: {}", f.name.text, f.ty_text())).collect();
+        let shown = if fields.is_empty() { v.name.text.clone() } else { format!("{}({})", v.name.text, fields.join(", ")) };
+        items.push(item(&v.name.text, CompletionItemKind::ENUM_MEMBER, shown));
+    }
+    Some(items)
+}
+
+/// `import ge|`: the `.kova` files next to this one, not imported yet.
+fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let line = src[..cursor].rsplit('\n').next().unwrap_or("");
+    let typed = line.trim_start().strip_prefix("import ")?.trim_start();
+    if !typed.chars().all(is_word) {
+        return None;
+    }
+    let me = std::path::Path::new(path);
+    let taken: Vec<String> = tree(src).imports.into_iter().map(|i| i.module.text).filter(|m| m != typed).collect();
+    let files = std::fs::read_dir(me.parent()?).ok()?.flatten().map(|e| e.path());
+    let mut names: Vec<String> = files
+        .filter(|p| p.extension().is_some_and(|x| x == "kova") && p != me)
+        .filter_map(|p| Some(p.file_stem()?.to_str()?.to_string()))
+        .filter(|n| !taken.contains(n))
+        .collect();
+    names.sort();
+    Some(names.into_iter().map(|n| CompletionItem { label: n, kind: Some(CompletionItemKind::FILE), ..Default::default() }).collect())
+}
+
+/// In `match shape {`, where a case goes: the cases not handled yet.
+fn match_cases(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let (before, k) = opened(src, cursor)?;
+    let brace = before[k].span.start;
+    // Without the name being typed, the `match` reads.
+    let start = src[..cursor].trim_end_matches(is_word).len();
+    let end = src.len() - src[cursor..].trim_start_matches(is_word).len();
+    let (_, info, _) = info(path, &format!("{}{}", &src[..start], &src[end..]))?;
+    // The `match` whose `{` this is: the first `{` after its subject.
+    let first_brace = |span: &Span| before.iter().find(|t| t.kind == Kind::Sym("{") && t.span.start > span.start).map(|t| t.span.start);
+    let (_, cases) = info.matches.iter().find(|(span, _)| first_brace(span) == Some(brace))?;
+    Some(
+        cases
+            .iter()
+            .map(|c| CompletionItem {
+                label: c.clone(),
+                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                insert_text: Some(format!("{c} => ")),
+                ..Default::default()
+            })
+            .collect(),
+    )
+}
+
+/// In `struct Dog : Animal {`, where a method goes (maybe after `fn`): the methods its interfaces
+/// promise that it doesn't write yet, as a heading to fill.
+fn promised(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let start = src[..cursor].trim_end_matches(is_word).len();
+    let head = src[..start].trim_end();
+    let after_fn = head.strip_suffix("fn").filter(|h| !h.ends_with(is_word) && head.len() < start);
+    let (before, k) = opened(src, after_fn.map_or(cursor, str::len))?;
+    // Back to `struct` on the same heading: `struct Dog<T> : Animal, Display {`.
+    let at = (0..k).rev().take_while(|&j| !matches!(before[j].kind, Kind::Sym("{" | "}"))).find(|&j| before[j].kind == Kind::Keyword("struct"))?;
+    let name = &src[before.get(at + 1)?.span.start..before[at + 1].span.end];
+    let (file, _, _, _) = analyze(path, src);
+    let st = file.structs.iter().find(|s| s.name.text == name)?;
+    let mut items = vec![];
+    for i in st.interfaces.iter().filter_map(|n| file.interfaces.iter().find(|i| i.name.text == n.text)) {
+        for (m, _) in i.methods.iter().filter(|(m, _)| !st.methods.iter().any(|x| x.name.text == m.name.text)) {
+            // `Self` is this type.
+            let self_is = |w: &str| if w.trim_end_matches(|c: char| !is_word(c)) == "Self" { w.replacen("Self", name, 1) } else { w.to_string() };
+            let heading: String = types::heading_text(m).split_inclusive(|c: char| !is_word(c)).map(self_is).collect();
+            let insert = if after_fn.is_some() { &heading["fn ".len()..] } else { &heading };
+            items.push(CompletionItem {
+                label: m.name.text.clone(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(heading.clone()),
+                insert_text: Some(format!("{insert} {{\n\t$0\n}}")),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
+            });
+        }
+    }
+    Some(items)
 }
 
 /// The fields and methods of a value of type `t`. `root`: the length of the edited file, the
@@ -354,27 +581,22 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     items
 }
 
-/// `Dog { na|`: the fields of `Dog` not written yet. `None` when the cursor is not where a
-/// field's name goes.
-fn literal_fields(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
-    let tokens = lex(src).0;
-    let mut before: Vec<_> = tokens.iter().take_while(|t| t.span.end <= cursor && t.kind != Kind::Eof).collect();
-    // The name being typed.
-    if before.last().is_some_and(|t| t.span.end == cursor && t.kind == Kind::Ident) {
+/// The tokens before the cursor, without the name being typed, and the innermost `{` still open
+/// (its place among them). `None` when no new name starts here (after `{`, `,` or a new line).
+fn opened(src: &str, cursor: usize) -> Option<(Vec<Token>, usize)> {
+    let mut before: Vec<Token> = lex(src).0.into_iter().take_while(|t| t.span.end <= cursor && t.kind != Kind::Eof).collect();
+    if before.last().is_some_and(|t| t.span.end == cursor && matches!(t.kind, Kind::Ident | Kind::Type)) {
         before.pop();
     }
     if !matches!(before.last()?.kind, Kind::Sym("{" | ",") | Kind::Newline) {
         return None;
     }
-    let (mut depth, mut written) = (0, vec![]);
+    let mut depth = 0;
     for (k, t) in before.iter().enumerate().rev() {
         match t.kind {
             Kind::Sym("}" | ")" | "]") => depth += 1,
             Kind::Sym("{" | "(" | "[") if depth > 0 => depth -= 1,
-            Kind::Sym(":=") if depth == 0 && k > 0 && before[k - 1].kind == Kind::Ident => {
-                written.push(&src[before[k - 1].span.start..before[k - 1].span.end]);
-            }
-            Kind::Sym("{") => return struct_fields(path, src, &before[..k], &written),
+            Kind::Sym("{") => return Some((before, k)),
             Kind::Sym("(" | "[") => return None,
             _ => {}
         }
@@ -382,8 +604,26 @@ fn literal_fields(path: &str, src: &str, cursor: usize) -> Option<Vec<Completion
     None
 }
 
+/// `Dog { na|`: the fields of `Dog` not written yet. `None` when the cursor is not where a
+/// field's name goes.
+fn literal_fields(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let (before, k) = opened(src, cursor)?;
+    let (mut depth, mut written) = (0, vec![]);
+    for j in k + 1..before.len() {
+        match before[j].kind {
+            Kind::Sym("{" | "(" | "[") => depth += 1,
+            Kind::Sym("}" | ")" | "]") => depth -= 1,
+            Kind::Sym(":=") if depth == 0 && before[j - 1].kind == Kind::Ident => {
+                written.push(&src[before[j - 1].span.start..before[j - 1].span.end]);
+            }
+            _ => {}
+        }
+    }
+    struct_fields(path, src, &before[..k], &written)
+}
+
 /// The fields of the struct named by the last tokens of `before` (`Dog`, `geo.Point`), minus `written`.
-fn struct_fields(path: &str, src: &str, before: &[&crate::lexer::Token], written: &[&str]) -> Option<Vec<CompletionItem>> {
+fn struct_fields(path: &str, src: &str, before: &[Token], written: &[&str]) -> Option<Vec<CompletionItem>> {
     let text = |k: usize| &src[before[k].span.start..before[k].span.end];
     let k = before.len().checked_sub(1).filter(|&k| before[k].kind == Kind::Type)?;
     let (mut name, mut first) = (text(k).to_string(), k);
@@ -835,6 +1075,101 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/modules/main.kova");
         let src = "import geometry as geo\nfn main {\n  let p := geo.Point { ";
         assert_eq!(labels(literal_fields(path, src, src.len())), ["x", "y"]);
+    }
+
+    const MODULES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/modules/main.kova");
+
+    #[test]
+    fn completion_of_statics_and_modules() {
+        let at = |path: &str, src: &str| labels(members(path, src, src.len()));
+        let geo = at(MODULES, "import geometry as geo\nfn main {\n  geo.");
+        for name in ["distance", "Point", "Animal", "Box"] {
+            assert!(geo.contains(&name.to_string()), "{name} in {geo:?}");
+        }
+        assert!(!geo.iter().any(|n| n == "helper" || n.contains('.')), "{geo:?}");
+        assert!(at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.").contains(&"origin".to_string()));
+        let src = "enum Light { Red, Green }\nfn main {\n  let l := Light.";
+        assert_eq!(at("/none/main.kova", src), ["Red", "Green"]);
+    }
+
+    #[test]
+    fn completion_of_imports() {
+        let src = "import geometry\nimport ";
+        assert_eq!(labels(import_files(MODULES, src, src.len())), ["shapes"]);
+        assert!(import_files(MODULES, "fn main {", 9).is_none());
+    }
+
+    const SHAPES: &str = "enum S { C(radius: Float), D, E }\nfn main {\n    let s := S.D\n    match s {\n        D => {}\n    }\n}\n";
+
+    #[test]
+    fn completion_of_match_cases() {
+        let src = SHAPES.replace("D => {}\n", "D => {}\n        C");
+        let items = match_cases("/none/main.kova", &src, src.find("        C").unwrap() + 9).unwrap();
+        let shown: Vec<(&str, &str)> = items.iter().map(|i| (i.label.as_str(), i.insert_text.as_deref().unwrap())).collect();
+        assert_eq!(shown, [("C(radius)", "C(radius) => "), ("E", "E => ")]);
+        // In the body of a case: not a case.
+        let src = SHAPES.replace("D => {}", "D => {\n        \n        }");
+        assert!(match_cases("/none/main.kova", &src, src.find("{\n        \n").unwrap() + 10).is_none());
+    }
+
+    #[test]
+    fn missing_cases_quick_fix() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let actions = add_cases(&uri, SHAPES, Range::new(Position::new(3, 10), Position::new(3, 10)));
+        let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
+        let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
+        assert_eq!(edit.new_text, "        C(radius) => {}\n        E => {}\n");
+        assert_eq!(edit.range.start, Position::new(5, 0));
+        // All handled: no light bulb.
+        let all = SHAPES.replace("D => {}", "_ => {}");
+        assert!(add_cases(&uri, &all, Range::new(Position::new(3, 10), Position::new(3, 10))).is_empty());
+    }
+
+    #[test]
+    fn completion_of_promised_methods() {
+        let src = "interface A {\n  fn same(self, other: Self) -> Bool\n  fn done(self) -> Int { return 1 }\n}\nstruct Dog : A {\n  fn done(self) -> Int { return 2 }\n  ";
+        let items = promised("/none/main.kova", src, src.len()).unwrap();
+        let shown: Vec<(&str, &str)> = items.iter().map(|i| (i.label.as_str(), i.insert_text.as_deref().unwrap())).collect();
+        assert_eq!(shown, [("same", "fn same(self, other: Dog) -> Bool {\n\t$0\n}")]);
+        let src = format!("{src}fn sa");
+        let items = promised("/none/main.kova", &src, src.len()).unwrap();
+        assert_eq!(items[0].insert_text.as_deref(), Some("same(self, other: Dog) -> Bool {\n\t$0\n}"));
+    }
+
+    #[test]
+    fn renaming() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let edits = |src: &str, at: &str, new: &str| {
+            let edit = rename(&uri, src, src.find(at).unwrap(), new)?.unwrap();
+            let mut ranges: Vec<_> = edit.changes.unwrap()[&uri].iter().map(|e| (e.range.start.line, e.range.start.character)).collect();
+            ranges.sort();
+            Ok::<_, String>(ranges)
+        };
+        assert_eq!(edits(DOGS, "rex :=", "max"), Ok(vec![(6, 6), (9, 14), (11, 8)]));
+        assert_eq!(edits(DOGS, "age: Int", "years"), Ok(vec![(2, 2), (6, 34), (9, 18)]));
+        assert_eq!(edits(DOGS, "Dog {\n", "Hound"), Ok(vec![(0, 7), (6, 13)]));
+        assert!(edits(DOGS, "rex :=", "Max").is_err());
+        assert!(edits(DOGS, "rex :=", "while").is_err());
+        let uses_self = DOGS.replace("return \"woof\"", "return self.name");
+        assert!(edits(&uses_self, "self.name", "me").is_err());
+        // A function of another file: renamed there and at the call, `geo.` kept.
+        let src = std::fs::read_to_string(MODULES).unwrap();
+        let main = file_uri(MODULES).unwrap();
+        let edit = rename(&main, &src, src.find("distance(a").unwrap(), "length").unwrap().unwrap();
+        let changes = edit.changes.unwrap();
+        assert_eq!(changes.len(), 2);
+        let call = &changes[&main][0];
+        assert_eq!(call.range.start, position(&src, src.find("distance(a").unwrap()));
+        assert_eq!(call.range.end, position(&src, src.find("(a, o)").unwrap()));
+    }
+
+    #[test]
+    fn test_buttons() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let src = "test \"one\" {\n  check 1 = 1\n}\ntest \"two\" {\n}\n";
+        let lenses = lenses(&uri, src);
+        let names: Vec<_> = lenses.iter().map(|l| (l.range.start.line, l.command.as_ref().unwrap().arguments.as_ref().unwrap()[1].clone())).collect();
+        assert_eq!(names, [(0, serde_json::json!("one")), (3, serde_json::json!("two"))]);
     }
 
     #[test]

@@ -35,7 +35,7 @@ pub struct Token {
     pub span: Span,
 }
 
-const KEYWORDS: &[&str] = &[
+pub const KEYWORDS: &[&str] = &[
     "fn", "let", "var", "move", "return", "if", "else", "while", "for", "in", "from", "to", "match",
     "struct", "enum", "interface", "import", "public", "private", "require", "ensure", "check",
     "result", "self", "true", "false", "none", "ok", "err", "and", "or", "copy", "any", "break",

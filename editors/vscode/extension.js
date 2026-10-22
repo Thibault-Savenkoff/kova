@@ -2,7 +2,8 @@
 // Kova extension:
 // - E2: ▶ Run / 🔨 Build / 🧪 Test buttons. Each button saves the file,
 //   then runs `kova` in the "Kova" terminal.
-// - E3: starts `kova lsp` (errors while typing, completion, parameter help).
+// - E3 to E5: starts `kova lsp` (errors while typing, completion, hover, renaming…).
+//   Its "▶ Run this test" above each `test` calls `kova.runTest`.
 
 const fs = require('fs');
 const vscode = require('vscode');
@@ -27,6 +28,12 @@ function activate(context) {
     );
   }
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('kova.runTest', (/** @type {string} */ uri, /** @type {string} */ name) =>
+      launch('test', vscode.Uri.parse(uri), name)
+    )
+  );
+
   const kova = kovaPath();
   const server = inFlatpak
     ? { command: '/usr/bin/flatpak-spawn', args: ['--host', '--watch-bus', `--env=${lang}`, kova, 'lsp'] }
@@ -49,8 +56,9 @@ function kovaPath() {
 /**
  * @param {'run' | 'build' | 'test'} action
  * @param {vscode.Uri=} uri file of the clicked button (otherwise: the active editor)
+ * @param {string=} test the one test to run
  */
-async function launch(action, uri) {
+async function launch(action, uri, test) {
   const doc = uri
     ? vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString())
     : vscode.window.activeTextEditor?.document;
@@ -60,7 +68,7 @@ async function launch(action, uri) {
 
   const t = terminal();
   t.show(true);
-  t.sendText(command(action, file, kovaPath()));
+  t.sendText(command(action, file, kovaPath(), test));
 }
 
 /** The "Kova" terminal, reused from one click to the next. */

@@ -337,6 +337,9 @@ pub struct Info {
     /// For the editor: the variables declared without their type written anywhere
     /// (`for score in scores`, `Circle(r) =>`), shown in grey after their name.
     pub hints: Vec<(Span, Type)>,
+    /// For the editor: each `match` on an enum, an optional or a result (from its subject to its
+    /// `}`), with the cases it doesn't handle as they are written: `Circle(radius)`, `none`.
+    pub matches: Vec<(Span, Vec<String>)>,
 }
 
 /// A name met while checking: `rex` at `span`, declared at `decl`, shown as `rex: Dog`.
@@ -523,6 +526,7 @@ struct Checker<'a> {
     spans: Vec<Span>,
     seen: Vec<Seen>,
     hints: Vec<(Span, Type)>,
+    matches: Vec<(Span, Vec<String>)>,
     diags: Vec<Diag>,
 }
 
@@ -581,6 +585,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         spans: vec![Span::new(0, 0); nb_exprs],
         seen: vec![],
         hints: vec![],
+        matches: vec![],
         diags: vec![],
     };
     // Hovering a declaration shows it too.
@@ -887,8 +892,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
-    let (spans, seen, hints) = (c.spans, c.seen, c.hints);
-    let info = Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods, spans, seen, hints };
+    let (spans, seen, hints, matches) = (c.spans, c.seen, c.hints, c.matches);
+    let info =
+        Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods, spans, seen, hints, matches };
     (info, c.diags)
 }
 
@@ -2922,6 +2928,16 @@ impl Checker<'_> {
                 self.block(&arm.body, vec![]);
             }
             self.scopes.pop();
+        }
+        if let Some(d) = &d {
+            // `Circle(radius)`: the variant and its fields' names; the value of an optional: `value`.
+            let written = |i: usize| match &d.variants[i] {
+                (_, fs) if optional && i == 1 => fs[0].0.clone(),
+                (n, fs) if fs.is_empty() => n.clone(),
+                (n, fs) => format!("{n}({})", fs.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>().join(", ")),
+            };
+            let todo = if any.is_some() { vec![] } else { (0..d.variants.len()).filter(|i| !seen.contains_key(i)).map(written).collect() };
+            self.matches.push((m.subject.span.to(m.close), todo));
         }
         if let Some(d) = &d
             && any.is_none()

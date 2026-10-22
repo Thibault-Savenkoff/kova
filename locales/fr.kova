@@ -20,7 +20,7 @@ lang fr {
     what_field := "champ"
 
     // ---- Command line ----
-    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost]\n                                       crée un exécutable autonome\n  kova test <fichier.kova>             lance les blocs `test`\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova --version"
+    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost]\n                                       crée un exécutable autonome\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova --version"
     cannot_read := "impossible de lire `{file}` : {error}"
     lsp_failed := "kova lsp : {error}"
     reserved_for := "ce programme est réservé à `kova {mode}` (header ligne {line})"
@@ -29,6 +29,7 @@ lang fr {
     cc_missing := "impossible de lancer `cc` (il sert à assembler l'exécutable) : {error}"
     cc_failed := "`cc` a échoué :\n{output}"
     tests_none := "aucun bloc `test` dans {file}"
+    test_unknown := "aucun test \"{name}\" dans {file}"
     tests_summary := "{passed} réussi(s), {failed} raté(s) sur {total}"
 
     // ---- Runtime (also in built executables) ----
@@ -386,6 +387,10 @@ lang fr {
     for_map_one_name_help := "`for {name}, value in …`"
 
     // ---- Editor (`kova lsp`) ----
+    action_add_cases := "Ajouter les cas manquants"
+    lens_run_test := "▶ Lancer ce test"
+    rename_self := "`self` ne se renomme pas"
+    rename_invalid := "`{name}` ne peut pas être ce nom : lettres, chiffres et `_`, une majuscule au début seulement pour un type"
     not_handled := "pas encore géré"
     completion_default := "{help} (par défaut)"
     completion_setting := "{values} : {help}"

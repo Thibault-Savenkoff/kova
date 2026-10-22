@@ -199,6 +199,14 @@ fn command_line() {
         assert!(stdout.contains(piece), "« {piece} » missing from:\n{stdout}");
     }
 
+    // `kova test f.kova "name"`: only that test (the editor's ▶ above a `test`).
+    let out = kova(LANG).args(["test", "tests/ok/test_blocks.kova", "carré de 3"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "✅ carré de 3\n\n1 passed, 0 failed out of 1\n");
+    let out = kova(LANG).args(["test", "tests/ok/test_blocks.kova", "nope"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stderr), "no test \"nope\" in tests/ok/test_blocks.kova\n");
+
     // `header`: `mode := build` → `kova f.kova` compiles; `lock := true` refuses the other command.
     let dir = std::env::temp_dir().join(format!("kova-header-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

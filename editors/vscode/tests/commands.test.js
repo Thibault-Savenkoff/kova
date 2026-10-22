@@ -12,4 +12,5 @@ assert.strictEqual(
   `cd '/p' && '/opt/kova' build 'fib.kova' && './fib'`
 );
 assert.strictEqual(command('test', '/p/a.kova', 'kova'), `cd '/p' && 'kova' test 'a.kova'`);
+assert.strictEqual(command('test', '/p/a.kova', 'kova', "l'un"), `cd '/p' && 'kova' test 'a.kova' 'l'\\''un'`);
 console.log('commands: ok');

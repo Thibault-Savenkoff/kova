@@ -20,7 +20,7 @@ lang en {
     what_field := "field"
 
     // ---- Command line ----
-    usage := "usage:\n  kova <file.kova>                     runs according to the file's header (run by default)\n  kova run <file.kova>                 runs right away\n  kova build <file.kova> [-o output] [--boost]\n                                       creates a standalone executable\n  kova test <file.kova>                runs the `test` blocks\n  kova lsp                             language server (for the editor)\n  kova --version"
+    usage := "usage:\n  kova <file.kova>                     runs according to the file's header (run by default)\n  kova run <file.kova>                 runs right away\n  kova build <file.kova> [-o output] [--boost]\n                                       creates a standalone executable\n  kova test <file.kova> [\"name\"]     runs the `test` blocks (or only this one)\n  kova lsp                             language server (for the editor)\n  kova --version"
     cannot_read := "cannot read `{file}`: {error}"
     lsp_failed := "kova lsp: {error}"
     reserved_for := "this program is reserved for `kova {mode}` (header line {line})"
@@ -29,6 +29,7 @@ lang en {
     cc_missing := "cannot launch `cc` (it assembles the executable): {error}"
     cc_failed := "`cc` failed:\n{output}"
     tests_none := "no `test` block in {file}"
+    test_unknown := "no test \"{name}\" in {file}"
     tests_summary := "{passed} passed, {failed} failed out of {total}"
 
     // ---- Runtime (also in built executables) ----
@@ -386,6 +387,10 @@ lang en {
     for_map_one_name_help := "`for {name}, value in …`"
 
     // ---- Editor (`kova lsp`) ----
+    action_add_cases := "Add the missing cases"
+    lens_run_test := "▶ Run this test"
+    rename_self := "`self` cannot be renamed"
+    rename_invalid := "`{name}` cannot be this name: letters, digits and `_`, starting with a capital only for a type"
     not_handled := "not handled yet"
     completion_default := "{help} (default)"
     completion_setting := "{values}: {help}"

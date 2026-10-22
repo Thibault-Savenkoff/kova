@@ -102,14 +102,20 @@ fn leaks(allocated: usize, live: usize) -> i32 {
 }
 
 /// `kova test`: runs every `test` block, even if another one failed. Code 1 if at least one fails.
-pub fn test(p: &Program, files: &[String]) -> i32 {
+/// `only`: the name of the one test to run.
+pub fn test(p: &Program, files: &[String], only: Option<&str>) -> i32 {
     if p.tests.is_empty() {
         println!("{}", t!("tests_none", file = files[0]));
         return 0;
     }
+    let tests: Vec<_> = p.tests.iter().filter(|(name, _)| only.is_none_or(|o| o == name)).collect();
+    if let (Some(name), true) = (only, tests.is_empty()) {
+        eprintln!("{}", t!("test_unknown", name = name, file = files[0]));
+        return 1;
+    }
     let mut out = BufWriter::new(std::io::stdout());
     let mut failed = 0;
-    for (name, num) in &p.tests {
+    for (name, num) in &tests {
         let result = call(p, *num, &[], &mut out, files, &mut Heap::default());
         let _ = match result {
             Ok(_) => writeln!(out, "✅ {name}"),
@@ -125,7 +131,7 @@ pub fn test(p: &Program, files: &[String]) -> i32 {
             }
         };
     }
-    let total = p.tests.len();
+    let total = tests.len();
     let _ = writeln!(out, "\n{}", t!("tests_summary", passed = total - failed, failed = failed, total = total));
     out.flush().unwrap();
     if failed > 0 { 1 } else { 0 }

@@ -20,7 +20,8 @@ use locale::t;
 enum Command {
     Run,
     Build { output: Option<String>, boost: bool },
-    Test,
+    /// `kova test file.kova "name"`: only that test.
+    Test { only: Option<String> },
 }
 
 fn main() {
@@ -40,7 +41,8 @@ fn main() {
         }
         // The words after the file go to the program (`args`).
         ["run", f, ..] => (Some(Command::Run), *f),
-        ["test", f] => (Some(Command::Test), *f),
+        ["test", f] => (Some(Command::Test { only: None }), *f),
+        ["test", f, name] => (Some(Command::Test { only: Some(name.to_string()) }), *f),
         ["build", f, options @ ..] => match build_options(options) {
             Some((output, boost)) => (Some(Command::Build { output, boost }), *f),
             None => usage_error(),
@@ -86,12 +88,12 @@ fn main() {
         }
     }
 
-    if !matches!(command, Command::Test) && !tree.functions.iter().any(|f| f.name.text == "main") {
+    if !matches!(command, Command::Test { .. }) && !tree.functions.iter().any(|f| f.name.text == "main") {
         eprintln!("{}", diag::render(&diag::Diag::new(diag::Span::new(0, 0), t!("main_missing")), &sources));
         exit(1);
     }
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
+    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }));
 
     match command {
         Command::Run => {
@@ -109,7 +111,7 @@ fn main() {
                 fail(e);
             }
         }
-        Command::Test => exit(interp::test(&program, &files)),
+        Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
     }
 }
 

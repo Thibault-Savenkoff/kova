@@ -12,8 +12,9 @@ function quote(text) {
  * @param {'run' | 'build' | 'test'} action
  * @param {string} file absolute path of the `.kova`
  * @param {string} kova path of the `kova` executable
+ * @param {string=} test the one test to run (the ▶ above a `test`)
  */
-function command(action, file, kova) {
+function command(action, file, kova, test) {
   const dir = quote(path.dirname(file));
   const name = path.basename(file);
   const k = quote(kova);
@@ -26,7 +27,7 @@ function command(action, file, kova) {
       return `cd ${dir} && ${k} build ${quote(name)} && ${quote('./' + exe)}`;
     }
     case 'test':
-      return `cd ${dir} && ${k} test ${quote(name)}`;
+      return `cd ${dir} && ${k} test ${quote(name)}` + (test === undefined ? '' : ` ${quote(test)}`);
   }
 }
 
