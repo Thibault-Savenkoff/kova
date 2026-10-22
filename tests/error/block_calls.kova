@@ -15,9 +15,11 @@ fn identity<T>(x: T) -> T {
 fn later(h: {}) {
     identity({ x: Int => x })
     twice(h, 1)
+    print({ x: Int => x })
 }
 // error: `f` is a block: call it with its arguments, `f(…)`
 // error: different types: `Int` expected, `Bool` given
 // error: a block is only read: write `g: {…}`, without `var`
 // error: a block cannot be given for `T` in `identity`: it would outlive the call
 // error: different types: `{Int -> Int}` expected, `{}` given
+// error: `print` cannot show a block

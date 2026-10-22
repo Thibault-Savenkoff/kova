@@ -28,6 +28,23 @@ fn label(make: {-> String}) -> String {
     return "<" + make + ">"
 }
 
+fn take(s: move String) -> Int {
+    return s.length
+}
+
+fn kept(make: {-> String}) -> String {
+    let text: String := make
+    return text
+}
+
+fn measure(make: {-> String}) -> Int {
+    return take(make)
+}
+
+fn size(s: String, f: {String -> Int}) -> Int {
+    return f(s)
+}
+
 fn main {
     repeat(2) { print("hi") }
     var total: Int := 0
@@ -55,6 +72,19 @@ fn main {
         }
     }
     print(seen)
+    print(kept { "dog" })
+    print(measure { "puppy" })
+    print(size(" ab ") { x: String => x.trim.length })
+    var found: Int := 0
+    [1, 2].each { x: Int =>
+        for i in 0..5 {
+            if i = x {
+                break
+            }
+            found += 1
+        }
+    }
+    print(found)
 }
 // expect: hi
 // expect: hi
@@ -67,3 +97,7 @@ fn main {
 // expect: Rex!!
 // expect: <Rex!!>
 // expect: [30, 31, 32, 33]
+// expect: dog
+// expect: 5
+// expect: 2
+// expect: 3

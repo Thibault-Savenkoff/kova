@@ -5,5 +5,11 @@ fn main {
 fn other {
     let g: Int := { 3 }
 }
+fn third(l: List<Int>) {
+    if l.any { x: Int => x > 2 } {
+        print(1)
+    }
+}
 // error: a block type (`{Int -> Bool}`) is only a parameter's type
 // error: a block `{ … }` is only written as a function's argument
+// error: a block on an `if`, `while`, `for`, `match` or `require` line goes between parentheses

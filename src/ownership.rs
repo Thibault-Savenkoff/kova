@@ -499,7 +499,8 @@ impl Owner<'_> {
     /// `e` is given (`let`, `:=`, `return`, tuple element, branch value): a variable is moved.
     fn give(&mut self, e: &Expr) {
         let ty = &self.info.types[e.id];
-        if is_copy(ty) {
+        // `body` alone calls a block: a new value, like any call's.
+        if is_copy(ty) || self.info.invoked.contains(&e.id) {
             return self.borrow(e);
         }
         match &e.kind {
@@ -591,10 +592,16 @@ impl Owner<'_> {
                 (Mode::Move, _) => self.give(e),
                 // What the call's other arguments read is checked against the block by
                 // `exclusive_blocks`, with a clearer message.
+                // What it uses stays read until the call: `f({ print(s) }, g(var s))` ❌.
                 (_, ExprKind::Block { .. }) => {
                     let own = self.pending.split_off(mark.min(self.pending.len()));
                     self.borrow(e);
                     self.pending.extend(own);
+                    let used: Vec<String> = self.uses.get(&e.id).into_iter().flatten().map(|(n, _)| n.clone()).collect();
+                    for n in used {
+                        let id = self.lookup(&n).id;
+                        self.pending.push(id);
+                    }
                 }
                 _ => self.borrow(e),
             }
@@ -699,6 +706,7 @@ impl Owner<'_> {
 
     fn borrow_kind(&mut self, e: &Expr) {
         match &e.kind {
+            ExprKind::Var(name) if self.info.invoked.contains(&e.id) => self.use_var(name, e.span),
             ExprKind::Var(name) => {
                 self.use_var(name, e.span);
                 if !is_copy(&self.info.types[e.id]) {

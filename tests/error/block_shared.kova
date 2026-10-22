@@ -11,6 +11,15 @@ fn both(a: {}, b: {}) {
     a
 }
 
+fn first(a: {}, n: Int) {
+    a
+}
+
+fn grow(t: var String) -> Int {
+    t := t + "!"
+    return 1
+}
+
 fn main {
     var total: Int := 0
     apply(var total) {
@@ -24,6 +33,7 @@ fn main {
         s := "c"
     }
     show(s) { print(s) }
+    first({ print(s) }, grow(var s))
     let kept: String := "x"
     show(s) {
         let k: String := kept
@@ -32,4 +42,5 @@ fn main {
 // error: the block uses `total`, which `apply` also receives, and one of them changes it
 // error: the block uses `s`, which `show` also receives, and one of them changes it
 // error: the block uses `s`, which `both` also receives, and one of them changes it
+// error: `s` is still read by this expression: it cannot be changed in it
 // error: `kept` is moved in a block

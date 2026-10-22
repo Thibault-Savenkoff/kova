@@ -2170,6 +2170,8 @@ impl<'a> Translator<'a> {
         } else {
             t.block_value(body, &r)
         };
+        // The temporaries of its last line (its value is owned, not among them).
+        t.free_temps(0);
         for (k, &l) in inside.iter().enumerate() {
             t.emit(Inst::ListStore(inner_env, zero, k, l));
         }

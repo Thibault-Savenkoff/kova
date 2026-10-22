@@ -177,6 +177,10 @@ impl Parser<'_> {
     fn kind(&self) -> Kind {
         self.token().kind
     }
+    /// The kind of the token `n` places further.
+    fn kind_at(&self, n: usize) -> Kind {
+        self.t[(self.pos + n).min(self.t.len() - 1)].kind
+    }
     fn advance(&mut self) -> Token {
         let t = self.token();
         if t.kind != Kind::Eof {
@@ -1446,7 +1450,20 @@ impl Parser<'_> {
     /// `l.each { x: Int => … }`: a block given last, after the `)` and on the same line
     /// (a line break before it would have made a `Newline`). Not in a heading (PLAN 2.3).
     fn trailing_block(&mut self, args: &mut Vec<Expr>) -> R<Option<Span>> {
-        if !self.is_sym("{") || self.no_literal {
+        if !self.is_sym("{") {
+            return Ok(None);
+        }
+        // `if l.any { x: Int => … } {`: no statement starts with `x:`, so this `{` opens a block
+        // and not the `if`'s body. Read as such, with one clear message.
+        let params = self.kind_at(1) == Kind::Ident && self.kind_at(2) == Kind::Sym(":");
+        if self.no_literal && params {
+            let b = self.block_literal()?;
+            self.diags.push(Diag::new(b.span, t!("block_in_heading")).help(t!("block_in_heading_help")));
+            let end = b.span;
+            args.push(b);
+            return Ok(Some(end));
+        }
+        if self.no_literal {
             return Ok(None);
         }
         let b = self.block_literal()?;

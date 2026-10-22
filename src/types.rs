@@ -2003,7 +2003,7 @@ impl Checker<'_> {
                     );
                 }
                 // A computed value (`keep(make_name)`) is given without a marker.
-                (Mode::Move, Mode::Read) if !is_copy(t) && place_root(value, &self.types).is_some() => self.diags.push(
+                (Mode::Move, Mode::Read) if !is_copy(t) && place_root(value, &self.types).is_some() && !self.invoked.contains(&value.id) => self.diags.push(
                     Diag::new(a.span, t!("move_mark_missing", name = name.text, arg = arg))
                         .help(t!("move_mark_missing_help", arg = arg)),
                 ),
@@ -2144,6 +2144,8 @@ impl Checker<'_> {
             self.declare(&p.name, t.clone(), VarKind::Param);
         }
         self.in_block += 1;
+        // A loop around the block is not the block's: `break` cannot leave it.
+        let loops = std::mem::take(&mut self.loops);
         let r = match result {
             Some(Type::Unit) => {
                 self.block(body, vec![]);
@@ -2159,6 +2161,7 @@ impl Checker<'_> {
             }
         };
         self.in_block -= 1;
+        self.loops = loops;
         self.scopes.pop();
         Type::Block(written, Box::new(r))
     }
@@ -2414,8 +2417,8 @@ impl Checker<'_> {
                 self.expect(value, &ty);
             }
             Stmt::Return { span, .. } if self.in_block > 0 => self.block_exit(*span, "return"),
-            Stmt::Break(span) if self.in_block > 0 => self.block_exit(*span, "break"),
-            Stmt::Continue(span) if self.in_block > 0 => self.block_exit(*span, "continue"),
+            Stmt::Break(span) if self.in_block > 0 && self.loops == 0 => self.block_exit(*span, "break"),
+            Stmt::Continue(span) if self.in_block > 0 && self.loops == 0 => self.block_exit(*span, "continue"),
             Stmt::Return { value, span } => match (value, self.ret.clone()) {
                 (None, Type::Unit | Type::Error) => {}
                 (None, t) => self.error(*span, t!("must_return", type = t.text())),
@@ -3232,8 +3235,10 @@ impl Checker<'_> {
                 self.error(name.span, t!("builtin_one_arg", name = name.text));
             }
             for a in args {
-                if self.expr(a) == Type::Unit {
-                    self.error(a.span, t!("print_no_value", name = name.text));
+                match self.expr(a) {
+                    Type::Unit => self.error(a.span, t!("print_no_value", name = name.text)),
+                    Type::Block(..) => self.error(a.span, t!("print_block", name = name.text)),
+                    _ => {}
                 }
             }
             return Type::Unit;
