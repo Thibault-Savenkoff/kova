@@ -1,0 +1,24 @@
+// A day or a time that cannot exist, written with its numbers, is refused before the program runs.
+fn main {
+    let a := Date.year(2026) month(2) day(29)
+    let b := Date.year(2026) month(13) day(1)
+    let c := Date.year(0) month(1) day(1)
+    let d := DateTime.year(2026) month(10) day(23) hour(24) minute(0)
+    let e := DateTime.year(2026) month(10) day(23) hour(14) minute(5) second(60)
+    let f := Date.day(23) month(10) year(2026)
+    let g := DateTime.year(2026) month(10) day(23)
+    let h := Date.year(2026.0) month(1) day(1)
+    let i: Int := Date.year(2026) month(1) day(1).year
+    print(a < 3)
+    print(i.month)
+}
+// error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// error: this time does not exist: hour 0 to 23, minute and second 0 to 59
+// error: this time does not exist: hour 0 to 23, minute and second 0 to 59
+// error: `Date` has no function `Date.day(…) month(…) year(…)`
+// error: `DateTime` has no function `DateTime.year(…) month(…) day(…)`
+// error: different types: `Int` expected, `Float` given
+// error: different types: `Date` expected, `Int` given
+// error: `Int` has no method `month`

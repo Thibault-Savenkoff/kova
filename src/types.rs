@@ -24,6 +24,10 @@ pub enum Type {
     String,
     /// An integer without limits, owned like a `String` (its decimal digits, `kir.rs`).
     BigInt,
+    /// A day, `2026-10-23`: its number of days since 1970-01-01, in one slot (PLAN Part 4, "Dates").
+    Date,
+    /// A day and a time, `2026-10-23 14:05:30`, without time zone: its seconds since 1970-01-01 00:00.
+    DateTime,
     /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
     /// A `struct`: its slots are those of its fields, in order (like a tuple).
@@ -79,6 +83,8 @@ impl Type {
             Type::Char => "Char".into(),
             Type::String => "String".into(),
             Type::BigInt => "BigInt".into(),
+            Type::Date => "Date".into(),
+            Type::DateTime => "DateTime".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(d) if d.args.is_empty() => d.name.clone(),
             Type::Struct(d) => format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
@@ -288,7 +294,41 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::Char, "to_string", Type::String, false),
     (Type::String, "to_string", Type::String, false),
     (Type::BigInt, "to_string", Type::String, false),
+    (Type::Date, "year", Type::Int, false),
+    (Type::Date, "month", Type::Int, false),
+    (Type::Date, "day", Type::Int, false),
+    (Type::Date, "clone", Type::Date, false),
+    (Type::Date, "to_string", Type::String, false),
+    (Type::DateTime, "year", Type::Int, false),
+    (Type::DateTime, "month", Type::Int, false),
+    (Type::DateTime, "day", Type::Int, false),
+    (Type::DateTime, "hour", Type::Int, false),
+    (Type::DateTime, "minute", Type::Int, false),
+    (Type::DateTime, "second", Type::Int, false),
+    (Type::DateTime, "clone", Type::DateTime, false),
+    (Type::DateTime, "to_string", Type::String, false),
 ];
+
+/// How a `Date` or a `DateTime` is made: the name of each static function, its number of `Int`s.
+pub fn date_forms(t: &Type) -> &'static [(&'static str, usize)] {
+    match t {
+        Type::Date => &[("year(…) month(…) day(…)", 3)],
+        _ => &[("year(…) month(…) day(…) hour(…) minute(…)", 5), ("year(…) month(…) day(…) hour(…) minute(…) second(…)", 6)],
+    }
+}
+
+/// Year, month, day (then hour, minute, second): does this day exist? The same rules as the
+/// checks `kir.rs` emits (`date_made`).
+pub fn date_exists(v: &[i64]) -> bool {
+    let (y, m, d) = (v[0], v[1], v[2]);
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    (1..=9999).contains(&y) && (1..=12).contains(&m) && (1..=days[m as usize - 1]).contains(&d)
+}
+
+pub fn time_exists(v: &[i64]) -> bool {
+    v.len() < 5 || ((0..=23).contains(&v[3]) && (0..=59).contains(&v[4]) && v.get(5).is_none_or(|s| (0..=59).contains(s)))
+}
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
 pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "join", "clone"];
@@ -343,8 +383,10 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
 /// The built-in interfaces each primitive follows (for `<T: Comparable>`, PLAN Part 4, "J5").
 fn primitive_follows(t: &Type, interface: &str) -> bool {
     match interface {
-        "Equal" | "Display" => matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::BigInt),
-        "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String | Type::BigInt),
+        "Equal" | "Display" => {
+            matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::Date | Type::DateTime)
+        }
+        "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String | Type::BigInt | Type::Date | Type::DateTime),
         _ => false,
     }
 }
@@ -364,7 +406,7 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Any(_) => false,
         // Borrowed for the call it is given to, never owned.
         Type::Block(..) => true,
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Unit | Type::Error => true,
     }
 }
 
@@ -1046,7 +1088,7 @@ fn self_param(interface: &str) -> Type {
     Type::Param(Rc::new(ParamDef { name: "Self".into(), bounds: vec![interface.to_string()] }))
 }
 
-fn primitive(name: &str) -> Option<Type> {
+pub fn primitive(name: &str) -> Option<Type> {
     Some(match name {
         "Int" => Type::Int,
         "Float" => Type::Float,
@@ -1054,8 +1096,19 @@ fn primitive(name: &str) -> Option<Type> {
         "Char" => Type::Char,
         "String" => Type::String,
         "BigInt" => Type::BigInt,
+        "Date" => Type::Date,
+        "DateTime" => Type::DateTime,
         _ => return None,
     })
+}
+
+/// `12`, `-3`: an `Int` written directly.
+fn int_written(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Int(v) => i64::try_from(*v).ok(),
+        ExprKind::Unary(UnOp::Neg, x) => int_written(x).map(|v| -v),
+        _ => None,
+    }
 }
 
 /// `Nothing`, written as the success of a result.
@@ -2442,6 +2495,30 @@ impl Checker<'_> {
         Some(result)
     }
 
+    /// `Date.year(2026) month(10) day(23)`, each part an `Int`; a day that cannot exist is an error
+    /// when its numbers are written directly, else a runtime error (`kir.rs` `date_made`).
+    fn date_made(&mut self, t: Type, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+        let forms = date_forms(&t);
+        let Some(&(_, n)) = forms.iter().find(|(f, _)| *f == name.text) else {
+            let help = if t == Type::Date { t!("date_made_help") } else { t!("datetime_made_help") };
+            self.diags.push(Diag::new(name.span, t!("no_static", type = ty.text, name = name.text)).help(help));
+            return self.unchecked(args);
+        };
+        self.arguments(name, args, &vec![(Mode::Read, Type::Int); n], &[]);
+        let numbers: Option<Vec<i64>> = args.iter().map(int_written).collect();
+        if let Some(v) = numbers
+            && v.len() == n
+        {
+            let span = args[0].span.to(args[n - 1].span);
+            if !date_exists(&v) {
+                self.error(span, t!("fault_bad_date"));
+            } else if !time_exists(&v) {
+                self.error(span, t!("fault_bad_time"));
+            }
+        }
+        t
+    }
+
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
         // `Float.pi`, like Smalltalk's `Float pi`.
@@ -2450,6 +2527,9 @@ impl Checker<'_> {
                 self.error(name.span, t!("no_arguments", name = name.text));
             }
             return Type::Float;
+        }
+        if let t @ (Type::Date | Type::DateTime) = primitive(&ty.text).unwrap_or(Type::Error) {
+            return self.date_made(t, ty, name, args);
         }
         if let kind @ ("List" | "Map" | "Set") = ty.text.as_str() {
             let help = match kind {
@@ -2618,8 +2698,12 @@ impl Checker<'_> {
 
     fn stmt(&mut self, s: &Stmt) {
         match s {
-            // `let rex := Dog { ... }`, `let c := Shape.Circle(2.0)`: the type is written on the right (PLAN 2.5).
-            Stmt::Declare { mutable, pattern, ty: None, value } if matches!(value.kind, ExprKind::StructLit { .. } | ExprKind::Variant { .. }) => {
+            // `let rex := Dog { ... }`, `let c := Shape.Circle(2.0)`, `let d := Date.year(2026) month(10) day(23)`:
+            // the type is written on the right (PLAN 2.5).
+            Stmt::Declare { mutable, pattern, ty: None, value }
+                if matches!(&value.kind, ExprKind::StructLit { .. } | ExprKind::Variant { .. })
+                    || matches!(&value.kind, ExprKind::Static { ty, .. } if matches!(ty.text.as_str(), "Date" | "DateTime")) =>
+            {
                 let ty = self.expr(value);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }

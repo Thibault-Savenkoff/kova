@@ -100,7 +100,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
@@ -128,7 +128,7 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
             vec![None; scalars(t).len()]
         }
     }
@@ -517,6 +517,10 @@ pub enum Fault {
     NegativePower,
     /// `random(5..5)`: nothing to draw from.
     EmptyRange,
+    /// `Date.year(2026) month(2) day(30)`.
+    BadDate,
+    /// `DateTime.year(2026) month(10) day(23) hour(25) minute(0)`.
+    BadTime,
 }
 
 impl Fault {
@@ -532,6 +536,8 @@ impl Fault {
             Fault::ExitCode => "fault_exit_code",
             Fault::NegativePower => "fault_negative_power",
             Fault::EmptyRange => "fault_empty_range",
+            Fault::BadDate => "fault_bad_date",
+            Fault::BadTime => "fault_bad_time",
         }
     }
 }
@@ -1122,7 +1128,7 @@ impl<'a> Translator<'a> {
     /// where a key is put in the index of a Map or a Set (`find_in_index`).
     fn hash(&mut self, v: &[Local], ty: &Type) -> Local {
         match ty {
-            Type::Int | Type::Bool | Type::Char => v[0],
+            Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime => v[0],
             Type::String | Type::BigInt => {
                 let d = self.int_local();
                 self.emit(Inst::Str(d, StrOp::Hash, vec![v[0]]));
@@ -1190,7 +1196,7 @@ impl<'a> Translator<'a> {
 
     /// `a < b` on a String or a type following `Comparable` (its `less`).
     fn less(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
-        if matches!(ty, Type::Int | Type::Char | Type::Float) {
+        if matches!(ty, Type::Int | Type::Char | Type::Float | Type::Date | Type::DateTime) {
             return self.operation(Op::Lt, a[0], b[0], *ty == Type::Float, NOWHERE);
         }
         if matches!(ty, Type::String | Type::BigInt) {
@@ -2139,6 +2145,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Value(text, Show::String));
             }
             Type::Block(..) => m.push(Piece::Text(ty.text())),
+            Type::Date | Type::DateTime => self.date_pieces(v[0], ty, m),
             Type::Char | Type::String => {
                 let quote = if *ty == Type::Char { "'" } else { "\"" };
                 m.push(Piece::Text(quote.into()));
@@ -2149,13 +2156,190 @@ impl<'a> Translator<'a> {
         }
     }
 
+    // Dates (PLAN Part 4, "Dates"): a `Date` is its number of days since 1970-01-01, a `DateTime`
+    // its seconds since 1970-01-01 00:00. Howard Hinnant's `days_from_civil` and `civil_from_days`
+    // in plain `Int` operations, so run and build count the same days. The year starts on March 1st,
+    // so that February, the only month of varying length, comes last.
+
+    /// `a op k`.
+    fn with(&mut self, op: Op, a: Local, k: i64) -> Local {
+        let k = self.constant(k);
+        self.operation(op, a, k, false, NOWHERE)
+    }
+
+    fn op(&mut self, op: Op, a: Local, b: Local) -> Local {
+        self.operation(op, a, b, false, NOWHERE)
+    }
+
+    /// The days since 1970-01-01 of a year (1 or later), a month and a day.
+    fn days_from_civil(&mut self, y: Local, m: Local, d: Local) -> Local {
+        let early = self.with(Op::Le, m, 2);
+        let y = self.op(Op::Minus, y, early);
+        let era = self.with(Op::Div, y, 400);
+        let t = self.with(Op::Times, era, 400);
+        let yoe = self.op(Op::Minus, y, t);
+        // The month counted from March: `m - 3`, or `m + 9` for January and February.
+        let late = self.with(Op::Gt, m, 2);
+        let t = self.with(Op::Times, late, 12);
+        let mp = self.with(Op::Plus, m, 9);
+        let mp = self.op(Op::Minus, mp, t);
+        let t = self.with(Op::Times, mp, 153);
+        let t = self.with(Op::Plus, t, 2);
+        let t = self.with(Op::Div, t, 5);
+        let t = self.op(Op::Plus, t, d);
+        let doy = self.with(Op::Minus, t, 1);
+        let t = self.with(Op::Times, yoe, 365);
+        let q = self.with(Op::Div, yoe, 4);
+        let t = self.op(Op::Plus, t, q);
+        let c = self.with(Op::Div, yoe, 100);
+        let t = self.op(Op::Minus, t, c);
+        let doe = self.op(Op::Plus, t, doy);
+        let t = self.with(Op::Times, era, 146097);
+        let t = self.op(Op::Plus, t, doe);
+        self.with(Op::Minus, t, 719468)
+    }
+
+    /// Year, month, day of a number of days since 0000-03-01 (never negative for a year 1 or later).
+    fn civil_from_days(&mut self, z: Local) -> (Local, Local, Local) {
+        let era = self.with(Op::Div, z, 146097);
+        let t = self.with(Op::Times, era, 146097);
+        let doe = self.op(Op::Minus, z, t);
+        let a = self.with(Op::Div, doe, 1460);
+        let b = self.with(Op::Div, doe, 36524);
+        let c = self.with(Op::Div, doe, 146096);
+        let t = self.op(Op::Minus, doe, a);
+        let t = self.op(Op::Plus, t, b);
+        let t = self.op(Op::Minus, t, c);
+        let yoe = self.with(Op::Div, t, 365);
+        let t = self.with(Op::Times, era, 400);
+        let y = self.op(Op::Plus, yoe, t);
+        let t = self.with(Op::Times, yoe, 365);
+        let q = self.with(Op::Div, yoe, 4);
+        let t = self.op(Op::Plus, t, q);
+        let c = self.with(Op::Div, yoe, 100);
+        let t = self.op(Op::Minus, t, c);
+        let doy = self.op(Op::Minus, doe, t);
+        let t = self.with(Op::Times, doy, 5);
+        let t = self.with(Op::Plus, t, 2);
+        let mp = self.with(Op::Div, t, 153);
+        let t = self.with(Op::Times, mp, 153);
+        let t = self.with(Op::Plus, t, 2);
+        let t = self.with(Op::Div, t, 5);
+        let t = self.op(Op::Minus, doy, t);
+        let d = self.with(Op::Plus, t, 1);
+        // `mp + 3`, or `mp - 9` for January and February.
+        let late = self.with(Op::Ge, mp, 10);
+        let t = self.with(Op::Times, late, 12);
+        let m = self.with(Op::Plus, mp, 3);
+        let m = self.op(Op::Minus, m, t);
+        let early = self.with(Op::Le, m, 2);
+        let y = self.op(Op::Plus, y, early);
+        (y, m, d)
+    }
+
+    /// Year, month, day, then hour, minute, second of a `Date` or a `DateTime`.
+    fn civil(&mut self, v: Local, ty: &Type) -> Vec<Local> {
+        if *ty == Type::Date {
+            let z = self.with(Op::Plus, v, 719468);
+            let (y, m, d) = self.civil_from_days(z);
+            return vec![y, m, d];
+        }
+        let s = self.with(Op::Plus, v, 719468 * 86400);
+        let z = self.with(Op::Div, s, 86400);
+        let (y, m, d) = self.civil_from_days(z);
+        let rest = self.with(Op::Rem, s, 86400);
+        let hour = self.with(Op::Div, rest, 3600);
+        let t = self.with(Op::Rem, rest, 3600);
+        let minute = self.with(Op::Div, t, 60);
+        let second = self.with(Op::Rem, rest, 60);
+        vec![y, m, d, hour, minute, second]
+    }
+
+    /// `low <= x <= high`, as 1 or 0.
+    fn within(&mut self, x: Local, low: i64, high: i64) -> Local {
+        let a = self.with(Op::Ge, x, low);
+        let b = self.with(Op::Le, x, high);
+        self.op(Op::Times, a, b)
+    }
+
+    /// A runtime error if `ok` is 0.
+    fn unless(&mut self, ok: Local, fault: Fault, loc: Loc) {
+        let bad = self.int_local();
+        self.emit(Inst::Not(bad, ok));
+        self.emit(Inst::FaultIf(bad, fault, loc));
+    }
+
+    /// `Date.year(y) month(m) day(d)` (3 numbers) or a `DateTime` (5 or 6): checked, then counted.
+    fn date_made(&mut self, v: &[Local], loc: Loc) -> Local {
+        let mut ok = self.within(v[0], 1, 9999);
+        for (x, high) in [(v[1], 12), (v[2], 31)] {
+            let w = self.within(x, 1, high);
+            ok = self.op(Op::Times, ok, w);
+        }
+        self.unless(ok, Fault::BadDate, loc);
+        let days = self.days_from_civil(v[0], v[1], v[2]);
+        // November 31 is counted as December 1st: the day found again is not the one given.
+        let z = self.with(Op::Plus, days, 719468);
+        let (_, _, d) = self.civil_from_days(z);
+        let same = self.op(Op::Eq, d, v[2]);
+        self.unless(same, Fault::BadDate, loc);
+        if v.len() == 3 {
+            return days;
+        }
+        let mut ok = self.within(v[3], 0, 23);
+        let mut total = self.with(Op::Times, days, 86400);
+        for (i, k) in [(3, 3600), (4, 60), (5, 1)] {
+            let Some(&x) = v.get(i) else { break };
+            if i > 3 {
+                let w = self.within(x, 0, 59);
+                ok = self.op(Op::Times, ok, w);
+            }
+            let t = self.with(Op::Times, x, k);
+            total = self.op(Op::Plus, total, t);
+        }
+        self.unless(ok, Fault::BadTime, loc);
+        total
+    }
+
+    /// `d.year`, `t.minute`, `d.to_string`, `d.clone`.
+    fn date_method(&mut self, v: Local, ty: &Type, name: &str) -> Local {
+        let parts = ["year", "month", "day", "hour", "minute", "second"];
+        if let Some(i) = parts.iter().position(|p| *p == name) {
+            return self.civil(v, ty)[i];
+        }
+        if name == "to_string" {
+            let mut pieces = vec![];
+            self.date_pieces(v, ty, &mut pieces);
+            let text = self.join(pieces);
+            self.temps.push((text, Type::String));
+            return text;
+        }
+        let copy = self.int_local();
+        self.emit(Inst::Copy(copy, v));
+        copy
+    }
+
+    /// `2026-10-23`, `2026-10-23 14:05:30`: as ISO 8601 writes them, every number with its zeros.
+    fn date_pieces(&mut self, v: Local, ty: &Type, m: &mut Vec<Piece>) {
+        let parts = self.civil(v, ty);
+        for (i, &x) in parts.iter().enumerate() {
+            m.push(Piece::Text(["", "-", "-", " ", ":", ":"][i].into()));
+            for k in if i == 0 { [1000, 100, 10, 1].as_slice() } else { &[10, 1] } {
+                let t = self.with(Op::Div, x, *k);
+                let t = self.with(Op::Rem, t, 10);
+                let c = self.with(Op::Plus, t, '0' as i64);
+                m.push(Piece::Value(c, Show::Char));
+            }
+        }
+    }
+
     /// The pieces of a part of a text: a String or a number as `print` shows it, a struct
     /// as `Dog { name: "Rex", age: 3 }`, a tuple as `(1, "a")`.
     fn part_pieces(&mut self, p: &Part, m: &mut Vec<Piece>) {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.ty(e) {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -2974,7 +3158,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.given(&args[0]) {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -3079,6 +3263,11 @@ impl<'a> Translator<'a> {
                 let x = self.new_slots(&Type::Float)[0];
                 self.emit(Inst::Const(x, std::f64::consts::PI.to_bits() as i64));
                 vec![x]
+            }
+            ExprKind::Static { ty, name, args, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") => {
+                let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                let loc = self.loc(name.span);
+                vec![self.date_made(&vals, loc)]
             }
             ExprKind::Static { ty, name, args, .. } => {
                 let q = method_name(&ty.text, &name.text);
@@ -3200,7 +3389,7 @@ impl<'a> Translator<'a> {
                 v
             }
             ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
-                if !matches!(self.ty(a), Type::Int | Type::Float | Type::Bool | Type::Char) =>
+                if !matches!(self.ty(a), Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime) =>
             {
                 let ty = self.ty(a);
                 let (va, vb) = (self.expr(a), self.expr(b));
@@ -3431,6 +3620,9 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, args } => {
                 let v = self.expr1(receiver);
+                if let ty @ (Type::Date | Type::DateTime) = self.ty(receiver) {
+                    return vec![self.date_method(v, &ty, &name.text)];
+                }
                 let string = |op| match op {
                     "length" => StrOp::Length,
                     _ => StrOp::Clone,

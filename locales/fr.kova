@@ -55,6 +55,8 @@ lang fr {
     fault_exit_code := "un code de sortie est entre 0 et 255"
     fault_negative_power := "un `Int` à une puissance négative n'est pas un `Int` : utilise un `Float` (`x.to_float.pow(-1)`)"
     fault_empty_range := "cet intervalle ne contient aucun nombre à tirer : `random(1..=6)` tire de 1 à 6"
+    fault_bad_date := "cette date n'existe pas : année 1 à 9999, mois 1 à 12, un jour de ce mois (29 février seulement une année bissextile)"
+    fault_bad_time := "cette heure n'existe pas : heure 0 à 23, minute et seconde 0 à 59"
 
     // ---- Lexer ----
     comment_unclosed := "commentaire `/*` jamais fermé"
@@ -344,6 +346,8 @@ lang fr {
     generic_struct_types_help := "écris-les, par exemple `{example}`"
     generic_interface_later_help := "`{name}` est générique : un struct générique qui suit `{interface}` viendra plus tard"
     list_literal := "une `List` n'a pas de champs"
+    date_made_help := "une `Date` se fait avec `Date.year(2026) month(10) day(23)`"
+    datetime_made_help := "un `DateTime` se fait avec `DateTime.year(2026) month(10) day(23) hour(14) minute(5)`, avec `second(30)` à la fin si besoin"
     list_made_help := "une `List` se fait avec `[1, 2]`, ou `List<Int>()` quand elle commence vide"
     generic_struct_interface_later := "un struct générique qui suit une interface viendra plus tard : enlève `: {interface}` de `{name}`"
     equal_field := "`{type}` suit `Equal`, mais son champ `{field}` (`{field_type}`) ne se compare pas avec `=`"

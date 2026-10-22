@@ -504,6 +504,10 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         }
         return Some(items);
     }
+    if let t @ (types::Type::Date | types::Type::DateTime) = types::primitive(&name).unwrap_or(types::Type::Unit) {
+        let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
+        return Some(made.collect());
+    }
     let s = file.structs.iter().find(|s| s.name.text == name)?;
     let statics = s.methods.iter().filter(|m| m.receiver.is_none() && !hidden(&types::method_name(&name, &m.name.text)));
     items.extend(statics.map(|m| item(&m.name.text, CompletionItemKind::FUNCTION, types::heading_text(m))));
@@ -1306,6 +1310,9 @@ mod tests {
         assert!(at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.").contains(&"origin".to_string()));
         let src = "enum Light { Red, Green }\nfn main {\n  let l := Light.";
         assert_eq!(at("/none/main.kova", src), ["Red", "Green"]);
+        let mut dates = members("/none/main.kova", "fn main {\n  let d := Date.", 26).unwrap();
+        parts_snippets(&mut dates);
+        assert_eq!(dates[0].insert_text.as_deref(), Some("year($1) month($2) day($3)"));
     }
 
     #[test]

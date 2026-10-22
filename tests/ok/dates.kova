@@ -1,0 +1,52 @@
+// `Date` and `DateTime` (PLAN Part 4, "Dates"): made by keyword messages, shown as ISO 8601 writes them,
+// compared and used as Map keys like an `Int`.
+struct Event {
+    name: String
+    when: Date
+}
+
+fn main {
+    let d := Date.year(2026) month(10) day(23)
+    print(d)
+    print("{d.year} {d.month} {d.day}")
+    let t := DateTime.year(2026) month(10) day(23) hour(14) minute(5)
+    print(t)
+    let u := DateTime.year(1969) month(12) day(31) hour(23) minute(59) second(59)
+    print(u)
+    print("{u.year}/{u.month}/{u.day} {u.hour}h{u.minute}m{u.second}s")
+    print(Date.year(1) month(1) day(1))
+    print(Date.year(9999) month(12) day(31))
+    print(Date.year(2024) month(2) day(29))
+    let e := Event { name := "fête", when := Date.year(2000) month(3) day(1) }
+    print(e)
+    print(d = Date.year(2026) month(10) day(23))
+    print(d < Date.year(2026) month(10) day(24))
+    print(Date.year(2025) month(12) day(31) > d)
+    let l: List<Date> := [d, Date.year(2020) month(1) day(1)]
+    print(l.sorted)
+    print("le {d}")
+    print(d.to_string.length)
+    let m: Map<Date, String> := [d := "ajd"]
+    print(m)
+    var y: Int := 2023
+    print(Date.year(y) month(2) day(29))
+}
+// expect: 2026-10-23
+// expect: 2026 10 23
+// expect: 2026-10-23 14:05:00
+// expect: 1969-12-31 23:59:59
+// expect: 1969/12/31 23h59m59s
+// expect: 0001-01-01
+// expect: 9999-12-31
+// expect: 2024-02-29
+// expect: Event { name: "fête", when: 2000-03-01 }
+// expect: true
+// expect: true
+// expect: false
+// expect: [2020-01-01, 2026-10-23]
+// expect: le 2026-10-23
+// expect: 10
+// expect: [2026-10-23 := "ajd"]
+// code: 101
+// stderr: error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// stderr: dates.kova:32:16
