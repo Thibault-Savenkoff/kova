@@ -49,7 +49,7 @@ fn main {
 // error: `x` is the value of an optional inside this `if`: it cannot change here
 // error: `k` has type `Int`: a `var Int?` parameter needs a variable of type `Int?`
 // error: different types: `Int` expected, `Int?` given
-// error: `?` applies to an optional (`T?`), not to `Int`
+// error: `?` applies to an optional (`T?`) or a result (`T or E`), not to `Int`
 // error: an optional (`Int?`) is matched with `none => …` and a name for its value
 // error: `v` alone matches the value of an optional (`T?`); `Light` is an enum
 // error: cases of `Int?` not handled: a name for the value (`x => …`)

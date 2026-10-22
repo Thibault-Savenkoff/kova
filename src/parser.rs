@@ -55,6 +55,7 @@ pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
         .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
         .filter(|(w, _)| w[2].kind != Kind::Sym("(") || w[3].kind == Kind::Sym(")"))
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
+        .chain(["read_line".to_string()])
         .collect();
     let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false };
     let file = p.file();
@@ -171,8 +172,23 @@ impl Parser<'_> {
         }
     }
 
-    /// `Int`, `(Int, Float)`, `List<Int>`, each maybe followed by `?` (`Int?`).
+    /// A type, maybe a result: `String or IoError` (a single `or`).
     fn type_(&mut self) -> R<TypeAst> {
+        let t = self.maybe_type()?;
+        if !self.is_keyword("or") {
+            return Ok(t);
+        }
+        self.advance();
+        let e = self.maybe_type()?;
+        if self.is_keyword("or") {
+            let span = self.token().span;
+            return self.error(span, t!("result_chain"));
+        }
+        Ok(TypeAst::Result(Box::new(t), Box::new(e)))
+    }
+
+    /// `Int`, `(Int, Float)`, `List<Int>`, each maybe followed by `?` (`Int?`).
+    fn maybe_type(&mut self) -> R<TypeAst> {
         let t = self.base_type()?;
         if !self.is_sym("?") {
             return Ok(t);
@@ -917,7 +933,10 @@ impl Parser<'_> {
         } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
             Case::Bind(self.pattern()?)
         } else {
-            let name = self.type_name()?;
+            let name = match self.kind() {
+                Kind::Keyword(word @ ("ok" | "err")) => Name { text: word.into(), span: self.advance().span },
+                _ => self.type_name()?,
+            };
             let mut binds = vec![];
             if self.is_sym("(") {
                 let open = self.advance().span;
@@ -1117,6 +1136,13 @@ impl Parser<'_> {
                 return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
             }
             Kind::Keyword("if") => return self.if_expr(),
+            Kind::Keyword(word @ ("ok" | "err")) => {
+                self.advance();
+                self.expect("(")?;
+                let value = self.inner_expr()?;
+                let end = self.expect(")")?;
+                return Ok(self.expr(t.span.to(end), ExprKind::Outcome { ok: word == "ok", value: Box::new(value) }));
+            }
             Kind::Keyword("match") => {
                 let m = self.match_()?;
                 return Ok(self.expr(t.span.to(m.close), ExprKind::Match(Box::new(m))));

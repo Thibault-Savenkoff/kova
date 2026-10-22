@@ -1,0 +1,18 @@
+fn wrap(s: String) -> String or Int {
+    return ok(s)
+}
+
+fn length(r: String or Int) -> Int or Int {
+    let s: String := r?
+    return ok(s.length)
+}
+
+fn main {
+    let t: String := "b"
+    let u: String or Int := ok(t)
+    print(t)
+}
+// error: `s` is borrowed here: it cannot be moved
+// error: `r?` takes the value out of `r`, but `r` is only borrowed here
+// error: to only read it: `match r { ok(v) => …, err(e) => … }`
+// error: `t` was moved

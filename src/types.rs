@@ -30,6 +30,8 @@ pub enum Type {
     Enum(Rc<EnumDef>),
     /// `Int?`: an `Int` or `none`. Laid out like an enum with 2 variants, `none` and `some`.
     Optional(Box<Type>),
+    /// `String or IoError`: like an enum with 2 variants, `err(error)` and `ok(value)`.
+    Result(Box<Type>, Box<Type>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
     /// What a function without `->` returns.
@@ -56,6 +58,7 @@ impl Type {
             Type::Struct(d) => d.name.clone(),
             Type::Enum(d) => d.name.clone(),
             Type::Optional(t) => format!("{}?", t.text()),
+            Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
@@ -105,6 +108,11 @@ pub fn enum_view(t: &Type) -> Option<Rc<EnumDef>> {
             name: t.text(),
             variants: vec![("none".into(), vec![]), ("some".into(), vec![("value".into(), (**inner).clone())])],
         })),
+        // `err` first: as for an optional, slot 0 is 1 when there is a value.
+        Type::Result(ok, err) => Some(Rc::new(EnumDef {
+            name: t.text(),
+            variants: vec![("err".into(), vec![("error".into(), (**err).clone())]), ("ok".into(), vec![("value".into(), (**ok).clone())])],
+        })),
         _ => None,
     }
 }
@@ -142,6 +150,18 @@ pub fn setting<'a>(f: &'a File, src: &str, key: &str) -> Option<(&'a str, usize)
 /// Built-in functions: `print(x)` ends the line, `write(x)` doesn't.
 pub const BUILTINS: &[&str] = &["print", "write"];
 
+/// The library's functions (PLAN 2.10), with an ordinary signature: (name, its text for the editor).
+pub const LIBRARY: &[(&str, &str)] =
+    &[("read_file", "fn read_file(path: String) -> String or IoError"), ("read_line", "fn read_line -> String?")];
+
+/// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
+/// `kova_read_file` (runtime/runtime.c) and of the interpreter: number = variant + 1.
+pub fn io_error() -> Type {
+    let path = || vec![("path".to_string(), Type::String)];
+    let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
+    Type::Enum(Rc::new(EnumDef { name: "IoError".into(), variants: names.iter().map(|n| (n.to_string(), path())).collect() }))
+}
+
 /// Built-in methods: (receiver type, name, result, true if the result is optional: `Int?`).
 pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::Int, "to_float", Type::Float, false),
@@ -162,6 +182,7 @@ pub fn is_copy(t: &Type) -> bool {
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
         Type::Enum(d) => d.variants.iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
         Type::Optional(t) => is_copy(t),
+        Type::Result(t, e) => is_copy(t) && is_copy(e),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -285,10 +306,15 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     // 1. The structs, then the signatures: what is written further down can be used.
+    c.structs.insert("IoError".into(), io_error());
+    let string = || Type::String;
+    let read_file = Signature { receiver: None, params: vec![(Mode::Read, string())], ret: Type::Result(Box::new(string()), Box::new(io_error())) };
+    c.functions.insert("read_file".into(), read_file);
+    c.functions.insert("read_line".into(), Signature { receiver: None, params: vec![], ret: Type::Optional(Box::new(string())) });
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
-        if primitive(name).is_some() {
+        if primitive(name).is_some() || c.structs.contains_key(name) {
             c.error(s.name.span, t!("type_builtin", name = name));
         } else if let Some(&j) = decls.get(name) {
             let (line, _) = line_col(src, f.structs[j].name.span.start);
@@ -309,7 +335,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let params = func.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
         let ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
         let name = func.name.text.as_str();
-        if BUILTINS.contains(&name) {
+        if BUILTINS.contains(&name) || LIBRARY.iter().any(|(n, _)| *n == name) {
             c.error(func.name.span, t!("builtin_function", name = name));
         } else if c.functions.contains_key(name) {
             c.error(func.name.span, t!("function_exists", name = name));
@@ -432,6 +458,10 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             Type::Error => Type::Error,
             t => Type::Optional(Box::new(t)),
         },
+        TypeAst::Result(t, e) => match (type_of(t, structs), type_of(e, structs)) {
+            (Type::Error, _) | (_, Type::Error) => Type::Error,
+            (t, e) => Type::Result(Box::new(t), Box::new(e)),
+        },
     }
 }
 
@@ -550,6 +580,10 @@ impl Checker<'_> {
                 Type::Error => Type::Error,
                 t => Type::Optional(Box::new(t)),
             },
+            TypeAst::Result(t, e) => match (self.field_type(f, decls, t, open), self.field_type(f, decls, e, open)) {
+                (Type::Error, _) | (_, Type::Error) => Type::Error,
+                (t, e) => Type::Result(Box::new(t), Box::new(e)),
+            },
             TypeAst::Tuple(ts) => {
                 let ts: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
                 if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
@@ -572,6 +606,12 @@ impl Checker<'_> {
             TypeAst::Name(n) => {
                 if let Some(t) = primitive(&n.text) {
                     return t;
+                }
+                // A type of the library (`IoError`).
+                if !decls.contains_key(n.text.as_str())
+                    && let Some(t) = self.structs.get(&n.text)
+                {
+                    return t.clone();
                 }
                 let Some(&j) = decls.get(n.text.as_str()) else {
                     self.error(n.span, t!("type_unknown", name = n.text));
@@ -598,6 +638,10 @@ impl Checker<'_> {
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
             TypeAst::Generic(n, ts) => self.generic(n, ts, |c, t| c.report_unknown(t)),
             TypeAst::Optional(t) => self.report_unknown(t),
+            TypeAst::Result(t, e) => {
+                self.report_unknown(t);
+                self.report_unknown(e);
+            }
         }
     }
 
@@ -655,6 +699,12 @@ impl Checker<'_> {
                     let code = &self.src[e.span.start..e.span.end];
                     self.diags.push(
                         Diag::new(e.span, t!("interp_optional", code = code)).help(t!("interp_optional_help", code = code)),
+                    );
+                }
+                Type::Result(..) => {
+                    let code = &self.src[e.span.start..e.span.end];
+                    self.diags.push(
+                        Diag::new(e.span, t!("interp_result", code = code)).help(t!("interp_result_help", code = code)),
                     );
                 }
                 _ => {}
@@ -745,6 +795,12 @@ impl Checker<'_> {
         }
         if let ExprKind::Match(m) = &e.kind {
             self.types[e.id] = self.match_(m, Some(expected), true);
+            return;
+        }
+        // `ok(v)` / `err(e)` where a `T or E` is expected.
+        if let (ExprKind::Outcome { ok, value }, Type::Result(t, er)) = (&e.kind, expected) {
+            self.expect(value, if *ok { t } else { er });
+            self.types[e.id] = expected.clone();
             return;
         }
         // Where a `T?` is expected: `none`, a `T?`, or a `T` that becomes one (`wraps`).
@@ -1316,7 +1372,26 @@ impl Checker<'_> {
                 self.diags.push(Diag::new(e.span, t!("none_needs_type")).help(t!("none_needs_type_help")));
                 Type::Error
             }
+            ExprKind::Outcome { ok, value } => {
+                self.expr(value);
+                let word = if *ok { "ok" } else { "err" };
+                self.diags.push(Diag::new(e.span, t!("outcome_needs_type", word = word)).help(t!("outcome_needs_type_help")));
+                Type::Error
+            }
             ExprKind::Try(x) => match self.expr(x) {
+                // The failure goes up as it is: the function's `or` side must be the same type.
+                Type::Result(t, er) => {
+                    if self.in_contract {
+                        self.error(e.span, t!("try_in_contract"));
+                    } else if !matches!(&self.ret, Type::Result(_, r) if *r == er) && self.ret != Type::Error {
+                        let ret = if self.ret == Type::Unit { self.ret.text() } else { format!("`{}`", self.ret.text()) };
+                        self.diags.push(
+                            Diag::new(e.span, t!("try_needs_result", error = er.text(), type = ret))
+                                .help(t!("try_needs_result_help", error = er.text())),
+                        );
+                    }
+                    *t
+                }
                 Type::Optional(inner) => {
                     if self.in_contract {
                         self.error(e.span, t!("try_in_contract"));
@@ -1352,7 +1427,10 @@ impl Checker<'_> {
                     return Type::Error;
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
-                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
+                if name.text == "clone"
+                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_))
+                    && !t.is_field("clone")
+                {
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
@@ -1441,7 +1519,7 @@ impl Checker<'_> {
                                     .help(t!("struct_compare_help")),
                             ),
                             Type::List(_) => self.error(e.span, t!("list_compare", op = op.text())),
-                            Type::Enum(_) if !is_copy(&ta) => self.diags.push(
+                            Type::Enum(_) | Type::Result(..) if !is_copy(&ta) => self.diags.push(
                                 Diag::new(e.span, t!("enum_compare", op = op.text(), type = ta.text()))
                                     .help(t!("enum_compare_help")),
                             ),
@@ -1558,8 +1636,9 @@ impl Checker<'_> {
     fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
         let t = self.expr(&m.subject);
         let optional = matches!(t, Type::Optional(_));
+        let outcome = matches!(t, Type::Result(..));
         let d = match &t {
-            Type::Enum(_) | Type::Optional(_) => enum_view(&t),
+            Type::Enum(_) | Type::Optional(_) | Type::Result(..) => enum_view(&t),
             Type::Error => None,
             t => {
                 self.error(m.subject.span, t!("match_needs_enum", type = t.text()));
@@ -1594,12 +1673,15 @@ impl Checker<'_> {
                     // An optional takes `none` and a name; an enum, its variants.
                     let wrong = match &arm.case {
                         Case::Bind(_) => !optional,
-                        _ => optional && name != "none",
+                        _ if optional => name != "none",
+                        _ => outcome && !matches!(name, "ok" | "err"),
                     };
                     let fields = match d.as_ref().map(|d| (d.variant(name), d)) {
                         Some((_, d)) if wrong => {
                             if optional {
                                 self.error(span, t!("optional_cases", type = d.name));
+                            } else if outcome {
+                                self.error(span, t!("result_cases", type = t.text()));
                             } else {
                                 self.diags.push(
                                     Diag::new(span, t!("bind_on_enum", name = shown, type = d.name))
@@ -1650,7 +1732,11 @@ impl Checker<'_> {
         {
             let missing: Vec<String> = (0..d.variants.len())
                 .filter(|i| !seen.contains_key(i))
-                .map(|i| if optional && i == 1 { t!("case_value") } else { format!("`{}`", d.variants[i].0) })
+                .map(|i| match &d.variants[i].0 {
+                    _ if optional && i == 1 => t!("case_value"),
+                    n if outcome => format!("`{n}(…)`"),
+                    n => format!("`{n}`"),
+                })
                 .collect();
             if !missing.is_empty() {
                 self.diags.push(

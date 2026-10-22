@@ -1,0 +1,34 @@
+// `read_file` gives the text or an `IoError` that says what went wrong.
+fn show(path: String) {
+    match read_file(path) {
+        ok(text) => write("read {text.length} characters:\n{text}")
+        err(e) => match e {
+            NotFound(p) => print("no file {p}")
+            IsDirectory(p) => print("{p} is a folder")
+            Denied => print("denied")
+            NotText => print("not a text")
+            Other => print("other")
+        }
+    }
+}
+
+// `?` passes the `IoError` on.
+fn first_char(path: String) -> Int or IoError {
+    let text: String := read_file(path)?
+    return ok(text.length)
+}
+
+fn main {
+    show("tests/data/poem.txt")
+    show("tests/data/missing.txt")
+    show("tests/data")
+    print(first_char("tests/data/poem.txt"))
+    print(first_char("nothing"))
+}
+// expect: read 28 characters:
+// expect: Roses are red,
+// expect: Kova is new.
+// expect: no file tests/data/missing.txt
+// expect: tests/data is a folder
+// expect: ok(28)
+// expect: err(IoError.NotFound(path: "nothing"))

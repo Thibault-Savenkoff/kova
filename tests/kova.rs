@@ -4,10 +4,12 @@
 //                      Expected output: one `// expect: ...` line per printed line.
 //                      Runtime error: `// code: 101` and `// stderr: ...` (a piece of the message).
 //                      stderr must be identical in both modes.
+//                      Input: one `// stdin: ...` line per line typed (none = empty input).
 // tests/error/*.kova : must be rejected; each `// error: ...` must appear in the message.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 
 const KOVA: &str = env!("CARGO_BIN_EXE_kova");
 
@@ -44,6 +46,13 @@ fn expectations(source: &str, key: &str) -> Vec<String> {
         .filter_map(|l| l.trim().strip_prefix(&prefix))
         .map(|v| v.strip_prefix(' ').unwrap_or(v).to_string())
         .collect()
+}
+
+/// Runs `c` with `input` as its standard input.
+fn with_input(c: &mut Command, input: &str) -> Output {
+    let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    child.wait_with_output().unwrap()
 }
 
 fn text(o: &[u8]) -> String {
@@ -84,9 +93,10 @@ fn ok_programs() {
             code: expectations(&source, "code").first().map_or(0, |c| c.parse().unwrap()),
             stderr: expectations(&source, "stderr"),
         };
+        let input: String = expectations(&source, "stdin").iter().map(|l| format!("{l}\n")).collect();
 
         // Run mode
-        let run = kova(LANG).arg("run").arg(&f).output().unwrap();
+        let run = with_input(kova(LANG).arg("run").arg(&f), &input);
         check_output(&name, "run", &run, &expected, &mut failures);
 
         // Build mode: compile, then run the produced executable.
@@ -96,7 +106,7 @@ fn ok_programs() {
             failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
             continue;
         }
-        let out = program(&exe, LANG).output().unwrap();
+        let out = with_input(&mut program(&exe, LANG), &input);
         check_output(&name, "build", &out, &expected, &mut failures);
         if out.stderr != run.stderr {
             failures.push(format!(

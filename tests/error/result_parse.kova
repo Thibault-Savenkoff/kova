@@ -1,0 +1,8 @@
+fn f(n: Int) -> Int or String or Bool {
+    return ok(n)
+}
+
+fn main {
+    print(f(1))
+}
+// error: a result has one error type: `T or E`, not `T or E or F`

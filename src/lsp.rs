@@ -176,6 +176,14 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
             ..Default::default()
         })
         .collect();
+    for (name, text) in types::LIBRARY {
+        items.push(CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(text.to_string()),
+            ..Default::default()
+        });
+    }
     for f in &file.functions {
         items.push(CompletionItem {
             label: f.name.text.clone(),
@@ -331,6 +339,10 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
         let label = format!("fn {name}(value)");
         let start = label.find('(').unwrap() as u32 + 1;
         (label, vec![[start, start + 5]])
+    } else if let Some((_, text)) = types::LIBRARY.iter().find(|(n, _)| *n == name) {
+        // `fn read_file(path: String) -> …`: the parameter is between the parentheses.
+        let (open, close) = (text.find('(').map_or(0, |i| i + 1), text.find(')').unwrap_or(0));
+        (text.to_string(), if close > open { vec![[open as u32, close as u32]] } else { vec![] })
     } else {
         let file = tree(src);
         let methods = file.structs.iter().flat_map(|s| &s.methods);

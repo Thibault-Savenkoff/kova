@@ -63,7 +63,7 @@ pub struct Arm {
 
 pub enum Case {
     /// `Circle(r)`, `Red`: a variant (without its type's name) and what receives its fields.
-    /// `none` on an optional (`T?`) is a variant too.
+    /// `none` on an optional (`T?`), `ok(v)` and `err(e)` on a result are variants too.
     Variant { name: Name, binds: Vec<Pattern> },
     /// `n =>` on an optional: a name alone receives the value (PLAN Part 4, J4 step 2).
     Bind(Pattern),
@@ -173,6 +173,8 @@ pub enum TypeAst {
     Generic(Name, Vec<TypeAst>),
     /// `Int?`: an `Int` or `none`.
     Optional(Box<TypeAst>),
+    /// `String or IoError`: a success (`ok`) or a failure (`err`).
+    Result(Box<TypeAst>, Box<TypeAst>),
 }
 
 impl TypeAst {
@@ -183,6 +185,7 @@ impl TypeAst {
             TypeAst::Tuple(ts) => format!("({})", ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
             TypeAst::Generic(n, ts) => format!("{}<{}>", n.text, ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
             TypeAst::Optional(t) => format!("{}?", t.text()),
+            TypeAst::Result(t, e) => format!("{} or {}", t.text(), e.text()),
         }
     }
 }
@@ -327,8 +330,11 @@ pub enum ExprKind {
     Match(Box<Match>),
     /// `none`: no value, in an optional (`T?`); its type comes from where it goes.
     None,
-    /// `x?`: the value of the optional `x`, or else the function returns `none` at once.
+    /// `x?`: the value of the optional `x`, or else the function returns `none` at once;
+    /// on a result, its `ok` value, or else the function returns its `err` at once.
     Try(Box<Expr>),
+    /// `ok(value)` or `err(error)`: a result; its type comes from where it goes.
+    Outcome { ok: bool, value: Box<Expr> },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

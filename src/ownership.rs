@@ -628,13 +628,18 @@ impl Owner<'_> {
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
+            ExprKind::Outcome { value, .. } => self.give(value),
             // `x?` takes its value; on `none` it leaves the function, like a `return`.
             ExprKind::Try(x) => {
                 match &x.kind {
                     // `s?` on a parameter: the message says how to only read it.
                     ExprKind::Var(n) if !is_copy(&self.info.types[x.id]) && self.lookup(n).borrowed => {
                         self.use_var(n, x.span);
-                        self.diags.push(Diag::new(e.span, t!("try_borrowed", name = n)).help(t!("try_borrowed_help", name = n)));
+                        let help = match &self.info.types[x.id] {
+                            Type::Result(..) => t!("try_borrowed_result_help", name = n),
+                            _ => t!("try_borrowed_help", name = n),
+                        };
+                        self.diags.push(Diag::new(e.span, t!("try_borrowed", name = n)).help(help));
                     }
                     _ => self.give(x),
                 }

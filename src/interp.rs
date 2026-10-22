@@ -1,6 +1,6 @@
 // Interpreter (`kova run`): executes the KIR directly, instruction by instruction.
 
-use std::io::{BufWriter, Stdout, Write};
+use std::io::{BufRead, BufWriter, Stdout, Write};
 
 use crate::kir::*;
 use crate::locale::{self, t};
@@ -188,6 +188,31 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         }
                         StrOp::IsInt => crate::kir::parse_int(s(0)).is_some() as i64,
                         StrOp::ToInt => crate::kir::parse_int(s(0)).unwrap_or(0),
+                        StrOp::ReadFile => match std::fs::read(s(0)).map(String::from_utf8) {
+                            Ok(Ok(text)) => heap.make(text),
+                            Ok(Err(_)) => -4,
+                            Err(e) => match e.kind() {
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => -1,
+                                std::io::ErrorKind::PermissionDenied => -2,
+                                std::io::ErrorKind::IsADirectory => -3,
+                                _ => -5,
+                            },
+                        },
+                        StrOp::ReadLine => {
+                            out.flush().unwrap();
+                            let mut line = vec![];
+                            match std::io::stdin().lock().read_until(b'\n', &mut line) {
+                                Ok(0) | Err(_) => 0,
+                                Ok(_) => {
+                                    for end in *b"\n\r" {
+                                        if line.last() == Some(&end) {
+                                            line.pop();
+                                        }
+                                    }
+                                    String::from_utf8(line).map_or(0, |t| heap.make(t))
+                                }
+                            }
+                        }
                         StrOp::Format(show) => {
                             let t = text(locals[a[0]], *show, heap);
                             heap.make(t)

@@ -103,6 +103,8 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         Type::Enum(d) => std::iter::once(Scalar::Int).chain(variant_fields(d).flat_map(scalars)).collect(),
         // Slot 0: 1 if there is a value (0 = `none`); then the value's slots, 0 for `none`.
         Type::Optional(t) => std::iter::once(Scalar::Int).chain(scalars(t)).collect(),
+        // Slot 0: 1 for `ok`; then the error's slots, then the value's.
+        Type::Result(ok, err) => std::iter::once(Scalar::Int).chain(scalars(err)).chain(scalars(ok)).collect(),
         Type::Unit => vec![],
         Type::Error => unreachable!("erroneous type after type checking"),
     }
@@ -116,6 +118,7 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
+        Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => vec![None; scalars(t).len()],
     }
 }
@@ -251,6 +254,10 @@ pub enum StrOp {
     IsInt,
     /// `s.to_int`: its value, 0 if it is not an Int.
     ToInt,
+    /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
+    ReadFile,
+    /// `read_line`: a new String, or 0 at the end of the input.
+    ReadLine,
 }
 
 /// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
@@ -611,7 +618,7 @@ impl<'a> Translator<'a> {
         let v = self.new_slots(ty);
         self.current = self.new_block();
         if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
-            let text = self.show_enum(&v, &d, matches!(ty, Type::Optional(_)));
+            let text = self.show_enum(&v, &d, ty);
             self.finish(End::Return(vec![text]));
             return self.function(format!("show {}", ty.text()), v.len(), vec![Scalar::Int]);
         }
@@ -666,7 +673,7 @@ impl<'a> Translator<'a> {
 
     /// The text of an enum value `v`: `Shape.Circle(radius: 2.0)`, `Light.Red`; of an
     /// `optional`: `none` or its value as is.
-    fn show_enum(&mut self, v: &[Local], d: &EnumDef, optional: bool) -> Local {
+    fn show_enum(&mut self, v: &[Local], d: &EnumDef, ty: &Type) -> Local {
         let text = self.int_local();
         let after = self.new_block();
         for (i, (name, fields)) in d.variants.iter().enumerate() {
@@ -678,12 +685,17 @@ impl<'a> Translator<'a> {
             let mark = self.temps.len();
             let mut pieces = vec![];
             let mut at = variant_slice(d, i).0;
-            if optional {
+            if let Type::Optional(_) = ty {
                 match &fields[..] {
                     [] => pieces.push(Piece::Text("none".into())),
                     [(_, t)] => self.value_pieces(&v[at..], t, &mut pieces),
                     _ => unreachable!("an optional has one value"),
                 }
+            } else if let (Type::Result(..), [(_, t)]) = (ty, &fields[..]) {
+                // `ok(5)`, `err(IoError.NotFound(path: "x"))`.
+                pieces.push(Piece::Text(format!("{name}(")));
+                self.value_pieces(&v[at..at + scalars(t).len()], t, &mut pieces);
+                pieces.push(Piece::Text(")".into()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", d.name)));
                 for (j, (field, t)) in fields.iter().enumerate() {
@@ -703,6 +715,44 @@ impl<'a> Translator<'a> {
         }
         self.go(End::Unreachable, after);
         text
+    }
+
+    /// `read_file(path)`: `ok(text)`, or `err(IoError.X(path: a copy of path))`.
+    fn read_file(&mut self, path: &Expr) -> Slots {
+        let error = crate::types::io_error();
+        let Type::Enum(d) = &error else { unreachable!("IoError is an enum") };
+        let d = d.clone();
+        let ty = Type::Result(Box::new(Type::String), Box::new(error));
+        let p = self.expr1(path);
+        let r = self.int_local();
+        self.emit(Inst::Str(r, StrOp::ReadFile, vec![p]));
+        // Slots: tag, IoError's tag, one path per variant, the text.
+        let v = self.new_slots(&ty);
+        v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+        let zero = self.constant(0);
+        let good = self.int_local();
+        self.emit(Inst::Binary(good, Op::Gt, r, zero, NOWHERE));
+        let (ok, err, after) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Branch(good, ok, err), ok);
+        self.emit(Inst::Const(v[0], 1));
+        let text = *v.last().unwrap();
+        self.emit(Inst::Copy(text, r));
+        self.go(End::Jump(after), err);
+        // Variant = failure − 1 = −r − 1.
+        let minus_one = self.constant(-1);
+        self.emit(Inst::Binary(v[1], Op::Minus, minus_one, r, NOWHERE));
+        for i in 0..d.variants.len() {
+            let (yes, no) = (self.new_block(), self.new_block());
+            let (number, test) = (self.constant(i as i64), self.int_local());
+            self.emit(Inst::Binary(test, Op::Eq, v[1], number, NOWHERE));
+            self.go(End::Branch(test, yes, no), yes);
+            let (start, _) = variant_slice(&d, i);
+            self.emit(Inst::Str(v[1 + start], StrOp::Clone, vec![p]));
+            self.go(End::Jump(after), no);
+        }
+        self.go(End::Jump(after), after);
+        self.track(&v, &ty);
+        v
     }
 
     /// Runs `body` on each element of `list` (with its index), in order.
@@ -1345,7 +1395,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(")".into()));
             }
             // Its text is made by a helper, and freed at the end of the statement.
-            Type::List(_) | Type::Enum(_) | Type::Optional(_) => {
+            Type::List(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) => {
                 let f = self.helper(Helper::Show(ty.clone()));
                 let text = self.int_local();
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -1368,7 +1418,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.info.types[e.id] {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -1678,7 +1728,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.info.types[args[0].id] {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -1689,6 +1739,19 @@ impl<'a> Translator<'a> {
                         ty => self.emit(Inst::Print { value: vals[0], show: Show::of(ty), newline }),
                     }
                     return vec![];
+                }
+                if name.text == "read_file" {
+                    return self.read_file(&args[0]);
+                }
+                if name.text == "read_line" {
+                    let line = self.int_local();
+                    self.emit(Inst::Str(line, StrOp::ReadLine, vec![]));
+                    let present = self.int_local();
+                    let zero = self.constant(0);
+                    self.emit(Inst::Binary(present, Op::Ne, line, zero, NOWHERE));
+                    let v = vec![present, line];
+                    self.track(&v, &self.info.types[e.id].clone());
+                    return v;
                 }
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&name.text, args, &mut vals, &mut places);
@@ -1736,16 +1799,28 @@ impl<'a> Translator<'a> {
                 v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
                 v
             }
-            // On `none`, leaves the function with `none`; otherwise the value, owned by the expression.
+            // On `none` (or `err`), leaves the function with `none` (or the same `err`);
+            // otherwise the value, owned by the expression.
             ExprKind::Try(x) => {
                 let v = self.owned(x);
                 let (empty, present) = (self.new_block(), self.new_block());
                 self.go(End::Branch(v[0], present, empty), empty);
                 let nothing = self.new_slots(&self.ret.clone());
                 nothing.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+                // The error's slots come right after the tag in both results.
+                let skip = match &self.info.types[x.id] {
+                    Type::Result(_, err) => {
+                        let n = scalars(err).len();
+                        for k in 1..=n {
+                            self.emit(Inst::Copy(nothing[k], v[k]));
+                        }
+                        n
+                    }
+                    _ => 0,
+                };
                 self.exit(nothing);
                 self.current = present;
-                let value = v[1..].to_vec();
+                let value = v[1 + skip..].to_vec();
                 self.track(&value, &self.info.types[e.id].clone());
                 value
             }
@@ -1753,6 +1828,26 @@ impl<'a> Translator<'a> {
                 let ty = self.info.types[e.id].clone();
                 let v = self.new_slots(&ty);
                 self.match_(m, Some((&v, &ty)));
+                self.track(&v, &ty);
+                v
+            }
+            // `ok(v)`: tag 1, the error's slots 0, then v; `err(e)`: tag 0, e, then the value's slots 0.
+            ExprKind::Outcome { ok, value } => {
+                let ty = self.info.types[e.id].clone();
+                let Type::Result(t, err) = &ty else { unreachable!("result checked by the type checker") };
+                let given = self.owned(value);
+                let zeros = |me: &mut Self, t: &Type| -> Slots {
+                    let z = me.new_slots(t);
+                    z.iter().for_each(|&l| me.emit(Inst::Const(l, 0)));
+                    z
+                };
+                let tag = self.constant(*ok as i64);
+                let v: Slots = if *ok {
+                    std::iter::once(tag).chain(zeros(self, err)).chain(given).collect()
+                } else {
+                    let z = zeros(self, t);
+                    std::iter::once(tag).chain(given).chain(z).collect()
+                };
                 self.track(&v, &ty);
                 v
             }
@@ -1777,7 +1872,7 @@ impl<'a> Translator<'a> {
             }
             // Slot by slot: only for enums made of copied values (checked by the type checker).
             // With `none` (all slots 0), this also tests whether an optional holding a String is empty.
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.info.types[a.id], Type::Enum(_) | Type::Optional(_)) => {
+            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.info.types[a.id], Type::Enum(_) | Type::Optional(_) | Type::Result(..)) => {
                 let kinds = scalars(&self.info.types[a.id]);
                 let (va, vb) = (self.expr(a), self.expr(b));
                 let same = self.constant(1);
@@ -1858,7 +1953,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) =>
+                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) =>
             {
                 let ty = self.info.types[receiver.id].clone();
                 let v = self.expr(receiver);
@@ -1959,7 +2054,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names))
         }
         ExprKind::Match(m) => names_in(&m.subject, names),
-        ExprKind::Try(x) => names_in(x, names),
+        ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } => names_in(x, names),
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));

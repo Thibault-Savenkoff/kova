@@ -1,0 +1,21 @@
+// `read_line` gives the next line typed, or `none` at the end of the input.
+fn main {
+    var total: Int := 0
+    while true {
+        match read_line {
+            none => break
+            line => match line.to_int {
+                none => print("not a number: {line}")
+                n => total := total + n
+            }
+        }
+    }
+    print("total: {total}")
+    print(read_line)
+}
+// stdin: 12
+// stdin: abc
+// stdin: 30
+// expect: not a number: abc
+// expect: total: 42
+// expect: none
