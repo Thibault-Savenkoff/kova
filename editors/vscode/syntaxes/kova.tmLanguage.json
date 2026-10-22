@@ -75,11 +75,20 @@
     "declarations": {
       "patterns": [
         {
-          "match": "\\b(fn)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
-          "captures": {
+          "comment": "To the end of the line, so that `at` in `fn put(v: Int) at(i: Int)` is a name too.",
+          "begin": "\\b(fn)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "beginCaptures": {
             "1": { "name": "storage.type.function.kova" },
             "2": { "name": "entity.name.function.kova" }
-          }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "match": "(?<=\\))\\s+([\\p{L}_][\\p{L}\\p{N}_]*)(?=\\()",
+              "captures": { "1": { "name": "entity.name.function.kova" } }
+            },
+            { "include": "$self" }
+          ]
         },
         {
           "match": "\\b(struct|enum|interface)\\s+(\\p{Lu}[\\p{L}\\p{N}_]*)",

@@ -241,6 +241,38 @@ fn info(path: &str, src: &str) -> Option<(File, types::Info, diag::Sources)> {
 }
 
 /// The name under the cursor, in this file (the imported files come after it in the text).
+/// `at` in `g.put(7) at(1)` or `fn put(v: Int) at(i: Int)`: the message is known by its first part.
+fn first_part(src: &str, cursor: usize) -> usize {
+    let tokens = lex(src).0;
+    let Some(mut k) = tokens.iter().position(|t| t.span.start <= cursor && cursor < t.span.end && t.kind == Kind::Ident) else {
+        return cursor;
+    };
+    while let Some((previous, _)) = previous_part(&tokens, k) {
+        k = previous;
+    }
+    tokens[k].span.start
+}
+
+/// The part before the one named at `tokens[k]` (`put` before `at` in `put(7) at(`), with its
+/// number of arguments, if `tokens[k - 1]` is its `)`.
+fn previous_part(tokens: &[Token], k: usize) -> Option<(usize, u32)> {
+    if k < 2 || tokens[k - 1].kind != Kind::Sym(")") {
+        return None;
+    }
+    let (mut depth, mut args) = (0, 1);
+    let open = (0..k - 1).rev().find(|&j| {
+        match tokens[j].kind {
+            Kind::Sym(")") => depth += 1,
+            Kind::Sym("(") if depth == 0 => return true,
+            Kind::Sym("(") => depth -= 1,
+            Kind::Sym(",") if depth == 0 => args += 1,
+            _ => {}
+        }
+        false
+    })?;
+    (open >= 1 && tokens[open - 1].kind == Kind::Ident).then_some((open - 1, args))
+}
+
 fn seen_at<'a>(info: &'a types::Info, src: &str, cursor: usize) -> Option<&'a types::Seen> {
     let under = |s: &Span| s.start <= cursor && cursor < s.end && s.end <= src.len();
     info.seen.iter().filter(|s| under(&s.span)).min_by_key(|s| s.span.end - s.span.start)
@@ -250,7 +282,7 @@ fn seen_at<'a>(info: &'a types::Info, src: &str, cursor: usize) -> Option<&'a ty
 /// of the smallest expression under the cursor (`a + b` → `Int`).
 fn hover(path: &str, src: &str, cursor: usize) -> Option<Hover> {
     let (_, info, _) = info(path, src)?;
-    let text = match seen_at(&info, src, cursor) {
+    let text = match seen_at(&info, src, first_part(src, cursor)) {
         Some(s) => s.text.clone(),
         None => {
             let under = |s: &Span| s.start <= cursor && cursor < s.end && s.end <= src.len();
@@ -270,7 +302,7 @@ fn hover(path: &str, src: &str, cursor: usize) -> Option<Hover> {
 /// Ctrl+click: where the name under the cursor is declared, maybe in an imported file.
 fn definition(uri: &Uri, src: &str, cursor: usize) -> Option<Location> {
     let (_, info, sources) = info(&file_path(uri), src)?;
-    location(uri, &sources, seen_at(&info, src, cursor)?.decl)
+    location(uri, &sources, seen_at(&info, src, first_part(src, cursor))?.decl)
 }
 
 /// Where `span` is: in this file (`uri`) or in a file it imports.
@@ -987,7 +1019,7 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
     // Walk back the tokens from the cursor to the open `(` of the current call,
     // counting the `,`: works even if the line is not finished.
     let tokens = lex(src).0;
-    let before: Vec<_> = tokens.iter().take_while(|t| t.span.end <= cursor).collect();
+    let before: Vec<Token> = tokens.into_iter().take_while(|t| t.span.end <= cursor).collect();
     let (mut depth, mut commas) = (0, 0);
     let mut name = None;
     for (k, t) in before.iter().enumerate().rev() {
@@ -1006,20 +1038,8 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
     let (mut k, name) = name?;
     // `grid.put(3) at(`: the parts already written, each with its arguments.
     let mut parts = vec![name];
-    while k >= 2 && before[k - 1].kind == Kind::Sym(")") {
-        let (mut depth, mut args) = (0, 1);
-        let open = (0..k - 1).rev().find(|&j| {
-            match before[j].kind {
-                Kind::Sym(")") => depth += 1,
-                Kind::Sym("(") if depth == 0 => return true,
-                Kind::Sym("(") => depth -= 1,
-                Kind::Sym(",") if depth == 0 => args += 1,
-                _ => {}
-            }
-            false
-        });
-        let Some(open) = open.filter(|&j| j >= 1 && before[j - 1].kind == Kind::Ident) else { break };
-        k = open - 1;
+    while let Some((previous, args)) = previous_part(&before, k) {
+        k = previous;
         parts.insert(0, &src[before[k].span.start..before[k].span.end]);
         commas += args;
     }
@@ -1380,6 +1400,15 @@ mod tests {
         // While the first part is typed, the bubble already shows the whole message.
         let help = signature(src, src.find("put(1").unwrap() + 4).unwrap();
         assert_eq!(help.active_parameter, Some(0));
+        // Hovering `at`, at the call or in the declaration, shows the whole message.
+        let src = format!("{src}2)\n}}");
+        let shown = |at: usize| match hover("/none/main.kova", &src, at).unwrap().contents {
+            HoverContents::Markup(m) => m.value,
+            _ => String::new(),
+        };
+        let heading = "```kova\nfn put(var self, value: Int) at(index: Int)\n```";
+        assert_eq!(shown(src.rfind("at(2").unwrap()), heading);
+        assert_eq!(shown(src.find("at(index").unwrap() + 1), heading);
         // Offered after `g.` and as a function, the cursor going to each argument.
         let src = "struct Grid {\n  n: Int\n  fn put(var self, value: Int) at(index: Int) {}\n}\nfn between(x: Int) upto(y: Int) {}\nfn main {\n  var g: Grid := Grid { n := 1 }\n  g.\n  \n}";
         let insert = |items: Vec<CompletionItem>, label: &str| items.into_iter().find(|i| i.label == label).and_then(|i| i.insert_text);

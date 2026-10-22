@@ -102,3 +102,9 @@ lang fr {
     hello := "Bonjour {name}"
 //        ^^ keyword.operator.assignment.kova
 }
+
+fn put(var self, v: Int) at(i: Int) {
+//                       ^^ entity.name.function.kova
+    g.put(1) at(2)
+//           ^^ entity.name.function.call.kova
+}
