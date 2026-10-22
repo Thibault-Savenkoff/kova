@@ -130,6 +130,8 @@ lang fr {
     ok_needs_value := "ici le succès est `{type}` : écris `ok(valeur)`"
     ok_without_value := "`ok` ne prend pas de valeur : le succès de `{type}` est `Nothing`"
     ok_without_value_help := "écris `ok` tout seul"
+    result_ignored := "ce résultat n'est pas regardé : un échec passerait inaperçu"
+    result_ignored_help := "écris `{code}?` pour faire remonter l'échec, ou traite-le avec `match`"
     nothing_only_in_result := "`Nothing` ne s'écrit que comme succès d'un résultat"
     nothing_only_in_result_help := "par exemple `fn save(text: String) -> Nothing or IoError`, qui finit par `return ok`"
     type_unknown := "type inconnu `{name}`"

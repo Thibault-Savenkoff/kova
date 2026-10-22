@@ -70,7 +70,7 @@ struct Runtime {
     /// `kova_show_int`… (in `Show` order): given by address to `kova_print` and the others, so
     /// that only the ones a program uses are linked (no Float formatting to print a String).
     shows: [FuncId; 6],
-    str_ops: [FuncId; 26],
+    str_ops: [FuncId; 32],
     lists: [FuncId; 10],
 }
 
@@ -129,6 +129,12 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::BigRem => (23, "kova_big_rem", 2),
         StrOp::BigLess => (24, "kova_big_less", 2),
         StrOp::Hash => (25, "kova_str_hash", 1),
+        StrOp::WriteFile => (26, "kova_write_file", 2),
+        StrOp::AppendFile => (27, "kova_append_file", 2),
+        StrOp::MakeDir => (28, "kova_make_dir", 1),
+        StrOp::RemoveFile => (29, "kova_remove_file", 1),
+        StrOp::ListDir => (30, "kova_list_dir", 1),
+        StrOp::Exists => (31, "kova_exists", 1),
     }
 }
 
@@ -172,7 +178,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -283,7 +289,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 26],
+    ops: [FuncRef; 32],
     shows: [FuncRef; 6],
 }
 

@@ -240,6 +240,12 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 pub const LIBRARY: &[(&str, &str)] =
     &[
         ("read_file", "fn read_file(path: String) -> String or IoError"),
+        ("write_file", "fn write_file(path: String, text: String) -> Nothing or IoError"),
+        ("append_file", "fn append_file(path: String, text: String) -> Nothing or IoError"),
+        ("exists", "fn exists(path: String) -> Bool"),
+        ("list_dir", "fn list_dir(path: String) -> List<String> or IoError"),
+        ("make_dir", "fn make_dir(path: String) -> Nothing or IoError"),
+        ("remove_file", "fn remove_file(path: String) -> Nothing or IoError"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
@@ -677,6 +683,18 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
+    let io = |ok: Type| Type::Result(Box::new(ok), Box::new(io_error()));
+    let paths = |n: usize| vec![(Mode::Read, string()); n];
+    for (name, n, result) in [
+        ("write_file", 2, io(Type::Unit)),
+        ("append_file", 2, io(Type::Unit)),
+        ("exists", 1, Type::Bool),
+        ("list_dir", 1, io(Type::List(Box::new(string())))),
+        ("make_dir", 1, io(Type::Unit)),
+        ("remove_file", 1, io(Type::Unit)),
+    ] {
+        c.functions.insert(name.into(), Signature::new(None, paths(n), result));
+    }
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
     c.functions.insert("exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
@@ -2693,6 +2711,11 @@ impl Checker<'_> {
                     },
                     _ => false,
                 };
+                // `write_file(p, text)` alone: its failure would go unseen.
+                if call && matches!(self.types[e.id], Type::Result(..)) {
+                    let code = &self.src[e.span.start..e.span.end];
+                    self.diags.push(Diag::new(e.span, t!("result_ignored")).help(t!("result_ignored_help", code = code)));
+                }
                 // `s.push(3)`: the unknown method is already reported.
                 if !call && self.types[e.id] != Type::Error {
                     let mut d = Diag::new(e.span, t!("does_nothing"));

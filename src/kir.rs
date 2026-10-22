@@ -321,6 +321,15 @@ pub enum StrOp {
     Less,
     /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
     ReadFile,
+    /// `write_file(path, text)`, `append_file(path, text)`, `make_dir(path)`, `remove_file(path)`:
+    /// 0, or minus the number of the failure; `list_dir(path)`: a new `List<String>` or minus it.
+    WriteFile,
+    AppendFile,
+    MakeDir,
+    RemoveFile,
+    ListDir,
+    /// `exists(path)`: 1 or 0.
+    Exists,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
     /// `args`: a new `List<String>`, the words given after the program's name.
@@ -1067,26 +1076,29 @@ impl<'a> Translator<'a> {
         text
     }
 
-    /// `read_file(path)`: `ok(text)`, or `err(IoError.X(path: a copy of path))`.
-    fn read_file(&mut self, path: &Expr) -> Slots {
-        let error = crate::types::io_error();
-        let Type::Enum(d) = &error else { unreachable!("IoError is an enum") };
+    /// `read_file(path)`, `write_file(path, text)`, `list_dir(path)`…: `ok(value)` (or `ok` for a
+    /// `Nothing or IoError`), or `err(IoError.X(path: a copy of path))`. `op` gives the value
+    /// (or 0) when it works, minus the failure's number otherwise.
+    fn io_call(&mut self, op: StrOp, args: &[Expr], ty: &Type) -> Slots {
+        let Type::Result(value, error) = ty else { unreachable!("a result checked by the type checker") };
+        let Type::Enum(d) = &**error else { unreachable!("IoError is an enum") };
         let d = d.clone();
-        let ty = Type::Result(Box::new(Type::String), Box::new(error));
-        let p = self.expr1(path);
+        let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+        let p = vals[0];
         let r = self.int_local();
-        self.emit(Inst::Str(r, StrOp::ReadFile, vec![p]));
-        // Slots: tag, IoError's tag, one path per variant, the text.
-        let v = self.new_slots(&ty);
+        self.emit(Inst::Str(r, op, vals));
+        // Slots: tag, IoError's tag, one path per variant, then the value (if any).
+        let v = self.new_slots(ty);
         v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
         let zero = self.constant(0);
         let good = self.int_local();
-        self.emit(Inst::Binary(good, Op::Gt, r, zero, NOWHERE));
+        self.emit(Inst::Binary(good, Op::Ge, r, zero, NOWHERE));
         let (ok, err, after) = (self.new_block(), self.new_block(), self.new_block());
         self.go(End::Branch(good, ok, err), ok);
         self.emit(Inst::Const(v[0], 1));
-        let text = *v.last().unwrap();
-        self.emit(Inst::Copy(text, r));
+        if **value != Type::Unit {
+            self.emit(Inst::Copy(*v.last().unwrap(), r));
+        }
         self.go(End::Jump(after), err);
         // Variant = failure − 1 = −r − 1.
         let minus_one = self.constant(-1);
@@ -2878,8 +2890,23 @@ impl<'a> Translator<'a> {
                     }
                     return vec![];
                 }
-                if name.text == "read_file" {
-                    return self.read_file(&args[0]);
+                let io = match name.text.as_str() {
+                    "read_file" => Some(StrOp::ReadFile),
+                    "write_file" => Some(StrOp::WriteFile),
+                    "append_file" => Some(StrOp::AppendFile),
+                    "list_dir" => Some(StrOp::ListDir),
+                    "make_dir" => Some(StrOp::MakeDir),
+                    "remove_file" => Some(StrOp::RemoveFile),
+                    _ => None,
+                };
+                if let Some(op) = io {
+                    let ty = self.ty(e);
+                    return self.io_call(op, args, &ty);
+                }
+                if name.text == "exists" {
+                    let (p, d) = (self.expr1(&args[0]), self.int_local());
+                    self.emit(Inst::Str(d, StrOp::Exists, vec![p]));
+                    return vec![d];
                 }
                 if name.text == "args" {
                     let l = self.int_local();

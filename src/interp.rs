@@ -126,6 +126,17 @@ fn unindex(s: &mut [i64], i: i64) {
     s[2 * j as usize + 1] = 0;
 }
 
+/// A failure of the system as an `IoError` variant + 1, like `failure` in runtime.c.
+fn failure(e: &std::io::Error) -> i64 {
+    use std::io::ErrorKind::*;
+    match e.kind() {
+        NotFound | NotADirectory => 1,
+        PermissionDenied | ReadOnlyFilesystem => 2,
+        IsADirectory => 3,
+        _ => 5,
+    }
+}
+
 /// `Inst::Mix`: the same in src/codegen.rs.
 fn mix(a: i64, b: i64) -> i64 {
     // splitmix64's finalizer: every bit counts in the low ones that `% cap` reads (keys like
@@ -412,6 +423,42 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::IsInt => crate::kir::parse_int(s(0)).is_some() as i64,
                         StrOp::ToInt => crate::kir::parse_int(s(0)).unwrap_or(0),
+                        StrOp::WriteFile | StrOp::AppendFile if std::path::Path::new(s(0)).is_dir() => -3,
+                        StrOp::WriteFile | StrOp::AppendFile => {
+                            let mut file = std::fs::OpenOptions::new();
+                            file.create(true);
+                            if matches!(op, StrOp::AppendFile) { file.append(true) } else { file.write(true).truncate(true) };
+                            match file.open(s(0)).and_then(|mut f| f.write_all(s(1).as_bytes())) {
+                                Ok(()) => 0,
+                                Err(e) => -failure(&e),
+                            }
+                        }
+                        StrOp::Exists => (!s(0).contains('\0') && std::path::Path::new(s(0)).exists()) as i64,
+                        StrOp::ListDir => match std::fs::read_dir(s(0)) {
+                            Err(e) => -failure(&e),
+                            Ok(entries) => {
+                                let names: Result<Vec<String>, _> = entries.map(|e| e.map_err(|_| -5).and_then(|e| e.file_name().into_string().map_err(|_| -4))).collect();
+                                match names {
+                                    Err(code) => code,
+                                    Ok(mut names) => {
+                                        names.sort();
+                                        let slots: Vec<i64> = names.into_iter().map(|n| heap.make(n)).collect();
+                                        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                    }
+                                }
+                            }
+                        },
+                        StrOp::MakeDir if s(0).is_empty() => -1,
+                        StrOp::MakeDir => match std::fs::create_dir_all(s(0)) {
+                            Ok(()) => 0,
+                            Err(_) if std::path::Path::new(s(0)).exists() => -5,
+                            Err(e) => -failure(&e),
+                        },
+                        StrOp::RemoveFile if std::path::Path::new(s(0)).is_dir() => -3,
+                        StrOp::RemoveFile => match std::fs::remove_file(s(0)) {
+                            Ok(()) => 0,
+                            Err(e) => -failure(&e),
+                        },
                         StrOp::ReadFile => match std::fs::read(s(0)).map(String::from_utf8) {
                             Ok(Ok(text)) => heap.make(text),
                             Ok(Err(_)) => -4,

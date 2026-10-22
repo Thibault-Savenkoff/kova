@@ -1,0 +1,9 @@
+fn main {
+    write_file("a.txt", "x")
+    let n: Int := exists("a.txt")
+    make_dir(3)?
+}
+// error: this result is not looked at: a failure would go unseen
+// error: different types: `Int` expected, `Bool` given
+// error: `?` gives the error (`IoError`) back to the caller
+// error: different types: `String` expected, `Int` given
