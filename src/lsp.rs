@@ -857,7 +857,7 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
         }
         match s {
             // Visible only after its value: in `let x: Int := x + 1`, the 2nd `x` isn't it.
-            Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
+            Stmt::Declare { pattern, ty, value, .. } if value.span.end < cursor => {
                 // `let rex := Dog { ... }`: the type is the literal's.
                 let written = match (&value.kind, ty) {
                     (ExprKind::StructLit { ty: name, types, .. }, None) if !types.is_empty() => {
@@ -1040,6 +1040,9 @@ mod tests {
         let src = "fn main {\n  let l: List<Int> := [1]\n  var total: Int := 0\n  l.each { x: Int =>\n    let y: Int := x\n    HERE\n  }\n  let after: Int := 1\n}";
         let here = src.find("HERE").unwrap();
         assert_eq!(names(&complete(src, here)), ["l", "total", "x", "y"]);
+        // While its value is typed, a variable is not offered to itself.
+        let src = "fn main {\n  let a: Int := 1\n  let n: Int := a\n}";
+        assert_eq!(names(&complete(src, src.find(":= a").unwrap() + 4)), ["a"]);
         // After `.` on a List: `filter` writes its block.
         let src = "fn main {\n  let l: List<Int> := [1]\n  l.\n}";
         let items = members("/none/main.kova", src, src.find("l.\n").unwrap() + 2).unwrap();
