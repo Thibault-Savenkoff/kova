@@ -29,8 +29,7 @@ const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime.a"));
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
     let object = make_object(p, files, lang).map_err(|e| t!("codegen_failed", error = e))?;
-    // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
-    let rust = !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none();
+    let rust = !RUNTIME.is_empty();
     if rust && cfg!(any(all(any(target_os = "linux", windows), target_arch = "x86_64"), all(target_os = "macos", target_arch = "aarch64"))) {
         // Kova's own linker: no `cc`, nor Microsoft's linker (src/link.rs).
         let exe = if cfg!(windows) {
@@ -46,7 +45,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let (o, c) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"));
+    let (o, c) = (tmp.join("main.o"), tmp.join("runtime.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     if rust {
         let a = tmp.join("runtime.a");
@@ -72,9 +71,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
     // else the system's static C library; else as usual, with a warning saying what to install.
     // macOS has no static C library: its `libSystem` is on every Mac, so `cc` as usual is fine.
-    let res = if cfg!(windows) {
-        windows_link(output, &o, &c, &tmp)
-    } else if cfg!(target_os = "macos") {
+    let res = if cfg!(target_os = "macos") {
         link("cc", &[])
     } else {
         [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
@@ -105,34 +102,12 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 /// What the linker said.
 fn linked(res: std::io::Result<std::process::Output>) -> Result<(), String> {
     match res {
-        Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound => Err(t!("no_msvc")),
         Err(e) => Err(t!("cc_missing", error = e)),
-        // Microsoft's compiler writes its errors on stdout.
         Ok(out) if !out.status.success() => {
             Err(t!("cc_failed", output = String::from_utf8_lossy(&[out.stdout, out.stderr].concat())))
         }
         Ok(_) => Ok(()),
     }
-}
-
-/// Windows (PLAN Part 4 "Windows"): Microsoft's C compiler, found where Visual Studio put it
-/// (the Rust installer installs it); else MinGW's `gcc` if it is on the PATH. `/MT` puts the C
-/// library inside the executable, so that it runs on any Windows, like a static one on Linux.
-fn windows_link(output: &str, o: &Path, c: &Path, tmp: &Path) -> std::io::Result<std::process::Output> {
-    #[cfg(windows)]
-    if let Some(mut cl) = find_msvc_tools::find(if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }, "cl.exe") {
-        return cl
-            .args(["/nologo", "/std:c11", "/utf-8", "/O2", "/MT", "/Gy", "/D_CRT_SECURE_NO_WARNINGS"])
-            .arg(format!("/Fo{}\\", tmp.display()))
-            .arg(format!("/Fe{output}"))
-            .arg(o)
-            .arg(c)
-            .args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"])
-            .output();
-    }
-    let _ = tmp;
-    let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
-    Command::new("gcc").args(["-static", "-O2"]).args(small).arg("-o").arg(output).arg(o).arg(c).arg("-lshell32").output()
 }
 
 /// The C runtime functions called by the generated code.

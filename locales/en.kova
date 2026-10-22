@@ -31,7 +31,6 @@ lang en {
     not_static := "note: this executable needs the C library of a Linux like yours. For one that runs on any Linux, install musl (Fedora: `sudo dnf install musl-gcc musl-libc-static`)"
     cc_missing := "cannot launch `cc` (it assembles the executable): {error}"
     cc_failed := "`cc` failed:\n{output}"
-    no_msvc := "to make an executable on Windows, Kova needs Microsoft's C compiler: install `Build Tools for Visual Studio` with `Desktop development with C++` (the Rust installer offers it)"
     tests_none := "no `test` block in {file}"
     test_unknown := "no test \"{name}\" in {file}"
     tests_summary := "{passed} passed, {failed} failed out of {total}"
