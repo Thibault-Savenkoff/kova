@@ -13,7 +13,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, Struct, TypeAst};
+use crate::ast::{Block, Expr, ExprKind, File, Function, Part, Pattern, Stmt, Struct, TypeAst};
 use crate::diag::Span;
 use crate::types::Type;
 use crate::lexer::{KEYWORDS, Kind, Token, lex};
@@ -563,11 +563,15 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             }
         }
         Type::Any(i) => items.extend(interface(i).into_iter().flat_map(|i| &i.methods).map(|(m, _)| method(m))),
-        Type::List(_) => items.extend(types::LIST_METHODS.iter().map(|m| item(m, CompletionItemKind::METHOD, String::new()))),
-        Type::Map(..) => items.extend(types::MAP_METHODS.iter().map(|m| item(m, CompletionItemKind::METHOD, String::new()))),
+        Type::List(e) => items.extend(list_methods(&e.text())),
+        Type::Map(k, v) => {
+            let (k, v) = (k.text(), v.text());
+            let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?"))];
+            items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
+        }
         _ => {}
     }
-    if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_)) {
+    if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..)) {
         items.push(item("clone", CompletionItemKind::METHOD, t.text()));
     }
     for (receiver, name, result, optional) in types::METHODS {
@@ -585,6 +589,37 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
         }
     }
     items
+}
+
+/// The methods of a `List<T>` (`elem` = `T`): those taking a block write it, the cursor in its body.
+fn list_methods(elem: &str) -> Vec<CompletionItem> {
+    let block = |name: &str, detail: String, start: &str| CompletionItem {
+        label: name.into(),
+        kind: Some(CompletionItemKind::METHOD),
+        detail: Some(detail),
+        insert_text: Some(format!("{name}{start} {{ x: {elem} => $0 }}")),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        ..Default::default()
+    };
+    let plain = |name: &str, detail: String| CompletionItem {
+        label: name.into(),
+        kind: Some(CompletionItemKind::METHOD),
+        detail: Some(detail),
+        ..Default::default()
+    };
+    let mut fold = block("fold", format!("(start: A) {{A, {elem} -> A}} -> A"), "");
+    fold.insert_text = Some(format!("fold(${{1:0}}) {{ acc: ${{2:Int}}, x: {elem} => $0 }}"));
+    vec![
+        plain("length", "-> Int".into()),
+        plain("add", format!("(x: move {elem})")),
+        plain("remove", format!("(index: Int) -> {elem}")),
+        block("each", format!("{{{elem}}}"), ""),
+        block("filter", format!("{{{elem} -> Bool}} -> List<{elem}>"), ""),
+        block("map", format!("{{{elem} -> U}} -> List<U>"), ""),
+        block("any", format!("{{{elem} -> Bool}} -> Bool"), ""),
+        block("all", format!("{{{elem} -> Bool}} -> Bool"), ""),
+        fold,
+    ]
 }
 
 /// The tokens before the cursor, without the name being typed, and the innermost `{` still open
@@ -718,6 +753,10 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
             ..Default::default()
         });
     }
+    // The other keywords come with the snippets (`let`, `if`, `for`…).
+    for word in ["true", "false", "none", "break", "continue", "else"] {
+        items.push(CompletionItem { label: word.into(), kind: Some(CompletionItemKind::KEYWORD), ..Default::default() });
+    }
     for f in &file.functions {
         items.push(CompletionItem {
             label: f.name.text.clone(),
@@ -802,6 +841,20 @@ fn written(s: &Struct) -> String {
 fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
     for s in &b.stmts {
+        // `scores.each { x: Int => … }`: inside a block written in this statement.
+        let exprs: Vec<&Expr> = match s {
+            Stmt::Declare { value, .. } | Stmt::Assign { value, .. } | Stmt::Expr(value) => vec![value],
+            Stmt::Return { value, .. } => value.iter().collect(),
+            Stmt::Check(c) => vec![&c.cond],
+            Stmt::If { cond, .. } | Stmt::While { cond, .. } => vec![cond],
+            Stmt::Loop { start, end, .. } => vec![start, end],
+            Stmt::Each { list, .. } => vec![list],
+            Stmt::Match(m) => vec![&m.subject],
+            Stmt::Break(_) | Stmt::Continue(_) => vec![],
+        };
+        for e in exprs {
+            in_expr(e, cursor, vars);
+        }
         match s {
             // Visible only after its value: in `let x: Int := x + 1`, the 2nd `x` isn't it.
             Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
@@ -844,6 +897,48 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
             }
             _ => {}
         }
+    }
+}
+
+/// The variables visible at the cursor inside `e`: a block's parameters and what it declares,
+/// or those of an `if` / `match` giving a value.
+fn in_expr(e: &Expr, cursor: usize, vars: &mut Vec<(String, String)>) {
+    if !(e.span.start < cursor && cursor <= e.span.end) {
+        return;
+    }
+    let mut each = |es: &mut dyn Iterator<Item = &Expr>| es.for_each(|x| in_expr(x, cursor, vars));
+    match &e.kind {
+        ExprKind::Block { params, body } => {
+            vars.extend(params.iter().map(|p| (p.name.text.clone(), p.ty.text())));
+            visible(body, cursor, vars);
+        }
+        ExprKind::If { cond, then, otherwise } => {
+            in_expr(cond, cursor, vars);
+            for b in [then, otherwise].into_iter().filter(|b| b.open.start < cursor && cursor <= b.close.start) {
+                visible(b, cursor, vars);
+            }
+        }
+        ExprKind::Match(m) => {
+            in_expr(&m.subject, cursor, vars);
+            for arm in m.arms.iter().filter(|a| a.body.open.start <= cursor && cursor <= a.body.close.end) {
+                if let Some((_, binds)) = arm.case.variant() {
+                    binds.into_iter().for_each(|p| pattern_names(p, None, vars));
+                }
+                visible(&arm.body, cursor, vars);
+            }
+        }
+        ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } | ExprKind::Tuple(args) | ExprKind::List(args) => {
+            each(&mut args.iter())
+        }
+        ExprKind::Method { receiver, args, .. } => each(&mut std::iter::once(&**receiver).chain(args)),
+        ExprKind::Mark(_, x) | ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } => {
+            in_expr(x, cursor, vars)
+        }
+        ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => each(&mut [&**a, &**b].into_iter()),
+        ExprKind::MapLit(pairs) => each(&mut pairs.iter().flat_map(|(k, v)| [k, v])),
+        ExprKind::StructLit { fields, .. } => each(&mut fields.iter().map(|(_, v)| v)),
+        ExprKind::Interp(parts) => each(&mut parts.iter().filter_map(|p| if let Part::Code(x) = p { Some(x) } else { None })),
+        _ => {}
     }
 }
 
@@ -938,6 +1033,19 @@ mod tests {
         assert_eq!(names(&complete(src, after_if)), ["n", "a"]);
         // Functions are always offered.
         assert!(complete(src, here).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_inside_a_block() {
+        let src = "fn main {\n  let l: List<Int> := [1]\n  var total: Int := 0\n  l.each { x: Int =>\n    let y: Int := x\n    HERE\n  }\n  let after: Int := 1\n}";
+        let here = src.find("HERE").unwrap();
+        assert_eq!(names(&complete(src, here)), ["l", "total", "x", "y"]);
+        // After `.` on a List: `filter` writes its block.
+        let src = "fn main {\n  let l: List<Int> := [1]\n  l.\n}";
+        let items = members("/none/main.kova", src, src.find("l.\n").unwrap() + 2).unwrap();
+        let filter = items.iter().find(|i| i.label == "filter").unwrap();
+        assert_eq!(filter.insert_text.as_deref(), Some("filter { x: Int => $0 }"));
+        assert_eq!(filter.detail.as_deref(), Some("{Int -> Bool} -> List<Int>"));
     }
 
     #[test]

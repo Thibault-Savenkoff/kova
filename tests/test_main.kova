@@ -1,0 +1,5 @@
+fn main {
+    let scores: List<Int> := [12, 5, 18]
+    let big: List<Int> := scores.filter { x: Int => x > 10 }
+    print(big)
+}
