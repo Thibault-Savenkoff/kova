@@ -1,0 +1,18 @@
+// A `T` in a generic struct follows the ownership rules of the real type.
+struct Stack<T> {
+    items: List<T>
+    fn push(var self, x: move T) {
+        self.items.add(move x)
+    }
+    fn top(self) -> T {
+        return self.items[0]
+    }
+}
+fn main {
+    var s := Stack<String> { items := [] }
+    let name: String := "Rex"
+    s.push(move name)
+    print(name)
+}
+// error: `self.items[0]` is an element of a List: it cannot be moved out
+// error: `name` was moved (line 14)

@@ -1,0 +1,22 @@
+// A contract in a generic struct's method shows the call, like any other.
+struct Stack<T> {
+    items: List<T>
+    fn pop(var self) -> T
+        require self.items.length > 0 else "pop on an empty stack"
+    {
+        return self.items.remove(self.items.length - 1)
+    }
+}
+
+fn main {
+    var s := Stack<String> { items := ["a"] }
+    print(s.pop)
+    print(s.pop)
+}
+// expect: a
+// code: 101
+// stderr: error: pop on an empty stack
+// stderr: generic_struct_contract.kova:5:17
+// stderr:   require self.items.length > 0
+// stderr:   values: self = Stack<String> { items: [] }
+// stderr: generic_struct_contract.kova:14:13

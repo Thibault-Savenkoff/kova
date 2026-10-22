@@ -49,6 +49,14 @@ impl Type {
         matches!(self, Type::Struct(d) if d.field(name).is_some())
     }
 
+    /// The name its methods are found under: `Stack` for `Stack<Int>` (`Stack.push`).
+    pub fn owner(&self) -> String {
+        match self {
+            Type::Struct(d) => d.name.clone(),
+            t => t.text(),
+        }
+    }
+
     /// The type as in the code: `Int`, `(Int, Float)`.
     pub fn text(&self) -> String {
         match self {
@@ -58,7 +66,8 @@ impl Type {
             Type::Char => "Char".into(),
             Type::String => "String".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
-            Type::Struct(d) => d.name.clone(),
+            Type::Struct(d) if d.args.is_empty() => d.name.clone(),
+            Type::Struct(d) => format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Enum(d) => d.name.clone(),
             Type::Optional(t) => format!("{}?", t.text()),
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
@@ -86,13 +95,37 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Optional(t) => Type::Optional(sub(t)),
         Type::Result(t, e) => Type::Result(sub(t), sub(e)),
         Type::List(t) => Type::List(sub(t)),
+        // `Stack<T>` → `Stack<Int>`: its fields change with it.
+        Type::Struct(d) if !d.args.is_empty() => Type::Struct(Rc::new(StructDef {
+            name: d.name.clone(),
+            args: d.args.iter().map(|t| substitute(t, s)).collect(),
+            fields: d.fields.iter().map(|(n, t)| (n.clone(), substitute(t, s))).collect(),
+            copy: d.copy,
+        })),
         _ => t.clone(),
     }
+}
+
+/// `Stack<T>` as declared, under its own name (`T` may stand for a `Stack<Int>`).
+fn is_template(t: &Type, name: &str) -> bool {
+    matches!(t, Type::Struct(d) if !d.args.is_empty() && d.name == name)
+}
+
+/// `Stack<Int>` from the struct `Stack<T>` as declared (`None` if it has no type parameters).
+pub fn instance(template: &Type, types: &[Type]) -> Option<Type> {
+    let Type::Struct(d) = template else { return None };
+    let names = d.args.iter().map(|a| match a {
+        Type::Param(p) => p.name.clone(),
+        _ => unreachable!("a declared struct has its parameters as arguments"),
+    });
+    (!d.args.is_empty() && d.args.len() == types.len()).then(|| substitute(template, &names.zip(types.iter().cloned()).collect::<Vec<_>>()))
 }
 
 #[derive(PartialEq, Debug)]
 pub struct StructDef {
     pub name: String,
+    /// `Stack<Int>`: the types given for its type parameters (`Stack<T>` itself: `T`).
+    pub args: Vec<Type>,
     pub fields: Vec<(String, Type)>,
     pub copy: bool,
 }
@@ -315,6 +348,7 @@ fn mentions(t: &Type, name: &str) -> bool {
         Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
         Type::Optional(t) | Type::List(t) => mentions(t, name),
         Type::Result(a, b) => mentions(a, name) || mentions(b, name),
+        Type::Struct(d) => d.args.iter().any(|t| mentions(t, name)),
         _ => false,
     }
 }
@@ -334,6 +368,9 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
         (Type::Result(p, q), Type::Result(t, u)) => {
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
+        }
+        (Type::Struct(p), Type::Struct(t)) if p.name == t.name => {
+            p.args.iter().zip(&t.args).for_each(|(p, t)| deduce(p, t, generics, found));
         }
         // A plain value given for `T?` is wrapped, as everywhere: `or_else(5, 0)` gives `T = Int`.
         (Type::Optional(p), t) => deduce(p, t, generics, found),
@@ -394,6 +431,8 @@ struct Checker<'a> {
     defaults: Vec<(String, usize, usize)>,
     follows: HashMap<String, Vec<String>>,
     type_args: HashMap<usize, Vec<Type>>,
+    /// `Sorted<Dog>`: where, the struct, its parameter, the type given, the interface to follow.
+    bounds: Vec<(Span, String, String, Type, String)>,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
     ret: Type,
@@ -416,6 +455,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         defaults: vec![],
         follows: HashMap::new(),
         type_args: HashMap::new(),
+        bounds: vec![],
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -513,6 +553,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
         let mut seen: HashMap<&str, Span> = HashMap::new();
         let me = c.structs[&s.name.text].clone();
+        // `struct Stack<T>`: its methods use `T`, given at each call by the receiver's type.
+        let (args, generics) = struct_params(&me);
+        let saved = c.open_struct(&args);
         c.structs.insert("Self".into(), me);
         for m in &s.methods {
             c.open_generics(m, false);
@@ -532,10 +575,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
                 let (line, _) = line_col(src, first.start);
                 c.error(m.name.span, t!("method_exists", name = name, type = s.name.text, line = line));
             } else {
-                c.functions.insert(method_name(&s.name.text, name), Signature::new(m.receiver, params, ret));
+                let generics = generics.clone();
+                c.functions.insert(method_name(&s.name.text, name), Signature { receiver: m.receiver, params, ret, generics });
             }
         }
         c.structs.remove("Self");
+        c.close_struct(saved);
     }
     // The interfaces' methods, `Animal.sound`, with `Self` standing for the type that follows it.
     for (i, it) in f.interfaces.iter().enumerate() {
@@ -569,8 +614,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
     // `struct Dog : Animal`: Dog writes each method Animal asks for, or takes its default one.
     for (i, s) in f.structs.iter().enumerate() {
-        if decls.get(s.name.text.as_str()) == Some(&i) {
-            c.conforms(f, s);
+        if decls.get(s.name.text.as_str()) != Some(&i) {
+            continue;
+        }
+        match (s.generics.first(), s.interfaces.first()) {
+            (Some(_), Some(it)) => c.error(it.span, t!("generic_struct_interface_later", name = s.name.text, interface = it.text)),
+            _ => c.conforms(f, s),
         }
     }
     // `struct Point : Equal` without `equals`: every field must have `=` (known once all conform).
@@ -617,11 +666,13 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) == Some(&i) {
             let ty = c.structs[&s.name.text].clone();
+            let saved = c.open_struct(&struct_params(&ty).0);
             c.structs.insert("Self".into(), ty.clone());
             for m in &s.methods {
                 c.body(m, Some(&ty));
             }
             c.structs.remove("Self");
+            c.close_struct(saved);
         }
     }
     // A default method is checked once, for every type that will take it: `self` is a `Self`.
@@ -648,9 +699,25 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         c.block(&t.body, vec![]);
     }
 
+    for (span, ty, name, t, bound) in std::mem::take(&mut c.bounds) {
+        if !c.satisfies(&t, &bound) {
+            c.diags.push(
+                Diag::new(span, t!("generic_bound", function = ty, name = name, type = t.text(), bound = bound))
+                    .help(t!("generic_bound_help", type = t.text(), bound = bound)),
+            );
+        }
+    }
+
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows, type_args }, c.diags)
+}
+
+/// The type parameters of `struct Stack<T>`, as types and as definitions.
+fn struct_params(t: &Type) -> (Vec<Type>, Vec<Rc<ParamDef>>) {
+    let Type::Struct(d) = t else { return (vec![], vec![]) };
+    let defs = d.args.iter().filter_map(|a| if let Type::Param(p) = a { Some(p.clone()) } else { None }).collect();
+    (d.args.clone(), defs)
 }
 
 /// `Equal`, `Comparable`, `Display` (`parser::PRELUDE`).
@@ -677,8 +744,9 @@ fn primitive(name: &str) -> Option<Type> {
 /// The written type; `Error` if it contains an unknown name.
 pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
+        // `Stack` alone is not a type: `Stack<Int>` is.
         TypeAst::Name(n) => primitive(&n.text)
-            .or_else(|| structs.get(&n.text).cloned())
+            .or_else(|| structs.get(&n.text).filter(|t| !is_template(t, &n.text)).cloned())
             .unwrap_or(Type::Error),
         TypeAst::Tuple(ts) => {
             let ts: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
@@ -688,7 +756,13 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             Type::Error => Type::Error,
             t => Type::List(Box::new(t)),
         },
-        TypeAst::Generic(..) => Type::Error,
+        TypeAst::Generic(n, ts) => {
+            let types: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
+            if types.contains(&Type::Error) {
+                return Type::Error;
+            }
+            structs.get(&n.text).and_then(|t| instance(t, &types)).unwrap_or(Type::Error)
+        }
         TypeAst::Optional(t) => match type_of(t, structs) {
             Type::Error => Type::Error,
             t => Type::Optional(Box::new(t)),
@@ -845,16 +919,26 @@ impl Checker<'_> {
     /// Makes the type parameters of `func` known as types (`T` in `fn larger<T: Comparable>`)
     /// until `close_generics`, after checking them; reported once, when `report` is set.
     fn open_generics(&mut self, func: &Function, report: bool) -> Vec<Rc<ParamDef>> {
-        let mut made: Vec<Rc<ParamDef>> = vec![];
-        for g in &func.generics {
-            let name = g.name.text.as_str();
-            if !report {
-                if g.name.span == func.generics[0].name.span {
-                    self.error(g.name.span, t!("generic_method_later"));
-                }
-                continue;
+        if !report {
+            if let Some(g) = func.generics.first() {
+                self.error(g.name.span, t!("generic_method_later"));
             }
-            if primitive(name).is_some() || self.structs.contains_key(name) || self.interfaces.contains_key(name) || name == "Self" {
+            return vec![];
+        }
+        let made = self.params(&func.generics, &|_| false);
+        for p in &made {
+            self.structs.insert(p.name.clone(), Type::Param(p.clone()));
+        }
+        made
+    }
+
+    /// The type parameters as written, checked (`taken`: also refused as a name).
+    fn params(&mut self, generics: &[Generic], taken: &dyn Fn(&str) -> bool) -> Vec<Rc<ParamDef>> {
+        let mut made: Vec<Rc<ParamDef>> = vec![];
+        for g in generics {
+            let name = g.name.text.as_str();
+            let other = matches!(self.structs.get(name), Some(t) if !matches!(t, Type::Param(_)));
+            if primitive(name).is_some() || other || taken(name) || self.interfaces.contains_key(name) || name == "Self" {
                 self.error(g.name.span, t!("generic_name_taken", name = name));
                 continue;
             }
@@ -875,10 +959,26 @@ impl Checker<'_> {
             let bounds = g.bounds.iter().map(|b| b.text.clone()).collect();
             made.push(Rc::new(ParamDef { name: name.to_string(), bounds }));
         }
-        for p in &made {
-            self.structs.insert(p.name.clone(), Type::Param(p.clone()));
-        }
         made
+    }
+
+    /// While checking `struct Stack<T>` and its methods, `T` is a type; gives back what the
+    /// names stood for before (a struct being built inside another one's fields).
+    fn open_struct(&mut self, args: &[Type]) -> Vec<(String, Option<Type>)> {
+        let params = args.iter().filter_map(|a| match a {
+            Type::Param(p) => Some(p.clone()),
+            _ => None,
+        });
+        params.map(|p| (p.name.clone(), self.structs.insert(p.name.clone(), Type::Param(p)))).collect()
+    }
+
+    fn close_struct(&mut self, saved: Vec<(String, Option<Type>)>) {
+        for (name, before) in saved {
+            match before {
+                Some(t) => self.structs.insert(name, t),
+                None => self.structs.remove(&name),
+            };
+        }
     }
 
     fn close_generics(&mut self, func: &Function) {
@@ -951,6 +1051,8 @@ impl Checker<'_> {
             return None;
         }
         open.push(i);
+        let args: Vec<Type> = self.params(&s.generics, &|n| decls.contains_key(n)).into_iter().map(Type::Param).collect();
+        let saved = self.open_struct(&args);
         let ty = match &s.variants {
             None => {
                 let fields = self.fields(f, decls, &s.fields, open);
@@ -961,7 +1063,7 @@ impl Checker<'_> {
                         self.diags.push(Diag::new(span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
                     }
                 }
-                Type::Struct(Rc::new(StructDef { name: s.name.text.clone(), fields, copy: s.copy }))
+                Type::Struct(Rc::new(StructDef { name: s.name.text.clone(), args, fields, copy: s.copy }))
             }
             Some(variants) => {
                 let mut seen: HashMap<&str, Span> = HashMap::new();
@@ -978,6 +1080,7 @@ impl Checker<'_> {
                 Type::Enum(Rc::new(EnumDef { name: s.name.text.clone(), variants: defs }))
             }
         };
+        self.close_struct(saved);
         open.pop();
         self.structs.insert(s.name.text.clone(), ty.clone());
         Some(ty)
@@ -1024,12 +1127,15 @@ impl Checker<'_> {
                     self.error(e.span, t!("list_of_itself", name = e.text));
                     return Type::Error;
                 }
-                let mut inner = vec![];
-                self.generic(n, ts, |c, t| inner.push(c.field_type(f, decls, t, open)));
-                match &inner[..] {
-                    [t] if n.text == "List" && *t != Type::Error => Type::List(Box::new(t.clone())),
-                    _ => Type::Error,
-                }
+                let inner: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
+                let template = match decls.get(n.text.as_str()) {
+                    Some(&j) => match self.define(f, decls, j, open) {
+                        None => return self.contains_itself(n),
+                        t => t,
+                    },
+                    None => self.structs.get(&n.text).cloned(),
+                };
+                self.generic(n, template.as_ref(), &inner)
             }
             TypeAst::Name(n) => {
                 if let Some(t) = primitive(&n.text) {
@@ -1046,14 +1152,12 @@ impl Checker<'_> {
                     return Type::Error;
                 };
                 match self.define(f, decls, j, open) {
-                    Some(t) => t,
-                    None => {
-                        self.diags.push(
-                            Diag::new(n.span, t!("struct_contains_itself", name = n.text))
-                                .help(t!("struct_contains_itself_help", name = n.text)),
-                        );
+                    Some(Type::Struct(d)) if !d.args.is_empty() => {
+                        self.generic_without_types(n);
                         Type::Error
                     }
+                    Some(t) => t,
+                    None => self.contains_itself(n),
                 }
             }
         }
@@ -1067,10 +1171,18 @@ impl Checker<'_> {
             TypeAst::Name(n) if self.interfaces.contains_key(&n.text) => self.diags.push(
                 Diag::new(n.span, t!("interface_as_type", name = n.text)).help(t!("interface_as_type_help", name = n.text)),
             ),
+            TypeAst::Name(n) if self.structs.get(&n.text).is_some_and(|t| is_template(t, &n.text)) => {
+                self.generic_without_types(n)
+            }
             TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
-            TypeAst::Generic(n, ts) => self.generic(n, ts, |c, t| c.report_unknown(t)),
+            TypeAst::Generic(n, ts) => {
+                ts.iter().for_each(|t| self.report_unknown(t));
+                let types: Vec<Type> = ts.iter().map(|t| type_of(t, &self.structs)).collect();
+                let template = self.structs.get(&n.text).cloned();
+                self.generic(n, template.as_ref(), &types);
+            }
             TypeAst::Optional(t) => self.report_unknown(t),
             TypeAst::Result(t, e) => {
                 self.report_unknown(t);
@@ -1079,14 +1191,58 @@ impl Checker<'_> {
         }
     }
 
-    /// `List<T>` is the only generic type for now (J5: the others); `each` checks `T`.
-    fn generic(&mut self, n: &Name, ts: &[TypeAst], mut each: impl FnMut(&mut Self, &TypeAst)) {
-        if n.text != "List" {
-            self.error(n.span, t!("generic_unknown", name = n.text));
-        } else if ts.len() != 1 {
-            self.error(n.span, t!("list_one_type", count = ts.len()));
+    /// `List<Int>`, or `Stack<Int>` from `template`, the struct `Stack<T>` (`None`: unknown name).
+    fn generic(&mut self, n: &Name, template: Option<&Type>, types: &[Type]) -> Type {
+        if n.text == "List" {
+            return match types {
+                [Type::Error] => Type::Error,
+                [t] => Type::List(Box::new(t.clone())),
+                _ => {
+                    self.error(n.span, t!("list_one_type", count = types.len()));
+                    Type::Error
+                }
+            };
         }
-        ts.iter().for_each(|t| each(self, t));
+        let d = match template {
+            Some(t @ Type::Struct(d)) if is_template(t, &n.text) => d.clone(),
+            Some(Type::Param(_)) | None => {
+                self.error(n.span, t!("type_unknown", name = n.text));
+                return Type::Error;
+            }
+            Some(_) => {
+                self.diags.push(Diag::new(n.span, t!("not_generic", name = n.text)).help(t!("not_generic_help", name = n.text)));
+                return Type::Error;
+            }
+        };
+        if d.args.len() != types.len() {
+            let example = format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", "));
+            self.error(n.span, t!("generic_count", name = n.text, expected = d.args.len(), given = types.len(), example = example));
+            return Type::Error;
+        }
+        if types.contains(&Type::Error) {
+            return Type::Error;
+        }
+        // Checked at the end: what each type follows is only known once all are read.
+        for (p, t) in d.args.iter().zip(types) {
+            if let Type::Param(p) = p {
+                for b in &p.bounds {
+                    self.bounds.push((n.span, n.text.clone(), p.name.clone(), t.clone(), b.clone()));
+                }
+            }
+        }
+        instance(&Type::Struct(d), types).unwrap()
+    }
+
+    fn contains_itself(&mut self, n: &Name) -> Type {
+        self.diags.push(Diag::new(n.span, t!("struct_contains_itself", name = n.text)).help(t!("struct_contains_itself_help", name = n.text)));
+        Type::Error
+    }
+
+    /// `Stack` written without its types.
+    fn generic_without_types(&mut self, n: &Name) {
+        let Some(Type::Struct(d)) = self.structs.get(&n.text) else { return };
+        let example = format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", "));
+        self.diags.push(Diag::new(n.span, t!("generic_struct_types", name = n.text)).help(t!("generic_struct_types_help", example = example)));
     }
 
     fn written_type(&mut self, t: &TypeAst) -> Type {
@@ -1484,6 +1640,16 @@ impl Checker<'_> {
         sig.ret
     }
 
+    /// A method of `Stack<T>` called on a `Stack<Int>`: its `T` is `Int` (kept for the KIR copy).
+    fn for_types(&mut self, id: usize, sig: Signature, types: Vec<Type>) -> Signature {
+        if types.is_empty() {
+            return sig;
+        }
+        let s: Vec<(String, Type)> = sig.generics.iter().map(|g| g.name.clone()).zip(types.iter().cloned()).collect();
+        self.type_args.insert(id, types);
+        sig.substitute(&s)
+    }
+
     /// `l.length`, `l.add(x)`, `l.remove(i)` (PLAN 2.10); `None` for `clone` (shared with the other types).
     fn list_method(&mut self, receiver: &Expr, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
@@ -1515,7 +1681,18 @@ impl Checker<'_> {
     }
 
     /// `Dog.create("Rex")`: a struct's function without `self`.
-    fn static_call(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+    fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
+        // `Stack<Int>.empty`: the function of `Stack<T>` with `T` = `Int`.
+        let mut given = vec![];
+        if !types.is_empty() || self.structs.get(&ty.text).is_some_and(|t| is_template(t, &ty.text)) {
+            match self.with_types(ty, types) {
+                Type::Struct(d) => given = d.args.clone(),
+                _ => {
+                    self.unchecked(args);
+                    return Type::Error;
+                }
+            }
+        }
         let found = match self.structs.get(&ty.text).cloned() {
             None if primitive(&ty.text).is_some() => {
                 self.error(name.span, t!("no_static", type = ty.text, name = name.text));
@@ -1545,6 +1722,7 @@ impl Checker<'_> {
                     .help(t!("method_needs_value_help", name = name.text)),
             );
         }
+        let sig = self.for_types(id, sig, given);
         self.arguments(name, args, &sig.params, &[]);
         sig.ret
     }
@@ -1587,7 +1765,7 @@ impl Checker<'_> {
     /// `rex.color`: no such field or method in `Dog` (a struct or an enum).
     fn no_field(&mut self, t: &Type, name: &Name) {
         let owner = t.text();
-        let prefix = method_name(&owner, "");
+        let prefix = method_name(&t.owner(), "");
         let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).collect();
         methods.sort();
         let own: Vec<&str> = match t {
@@ -1700,7 +1878,7 @@ impl Checker<'_> {
                 let call = match &e.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
-                        t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.text(), &name.text)),
+                        t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         _ => false,
@@ -1817,9 +1995,9 @@ impl Checker<'_> {
                     }
                 }
             }
-            ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
+            ExprKind::StructLit { ty, types, fields } => self.struct_literal(ty, types, fields),
             ExprKind::Call { name, args } => self.call(e.id, name, args),
-            ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
+            ExprKind::Static { ty, types, name, args } => self.static_call(e.id, ty, types, name, args),
             ExprKind::Variant { ty, name, args } => self.variant(ty, name, args),
             ExprKind::None => {
                 self.diags.push(Diag::new(e.span, t!("none_needs_type")).help(t!("none_needs_type_help")));
@@ -1864,8 +2042,10 @@ impl Checker<'_> {
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
                 if matches!(t, Type::Struct(_) | Type::Enum(_))
-                    && let Some(sig) = self.functions.get(&method_name(&t.text(), &name.text)).cloned()
+                    && let Some(sig) = self.functions.get(&method_name(&t.owner(), &name.text)).cloned()
                 {
+                    let given = if let Type::Struct(d) = &t { d.args.clone() } else { vec![] };
+                    let sig = self.for_types(e.id, sig, given);
                     return self.method_call(receiver, &t.text(), name, args, sig);
                 }
                 if let Type::List(elem) = &t
@@ -2035,8 +2215,12 @@ impl Checker<'_> {
     }
 
     /// `Dog { name := "Rex", age := 3 }`: every field exactly once, in any order.
-    fn struct_literal(&mut self, ty: &Name, fields: &[(Name, Expr)]) -> Type {
+    fn struct_literal(&mut self, ty: &Name, types: &[TypeAst], fields: &[(Name, Expr)]) -> Type {
         let d = match self.structs.get(&ty.text).cloned() {
+            Some(t @ Type::Struct(_)) if !types.is_empty() || is_template(&t, &ty.text) => match self.with_types(ty, types) {
+                Type::Struct(d) => d,
+                _ => return self.unchecked_fields(fields),
+            },
             Some(Type::Struct(d)) => d,
             other => {
                 match other {
@@ -2070,6 +2254,24 @@ impl Checker<'_> {
             self.error(ty.span, t!("fields_missing", type = d.name, fields = missing.join(", ")));
         }
         Type::Struct(d)
+    }
+
+    fn unchecked_fields(&mut self, fields: &[(Name, Expr)]) -> Type {
+        fields.iter().for_each(|(_, v)| {
+            self.expr(v);
+        });
+        Type::Error
+    }
+
+    /// `Stack<Int>` before `{` or `.`: written in full, since Kova does not deduce it (PLAN Part 4).
+    fn with_types(&mut self, ty: &Name, types: &[TypeAst]) -> Type {
+        if types.is_empty() {
+            self.generic_without_types(ty);
+            return Type::Error;
+        }
+        let given: Vec<Type> = types.iter().map(|t| self.written_type(t)).collect();
+        let template = self.structs.get(&ty.text).cloned();
+        self.generic(ty, template.as_ref(), &given)
     }
 
     /// `Shape.Circle(2.0)`: the fields in their declared order.

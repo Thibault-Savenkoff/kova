@@ -12,7 +12,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, TypeAst};
+use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, Struct, TypeAst};
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
 use crate::{analyze, parser, types};
@@ -197,14 +197,14 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
         items.push(CompletionItem {
             label: st.name.text.clone(),
             kind: Some(CompletionItemKind::STRUCT),
-            detail: Some(format!("struct {} {{ {} }}", st.name.text, fields.join(", "))),
+            detail: Some(format!("struct {} {{ {} }}", written(st), fields.join(", "))),
             ..Default::default()
         });
     }
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
     let bodies = file.functions.iter().map(|f| (None, &f.params[..], &f.body));
     let methods = (file.structs.iter())
-        .flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| s.name.text.clone()), &m.params[..], &m.body)));
+        .flat_map(|s| s.methods.iter().map(move |m| (m.receiver.map(|_| written(s)), &m.params[..], &m.body)));
     // In a default method, `self` is a `Self`.
     let defaults = (file.interfaces.iter())
         .flat_map(|i| i.methods.iter().map(|(m, _)| (m.receiver.map(|_| "Self".to_string()), &m.params[..], &m.body)));
@@ -257,6 +257,12 @@ fn complete_header(before: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// `Stack<T>`: a struct's name with its type parameters.
+fn written(s: &Struct) -> String {
+    let names: Vec<&str> = s.generics.iter().map(|g| g.name.text.as_str()).collect();
+    if names.is_empty() { s.name.text.clone() } else { format!("{}<{}>", s.name.text, names.join(", ")) }
+}
+
 /// Adds to `vars` the variables of `b` visible at the cursor: declared before it,
 /// in this block or in a block containing the cursor.
 fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
@@ -267,6 +273,9 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
             Stmt::Declare { pattern, ty, value, .. } if value.span.end <= cursor => {
                 // `let rex := Dog { ... }`: the type is the literal's.
                 let written = match (&value.kind, ty) {
+                    (ExprKind::StructLit { ty: name, types, .. }, None) if !types.is_empty() => {
+                        Some(TypeAst::Generic(name.clone(), types.clone()))
+                    }
                     (ExprKind::StructLit { ty: name, .. } | ExprKind::Variant { ty: name, .. }, None) => {
                         Some(TypeAst::Name(name.clone()))
                     }

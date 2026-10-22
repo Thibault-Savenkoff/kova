@@ -507,7 +507,7 @@ impl Owner<'_> {
     /// `rex.sound`: the method called (`Dog.sound`, `List.add`) and how it receives `rex`.
     fn method(&self, receiver: &Expr, name: &Name) -> Option<(String, Mode)> {
         let q = match &self.info.types[receiver.id] {
-            t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.text(), &name.text),
+            t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),
             Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,
@@ -609,7 +609,7 @@ impl Owner<'_> {
                 }
             }
             ExprKind::Call { name, args } => self.arguments(&name.text, &name.text, None, args),
-            ExprKind::Static { ty, name, args } => self.arguments(&method_name(&ty.text, &name.text), &name.text, None, args),
+            ExprKind::Static { ty, name, args, .. } => self.arguments(&method_name(&ty.text, &name.text), &name.text, None, args),
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
                 self.arguments(&q, &name.text, Some((r, receiver)), args);

@@ -1,0 +1,52 @@
+// Generic structs: types always written, counted, and keeping their promises.
+struct Stack<T> {
+    items: List<T>
+    fn empty -> Stack<T> {
+        return Stack<T> { items := [] }
+    }
+}
+struct Sorted<T: Comparable> {
+    items: List<T>
+}
+struct Dog {
+    name: String
+}
+struct Box<T> : Display {
+    value: T
+    fn to_string(self) -> String { return "box" }
+}
+struct Bad<Int> {
+    x: Int
+}
+struct Twice<T, T> {
+    x: T
+}
+struct Node<T> {
+    next: Node<T>
+}
+struct Holder {
+    s: Stack
+}
+fn g(s: Stack<Int, Int>) {
+}
+fn h(d: Dog<Int>) {
+}
+fn k(s: Sorted<Dog>) {
+}
+fn main {
+    let a := Stack { items := [1] }
+    let c: Stack<Int> := Stack.empty
+    let e := Stack<Int>()
+    let q: Stack<String> := Stack<Int>.empty
+}
+// error: a generic struct following an interface comes later: remove `: Display` from `Box`
+// error: `Int` is already a type's name
+// error: the type parameter `T` is already declared
+// error: `Node` contains itself
+// error: `Stack` needs its types: Kova does not deduce them
+// error: write them, for example `Stack<T>`
+// error: `Stack` takes 1 type(s), not 2: `Stack<T>`
+// error: `Dog` has no type parameters
+// error: `Sorted` needs its `T` to follow `Comparable`, and `Dog` does not
+// error: `()` only makes an empty `List<T>`: `Stack<Int>` is made with its fields
+// error: different types: `Stack<String>` expected, `Stack<Int>` given

@@ -489,9 +489,16 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         let me = vec![("Self".to_string(), ty.clone())];
         (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me)
     };
+    let mut generic = generic;
     for s in &f.structs {
         let ty = info.structs[&s.name.text].clone();
-        all.extend(s.methods.iter().map(|m| method(&ty, &s.name.text, m)));
+        if s.generics.is_empty() {
+            all.extend(s.methods.iter().map(|m| method(&ty, &s.name.text, m)));
+            continue;
+        }
+        // `struct Stack<T>`: one copy of each method per list of types (`Stack.push<Int>`).
+        let names: Vec<String> = s.generics.iter().map(|g| g.name.text.clone()).collect();
+        generic.extend(s.methods.iter().map(|m| (method_name(&s.name.text, &m.name.text), (method(&ty, &s.name.text, m), names.clone()))));
     }
     // One copy of a default method for each type taking it: `Dog.introduce`, `Cat.introduce`.
     for (owner, k, j) in &info.defaults {
@@ -573,9 +580,12 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         functions.push(match &h {
             Helper::Instance(name, types) => {
                 let (g, names) = &generic[name];
-                let subst: Vec<(String, Type)> = names.iter().cloned().zip(types.iter().cloned()).collect();
+                let mut subst: Vec<(String, Type)> = names.iter().cloned().zip(types.iter().cloned()).collect();
+                // A method's `Self` and `self` are `Stack<Int>`.
+                subst.extend(g.6.iter().map(|(n, t)| (n.clone(), substitute(t, &subst))).collect::<Vec<_>>());
+                let receiver = g.1.as_ref().map(|(r, t)| (*r, substitute(t, &subst)));
                 let shown = format!("{name}<{}>", types.iter().map(Type::text).collect::<Vec<_>>().join(", "));
-                make(&(shown, g.1.clone(), g.2, g.3, g.4, g.5, subst), generic_sites[name.as_str()])
+                make(&(shown, receiver, g.2, g.3, g.4, g.5, subst), generic_sites[name.as_str()])
             }
             h => translator(Type::Unit, vec![], vec![]).helper_function(h),
         });
@@ -1522,9 +1532,9 @@ impl<'a> Translator<'a> {
                 let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
                 m.push(Piece::Value(text[0], Show::String));
             }
-            Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", d.name))),
+            Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", ty.text()))),
             Type::Struct(d) => {
-                m.push(Piece::Text(format!("{} {{ ", d.name)));
+                m.push(Piece::Text(format!("{} {{ ", ty.text())));
                 for (i, (name, t)) in d.fields.iter().enumerate() {
                     let sep = if i > 0 { ", " } else { "" };
                     m.push(Piece::Text(format!("{sep}{name}: ")));
@@ -1654,6 +1664,17 @@ impl<'a> Translator<'a> {
         self.call_to(num, self.sites[num], vals, places, span, ty)
     }
 
+    /// The call `id` of `name`; a generic one calls its copy for the types of this call
+    /// (`larger<Int>`, `Stack.push<Int>`), with the caller's own `T` replaced too.
+    fn call_at(&mut self, id: usize, name: &str, vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
+        let Some(types) = self.info.type_args.get(&id) else {
+            return self.call(name, vals, places, span, ty);
+        };
+        let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
+        let num = self.helper(Helper::Instance(name.to_string(), types));
+        self.call_to(num, self.generic_sites[name], vals, places, span, ty)
+    }
+
     /// Calls function `num` (`site`: it receives the call location).
     fn call_to(&mut self, num: usize, site: bool, mut vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
         if site {
@@ -1677,7 +1698,7 @@ impl<'a> Translator<'a> {
         if !matches!(t, Type::Struct(_) | Type::Enum(_)) {
             return None;
         }
-        let q = method_name(&t.text(), &name.text);
+        let q = method_name(&t.owner(), &name.text);
         let r = self.signatures.get(&q)?.0.expect("static function called on a value: refused by the type checker");
         Some((q, r))
     }
@@ -1916,21 +1937,14 @@ impl<'a> Translator<'a> {
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&name.text, args, &mut vals, &mut places);
                 let ty = self.ty(e);
-                // A generic function: its copy for these types (`T` of the caller replaced too).
-                if let Some(types) = self.info.type_args.get(&e.id) {
-                    let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
-                    let num = self.helper(Helper::Instance(name.text.clone(), types));
-                    let site = self.generic_sites[name.text.as_str()];
-                    return self.call_to(num, site, vals, places, name.span, &ty);
-                }
-                self.call(&name.text, vals, places, name.span, &ty)
+                self.call_at(e.id, &name.text, vals, places, name.span, &ty)
             }
-            ExprKind::Static { ty, name, args } => {
+            ExprKind::Static { ty, name, args, .. } => {
                 let q = method_name(&ty.text, &name.text);
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.ty(e);
-                self.call(&q, vals, places, name.span, &result)
+                self.call_at(e.id, &q, vals, places, name.span, &result)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // A number written with `-` in front is a constant (handles `-9223372036854775808`).
@@ -2132,7 +2146,7 @@ impl<'a> Translator<'a> {
                 let mut vals = vals;
                 self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.ty(e);
-                self.call(&q, vals, places, name.span, &result)
+                self.call_at(e.id, &q, vals, places, name.span, &result)
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"

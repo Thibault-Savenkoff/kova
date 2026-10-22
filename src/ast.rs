@@ -36,6 +36,8 @@ pub struct Header {
 pub struct Struct {
     pub copy: bool,
     pub name: Name,
+    /// `struct Stack<T>`: its type parameters.
+    pub generics: Vec<Generic>,
     /// `struct Dog : Animal, Aging`: the interfaces it follows.
     pub interfaces: Vec<Name>,
     pub fields: Vec<Param>,
@@ -188,6 +190,7 @@ impl ContractKind {
 }
 
 /// A type as written: `Int`, `(Int, Float)`, `((Int, Int), Bool)`, `List<Int>`.
+#[derive(Clone)]
 pub enum TypeAst {
     Name(Name),
     Tuple(Vec<TypeAst>),
@@ -325,7 +328,8 @@ pub enum ExprKind {
     /// `var a` or `move a` in a call's arguments (never `Read`).
     Mark(Mode, Box<Expr>),
     /// `Dog.create("Rex")`: a struct's function without `self`.
-    Static { ty: Name, name: Name, args: Vec<Expr> },
+    /// `Stack<Int>.empty`: `types` = the type arguments written after the struct's name.
+    Static { ty: Name, types: Vec<TypeAst>, name: Name, args: Vec<Expr> },
     /// `Shape.Circle(2.0)`, `Light.Red`: a new value of an enum.
     Variant { ty: Name, name: Name, args: Vec<Expr> },
     /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).
@@ -343,7 +347,7 @@ pub enum ExprKind {
     /// `t.0`
     Field(Box<Expr>, usize),
     /// `Dog { name := "Rex", age := 3 }`: the fields in the written order.
-    StructLit { ty: Name, fields: Vec<(Name, Expr)> },
+    StructLit { ty: Name, types: Vec<TypeAst>, fields: Vec<(Name, Expr)> },
     /// `mode = build` (`negated`: `mode != build`); `build` false = `run`. Known before running.
     InMode { build: bool, negated: bool },
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.

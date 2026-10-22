@@ -1,0 +1,8 @@
+// A generic enum comes later.
+enum Tree<T> {
+    Leaf
+    Node(value: T)
+}
+fn main {
+}
+// error: an enum with type parameters comes later

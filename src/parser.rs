@@ -549,6 +549,10 @@ impl Parser<'_> {
         let mut variants = self.is_keyword("enum").then(Vec::new);
         self.advance(); // struct, enum
         let name = self.type_name()?;
+        let generics = self.generics()?;
+        if variants.is_some() && !generics.is_empty() {
+            self.diags.push(Diag::new(generics[0].name.span, t!("generic_enum_later")));
+        }
         let mut interfaces = vec![];
         if self.is_sym(":") {
             self.advance();
@@ -568,7 +572,7 @@ impl Parser<'_> {
                 Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
-                    return Ok(Struct { copy, name, interfaces, fields, variants, methods });
+                    return Ok(Struct { copy, name, generics, interfaces, fields, variants, methods });
                 }
                 // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
                 Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
@@ -590,7 +594,7 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy, name, interfaces, fields, variants, methods })
+        Ok(Struct { copy, name, generics, interfaces, fields, variants, methods })
     }
 
     /// `interface Animal { fn sound(self) -> String … }`: signatures, and default methods with a body.
@@ -1309,16 +1313,22 @@ impl Parser<'_> {
     /// An expression starting with a type name: `Dog { name := "Rex" }`.
     fn type_atom(&mut self) -> R<Expr> {
         let ty = self.type_name()?;
-        // `List<Int>()`: a generic constructor keeps its `()` (PLAN Part 4).
+        // `Stack<Int>`: the type arguments, before `{`, `.` or the `()` of `List<Int>()`.
+        let mut types = vec![];
+        let mut last = ty.span;
         if self.is_sym("<") {
-            let start = ty.span;
-            let ty = self.type_arguments(ty)?;
-            self.expect("(")?;
+            let TypeAst::Generic(_, ts) = self.type_arguments(ty.clone())? else { unreachable!() };
+            types = ts;
+            last = self.t[self.pos - 1].span;
+        }
+        // `List<Int>()`: a generic constructor keeps its `()` (PLAN Part 4).
+        if !types.is_empty() && self.is_sym("(") {
+            self.advance();
             let end = self.expect(")")?;
-            return Ok(self.expr(start.to(end), ExprKind::New(ty)));
+            return Ok(self.expr(ty.span.to(end), ExprKind::New(TypeAst::Generic(ty, types))));
         }
         // The `{` of a literal is on the same line as the type name (PLAN 2.3).
-        let brace = self.is_sym("{") && !self.src[ty.span.end..self.token().span.start].contains('\n');
+        let brace = self.is_sym("{") && !self.src[last.end..self.token().span.start].contains('\n');
         if brace && self.no_literal {
             self.diags.push(
                 Diag::new(ty.span, t!("literal_in_heading", name = ty.text)).help(t!("literal_in_heading_help")),
@@ -1338,7 +1348,7 @@ impl Parser<'_> {
                 self.empty_parens(&args, open, end, &name.text);
             }
             let span = ty.span.to(end);
-            let kind = if variant { ExprKind::Variant { ty, name, args } } else { ExprKind::Static { ty, name, args } };
+            let kind = if variant { ExprKind::Variant { ty, name, args } } else { ExprKind::Static { ty, types, name, args } };
             return Ok(self.expr(span, kind));
         }
         if !brace {
@@ -1350,7 +1360,7 @@ impl Parser<'_> {
         let fields = self.literal_fields();
         self.no_literal = saved;
         let (fields, end) = fields?;
-        Ok(self.expr(ty.span.to(end), ExprKind::StructLit { ty, fields }))
+        Ok(self.expr(ty.span.to(end), ExprKind::StructLit { ty, types, fields }))
     }
 
     /// `name := "Rex", age := 3 }`: separated by `,` or a line break. Returns the `}` too.

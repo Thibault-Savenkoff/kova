@@ -1,0 +1,131 @@
+// Generic structs: `Stack<T>` written once, one compiled copy of its methods per type.
+struct Stack<T> {
+    items: List<T>
+
+    fn empty -> Self {
+        return Self { items := [] }
+    }
+
+    fn of(x: move T) -> Stack<T> {
+        var s: Stack<T> := Stack<T>.empty
+        s.push(move x)
+        return s
+    }
+
+    fn push(var self, x: move T) {
+        self.items.add(move x)
+    }
+
+    fn size(self) -> Int {
+        return self.items.length
+    }
+
+    fn is_empty(self) -> Bool {
+        return self.size = 0
+    }
+
+    fn pop(var self) -> T?
+    {
+        if self.is_empty {
+            return none
+        }
+        return self.items.remove(self.items.length - 1)
+    }
+}
+
+struct Sorted<T: Comparable> {
+    items: List<T>
+    fn smallest(self) -> T? {
+        if self.items.length = 0 {
+            return none
+        }
+        var best: T := self.items[0].clone
+        for x in self.items {
+            if x < best {
+                best := x.clone
+            }
+        }
+        return best
+    }
+}
+
+struct Queue<T> {
+    front: Stack<T>
+    back: Stack<T>
+    fn size(self) -> Int {
+        return self.front.size + self.back.size
+    }
+}
+
+struct Entry<K, V> {
+    key: K
+    value: V
+}
+
+struct Shelf {
+    books: Stack<String>
+}
+
+fn peek<T>(s: Stack<T>) -> T? {
+    if s.is_empty {
+        return none
+    }
+    return s.items[s.size - 1].clone
+}
+
+fn make<T>(x: move T) -> Stack<T> {
+    return Stack<T>.of(move x)
+}
+
+fn main {
+    var s: Stack<Int> := Stack<Int>.empty
+    s.push(1)
+    s.push(2)
+    print(s.size)
+    print(peek(s))
+    print(s.pop)
+    print(s)
+    var w := Stack<String> { items := ["a"] }
+    w.push("b")
+    print(w.pop)
+    print(w.pop)
+    print(w.pop)
+    print(w.is_empty)
+    let o := Sorted<String> { items := ["pear", "apple", "fig"] }
+    print(o.smallest)
+    var nest := Stack<Stack<Int>> { items := [] }
+    nest.push(s.clone)
+    nest.push(Stack<Int>.of(9))
+    let top: Stack<Int>? := nest.pop
+    if top != none {
+        var inner: Stack<Int> := top.clone
+        print(inner.pop)
+    }
+    print(nest.size)
+    var tup := Stack<(Int, String)> { items := [(1, "one")] }
+    print(tup.pop)
+    let q := Queue<String> { front := make("x"), back := Stack<String>.of("y") }
+    print(q.size)
+    let e := Entry<String, Int> { key := "age", value := 3 }
+    print("{e.key} = {e.value}")
+    print(e)
+    var shelf := Shelf { books := Stack<String>.empty }
+    shelf.books.push("Dune")
+    print(shelf.books.size)
+}
+// expect: 2
+// expect: 2
+// expect: 2
+// expect: Stack<Int> { items: [1] }
+// expect: "b"
+// expect: "a"
+// expect: none
+// expect: true
+// expect: "apple"
+// expect: 9
+// expect: 1
+// expect: (1, "one")
+// expect: 2
+// expect: age = 3
+// expect: Entry<String, Int> { key: "age", value: 3 }
+// expect: 1
