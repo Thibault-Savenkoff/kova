@@ -1,0 +1,79 @@
+// Many keys: found through the index of the Map or the Set (its keys' `hash`), the same in
+// run and build; a `remove` drops the index, the next search makes it again.
+struct Dog : Equal {
+    name: String
+    age: Int
+    // Two dogs are the same when they have the same name.
+    fn equals(self, other: Self) -> Bool { return self.name = other.name }
+}
+
+enum Pet : Equal {
+    Cat(name: String),
+    Fish,
+}
+
+fn main {
+    var squares: Map<Int, Int> := []
+    for i in 0..3000 {
+        squares[i] := i * i
+        if i % 3 = 0 {
+            squares.remove(i / 2)
+        }
+    }
+    print(squares.length)
+    var total: Int := 0
+    for i in 0..3000 {
+        let v: Int? := squares[i]
+        if v != none {
+            total += v
+        }
+    }
+    print(total)
+    for i in 0..1000 {
+        squares[i] := 0
+    }
+    print(squares.length)
+    print(squares[-5])
+    var words: Map<String, Int> := []
+    for w in "the cat and the dog and the bird".words {
+        let n: Int? := words[w]
+        if n != none {
+            words[w] := n + 1
+        } else {
+            words[w] := 1
+        }
+    }
+    print(words)
+    var ages: Map<Dog, Int> := [Dog { name := "Rex", age := 2 } := 2]
+    print(ages[Dog { name := "Rex", age := 1 }])
+    var pets: Set<Pet?> := [Pet.Cat("Tom"), none, Pet.Fish, Pet.Cat("Tom")]
+    print(pets.length)
+    print(pets.contains(Pet.Cat("Tom")))
+    print(pets.contains(Pet.Cat("Felix")))
+    print(pets.contains(none))
+    var seen: Set<(Int, String)> := []
+    for i in 0..2000 {
+        seen.add((i % 700, "n"))
+    }
+    print(seen.length)
+    for i in 0..350 {
+        seen.remove((i * 2, "n"))
+    }
+    print(seen.length)
+    print(seen.contains((1, "n")))
+    print(seen.contains((2, "n")))
+}
+// expect: 2000
+// expect: 8247000000
+// expect: 2667
+// expect: none
+// expect: ["the" := 3, "cat" := 1, "and" := 2, "dog" := 1, "bird" := 1]
+// expect: 2
+// expect: 3
+// expect: true
+// expect: false
+// expect: true
+// expect: 700
+// expect: 350
+// expect: true
+// expect: false

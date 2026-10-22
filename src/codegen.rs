@@ -70,13 +70,13 @@ struct Runtime {
     /// `kova_show_int`… (in `Show` order): given by address to `kova_print` and the others, so
     /// that only the ones a program uses are linked (no Float formatting to print a String).
     shows: [FuncId; 6],
-    str_ops: [FuncId; 25],
-    lists: [FuncId; 8],
+    str_ops: [FuncId; 26],
+    lists: [FuncId; 10],
 }
 
 /// The runtime functions for Lists (`kova_list_*` in `runtime/runtime.c`):
 /// (name, number of arguments, number of results), in the order of the `L_*` numbers.
-const LIST_FUNCTIONS: [(&str, usize, usize); 8] = [
+const LIST_FUNCTIONS: [(&str, usize, usize); 10] = [
     ("kova_list_new", 1, 1),
     ("kova_list_length", 1, 1),
     ("kova_list_check", 4, 0),
@@ -85,6 +85,8 @@ const LIST_FUNCTIONS: [(&str, usize, usize); 8] = [
     ("kova_list_grow", 1, 1),
     ("kova_list_remove", 2, 0),
     ("kova_list_free", 1, 0),
+    ("kova_list_index", 1, 1),
+    ("kova_list_set_index", 2, 0),
 ];
 const L_NEW: usize = 0;
 const L_LENGTH: usize = 1;
@@ -94,6 +96,8 @@ const L_STORE: usize = 4;
 const L_GROW: usize = 5;
 const L_REMOVE: usize = 6;
 const L_FREE: usize = 7;
+const L_INDEX: usize = 8;
+const L_SET_INDEX: usize = 9;
 
 /// The runtime function of a String operation, and its number of arguments.
 fn str_op(op: StrOp) -> (usize, &'static str, usize) {
@@ -124,6 +128,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::BigDiv => (22, "kova_big_div", 2),
         StrOp::BigRem => (23, "kova_big_rem", 2),
         StrOp::BigLess => (24, "kova_big_less", 2),
+        StrOp::Hash => (25, "kova_str_hash", 1),
     }
 }
 
@@ -167,7 +172,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -271,14 +276,14 @@ struct Generator<'a> {
     fail: Fail,
     strings: Strings,
     /// See `LIST_FUNCTIONS`.
-    lists: [FuncRef; 8],
+    lists: [FuncRef; 10],
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/runtime.c`).
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 25],
+    ops: [FuncRef; 26],
     shows: [FuncRef; 6],
 }
 
@@ -516,6 +521,23 @@ impl Generator<'_> {
             Inst::ListRemove(l, i) => {
                 let (l, i) = (self.read(*l), self.read(*i));
                 self.list_call(L_REMOVE, &[l, i]);
+            }
+            Inst::ListIndex(d, l) => {
+                let l = self.read(*l);
+                let v = self.list_call(L_INDEX, &[l]).unwrap();
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::ListSetIndex(l, v) => {
+                let (l, v) = (self.read(*l), self.read(*v));
+                self.list_call(L_SET_INDEX, &[l, v]);
+            }
+            // Like `interp::mix`.
+            Inst::Mix(d, a, b) => {
+                let (a, b) = (self.read(*a), self.read(*b));
+                let x = self.b.ins().bxor(a, b);
+                let x = self.b.ins().imul_imm_u(x, 0x100000001b3);
+                let v = self.b.ins().ushr_imm_u(x, 1);
+                self.b.def_var(self.vars[*d], v);
             }
             Inst::ListFree(l) => {
                 let v = self.read(*l);

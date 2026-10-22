@@ -180,6 +180,8 @@ enum Helper {
     Look(Type),
     /// The function of a block (`{ x: Int => … }`), number `k` in the blocks made (`Translator::made`).
     Block(usize),
+    /// Takes a Map or a Set and a key (of this type): returns its position, or -1 (see `find`).
+    Find(Type),
 }
 
 /// For the debugger (`kova debug`): a variable visible at a statement, its slots, and the
@@ -282,6 +284,13 @@ pub enum Inst {
     ListRemove(Local, Local),
     /// Frees the List's block, not what its elements own (done before); then sets its slot to 0.
     ListFree(Local),
+    /// `dst := the index of a Map or a Set` (a List of positions, see `find_in_index`; 0 = none).
+    /// Freed with its List; `ListRemove` takes the removed element out of it.
+    ListIndex(Local, Local),
+    /// `list.index := value` (the List had none).
+    ListSetIndex(Local, Local),
+    /// `dst := a number made from a and b`, never negative, never an overflow: for `hash`.
+    Mix(Local, Local, Local),
     /// `print` (`newline` = true) or `write`.
     Print { value: Local, show: Show, newline: bool },
     /// Broken contract: writes the message to stderr and stops (code 101).
@@ -338,6 +347,8 @@ pub enum StrOp {
     Words,
     /// `s.chars`: a new `List<Char>`.
     Chars,
+    /// A number for the text (0 for no String): where a key is looked for (`hash`).
+    Hash,
 }
 
 /// A String method with arguments or a new List (`types::string_method`): its operation.
@@ -814,6 +825,13 @@ impl<'a> Translator<'a> {
         if let Helper::Dispatch(interface, method) = h {
             return self.dispatch(interface, method);
         }
+        if let Helper::Find(k) = h {
+            let (map, key) = (self.int_local(), self.new_slots(k));
+            self.current = self.new_block();
+            let found = self.find_in_index(map, &key, k);
+            self.finish(End::Return(vec![found]));
+            return self.function(format!("find {}", k.text()), 1 + key.len(), vec![Scalar::Int]);
+        }
         if let Helper::Look(ty) = h {
             let v = self.new_slots(ty);
             self.current = self.new_block();
@@ -893,7 +911,7 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) | Helper::Block(_) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) | Helper::Block(_) | Helper::Find(_) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
@@ -1116,6 +1134,50 @@ impl<'a> Translator<'a> {
                 d
             }
             _ => self.operation(Op::Eq, a[0], b[0], *ty == Type::Float, NOWHERE),
+        }
+    }
+
+    /// A number for `v`, the same for two values `equal` finds equal (same cases, same order):
+    /// where a key is put in the index of a Map or a Set (`find_in_index`).
+    fn hash(&mut self, v: &[Local], ty: &Type) -> Local {
+        match ty {
+            Type::Int | Type::Bool | Type::Char => v[0],
+            Type::String | Type::BigInt => {
+                let d = self.int_local();
+                self.emit(Inst::Str(d, StrOp::Hash, vec![v[0]]));
+                d
+            }
+            // Its own `equals` may look at some fields only: all its values get the same number.
+            Type::Struct(_) | Type::Enum(_)
+                if self.info.follows(ty, "Equal") && self.numbers.contains_key(method_name(&ty.text(), "equals").as_str()) =>
+            {
+                self.constant(0)
+            }
+            Type::Struct(_) | Type::Tuple(_) => {
+                let h = self.constant(0);
+                for (i, t) in members(ty).iter().enumerate() {
+                    let (start, n) = slice_of(ty, i);
+                    let x = self.hash(&v[start..start + n], t);
+                    self.emit(Inst::Mix(h, h, x));
+                }
+                h
+            }
+            // The variant, then every variant's fields: those of the others hold 0.
+            Type::Enum(_) | Type::Optional(_) | Type::Result(..) => {
+                let d = enum_view(ty).expect("an enum, an optional or a result");
+                let h = self.int_local();
+                self.emit(Inst::Copy(h, v[0]));
+                let mut at = 1;
+                for t in variant_fields(&d) {
+                    let n = scalars(t).len();
+                    let x = self.hash(&v[at..at + n], t);
+                    self.emit(Inst::Mix(h, h, x));
+                    at += n;
+                }
+                h
+            }
+            // A `Float` (`0.0 = -0.0`, written differently), an `any`.
+            _ => self.constant(0),
         }
     }
 
@@ -1529,27 +1591,117 @@ impl<'a> Translator<'a> {
         }
     }
 
-    /// The index of `key` in the Map `map` (keys of type `k`), or -1; also a value in a Set.
-    /// ponytail: a linear search; hashing (an interface `Hash`) if Maps or Sets get big.
+    /// The position of `key` in the Map `map` (keys of type `k`), or -1; also a value in a Set.
     fn find(&mut self, map: Local, key: &[Local], k: &Type) -> Local {
-        let found = self.constant(-1);
-        let n = self.int_local();
+        let f = self.helper(Helper::Find(k.clone()));
+        let d = self.int_local();
+        self.emit(Inst::Call(vec![d], f, [&[map], key].concat()));
+        d
+    }
+
+    /// Inside the `Find` helper. The index (`Inst::ListIndex`) is a `List<(Int, Int)>`: element 0
+    /// = (how many of the Map's elements it holds, 0), then a table of `cap` places, each (0, 0)
+    /// when empty or (mixed hash, position + 1) of a key, at `1 + hash % cap` or after, at the
+    /// first empty place. Made again when it would be half full (it then has 4 places per
+    /// element), added to for the elements added since. `ListRemove` takes the element out of
+    /// it (`unindex` in runtime.c and interp.rs).
+    fn find_in_index(&mut self, map: Local, key: &[Local], k: &Type) -> Local {
+        let (zero, one, two) = (self.constant(0), self.constant(1), self.constant(2));
+        let (n, index, cap, test) = (self.int_local(), self.int_local(), self.int_local(), self.int_local());
         self.emit(Inst::ListLength(n, map));
-        let i = self.constant(0);
-        let (head, body, hit, next, exit) = (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
-        self.go(End::Jump(head), head);
-        let more = self.int_local();
-        self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
-        self.go(End::Branch(more, body, exit), body);
-        let keys = self.load(map, i, k);
-        let same = self.equal(&keys, key, k, Span::new(0, 0));
-        self.go(End::Branch(same, hit, next), hit);
-        self.emit(Inst::Copy(found, i));
-        self.go(End::Jump(exit), next);
-        let one = self.constant(1);
+        self.emit(Inst::ListIndex(index, map));
+        // Made again when there is none, or when it is half full.
+        let (check, remake, ready) = (self.new_block(), self.new_block(), self.new_block());
+        self.emit(Inst::Binary(test, Op::Eq, index, zero, NOWHERE));
+        self.go(End::Branch(test, remake, check), check);
+        self.emit(Inst::ListLength(cap, index));
+        self.emit(Inst::Binary(cap, Op::Minus, cap, one, NOWHERE));
+        let twice = self.int_local();
+        self.emit(Inst::Binary(twice, Op::Times, n, two, NOWHERE));
+        self.emit(Inst::Binary(test, Op::Ge, twice, cap, NOWHERE));
+        self.go(End::Branch(test, remake, ready), remake);
+        self.emit(Inst::ListFree(index));
+        let wanted = self.int_local();
+        self.emit(Inst::Binary(wanted, Op::Times, twice, two, NOWHERE));
+        let sixteen = self.constant(16);
+        self.emit(Inst::Copy(cap, sixteen));
+        let (double, made) = (self.new_block(), self.new_block());
+        let grow = self.new_block();
+        self.go(End::Jump(grow), grow);
+        self.emit(Inst::Binary(test, Op::Lt, cap, wanted, NOWHERE));
+        self.go(End::Branch(test, double, made), double);
+        self.emit(Inst::Binary(cap, Op::Times, cap, two, NOWHERE));
+        self.go(End::Jump(grow), made);
+        self.emit(Inst::ListNew(index, 2));
+        let (i, place, mixed) = (self.constant(0), self.int_local(), self.int_local());
+        let (fill, more, filled) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(fill), fill);
+        self.emit(Inst::Binary(test, Op::Le, i, cap, NOWHERE));
+        self.go(End::Branch(test, more, filled), more);
+        self.emit(Inst::ListGrow(place, index));
         self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
-        self.go(End::Jump(head), exit);
+        self.go(End::Jump(fill), filled);
+        self.emit(Inst::ListSetIndex(map, index));
+        self.go(End::Jump(ready), ready);
+        // The elements added since: their position + 1 at the first empty place from their hash.
+        let done = self.int_local();
+        self.emit(Inst::ListLoad(done, index, zero, 0));
+        let (head, add, caught_up) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(head), head);
+        self.emit(Inst::Binary(test, Op::Lt, done, n, NOWHERE));
+        self.go(End::Branch(test, add, caught_up), add);
+        let keys = self.load(map, done, k);
+        let h = self.hash(&keys, k);
+        self.first_place(h, cap, place, mixed);
+        let (probe, taken, free) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(probe), probe);
+        let there = self.int_local();
+        self.emit(Inst::ListLoad(there, index, place, 1));
+        self.go(End::Branch(there, taken, free), taken);
+        self.next_place(cap, place);
+        self.go(End::Jump(probe), free);
+        self.emit(Inst::Binary(done, Op::Plus, done, one, NOWHERE));
+        self.emit(Inst::ListStore(index, place, 0, mixed));
+        self.emit(Inst::ListStore(index, place, 1, done));
+        self.go(End::Jump(head), caught_up);
+        self.emit(Inst::ListStore(index, zero, 0, done));
+        // The key: from its place, until an empty one.
+        let h = self.hash(key, k);
+        self.first_place(h, cap, place, mixed);
+        let found = self.constant(-1);
+        let (probe, look, missing, same, other) = (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(probe), probe);
+        let at = self.int_local();
+        self.emit(Inst::ListLoad(at, index, place, 1));
+        self.go(End::Branch(at, look, missing), look);
+        self.emit(Inst::Binary(at, Op::Minus, at, one, NOWHERE));
+        let keys = self.load(map, at, k);
+        let eq = self.equal(&keys, key, k, Span::new(0, 0));
+        self.go(End::Branch(eq, same, other), same);
+        self.emit(Inst::Copy(found, at));
+        self.go(End::Jump(missing), other);
+        self.next_place(cap, place);
+        self.go(End::Jump(probe), missing);
         found
+    }
+
+    /// `place := 1 + mixed % cap` (place 0 of the index is its count), `mixed` = the hash mixed
+    /// once more, so that it is never negative and that keys following each other spread out.
+    fn first_place(&mut self, h: Local, cap: Local, place: Local, mixed: Local) {
+        let (zero, one) = (self.constant(0), self.constant(1));
+        self.emit(Inst::Mix(mixed, h, zero));
+        self.emit(Inst::Binary(place, Op::Rem, mixed, cap, NOWHERE));
+        self.emit(Inst::Binary(place, Op::Plus, place, one, NOWHERE));
+    }
+
+    /// The place after `place`, back to 1 after the last one.
+    fn next_place(&mut self, cap: Local, place: Local) {
+        let (one, past, wrap, go_on) = (self.constant(1), self.int_local(), self.new_block(), self.new_block());
+        self.emit(Inst::Binary(place, Op::Plus, place, one, NOWHERE));
+        self.emit(Inst::Binary(past, Op::Gt, place, cap, NOWHERE));
+        self.go(End::Branch(past, wrap, go_on), wrap);
+        self.emit(Inst::Copy(place, one));
+        self.go(End::Jump(go_on), go_on);
     }
 
     /// Adds `v` (owned) to the Set `set`, or frees it if an equal value is already there.

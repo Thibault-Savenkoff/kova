@@ -205,6 +205,15 @@ int64_t kova_str_eq(int64_t a, int64_t b) {
     return x->length == y->length && memcmp(x->bytes, y->bytes, x->length) == 0;
 }
 
+// A number for the text (FNV-1a), the same as `StrOp::Hash` in src/interp.rs; 0 for no String.
+int64_t kova_str_hash(int64_t a) {
+    String *x = (String *)a;
+    uint64_t h = 0xcbf29ce484222325u;
+    if (!x) return 0;
+    for (int64_t i = 0; i < x->length; i++) h = (h ^ (uint8_t)x->bytes[i]) * 0x100000001b3u;
+    return (int64_t)h;
+}
+
 // `a < b`: the order of the bytes, which is the order of the characters' codes in UTF-8
 // (same as Rust's `str` order, src/interp.rs).
 int64_t kova_str_less(int64_t a, int64_t b) {
@@ -485,10 +494,13 @@ int64_t kova_read_line(void) {
 // ---- Lists ----
 // A List is a fixed block (so its address never changes) pointing to its elements,
 // `width` slots each, one after the other. 0 = no List (moved): freeing it does nothing.
+// A Map or a Set also has an `index` (a table of positions, made by `find_in_index` in
+// src/kir.rs): freed with it; `unindex` takes a removed element out of it.
 
 typedef struct {
     int64_t length, capacity, width;
     int64_t *slots;
+    int64_t index;
 } List;
 
 int64_t kova_list_new(int64_t width) {
@@ -532,18 +544,50 @@ int64_t kova_list_grow(int64_t l) {
     return x->length++;
 }
 
+// Element `i` of a Map or a Set goes: out of its index (its place emptied, the next keys moved
+// back towards their own place, as linear probing needs), and the positions after it move
+// back by one. The same as `unindex` in src/interp.rs.
+static void unindex(int64_t index, int64_t i) {
+    int64_t *s = ((List *)index)->slots, cap = ((List *)index)->length - 1, j = 0;
+    if (i >= s[0]) return; // not in the index yet
+    for (int64_t k = 1; k <= cap; k++) {
+        if (s[2 * k + 1] == i + 1) j = k;
+        if (s[2 * k + 1] > i + 1) s[2 * k + 1]--;
+    }
+    s[0]--;
+    for (int64_t k = j % cap + 1; s[2 * k + 1]; k = k % cap + 1) {
+        int64_t home = s[2 * k] % cap + 1;
+        // `k` stays if its own place lies after `j` (cyclically, up to `k`).
+        if (j < k ? (j < home && home <= k) : (j < home || home <= k)) continue;
+        s[2 * j] = s[2 * k];
+        s[2 * j + 1] = s[2 * k + 1];
+        j = k;
+    }
+    s[2 * j] = s[2 * j + 1] = 0;
+}
+
 void kova_list_remove(int64_t l, int64_t i) {
     List *x = (List *)l;
     int64_t w = x->width;
+    if (x->index) unindex(x->index, i);
     memmove(x->slots + i * w, x->slots + (i + 1) * w, (x->length - i - 1) * w * sizeof(int64_t));
     x->length--;
 }
 
 void kova_list_free(int64_t l) {
     if (!l) return;
+    kova_list_free(((List *)l)->index);
     free(((List *)l)->slots);
     free((List *)l);
     live--;
+}
+
+int64_t kova_list_index(int64_t l) {
+    return l ? ((List *)l)->index : 0;
+}
+
+void kova_list_set_index(int64_t l, int64_t index) {
+    ((List *)l)->index = index;
 }
 
 // ---- String methods that look for a text or make a List (src/interp.rs does the same) ----

@@ -10,8 +10,9 @@ use crate::locale::{self, t};
 /// What a String or List slot points to.
 enum Object {
     Str(String),
-    /// `length` elements, their slots one after the other (`width` slots each).
-    List { width: usize, length: usize, slots: Vec<i64> },
+    /// `length` elements, their slots one after the other (`width` slots each). A Map or a Set
+    /// also has an `index` (a List, made by `kir.rs` `find`; 0 = none), like in runtime.c.
+    List { width: usize, length: usize, slots: Vec<i64>, index: i64 },
 }
 
 /// The Strings and Lists of the running program; their slot holds their number here (0 = none).
@@ -72,17 +73,62 @@ impl Heap {
             return (1, &mut self.nothing.0, &mut self.nothing.1);
         }
         match &mut self.objects[h as usize] {
-            Some(Object::List { width, length, slots }) => (*width, length, slots),
+            Some(Object::List { width, length, slots, .. }) => (*width, length, slots),
+            _ => panic!("List used after being freed"),
+        }
+    }
+    fn index(&mut self, h: i64) -> &mut i64 {
+        match &mut self.objects[h as usize] {
+            Some(Object::List { index, .. }) => index,
             _ => panic!("List used after being freed"),
         }
     }
     fn release(&mut self, h: i64) {
         if h != 0 {
-            self.objects[h as usize].take().expect("freed twice");
+            if let Object::List { index, .. } = self.objects[h as usize].take().expect("freed twice") {
+                self.release(index);
+            }
             self.free.push(h as usize);
             self.live -= 1;
         }
     }
+}
+
+/// Element `i` of a Map or a Set goes out of its index (`s`, its slots), and the positions
+/// after it move back by one: the same as `unindex` in runtime.c (comments there).
+fn unindex(s: &mut [i64], i: i64) {
+    let cap = s.len() as i64 / 2 - 1;
+    if i >= s[0] {
+        return;
+    }
+    let mut j = 0;
+    for k in 1..=cap as usize {
+        if s[2 * k + 1] == i + 1 {
+            j = k as i64;
+        }
+        if s[2 * k + 1] > i + 1 {
+            s[2 * k + 1] -= 1;
+        }
+    }
+    s[0] -= 1;
+    let mut k = j % cap + 1;
+    while s[2 * k as usize + 1] != 0 {
+        let home = s[2 * k as usize] % cap + 1;
+        let stays = if j < k { j < home && home <= k } else { j < home || home <= k };
+        if !stays {
+            s[2 * j as usize] = s[2 * k as usize];
+            s[2 * j as usize + 1] = s[2 * k as usize + 1];
+            j = k;
+        }
+        k = k % cap + 1;
+    }
+    s[2 * j as usize] = 0;
+    s[2 * j as usize + 1] = 0;
+}
+
+/// `Inst::Mix`: the same in src/codegen.rs.
+fn mix(a: i64, b: i64) -> i64 {
+    (((a ^ b) as u64).wrapping_mul(0x100000001b3) >> 1) as i64
 }
 
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
@@ -275,6 +321,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
             match inst {
                 Inst::Const(d, v) => locals[*d] = *v,
                 Inst::Copy(d, s) => locals[*d] = locals[*s],
+                Inst::ListIndex(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.index(locals[*l]) },
+                Inst::ListSetIndex(l, v) => *heap.index(locals[*l]) = locals[*v],
+                Inst::Mix(d, a, b) => locals[*d] = mix(locals[*a], locals[*b]),
                 Inst::Binary(d, op, a, b, loc) => {
                     locals[*d] = compute(*op, locals[*a], locals[*b]).map_err(|e| fault(e, loc))?;
                 }
@@ -324,6 +373,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             heap.make(joined)
                         }
                         StrOp::Eq => (s(0) == s(1)) as i64,
+                        StrOp::Hash if locals[a[0]] == 0 => 0,
+                        // FNV-1a, like `kova_str_hash` in runtime.c.
+                        StrOp::Hash => s(0).bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3)) as i64,
                         StrOp::Less => (s(0) < s(1)) as i64,
                         StrOp::BigLess => crate::bigint::less(s(0), s(1)) as i64,
                         StrOp::BigAdd => {
@@ -404,15 +456,15 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 _ => s(0).split_ascii_whitespace().map(String::from).collect(),
                             };
                             let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
                         }
                         StrOp::Args => {
                             let slots: Vec<i64> = heap.args.clone().into_iter().map(|a| heap.make(a)).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
                         }
                         StrOp::Chars => {
                             let slots: Vec<i64> = s(0).chars().map(|c| c as i64).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
                         }
                     }
                 }
@@ -421,7 +473,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*l] = 0;
                 }
                 Inst::ListNew(d, width) => {
-                    locals[*d] = heap.add(Object::List { width: *width, length: 0, slots: vec![] });
+                    locals[*d] = heap.add(Object::List { width: *width, length: 0, slots: vec![], index: 0 });
                 }
                 // 0 = a List emptied by a move: its helper (`Drop`) still asks its length.
                 Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.list(locals[*l]).1 as i64 },
@@ -449,6 +501,10 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*d] = *length as i64 - 1;
                 }
                 Inst::ListRemove(l, i) => {
+                    let index = *heap.index(locals[*l]);
+                    if index != 0 {
+                        unindex(heap.list(index).2, locals[*i]);
+                    }
                     let i = locals[*i] as usize;
                     let (width, length, slots) = heap.list(locals[*l]);
                     slots.drain(i * width..(i + 1) * width);
