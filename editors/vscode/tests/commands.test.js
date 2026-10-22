@@ -18,3 +18,10 @@ assert.deepStrictEqual([...found], [
   ['deux', { ok: false, message: 'error: non\n  check x = 1' }],
 ]);
 console.log('commands: ok');
+
+// VSCodium reads a `wordPattern` string without the `u` flag, where `\p{L}` is no letter:
+// no word under the cursor, so the suggestion list never opened while typing.
+const words = require('../language-configuration.json').wordPattern;
+const word = new RegExp(words.pattern, words.flags);
+assert.deepStrictEqual('    sc'.match(new RegExp(word, 'gu')), ['sc']);
+assert.deepStrictEqual('été_2 := -1.5e3'.match(new RegExp(word, 'gu')), ['été_2', '-1.5e3']);
