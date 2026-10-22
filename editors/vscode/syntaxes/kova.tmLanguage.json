@@ -106,6 +106,10 @@
       "patterns": [
         { "name": "keyword.control.contract.kova", "match": "\\b(require|ensure|check)\\b" },
         { "name": "keyword.control.kova", "match": "\\b(if|else|while|for|in|from|to|match|return|break|continue)\\b" },
+        {
+          "match": "\\b(import)\\s+(\\w+)\\s+(as)\\b",
+          "captures": { "1": { "name": "keyword.control.import.kova" }, "3": { "name": "keyword.control.import.kova" } }
+        },
         { "name": "keyword.control.import.kova", "match": "\\bimport\\b" },
         { "name": "keyword.other.header.kova", "match": "\\bheader\\b" },
         { "name": "storage.type.kova", "match": "\\b(let|var|fn|struct|enum|interface)\\b" },

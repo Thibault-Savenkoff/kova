@@ -1,5 +1,11 @@
 // SYNTAX TEST "source.kova" "Kova colors"
 
+import geometry as geo
+// <-- keyword.control.import.kova
+//              ^^ keyword.control.import.kova
+import shapes
+// <-- keyword.control.import.kova
+
 fn carré(x: Int) -> Int {
 // <-- storage.type.function.kova
 // ^^^^^ entity.name.function.kova

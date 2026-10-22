@@ -222,9 +222,9 @@ impl Parser<'_> {
         Expr { id: self.ids - 1, span, kind }
     }
 
-    /// Outside `public:`, a name of an imported file is hidden from the other files.
+    /// Outside `public:`, a name is hidden from the other files (only an imported file has any).
     fn hide(&mut self, public: bool, name: &Name) {
-        if !public && self.module.is_some() {
+        if !public {
             self.private.push((name.text.clone(), name.span));
         }
     }

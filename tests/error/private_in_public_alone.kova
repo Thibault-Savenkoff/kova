@@ -1,0 +1,12 @@
+// A module opened alone (in the editor, or by `kova test`) shows its own mistakes too.
+struct Price {
+    cents: Int
+}
+
+public:
+
+fn price -> Price { return Price { cents := 100 } }
+
+fn main {
+}
+// error: `price` is public but uses `Price`, which is private

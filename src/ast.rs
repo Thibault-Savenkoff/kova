@@ -14,7 +14,7 @@ pub struct File {
     pub tests: Vec<Test>,
     /// `lang fr { ... }`: only in a translation file (PLAN 2.13).
     pub langs: Vec<Lang>,
-    /// What an imported file hides from the other files (not under `public:`): its functions and
+    /// What a file hides from the other files (not under `public:`): its functions and
     /// types (`geometry.helper`), the fields and methods of its types (`geometry.Point.x`),
     /// with where they are declared.
     pub private: Vec<(String, Span)>,
