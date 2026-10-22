@@ -216,12 +216,21 @@ fn file_path(uri: &Uri) -> String {
             }
         }
     }
+    // Windows: `/c:/Users/…` → `c:/Users/…`.
+    if bytes.len() > 2 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+        bytes.remove(0);
+    }
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// `/home/me/my code/main.kova` → `file:///home/me/my%20code/main.kova` (the reverse of `file_path`).
 fn file_uri(path: &str) -> Option<Uri> {
+    let path = if cfg!(windows) { path.replace('\\', "/") } else { path.to_string() };
     let mut s = String::from("file://");
+    // Windows: `c:/Users/…` → `file:///c%3A/Users/…`.
+    if path.as_bytes().get(1) == Some(&b':') {
+        s.push('/');
+    }
     for b in path.bytes() {
         if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
             s.push(b as char);
@@ -1235,6 +1244,9 @@ mod tests {
         let path = "/home/me/my code/é.kova";
         assert_eq!(file_uri(path).unwrap().as_str(), "file:///home/me/my%20code/%C3%A9.kova");
         assert_eq!(file_path(&file_uri(path).unwrap()), path);
+        let windows = "c:/Users/me/é.kova";
+        assert_eq!(file_uri(windows).unwrap().as_str(), "file:///c%3A/Users/me/%C3%A9.kova");
+        assert_eq!(file_path(&file_uri(windows).unwrap()), windows);
     }
 
     fn labels(items: Option<Vec<CompletionItem>>) -> Vec<String> {

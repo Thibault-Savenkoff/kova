@@ -500,6 +500,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             Ok(()) => 0,
                             Err(e) => -failure(&e),
                         },
+                        // Windows answers "denied" for a directory: asked first, like `kind_of` in runtime.c.
+                        StrOp::ReadFile if std::path::Path::new(s(0)).is_dir() => -3,
                         StrOp::ReadFile => match std::fs::read(s(0)).map(String::from_utf8) {
                             Ok(Ok(text)) => heap.make(text),
                             Ok(Err(_)) => -4,

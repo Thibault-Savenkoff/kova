@@ -4,6 +4,7 @@
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -26,7 +27,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let (o, c, texts) = (tmp.join("main.o"), tmp.join("runtime.c"), tmp.join("texts.c"));
+    let (o, c, texts) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"), tmp.join("texts.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
     std::fs::write(&texts, locale::c_texts(lang, files)).map_err(|e| e.to_string())?;
@@ -45,7 +46,9 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
     // else the system's static C library; else as usual, with a warning saying what to install.
     // macOS has no static C library: its `libSystem` is on every Mac, so `cc` as usual is fine.
-    let res = if cfg!(target_os = "macos") {
+    let res = if cfg!(windows) {
+        windows_link(output, &o, &c, &texts, &tmp)
+    } else if cfg!(target_os = "macos") {
         link("cc", &[])
     } else {
         [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
@@ -59,10 +62,35 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     };
     let _ = std::fs::remove_dir_all(&tmp);
     match res {
+        Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound => Err(t!("no_msvc")),
         Err(e) => Err(t!("cc_missing", error = e)),
-        Ok(out) if !out.status.success() => Err(t!("cc_failed", output = String::from_utf8_lossy(&out.stderr))),
+        // Microsoft's compiler writes its errors on stdout.
+        Ok(out) if !out.status.success() => {
+            Err(t!("cc_failed", output = String::from_utf8_lossy(&[out.stdout, out.stderr].concat())))
+        }
         Ok(_) => Ok(()),
     }
+}
+
+/// Windows (PLAN Part 4 "Windows"): Microsoft's C compiler, found where Visual Studio put it
+/// (the Rust installer installs it); else MinGW's `gcc` if it is on the PATH. `/MT` puts the C
+/// library inside the executable, so that it runs on any Windows, like a static one on Linux.
+fn windows_link(output: &str, o: &Path, c: &Path, texts: &Path, tmp: &Path) -> std::io::Result<std::process::Output> {
+    #[cfg(windows)]
+    if let Some(mut cl) = find_msvc_tools::find(if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }, "cl.exe") {
+        return cl
+            .args(["/nologo", "/std:c11", "/utf-8", "/O2", "/MT", "/Gy", "/D_CRT_SECURE_NO_WARNINGS"])
+            .arg(format!("/Fo{}\\", tmp.display()))
+            .arg(format!("/Fe{output}"))
+            .arg(o)
+            .arg(c)
+            .arg(texts)
+            .args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"])
+            .output();
+    }
+    let _ = tmp;
+    let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
+    Command::new("gcc").args(["-static", "-O2"]).args(small).arg("-o").arg(output).arg(o).arg(c).arg(texts).arg("-lshell32").output()
 }
 
 /// The C runtime functions called by the generated code.

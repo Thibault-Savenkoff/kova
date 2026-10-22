@@ -218,7 +218,9 @@ function terminal() {
       shellArgs: ['--host', '--watch-bus', '--env=TERM=xterm-256color', `--env=${lang}`, 'sh', '-c', 'exec "${SHELL:-sh}" -l'],
     });
   }
-  return vscode.window.createTerminal({ name: 'Kova', env: { KOVA_LANG: vscode.env.language } });
+  // Windows: always PowerShell, the shell `commands.js` writes for (Git Bash or cmd may be the default).
+  const shellPath = process.platform === 'win32' ? 'powershell.exe' : undefined;
+  return vscode.window.createTerminal({ name: 'Kova', shellPath, env: { KOVA_LANG: vscode.env.language } });
 }
 
 module.exports = { activate, deactivate };

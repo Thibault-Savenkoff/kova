@@ -1,0 +1,2 @@
+# Kova files keep `\n` line ends on Windows too: the tests compare texts byte for byte.
+* text=auto eol=lf

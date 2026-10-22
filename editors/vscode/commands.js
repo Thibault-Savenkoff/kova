@@ -8,12 +8,34 @@ function quote(text) {
   return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Quotes a text for PowerShell: `l'été` → `'l''été'`. */
+function quotePs(text) {
+  return `'${text.replace(/'/g, "''")}'`;
+}
+
 /**
  * @param {'run' | 'build' | 'test'} action
  * @param {string} file absolute path of the `.kova`
  * @param {string} kova path of the `kova` executable
+ * @param {boolean} windows the "Kova" terminal is then Windows PowerShell (no `&&`)
  */
-function command(action, file, kova) {
+function command(action, file, kova, windows = process.platform === 'win32') {
+  if (windows) {
+    const dir = quotePs(path.win32.dirname(file));
+    const name = path.win32.basename(file);
+    const k = `& ${quotePs(kova)}`;
+    const go = `Set-Location -LiteralPath ${dir}; `;
+    switch (action) {
+      case 'run':
+        return `${go}${k} run ${quotePs(name)}`;
+      case 'build': {
+        const exe = name.replace(/\.kova$/, '.exe');
+        return `${go}${k} build ${quotePs(name)}; if ($LASTEXITCODE -eq 0) { & ${quotePs('.\\' + exe)} }`;
+      }
+      case 'test':
+        return `${go}${k} test ${quotePs(name)}`;
+    }
+  }
   const dir = quote(path.dirname(file));
   const name = path.basename(file);
   const k = quote(kova);

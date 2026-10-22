@@ -16,6 +16,8 @@ const KOVA: &str = env!("CARGO_BIN_EXE_kova");
 /// `kova` (or a built executable) with its language fixed: the tests must not depend
 /// on the machine's `LANG`.
 const LANG: &str = "en";
+/// `.exe` on Windows: what `kova build -o name` adds.
+const EXE: &str = std::env::consts::EXE_SUFFIX;
 
 fn kova(lang: &str) -> Command {
     program(KOVA, lang)
@@ -119,7 +121,7 @@ fn ok_programs() {
         check_output(&name, "run", &run, &expected, &mut failures);
 
         // Build mode: compile, then run the produced executable.
-        let exe = tmp.join(name.trim_end_matches(".kova").replace('/', "_"));
+        let exe = tmp.join(name.trim_end_matches(".kova").replace('/', "_") + EXE);
         let out = kova(LANG).arg("build").arg(&f).arg("-o").arg(&exe).output().unwrap();
         if !out.status.success() {
             failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
@@ -172,7 +174,7 @@ fn command_line() {
     assert!(text(&out.stderr).contains("cannot read"));
 
     // `--boost` removes contracts: the failed `require` gives way to the division by zero.
-    let exe = std::env::temp_dir().join(format!("kova-boost-{}", std::process::id()));
+    let exe = std::env::temp_dir().join(format!("kova-boost-{}{EXE}", std::process::id()));
     let out = kova(LANG).args(["build", "tests/ok/contract_require.kova", "--boost", "-o"]).arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     let out = program(&exe, LANG).output().unwrap();
@@ -249,7 +251,7 @@ fn static_executable() {
     if Command::new("musl-gcc").arg("--version").output().is_err() {
         return;
     }
-    let exe = std::env::temp_dir().join(format!("kova-static-{}", std::process::id()));
+    let exe = std::env::temp_dir().join(format!("kova-static-{}{EXE}", std::process::id()));
     let out = kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).output().unwrap();
     assert!(out.status.success() && out.stderr.is_empty(), "{}", text(&out.stderr));
     let elf = std::fs::read(&exe).unwrap();
@@ -268,7 +270,7 @@ fn leak_counter() {
     };
     let run = count(kova(LANG).args(["run", "tests/ok/strings.kova"]));
     assert_eq!(run, "Strings and Lists made: 25\n");
-    let exe = std::env::temp_dir().join(format!("kova-leaks-{}", std::process::id()));
+    let exe = std::env::temp_dir().join(format!("kova-leaks-{}{EXE}", std::process::id()));
     assert!(kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).status().unwrap().success());
     assert_eq!(count(&mut program(&exe, LANG)), run);
     let _ = std::fs::remove_file(&exe);

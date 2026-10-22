@@ -108,7 +108,7 @@ fn main() {
             exit(interp::run(&program, &files, &given))
         }
         Command::Build { output, .. } => {
-            let output = output.unwrap_or_else(|| file.trim_end_matches(".kova").to_string());
+            let output = output.unwrap_or_else(|| format!("{}{}", file.trim_end_matches(".kova"), std::env::consts::EXE_SUFFIX));
             if output == file {
                 fail(t!("output_overwrites", file = file));
             }
@@ -212,8 +212,12 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             if !done.insert(m.clone()) {
                 continue;
             }
-            let file = dir.join(format!("{m}.kova"));
-            let shown = file.to_string_lossy().into_owned();
+            // Written with the separator the importing file's path uses (`/`, or Windows' `\`),
+            // so that run and build show the same path everywhere.
+            let dir_text = dir.to_string_lossy();
+            let sep = dir_text.chars().rev().find(|c| matches!(c, '/' | '\\')).unwrap_or('/');
+            let shown = if dir_text.is_empty() { format!("{m}.kova") } else { format!("{dir_text}{sep}{m}.kova") };
+            let file = std::path::PathBuf::from(&shown);
             let Ok(text) = std::fs::read_to_string(&file) else {
                 diags.push(diag::Diag::new(imp.module.span, t!("import_not_found", file = shown)));
                 continue;

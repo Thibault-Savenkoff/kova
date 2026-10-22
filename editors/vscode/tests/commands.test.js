@@ -4,14 +4,23 @@ const { quote, command, results } = require('../commands');
 
 assert.strictEqual(quote("l'été"), `'l'\\''été'`);
 assert.strictEqual(
-  command('run', '/home/me/my projects/fib.kova', 'kova'),
+  command('run', '/home/me/my projects/fib.kova', 'kova', false),
   `cd '/home/me/my projects' && 'kova' run 'fib.kova'`
 );
 assert.strictEqual(
-  command('build', '/p/fib.kova', '/opt/kova'),
+  command('build', '/p/fib.kova', '/opt/kova', false),
   `cd '/p' && '/opt/kova' build 'fib.kova' && './fib'`
 );
-assert.strictEqual(command('test', '/p/a.kova', 'kova'), `cd '/p' && 'kova' test 'a.kova'`);
+assert.strictEqual(command('test', '/p/a.kova', 'kova', false), `cd '/p' && 'kova' test 'a.kova'`);
+// Windows: PowerShell 5.1, the one every Windows has.
+assert.strictEqual(
+  command('run', "C:\\Users\\Zoé\\l'été\\fib.kova", 'kova', true),
+  `Set-Location -LiteralPath 'C:\\Users\\Zoé\\l''été'; & 'kova' run 'fib.kova'`
+);
+assert.strictEqual(
+  command('build', 'C:\\p\\fib.kova', 'kova', true),
+  `Set-Location -LiteralPath 'C:\\p'; & 'kova' build 'fib.kova'; if ($LASTEXITCODE -eq 0) { & '.\\fib.exe' }`
+);
 const found = results('✅ un\n❌ deux\n   error: non\n     check x = 1\n\n1 passed, 1 failed out of 2\n');
 assert.deepStrictEqual([...found], [
   ['un', { ok: true, message: '' }],
