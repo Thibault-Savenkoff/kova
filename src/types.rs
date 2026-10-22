@@ -649,12 +649,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
 
-    // 2. `fn main()`: required, without parameters or result; not in a translation file.
-    match f.functions.iter().find(|f| f.name.text == "main") {
-        None if !f.langs.is_empty() => {}
-        None => c.error(Span::new(0, 0), t!("main_missing")),
-        Some(m) if !m.params.is_empty() || m.ret.is_some() => c.error(m.name.span, t!("main_signature")),
-        _ => {}
+    // 2. `fn main`: without parameters or result. Required only to run or build (`main.rs`):
+    // a module opened alone in the editor, or given to `kova test`, needs none.
+    if let Some(m) = f.functions.iter().find(|f| f.name.text == "main")
+        && (!m.params.is_empty() || m.ret.is_some())
+    {
+        c.error(m.name.span, t!("main_signature"));
     }
 
     // A translation file contains only `lang` blocks.

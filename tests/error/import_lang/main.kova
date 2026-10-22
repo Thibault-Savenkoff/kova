@@ -1,0 +1,5 @@
+import words
+
+fn main {
+}
+// error: an imported file cannot hold translations yet

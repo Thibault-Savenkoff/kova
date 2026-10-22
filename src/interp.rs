@@ -71,7 +71,7 @@ impl Heap {
 pub fn run(p: &Program, files: &[String]) -> i32 {
     let mut out = BufWriter::new(std::io::stdout());
     let mut heap = Heap::default();
-    let result = call(p, p.main, &[], &mut out, files, &mut heap);
+    let result = call(p, p.main.expect("checked by main.rs"), &[], &mut out, files, &mut heap);
     out.flush().unwrap();
     match result {
         Ok(_) => leaks(heap.allocated, heap.live),

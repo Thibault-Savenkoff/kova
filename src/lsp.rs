@@ -116,7 +116,7 @@ fn offset(src: &str, p: Position) -> usize {
 /// An error in an imported file is shown on the `import` line that brings it in
 /// (or on the first line), with the place where it really is.
 fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
-    let (tree, _, diags, sources) = analyze(&file_path(uri), src);
+    let (_, _, diags, sources) = analyze(&file_path(uri), src);
     diags
         .into_iter()
         .map(|d| {
@@ -131,8 +131,7 @@ fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
                 let path = &sources.files[n].0;
                 let (line, col) = diag::line_col(&sources.text, d.span.start);
                 message = t!("error_in_import", file = path, line = line, col = col, message = message);
-                let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned());
-                tree.imports.iter().find(|i| Some(&i.module.text) == stem.as_ref()).map_or(diag::Span::new(0, 0), |i| i.module.span)
+                sources.origins[n].expect("an imported file")
             };
             Diagnostic {
                 range: Range::new(position(src, span.start), position(src, span.end)),

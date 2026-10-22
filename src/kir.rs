@@ -173,7 +173,8 @@ enum Helper {
 
 pub struct Program {
     pub functions: Vec<Function>,
-    pub main: usize,
+    /// `None` for a file without `main` (a module): only `kova test` runs it.
+    pub main: Option<usize>,
     /// The `test` blocks (name, number of their function): translated only for `kova test`.
     pub tests: Vec<(String, usize)>,
 }
@@ -617,7 +618,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         k += 1;
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
-    Program { functions, main: numbers["main"], tests }
+    Program { functions, main: numbers.get("main").copied(), tests }
 }
 
 struct Translator<'a> {

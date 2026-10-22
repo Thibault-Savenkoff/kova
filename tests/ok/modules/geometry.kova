@@ -54,6 +54,6 @@ fn main {
     print("geometry's main")
 }
 
-test "not run either" {
+test "run only by kova test on this file" {
     check false
 }

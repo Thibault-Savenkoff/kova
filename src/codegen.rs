@@ -141,7 +141,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
     let mut ids = vec![];
     for (i, f) in p.functions.iter().enumerate() {
         let sig = signature(&f.locals[..f.nb_params], &f.returns);
-        let id = if i == p.main {
+        let id = if Some(i) == p.main {
             module.declare_function("kova_main", Linkage::Export, &sig)?
         } else {
             module.declare_function(&format!("kova_f{i}"), Linkage::Local, &sig)?

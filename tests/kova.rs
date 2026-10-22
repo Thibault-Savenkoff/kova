@@ -178,6 +178,13 @@ fn command_line() {
     assert_eq!(out.status.code(), Some(101));
     assert!(text(&out.stderr).starts_with("error: division by zero"), "{}", text(&out.stderr));
 
+    // A module alone: no `main` needed for `kova test`; its own tests run (not when imported).
+    let out = kova(LANG).args(["test", "tests/ok/modules/shapes.kova"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let out = kova(LANG).args(["test", "tests/ok/modules/geometry.kova"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("❌ run only by kova test on this file"), "{}", text(&out.stdout));
+
     // `kova test`: every test runs, even after a failure; code 1 if any failed.
     let out = kova(LANG).args(["test", "tests/ok/test_blocks.kova"]).output().unwrap();
     let stdout = text(&out.stdout);
@@ -345,6 +352,17 @@ fn language_server() {
     let error = &diag["params"]["diagnostics"][0];
     assert!(error["message"].as_str().unwrap().contains("broken.kova:4:16: different types"), "{diag}");
     assert_eq!(error["range"]["start"], serde_json::json!({"line": 0, "character": 7}));
+
+    // Imported through another file: shown on the `import` of the file that leads to it.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error/import_deep");
+    let main = format!("file://{}", dir.join("main.kova").display());
+    let text = std::fs::read_to_string(dir.join("main.kova")).unwrap();
+    send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {"textDocument": {"uri": main, "languageId": "kova", "version": 1, "text": text}}}));
+    let diag = receive();
+    let error = &diag["params"]["diagnostics"][0];
+    assert!(error["message"].as_str().unwrap().contains("deep.kova:2:"), "{diag}");
+    assert_eq!(error["range"]["start"], serde_json::json!({"line": 1, "character": 7}));
 
     send(serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
     assert_eq!(receive()["id"], 3);

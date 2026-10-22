@@ -1,0 +1,2 @@
+public:
+fn broken -> Int { return true }

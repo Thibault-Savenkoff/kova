@@ -85,6 +85,10 @@ fn main() {
         }
     }
 
+    if !matches!(command, Command::Test) && !tree.functions.iter().any(|f| f.name.text == "main") {
+        eprintln!("{}", diag::render(&diag::Diag::new(diag::Span::new(0, 0), t!("main_missing")), &sources));
+        exit(1);
+    }
     let contracts = !matches!(command, Command::Build { boost: true, .. });
     let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
 
@@ -148,6 +152,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
     // Depth first: `chain` = the files being read, to refuse a cycle.
     fn visit(
         imports: &[ast::Import],
+        origin: Option<diag::Span>,
         chain: &mut Vec<String>,
         done: &mut std::collections::HashSet<String>,
         dir: &std::path::Path,
@@ -179,6 +184,8 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
                 continue;
             };
             let base = sources.add(&shown, &text);
+            let origin = origin.unwrap_or(imp.module.span);
+            *sources.origins.last_mut().unwrap() = Some(origin);
             let (mut tokens, d) = lexer::lex(&text);
             let shift = |s: diag::Span| diag::Span::new(s.start + base, s.end + base);
             tokens.iter_mut().for_each(|t| t.span = shift(t.span));
@@ -190,14 +197,14 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
                 diags.push(diag::Diag::new(l.name.span, t!("import_lang_later")));
             }
             chain.push(m.clone());
-            visit(&tree.imports, chain, done, dir, sources, ids, diags, loaded);
+            visit(&tree.imports, Some(origin), chain, done, dir, sources, ids, diags, loaded);
             chain.pop();
             loaded.push(tree);
         }
     }
     let mut chain = vec![stem];
     let imports = std::mem::take(&mut root.imports);
-    visit(&imports, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
+    visit(&imports, None, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
     root.imports = imports;
     for m in loaded {
         root.functions.extend(m.functions);

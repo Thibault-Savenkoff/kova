@@ -1,0 +1,5 @@
+import shapes.circle
+
+fn main {
+}
+// error: importing from a folder is not possible yet

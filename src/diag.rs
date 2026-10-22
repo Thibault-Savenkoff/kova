@@ -47,11 +47,14 @@ pub struct Sources {
     pub text: String,
     /// Each file: the path shown in messages, and where its text starts in `text`.
     pub files: Vec<(String, usize)>,
+    /// Each file: the `import` of the main file that brings it in, directly or not
+    /// (the editor shows the file's errors there). `None` for the main file.
+    pub origins: Vec<Option<Span>>,
 }
 
 impl Sources {
     pub fn new() -> Sources {
-        Sources { text: String::new(), files: vec![] }
+        Sources { text: String::new(), files: vec![], origins: vec![] }
     }
 
     /// Adds a file; returns where its text starts. The first file starts at 0.
@@ -62,6 +65,7 @@ impl Sources {
         let start = self.text.len();
         self.text.push_str(text);
         self.files.push((path.to_string(), start));
+        self.origins.push(None);
         start
     }
 

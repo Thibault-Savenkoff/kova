@@ -1,0 +1,6 @@
+// The error is in deep.kova, imported by middle.kova.
+import middle
+
+fn main {
+}
+// error: deep.kova:2:
