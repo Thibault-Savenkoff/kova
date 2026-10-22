@@ -2,7 +2,7 @@
 struct Dog { name: String, age: Int }
 
 fn birthday(d: Dog) -> Int
-    require d.age < 20 else "{d.name} is too old: {d}"
+    require d.age < 20 else "{d.name} is too old: {d.age}"
 {
     return d.age + 1
 }
@@ -13,5 +13,5 @@ fn main {
 }
 // expect: 4
 // code: 101
-// stderr: error: Max is too old: Dog { name: "Max", age: 25 }
+// stderr: error: Max is too old: 25
 // stderr: values: d = Dog { name: "Max", age: 25 }

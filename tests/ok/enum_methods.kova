@@ -63,7 +63,8 @@ fn main {
     }
     let shop := Shop { name := "Corner", best := Item.Priced("cake", 4.25) }
     print(shop)
-    print("best: {shop.best}")
+    write("best: ")
+    print(shop.best)
     print(label_or_quit(0))
     print(label_or_quit(3))
     var k: Int := 0

@@ -33,5 +33,6 @@ fn main {
 // error: `Dog` has no field or method `color`
 // error: unknown type `Wolf`
 // error: `Dog` has no field or method `color`
-// error: `=` does not compare structs (`Dog`) yet
+// error: `=` cannot compare `Dog` values
+// error: add `: Equal` to `struct Dog`
 // error: `Dog` has no field or method `size`

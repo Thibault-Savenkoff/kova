@@ -47,6 +47,8 @@ pub struct Struct {
 /// `interface Animal { fn sound(self) -> String … }`: what a type promises (PLAN 2.6).
 pub struct Interface {
     pub name: Name,
+    /// `Equal`, `Comparable`, `Display`: given by Kova (`parser::PRELUDE`), not written in the file.
+    pub builtin: bool,
     /// Each method, and whether it has a body (a default method, used when the type doesn't
     /// write its own); without a body, its `body` is empty.
     pub methods: Vec<(Function, bool)>,

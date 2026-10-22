@@ -1,0 +1,106 @@
+// Equal, Comparable, Display: `=`, `<` and texts for people on your own types.
+struct Point : Equal {
+    x: Int
+    y: Int
+}
+
+struct Dog : Equal, Comparable, Display {
+    name: String
+    age: Int
+    // Two dogs are the same when they have the same name.
+    fn equals(self, other: Self) -> Bool { return self.name = other.name }
+    fn less(self, other: Self) -> Bool { return self.age < other.age }
+    fn to_string(self) -> String { return "{self.name} ({self.age})" }
+}
+
+enum Shape : Equal {
+    Circle(radius: Float),
+    Label(text: String),
+    Dot,
+}
+
+// Compared field by field: its Dogs with their own `equals`.
+struct Pack : Equal {
+    owner: String
+    dogs: (Dog, Dog)
+    best: Point?
+}
+
+enum Size : Comparable, Display {
+    Small,
+    Big,
+    fn less(self, other: Self) -> Bool { return self = Size.Small && other = Size.Big }
+    fn to_string(self) -> String {
+        return match self {
+            Small => "small"
+            Big => "big"
+        }
+    }
+}
+
+fn main {
+    let a := Point { x := 1, y := 2 }
+    print(a = Point { x := 1, y := 2 })
+    print(a != Point { x := 2, y := 2 })
+    let rex := Dog { name := "Rex", age := 3 }
+    let rex2 := Dog { name := "Rex", age := 9 }
+    let fido := Dog { name := "Fido", age := 5 }
+    print(rex = rex2)
+    print(rex = fido)
+    print(rex < fido)
+    print(rex > fido)
+    print(rex <= rex2)
+    print(fido >= rex2)
+    print("my dog: {rex}")
+    print(rex)
+    let dogs: List<Dog> := [rex.clone, fido.clone]
+    print(dogs)
+    print(Shape.Label("a") = Shape.Label("a"))
+    print(Shape.Label("a") = Shape.Label("b"))
+    print(Shape.Circle(1.0) = Shape.Dot)
+    let s: String? := "x"
+    print(s = "x")
+    print(s = none)
+    print((1, "a") = (1, "a"))
+    let r: Int or String := err("bad")
+    print(r = err("bad"))
+    print("apple" < "banana")
+    print("b" <= "a")
+    print("ab" > "a")
+    print(Size.Small < Size.Big)
+    print("size {Size.Big}")
+    let (n, f, c): (Int, Float, Char) := (7, 2.5, 'c')
+    print(n.to_string + f.to_string + true.to_string + c.to_string)
+    print(n.clone + 1)
+    let p := Pack { owner := "Ann", dogs := (rex.clone, fido.clone), best := none }
+    print(p = p.clone)
+    let q := Pack { owner := "Ann", dogs := (rex2.clone, fido.clone), best := a }
+    print(p = q)
+}
+// expect: true
+// expect: true
+// expect: true
+// expect: false
+// expect: true
+// expect: false
+// expect: true
+// expect: false
+// expect: my dog: Rex (3)
+// expect: Rex (3)
+// expect: [Rex (3), Fido (5)]
+// expect: true
+// expect: false
+// expect: false
+// expect: true
+// expect: false
+// expect: true
+// expect: true
+// expect: true
+// expect: false
+// expect: true
+// expect: true
+// expect: size big
+// expect: 72.5truec
+// expect: 8
+// expect: true
+// expect: false

@@ -5,4 +5,4 @@ fn main {
 }
 // error: `-` applies to `Int` or `Float`, not to `Bool`
 // error: `+` applies to `Int` or `Float` or `String`, not to `Char`
-// error: `<` applies to `Int` or `Float` or `Char`, not to `Bool`
+// error: `<` cannot order `Bool` values

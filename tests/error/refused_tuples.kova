@@ -5,7 +5,6 @@ fn main {
     let t: (Int, Int) := (1, 2)
     print(t.2)
     print(a.0)
-    print(t = t)
     var x: Int := 0
     (x, x) := (1, 2)
 }
@@ -13,5 +12,4 @@ fn main {
 // error: this pattern has 2 elements, but the value is of type `Int`
 // error: this tuple has 2 elements: from `.0` to `.1`
 // error: `.0` applies to a tuple, not to `Int`
-// error: `=` does not compare tuples yet
 // error: `x` receives two values in the same assignment

@@ -1,6 +1,5 @@
 fn main {
     let a: String := "a"
-    print(a < "b")
     print(a - "b")
     print(a + 1)
     var s: String := "s"
@@ -8,7 +7,6 @@ fn main {
     let n: Int := "5"
     print(a.size)
 }
-// error: `<` applies to `Int` or `Float` or `Char`, not to `String`
 // error: `-` applies to `Int` or `Float`, not to `String`
 // error: different types: `String` expected, `Int` given
 // error: `s` is neither an `Int` nor a `Float`

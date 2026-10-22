@@ -61,7 +61,8 @@ fn main {
     rex.birthday
     print(rex.age)
     let old: String := rex.rename("Max")
-    print("{old} -> {rex}")
+    write("{old} -> ")
+    print(rex)
 
     var k := Kennel { dog := rex, count := 0 }
     k.add

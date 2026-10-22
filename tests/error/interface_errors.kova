@@ -44,7 +44,7 @@ fn main {}
 // error: contracts on interface methods (`require` / `ensure` on `checked`) come later
 // error: `Self` has no method `fly`
 // error: help: methods of `Self`: `bad`, `checked`, `equal`, `hello`, `make`, `sound`, `clone`
-// error: `=` does not compare structs (`Self`) yet
+// error: `=` on a `Self` needs `Self` to follow `Equal`
 // error: the type `Bee` already exists (line 33)
 // error: `sound` is not written as `Animal` asks
 // error: `Animal` asks for `fn sound(self) -> String` (`Self` = this type)

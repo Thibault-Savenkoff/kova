@@ -179,6 +179,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             heap.make(joined)
                         }
                         StrOp::Eq => (s(0) == s(1)) as i64,
+                        StrOp::Less => (s(0) < s(1)) as i64,
                         StrOp::Length => s(0).chars().count() as i64,
                         // 0 (no String: a field of another variant of an enum) is copied as 0.
                         StrOp::Clone if locals[a[0]] == 0 => 0,

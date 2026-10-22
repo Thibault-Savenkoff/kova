@@ -195,7 +195,27 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "length", Type::Int, false),
     (Type::String, "clone", Type::String, false),
     (Type::String, "to_int", Type::Int, true),
+    // Every type has `.clone` (PLAN Part 4, "J5"); for these, a plain copy.
+    (Type::Int, "clone", Type::Int, false),
+    (Type::Float, "clone", Type::Float, false),
+    (Type::Bool, "clone", Type::Bool, false),
+    (Type::Char, "clone", Type::Char, false),
+    // `Display`: the text `print` writes.
+    (Type::Int, "to_string", Type::String, false),
+    (Type::Float, "to_string", Type::String, false),
+    (Type::Bool, "to_string", Type::String, false),
+    (Type::Char, "to_string", Type::String, false),
+    (Type::String, "to_string", Type::String, false),
 ];
+
+/// The built-in interfaces each primitive follows (for `<T: Comparable>`, PLAN Part 4, "J5").
+fn primitive_follows(t: &Type, interface: &str) -> bool {
+    match interface {
+        "Equal" | "Display" => matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String),
+        "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String),
+        _ => false,
+    }
+}
 
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
 pub fn is_copy(t: &Type) -> bool {
@@ -224,6 +244,15 @@ pub struct Info {
     /// The default methods a type takes from its interfaces: (type, interface number in
     /// `File::interfaces`, method number), for `Dog.introduce`.
     pub defaults: Vec<(String, usize, usize)>,
+    /// Type name → the interfaces it follows (`struct Dog : Equal, Display`).
+    pub follows: HashMap<String, Vec<String>>,
+}
+
+impl Info {
+    /// Does the struct or enum `t` follow `interface`?
+    pub fn follows(&self, t: &Type, interface: &str) -> bool {
+        self.follows.get(&t.text()).is_some_and(|is| is.iter().any(|i| i == interface))
+    }
 }
 
 impl Info {
@@ -309,6 +338,7 @@ struct Checker<'a> {
     /// (`Animal.sound`), with `Self` as a `Type::Param`.
     interfaces: HashMap<String, usize>,
     defaults: Vec<(String, usize, usize)>,
+    follows: HashMap<String, Vec<String>>,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
     ret: Type,
@@ -329,6 +359,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         structs: Structs::new(),
         interfaces: HashMap::new(),
         defaults: vec![],
+        follows: HashMap::new(),
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -370,7 +401,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
-        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" {
+        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" || builtin_interface(f, name) {
             c.error(s.name.span, t!("type_builtin", name = name));
         } else if let Some(&j) = decls.get(name) {
             let (line, _) = line_col(src, f.structs[j].name.span.start);
@@ -381,7 +412,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
     for (i, it) in f.interfaces.iter().enumerate() {
         let name = it.name.text.as_str();
-        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" {
+        if it.builtin {
+            c.interfaces.insert(name.to_string(), i);
+        } else if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" || builtin_interface(f, name) {
             c.error(it.name.span, t!("type_builtin", name = name));
         } else if let Some(span) = decls.get(name).map(|&j| f.structs[j].name.span).or(c.interfaces.get(name).map(|&j| f.interfaces[j].name.span)) {
             let (line, _) = line_col(src, span.start);
@@ -474,6 +507,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.conforms(f, s);
         }
     }
+    // `struct Point : Equal` without `equals`: every field must have `=` (known once all conform).
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) == Some(&i) {
+            c.auto_equal(s);
+        }
+    }
 
     // 2. `fn main()`: required, without parameters or result; not in a translation file.
     match f.functions.iter().find(|f| f.name.text == "main") {
@@ -543,7 +582,13 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     let moves = vec![false; c.types.len()];
-    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults: c.defaults }, c.diags)
+    let (defaults, follows) = (c.defaults, c.follows);
+    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows }, c.diags)
+}
+
+/// `Equal`, `Comparable`, `Display` (`parser::PRELUDE`).
+fn builtin_interface(f: &File, name: &str) -> bool {
+    f.interfaces.iter().any(|i| i.builtin && i.name.text == name)
 }
 
 /// `Self` inside `interface Animal`.
@@ -627,6 +672,7 @@ impl Checker<'_> {
                 self.error(n.span, t!("interface_twice", name = n.text, line = line));
                 continue;
             }
+            self.follows.entry(s.name.text.clone()).or_default().push(n.text.clone());
             let it = &f.interfaces[k];
             let mut asked: Vec<&str> = vec![];
             for (j, (m, body)) in it.methods.iter().enumerate() {
@@ -646,6 +692,8 @@ impl Checker<'_> {
                                 .help(t!("interface_signature_help", interface = it.name.text, heading = heading)),
                         );
                     }
+                } else if it.builtin && it.name.text == "Equal" {
+                    // Compared field by field: checked by `auto_equal`.
                 } else if !body {
                     self.diags.push(
                         Diag::new(n.span, t!("interface_missing", type = s.name.text, name = m.name.text, interface = it.name.text))
@@ -666,6 +714,64 @@ impl Checker<'_> {
                     self.defaults.push((s.name.text.clone(), k, j));
                 }
             }
+        }
+    }
+
+    /// `struct Point : Equal` without `equals`: `=` compares the fields (an enum's variant, then
+    /// its fields) one by one, so each of them must have `=` too.
+    fn auto_equal(&mut self, s: &Struct) {
+        let Some(n) = s.interfaces.iter().find(|n| n.text == "Equal") else { return };
+        if !self.follows(&s.name.text, "Equal") || self.functions.contains_key(&method_name(&s.name.text, "equals")) {
+            return;
+        }
+        let fields = s.fields.iter().chain(s.variants.iter().flatten().flat_map(|v| &v.fields));
+        for p in fields {
+            let t = type_of(&p.ty, &self.structs);
+            if !self.equatable(&t) {
+                self.diags.push(
+                    Diag::new(n.span, t!("equal_field", type = s.name.text, field = p.name.text, field_type = t.text()))
+                        .help(t!("equal_field_help", type = s.name.text)),
+                );
+            }
+        }
+    }
+
+    fn follows(&self, name: &str, interface: &str) -> bool {
+        self.follows.get(name).is_some_and(|is| is.iter().any(|i| i == interface))
+    }
+
+    /// Does `t` follow `interface` (`Equal`, `Comparable`, `Display`): written for a struct or an
+    /// enum, given for the primitives, promised for a `Self`.
+    fn has(&self, t: &Type, interface: &str) -> bool {
+        match t {
+            Type::Struct(d) => self.follows(&d.name, interface),
+            Type::Enum(d) => self.follows(&d.name, interface),
+            Type::Param(p) => p.bounds.iter().any(|b| b == interface),
+            Type::Error => true,
+            t => primitive_follows(t, interface),
+        }
+    }
+
+    /// Can two values of type `t` be compared with `=`?
+    fn equatable(&self, t: &Type) -> bool {
+        match t {
+            Type::Tuple(ts) => ts.iter().all(|t| self.equatable(t)),
+            Type::Optional(t) => self.equatable(t),
+            Type::Result(a, b) => self.equatable(a) && self.equatable(b),
+            // `light = Light.Red`: an enum of copied values is compared like an `Int` (J4).
+            Type::Enum(d) => is_copy(t) || self.follows(&d.name, "Equal"),
+            t => self.has(t, "Equal"),
+        }
+    }
+
+    /// The struct or enum that keeps `t` from having `=`: `Dog` in `(Int, Dog?)`.
+    fn missing_equal(&self, t: &Type) -> Option<Type> {
+        match t {
+            Type::Tuple(ts) => ts.iter().find_map(|t| self.missing_equal(t)),
+            Type::Optional(t) => self.missing_equal(t),
+            Type::Result(a, b) => self.missing_equal(a).or_else(|| self.missing_equal(b)),
+            t if self.equatable(t) => None,
+            t => Some(t.clone()),
         }
     }
 
@@ -900,6 +1006,18 @@ impl Checker<'_> {
                     self.diags.push(
                         Diag::new(e.span, t!("interp_result", code = code)).help(t!("interp_result_help", code = code)),
                     );
+                }
+                // A text for people shows what the type chose to show (`to_string`), never its
+                // inside by accident (PLAN Part 4, "J5").
+                t if !self.has(&t, "Display") => {
+                    let code = &self.src[e.span.start..e.span.end];
+                    let help = match &t {
+                        Type::Struct(d) => t!("interp_display_help", name = d.name, kind = "struct"),
+                        Type::Enum(d) => t!("interp_display_help", name = d.name, kind = "enum"),
+                        Type::Param(p) => t!("param_display_help", type = p.name),
+                        _ => t!("interp_display_list_help", code = code),
+                    };
+                    self.diags.push(Diag::new(e.span, t!("interp_display", code = code, type = t.text())).help(help));
                 }
                 _ => {}
             }
@@ -1721,31 +1839,37 @@ impl Checker<'_> {
                             }
                             return Type::Bool;
                         }
-                        match ta {
-                            Type::Optional(_) if !is_copy(&ta) => self.diags.push(
-                                Diag::new(e.span, t!("optional_compare", op = op.text(), type = ta.text()))
-                                    .help(t!("optional_compare_help")),
-                            ),
-                            Type::Unit => self.error(a.span, t!("expression_nothing")),
-                            Type::Tuple(_) => self.diags.push(
-                                Diag::new(e.span, t!("tuple_compare", op = op.text())).help(t!("tuple_compare_help")),
-                            ),
-                            Type::Struct(_) | Type::Param(_) => self.diags.push(
-                                Diag::new(e.span, t!("struct_compare", op = op.text(), type = ta.text()))
-                                    .help(t!("struct_compare_help")),
-                            ),
-                            Type::List(_) => self.error(e.span, t!("list_compare", op = op.text())),
-                            Type::Enum(_) | Type::Result(..) if !is_copy(&ta) => self.diags.push(
-                                Diag::new(e.span, t!("enum_compare", op = op.text(), type = ta.text()))
-                                    .help(t!("enum_compare_help")),
-                            ),
-                            _ => {}
+                        match self.missing_equal(&ta) {
+                            None => {}
+                            Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
+                            Some(Type::List(_)) => self.error(e.span, t!("list_compare", op = op.text())),
+                            Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
+                            Some(culprit) => {
+                                let (name, kind) = match &culprit {
+                                    Type::Enum(d) => (d.name.clone(), "enum"),
+                                    t => (t.text(), "struct"),
+                                };
+                                self.diags.push(
+                                    Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text()))
+                                        .help(t!("compare_needs_equal_help", name = name, kind = kind)),
+                                );
+                            }
                         }
                         self.like(a, ta, b);
                         Type::Bool
                     }
                     Lt | Le | Gt | Ge => {
-                        self.same_type(a, b, &[Type::Int, Type::Float, Type::Char], &format!("`{}`", op.text()));
+                        let ta = self.expr(a);
+                        if !self.has(&ta, "Comparable") {
+                            let help = match &ta {
+                                Type::Struct(d) => t!("order_needs_comparable_help", name = d.name, kind = "struct"),
+                                Type::Enum(d) => t!("order_needs_comparable_help", name = d.name, kind = "enum"),
+                                Type::Param(p) => t!("param_order_help", type = p.name),
+                                _ => t!("order_primitives_help"),
+                            };
+                            self.diags.push(Diag::new(e.span, t!("order_needs_comparable", op = op.text(), type = ta.text())).help(help));
+                        }
+                        self.like(a, ta, b);
                         Type::Bool
                     }
                     Range | RangeInclusive => {

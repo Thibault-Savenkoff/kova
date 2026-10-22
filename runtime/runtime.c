@@ -203,6 +203,15 @@ int64_t kova_str_eq(int64_t a, int64_t b) {
     return x->length == y->length && memcmp(x->bytes, y->bytes, x->length) == 0;
 }
 
+// `a < b`: the order of the bytes, which is the order of the characters' codes in UTF-8
+// (same as Rust's `str` order, src/interp.rs).
+int64_t kova_str_less(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    int64_t n = x->length < y->length ? x->length : y->length;
+    int c = memcmp(x->bytes, y->bytes, n);
+    return c < 0 || (c == 0 && x->length < y->length);
+}
+
 // The number of characters: the bytes that don't continue a UTF-8 character (10xxxxxx).
 int64_t kova_str_length(int64_t a) {
     String *x = (String *)a;

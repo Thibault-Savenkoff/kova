@@ -1,0 +1,52 @@
+struct Equal { x: Int }
+
+interface Display {}
+
+struct Bag : Equal {
+    items: List<Int>
+}
+
+struct Dog : Comparable {
+    age: Int
+}
+
+struct Cat : Display {
+    fn to_string(self) -> Int { return 1 }
+}
+
+struct Box { n: Int }
+
+interface Named {
+    fn name(self) -> String
+    fn show(self) -> String { return "{self}" }
+    fn first(self, other: Self) -> Bool { return self < other }
+}
+
+fn main {
+    let b := Box { n := 1 }
+    print("box: {b}")
+    let l: List<Int> := [1, 2]
+    print("list: {l}")
+    print(b < b)
+    print(true < false)
+}
+// error: `Equal` is a built-in type: choose another name
+// error: `Display` is a built-in type: choose another name
+// error: `Bag` follows `Equal`, but its field `items` (`List<Int>`) cannot be compared with `=`
+// error: write `fn equals(self, other: Self) -> Bool` in `Bag` to say how two of them are equal
+// error: `Dog` follows `Comparable` but has no method `less`
+// error: add `fn less(self, other: Self) -> Bool { … }`
+// error: `to_string` is not written as `Display` asks
+// error: `Display` asks for `fn to_string(self) -> String`
+// error: `self` (`Self`) has no text for people
+// error: `Self` must follow `Display`
+// error: `<` cannot order `Self` values
+// error: `Self` must follow `Comparable`
+// error: `b` (`Box`) has no text for people
+// error: write `struct Box : Display` and its method `fn to_string(self) -> String`
+// error: `l` (`List<Int>`) has no text for people
+// error: build the text you want
+// error: `<` cannot order `Box` values
+// error: write `struct Box : Comparable` and its method `fn less(self, other: Self) -> Bool`
+// error: `<` cannot order `Bool` values
+// error: `<`, `>`, `<=`, `>=` order `Int`, `Float`, `Char`, `String`, and the types following `Comparable`

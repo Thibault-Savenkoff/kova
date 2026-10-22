@@ -22,7 +22,6 @@ fn main {
     let n: Int := 3
     print(n != none)
     let s: String? := "a"
-    print(s = "a")
     let x: Int? := 4
     if x != none {
         x := 5
@@ -45,7 +44,6 @@ fn main {
 }
 // error: `none` needs a type
 // error: `Int` is never `none`
-// error: `=` compares `String?` values only with `none`
 // error: `x` is the value of an optional inside this `if`: it cannot change here
 // error: `k` has type `Int`: a `var Int?` parameter needs a variable of type `Int?`
 // error: different types: `Int` expected, `Int?` given

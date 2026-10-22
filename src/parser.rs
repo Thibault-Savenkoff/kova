@@ -34,6 +34,38 @@ const ASSIGNMENTS: &[(&str, Option<BinOp>)] = &[
 ];
 
 /// Returns the tree, the number of expressions (for the type table) and the errors.
+/// The interfaces every program knows (PLAN Part 4, "J5"). `Equal` without `equals` compares
+/// the fields one by one (`types::Checker::conforms`).
+const PRELUDE: &str = "interface Equal {
+    fn equals(self, other: Self) -> Bool
+}
+interface Comparable {
+    fn less(self, other: Self) -> Bool
+}
+interface Display {
+    fn to_string(self) -> String
+}
+";
+
+fn prelude() -> Vec<Interface> {
+    let (tokens, _) = lex(PRELUDE);
+    let mut p = Parser {
+        t: tokens,
+        pos: 0,
+        src: PRELUDE,
+        diags: vec![],
+        ids: 0,
+        no_params: HashSet::new(),
+        no_literal: false,
+        in_interface: false,
+        bodiless: false,
+    };
+    let mut interfaces = p.file().interfaces;
+    debug_assert!(p.diags.is_empty() && p.ids == 0, "the prelude has no expressions");
+    interfaces.iter_mut().for_each(|i| i.builtin = true);
+    interfaces
+}
+
 pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
     // The functions without parameters, wherever they are declared: a bare `main` calls `fn main`.
     // ponytail: a scan of `fn name` tokens outside any `{ }` (a struct's methods are not in it).
@@ -58,7 +90,8 @@ pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
         .chain(["read_line".to_string()])
         .collect();
     let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false, in_interface: false, bodiless: false };
-    let file = p.file();
+    let mut file = p.file();
+    file.interfaces.splice(0..0, prelude());
     (file, p.ids, p.diags)
 }
 
@@ -583,7 +616,7 @@ impl Parser<'_> {
                 Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
-                    return Ok(Interface { name, methods });
+                    return Ok(Interface { name, builtin: false, methods });
                 }
                 _ => {
                     let msg = t!("interface_item", found = self.describe());
@@ -593,7 +626,7 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Interface { name, methods })
+        Ok(Interface { name, builtin: false, methods })
     }
 
     /// `Circle(radius: Float)` or `Red`, followed by `,`, a line break or the `}`.

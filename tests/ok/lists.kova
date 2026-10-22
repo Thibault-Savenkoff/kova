@@ -28,12 +28,15 @@ fn main {
     print(l.remove(1))
     print(l)
     let f: List<Float> := [1, 2.5]
-    print("floats: {f}")
+    write("floats: ")
+    print(f)
     let e: List<Int> := List<Int>()
     print(e.length)
     let c: List<Int> := l.clone
     l.add(l[0])
-    print("{l} {c}")
+    write(l)
+    write(" ")
+    print(c)
     var m: List<Int> := scores
     m := [7]
     print(m)

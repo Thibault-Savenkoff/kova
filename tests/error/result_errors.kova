@@ -27,7 +27,6 @@ fn main {
         err(e) => print(e)
     }
     print("{half(2)}")
-    print(half(2) = half(4))
 }
 // error: `IoError` is a built-in type: choose another name
 // error: `read_file` is a built-in function
@@ -38,4 +37,3 @@ fn main {
 // error: `err(…)`
 // error: a result (`Int or String`) is matched with `ok(v) => …` and `err(e) => …`
 // error: `half(2)` may be an error: a text cannot show it
-// error: `=` compares only enums made of copied values; `Int or String` holds a String

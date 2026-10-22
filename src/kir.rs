@@ -162,6 +162,8 @@ enum Helper {
     Clone(Type),
     /// Returns its text, as `print` writes it: `[1, 2]`, `Shape.Circle(radius: 2.0)`.
     Show(Type),
+    /// Takes two values (an enum, an optional or a result) and returns 1 if they are equal.
+    Equal(Type),
 }
 
 pub struct Program {
@@ -259,6 +261,8 @@ pub enum StrOp {
     IsInt,
     /// `s.to_int`: its value, 0 if it is not an Int.
     ToInt,
+    /// `a < b` on Strings: 1 or 0, in the order of their bytes (= of their characters' codes).
+    Less,
     /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
     ReadFile,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
@@ -645,7 +649,14 @@ impl<'a> Translator<'a> {
     }
 
     fn helper_function(mut self, h: &Helper) -> Function {
-        let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h;
+        if let Helper::Equal(ty) = h {
+            let (a, b) = (self.new_slots(ty), self.new_slots(ty));
+            self.current = self.new_block();
+            let same = self.equal_variants(&a, &b, ty);
+            self.finish(End::Return(vec![same]));
+            return self.function(format!("equal {}", ty.text()), a.len() * 2, vec![Scalar::Int]);
+        }
+        let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h else { unreachable!() };
         let v = self.new_slots(ty);
         self.current = self.new_block();
         if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
@@ -696,6 +707,7 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
+            Helper::Equal(_) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
@@ -784,6 +796,76 @@ impl<'a> Translator<'a> {
         self.go(End::Jump(after), after);
         self.track(&v, &ty);
         v
+    }
+
+    /// `a = b` (PLAN Part 4, "J5"): 1 or 0. A struct writing `equals` is asked; otherwise
+    /// the fields (or the variant, then its fields) are compared one by one.
+    fn equal(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
+        match ty {
+            Type::String => {
+                let d = self.int_local();
+                self.emit(Inst::Str(d, StrOp::Eq, vec![a[0], b[0]]));
+                d
+            }
+            Type::Struct(d) if self.numbers.contains_key(method_name(&d.name, "equals").as_str()) => {
+                self.call(&method_name(&d.name, "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
+            }
+            Type::Enum(d) if self.numbers.contains_key(method_name(&d.name, "equals").as_str()) => {
+                self.call(&method_name(&d.name, "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
+            }
+            Type::Struct(_) | Type::Tuple(_) => {
+                let same = self.constant(1);
+                for (i, t) in members(ty).iter().enumerate() {
+                    let (start, n) = slice_of(ty, i);
+                    let eq = self.equal(&a[start..start + n], &b[start..start + n], t, span);
+                    self.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
+                }
+                same
+            }
+            Type::Enum(_) | Type::Optional(_) | Type::Result(..) => {
+                let f = self.helper(Helper::Equal(ty.clone()));
+                let d = self.int_local();
+                self.emit(Inst::Call(vec![d], f, [a, b].concat()));
+                d
+            }
+            _ => self.operation(Op::Eq, a[0], b[0], *ty == Type::Float, NOWHERE),
+        }
+    }
+
+    /// Inside the `Equal` helper: same variant, then the same fields for that variant.
+    fn equal_variants(&mut self, a: &[Local], b: &[Local], ty: &Type) -> Local {
+        let d = enum_view(ty).expect("an enum, an optional or a result");
+        let same = self.int_local();
+        self.emit(Inst::Binary(same, Op::Eq, a[0], b[0], NOWHERE));
+        let after = self.new_block();
+        let compare = self.new_block();
+        self.go(End::Branch(same, compare, after), compare);
+        for (i, (_, fields)) in d.variants.iter().enumerate() {
+            let (yes, no) = (self.new_block(), self.new_block());
+            let (number, test) = (self.constant(i as i64), self.int_local());
+            self.emit(Inst::Binary(test, Op::Eq, a[0], number, NOWHERE));
+            self.go(End::Branch(test, yes, no), yes);
+            let mut at = variant_slice(&d, i).0;
+            for (_, t) in fields {
+                let n = scalars(t).len();
+                let eq = self.equal(&a[at..at + n], &b[at..at + n], t, Span::new(0, 0));
+                self.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
+                at += n;
+            }
+            self.go(End::Jump(after), no);
+        }
+        self.go(End::Jump(after), after);
+        same
+    }
+
+    /// `a < b` on a String or a type following `Comparable` (its `less`).
+    fn less(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
+        if *ty == Type::String {
+            let d = self.int_local();
+            self.emit(Inst::Str(d, StrOp::Less, vec![a[0], b[0]]));
+            return d;
+        }
+        self.call(&method_name(&ty.text(), "less"), [a, b].concat(), vec![], span, &Type::Bool)[0]
     }
 
     /// Runs `body` on each element of `list` (with its index), in order.
@@ -1403,6 +1485,11 @@ impl<'a> Translator<'a> {
     /// `Dog { name: "Rex", age: 3 }`, `[1, 2]`.
     fn value_pieces(&mut self, v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
         match ty {
+            // A type following `Display` is always shown by its `to_string`.
+            Type::Struct(_) | Type::Enum(_) if self.info.follows(ty, "Display") => {
+                let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
+                m.push(Piece::Value(text[0], Show::String));
+            }
             Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", d.name))),
             Type::Struct(d) => {
                 m.push(Piece::Text(format!("{} {{ ", d.name)));
@@ -1906,22 +1993,33 @@ impl<'a> Translator<'a> {
                 self.track(&v, &ty);
                 v
             }
-            // Slot by slot: only for enums made of copied values (checked by the type checker).
-            // With `none` (all slots 0), this also tests whether an optional holding a String is empty.
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.ty(a), Type::Enum(_) | Type::Optional(_) | Type::Result(..)) => {
-                let kinds = scalars(&self.ty(a));
+            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
+                if !matches!(self.ty(a), Type::Int | Type::Float | Type::Bool | Type::Char) =>
+            {
+                let ty = self.ty(a);
                 let (va, vb) = (self.expr(a), self.expr(b));
-                let same = self.constant(1);
-                for (k, kind) in kinds.iter().enumerate() {
-                    let eq = self.operation(Op::Eq, va[k], vb[k], *kind == Scalar::Float, NOWHERE);
-                    self.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
-                }
+                let same = self.equal(&va, &vb, &ty, e.span);
                 if *op == BinOp::Eq {
                     return vec![same];
                 }
                 let ne = self.int_local();
                 self.emit(Inst::Not(ne, same));
                 vec![ne]
+            }
+            // `a > b` = `b < a`, `a <= b` = `!(b < a)`, `a >= b` = `!(a < b)`, as in Eiffel's `COMPARABLE`.
+            ExprKind::Binary(op @ (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge), a, b)
+                if matches!(self.ty(a), Type::String | Type::Struct(_) | Type::Enum(_)) =>
+            {
+                let ty = self.ty(a);
+                let (va, vb) = (self.expr(a), self.expr(b));
+                let (x, y) = if matches!(op, BinOp::Lt | BinOp::Ge) { (&va, &vb) } else { (&vb, &va) };
+                let less = self.less(x, y, &ty, e.span);
+                if matches!(op, BinOp::Lt | BinOp::Gt) {
+                    return vec![less];
+                }
+                let not = self.int_local();
+                self.emit(Inst::Not(not, less));
+                vec![not]
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), a, b) => {
                 // Short circuit: `b` is computed only if `a` is not enough.
@@ -1938,21 +2036,12 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(after), after);
                 vec![dst]
             }
-            ExprKind::Binary(op @ (BinOp::Plus | BinOp::Eq | BinOp::Ne), a, b) if self.ty(a) == Type::String => {
+            ExprKind::Binary(BinOp::Plus, a, b) if self.ty(a) == Type::String => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
                 let dst = self.int_local();
-                if *op == BinOp::Plus {
-                    self.emit(Inst::Str(dst, StrOp::Concat, vec![va, vb]));
-                    self.temps.push((dst, Type::String));
-                    return vec![dst];
-                }
-                self.emit(Inst::Str(dst, StrOp::Eq, vec![va, vb]));
-                if *op == BinOp::Eq {
-                    return vec![dst];
-                }
-                let ne = self.int_local();
-                self.emit(Inst::Not(ne, dst));
-                vec![ne]
+                self.emit(Inst::Str(dst, StrOp::Concat, vec![va, vb]));
+                self.temps.push((dst, Type::String));
+                vec![dst]
             }
             ExprKind::Binary(op, a, b) => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
@@ -2060,6 +2149,17 @@ impl<'a> Translator<'a> {
                         self.temps.push((dst, Type::String));
                     }
                     return vec![dst];
+                }
+                if name.text == "clone" {
+                    let copy = self.new_slots(&self.ty(receiver))[0];
+                    self.emit(Inst::Copy(copy, v));
+                    return vec![copy];
+                }
+                if name.text == "to_string" {
+                    let text = self.int_local();
+                    self.emit(Inst::Str(text, StrOp::Format(Show::of(&self.ty(receiver))), vec![v]));
+                    self.temps.push((text, Type::String));
+                    return vec![text];
                 }
                 let conversion = match (&self.ty(receiver), name.text.as_str()) {
                     (Type::Int, "to_float") => Conversion::IntToFloat,

@@ -17,7 +17,9 @@ fn main {
     let b := Wrap.Bag([1, 2])
     print(a)
     print(b)
-    print("{a} and {b}")
+    write(a)
+    write(" and ")
+    print(b)
     let e := Box.Empty
     let e2: Box := e.clone
     print(e2)

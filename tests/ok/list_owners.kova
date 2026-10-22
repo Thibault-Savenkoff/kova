@@ -28,7 +28,8 @@ fn main {
     let w: String := "e"
     words.add(move w)
     print(words.remove(0))
-    print("{words} {words.length}")
+    write(words)
+    print(" {words.length}")
     let backup: List<String> := words.clone
     print(keep(move words))
     print(backup)
