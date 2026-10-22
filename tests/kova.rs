@@ -237,8 +237,25 @@ fn command_line() {
     languages();
     modes();
     leak_counter();
+    static_executable();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
+}
+
+/// `kova build` makes a 100% static executable when musl is installed: no ELF program header
+/// `PT_INTERP` (3), the loader of the system's C library.
+fn static_executable() {
+    if Command::new("musl-gcc").arg("--version").output().is_err() {
+        return;
+    }
+    let exe = std::env::temp_dir().join(format!("kova-static-{}", std::process::id()));
+    let out = kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).output().unwrap();
+    assert!(out.status.success() && out.stderr.is_empty(), "{}", text(&out.stderr));
+    let elf = std::fs::read(&exe).unwrap();
+    let _ = std::fs::remove_file(&exe);
+    let number = |at: usize, n: usize| elf[at..at + n].iter().rev().fold(0usize, |v, &b| v << 8 | b as usize);
+    let (start, size, count) = (number(0x20, 8), number(0x36, 2), number(0x38, 2));
+    assert!((0..count).all(|i| number(start + i * size, 4) != 3), "the executable needs the system's loader");
 }
 
 /// The leak check really counts: the same number of Strings is made in run and in build.
