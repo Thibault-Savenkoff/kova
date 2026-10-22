@@ -3,6 +3,6 @@ fn main {
     print('a' + 'b')
     print(true < false)
 }
-// error: `-` applies to `Int` or `Float`, not to `Bool`
-// error: `+` applies to `Int` or `Float` or `String`, not to `Char`
+// error: `-` applies to `Int`, `Float` or `BigInt`, not to `Bool`
+// error: `+` applies to `Int`, `Float`, `String` or `BigInt`, not to `Char`
 // error: `<` cannot order `Bool` values

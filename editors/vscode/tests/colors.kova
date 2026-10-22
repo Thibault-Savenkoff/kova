@@ -108,3 +108,9 @@ fn put(var self, v: Int) at(i: Int) {
     g.put(1) at(2)
 //           ^^ entity.name.function.call.kova
 }
+
+fn grand(f: BigInt) -> BigInt {
+//          ^^^^^^ support.type.primitive.kova
+    return f * 123456789012345678901234567890
+//             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constant.numeric.integer.kova
+}

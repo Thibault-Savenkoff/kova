@@ -1,6 +1,6 @@
 fn main {
-    print(99999999999999999999)
+    print(0xFFFFFFFFFFFFFFFFFF)
     print(0xZZ)
 }
-// error: number too big `99999999999999999999`
+// error: number too big `0xFFFFFFFFFFFFFFFFFF`
 // error: badly written number `0xZZ`

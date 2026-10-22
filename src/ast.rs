@@ -359,6 +359,8 @@ pub struct Expr {
 
 pub enum ExprKind {
     Int(u64),
+    /// `123456789012345678901234567890`: too big for an `Int`, a `BigInt` (its digits).
+    BigInt(String),
     Float(f64),
     Char(char),
     Bool(bool),

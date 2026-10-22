@@ -1,0 +1,14 @@
+fn main {
+    let n: Int := 3
+    let b: BigInt := 10
+    print(b + n)
+    let c: BigInt := n
+    let d: Int := b
+    let e: Int := 99999999999999999999999
+    print(b.size)
+}
+// error: different types: `BigInt` expected, `Int` given
+// error: Kova never converts a variable by itself: use `.to_big`, or `.to_int` (an `Int?`: `none` if too big)
+// error: different types: `Int` expected, `BigInt` given
+// error: this number is too big for an `Int` (at most 9223372036854775807): write `BigInt` as its type
+// error: `BigInt` has no method `size`

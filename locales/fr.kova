@@ -132,6 +132,8 @@ lang fr {
     pattern_size := "ce motif a {count} éléments, mais la valeur est un `{type}`"
     types_differ := "types différents : `{expected}` attendu, `{given}` donné"
     float_inexact := "`{value}` est trop grand pour être exactement un `Float` : le plus proche est `{nearest}`"
+    no_big_conversion := "Kova ne convertit jamais une variable tout seul : utilise `.to_big`, ou `.to_int` (un `Int?` : `none` si trop grand)"
+    big_literal_help := "ce nombre est trop grand pour un `Int` (au plus 9223372036854775807) : donne-lui le type `BigInt`"
     no_conversion := "Kova ne convertit jamais une variable tout seul : utilise `.to_float` ou `.to_int`"
     applies_to := "{what} s'applique à {allowed}, pas à `{given}`"
     two_values := "`{target}` reçoit deux valeurs dans la même affectation"

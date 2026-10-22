@@ -1,0 +1,8 @@
+fn main {
+    let b: BigInt := 10
+    let z: BigInt := 0
+    print(b / z)
+}
+// code: 101
+// stderr: error: division by zero
+// stderr: bigint_zero.kova:4:13

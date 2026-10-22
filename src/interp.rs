@@ -325,6 +325,27 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::Eq => (s(0) == s(1)) as i64,
                         StrOp::Less => (s(0) < s(1)) as i64,
+                        StrOp::BigLess => crate::bigint::less(s(0), s(1)) as i64,
+                        StrOp::BigAdd => {
+                            let v = crate::bigint::add(s(0), s(1));
+                            heap.make(v)
+                        }
+                        StrOp::BigSub => {
+                            let v = crate::bigint::sub(s(0), s(1));
+                            heap.make(v)
+                        }
+                        StrOp::BigMul => {
+                            let v = crate::bigint::mul(s(0), s(1));
+                            heap.make(v)
+                        }
+                        StrOp::BigDiv => {
+                            let v = crate::bigint::div(s(0), s(1));
+                            heap.make(v)
+                        }
+                        StrOp::BigRem => {
+                            let v = crate::bigint::rem(s(0), s(1));
+                            heap.make(v)
+                        }
                         StrOp::Length => s(0).chars().count() as i64,
                         // 0 (no String: a field of another variant of an enum) is copied as 0.
                         StrOp::Clone if locals[a[0]] == 0 => 0,

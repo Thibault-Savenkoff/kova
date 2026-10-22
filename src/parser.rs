@@ -1564,6 +1564,10 @@ impl Parser<'_> {
         let t = self.token();
         let kind = match t.kind {
             Kind::Int(v) => ExprKind::Int(v),
+            Kind::Big => {
+                let digits = self.text(t.span).replace('_', "");
+                ExprKind::BigInt(digits.trim_start_matches('0').to_string())
+            }
             Kind::Float(v) => ExprKind::Float(v),
             Kind::Char(c) => ExprKind::Char(c),
             Kind::Keyword("true") => ExprKind::Bool(true),

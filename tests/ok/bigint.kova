@@ -1,0 +1,45 @@
+// BigInt: integers without limits, owned like a String.
+fn factorial(n: Int) -> BigInt {
+    var f: BigInt := 1
+    for i in 1..=n {
+        f := f * i.to_big
+    }
+    return f
+}
+
+fn main {
+    print(factorial(30))
+    let huge: BigInt := 123456789012345678901234567890
+    print(huge + 1)
+    print(-huge)
+    print(huge / 7)
+    print(huge % 7)
+    print(2 * huge - huge)
+    var x: BigInt := 10
+    x += 5
+    x *= -3
+    print(x)
+    print(x < 0)
+    print(huge = huge.clone)
+    print("big: {huge}")
+    let l: List<BigInt> := [3, -1, 2]
+    print(l.sorted)
+    print(huge.to_int)
+    print(x.to_int)
+    let s: String := x.to_string
+    print(s)
+}
+// expect: 265252859812191058636308480000000
+// expect: 123456789012345678901234567891
+// expect: -123456789012345678901234567890
+// expect: 17636684144620811271604938270
+// expect: 0
+// expect: 123456789012345678901234567890
+// expect: -45
+// expect: true
+// expect: true
+// expect: big: 123456789012345678901234567890
+// expect: [-1, 2, 3]
+// expect: none
+// expect: -45
+// expect: -45

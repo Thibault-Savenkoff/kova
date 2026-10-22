@@ -52,7 +52,7 @@ struct Runtime {
     /// `kova_str_new`, `kova_str_free`, then one per `StrOp` (in `str_op` order).
     str_new: FuncId,
     str_free: FuncId,
-    str_ops: [FuncId; 19],
+    str_ops: [FuncId; 25],
     lists: [FuncId; 8],
 }
 
@@ -100,6 +100,12 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Words => (16, "kova_str_words", 1),
         StrOp::Chars => (17, "kova_str_chars", 1),
         StrOp::Args => (18, "kova_args", 0),
+        StrOp::BigAdd => (19, "kova_big_add", 2),
+        StrOp::BigSub => (20, "kova_big_sub", 2),
+        StrOp::BigMul => (21, "kova_big_mul", 2),
+        StrOp::BigDiv => (22, "kova_big_div", 2),
+        StrOp::BigRem => (23, "kova_big_rem", 2),
+        StrOp::BigLess => (24, "kova_big_less", 2),
     }
 }
 
@@ -133,7 +139,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -243,7 +249,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 19],
+    ops: [FuncRef; 25],
 }
 
 /// What is needed to write the message of a broken contract.

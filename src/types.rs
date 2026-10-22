@@ -22,6 +22,8 @@ pub enum Type {
     Char,
     /// UTF-8 text, owned: moved when given away, freed at the end of its block (PLAN 2.7).
     String,
+    /// An integer without limits, owned like a `String` (its decimal digits, `kir.rs`).
+    BigInt,
     /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
     /// A `struct`: its slots are those of its fields, in order (like a tuple).
@@ -73,6 +75,7 @@ impl Type {
             Type::Bool => "Bool".into(),
             Type::Char => "Char".into(),
             Type::String => "String".into(),
+            Type::BigInt => "BigInt".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(d) if d.args.is_empty() => d.name.clone(),
             Type::Struct(d) => format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
@@ -249,6 +252,10 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "length", Type::Int, false),
     (Type::String, "clone", Type::String, false),
     (Type::String, "to_int", Type::Int, true),
+    (Type::Int, "to_big", Type::BigInt, false),
+    // `none` if it is too big for an `Int`.
+    (Type::BigInt, "to_int", Type::Int, true),
+    (Type::BigInt, "clone", Type::BigInt, false),
     // Every type has `.clone` (PLAN Part 4, "J5"); for these, a plain copy.
     (Type::Int, "clone", Type::Int, false),
     (Type::Float, "clone", Type::Float, false),
@@ -260,6 +267,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::Bool, "to_string", Type::String, false),
     (Type::Char, "to_string", Type::String, false),
     (Type::String, "to_string", Type::String, false),
+    (Type::BigInt, "to_string", Type::String, false),
 ];
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
@@ -291,8 +299,8 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
 /// The built-in interfaces each primitive follows (for `<T: Comparable>`, PLAN Part 4, "J5").
 fn primitive_follows(t: &Type, interface: &str) -> bool {
     match interface {
-        "Equal" | "Display" => matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String),
-        "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String),
+        "Equal" | "Display" => matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::BigInt),
+        "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String | Type::BigInt),
         _ => false,
     }
 }
@@ -300,7 +308,7 @@ fn primitive_follows(t: &Type, interface: &str) -> bool {
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
 pub fn is_copy(t: &Type) -> bool {
     match t {
-        Type::String | Type::List(_) | Type::Map(..) => false,
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
@@ -987,6 +995,7 @@ fn primitive(name: &str) -> Option<Type> {
         "Bool" => Type::Bool,
         "Char" => Type::Char,
         "String" => Type::String,
+        "BigInt" => Type::BigInt,
         _ => return None,
     })
 }
@@ -1803,6 +1812,9 @@ impl Checker<'_> {
             }
             return;
         }
+        if *expected == Type::BigInt && self.as_big(e) {
+            return;
+        }
         let t = self.expr(e);
         if *expected == Type::Float && t == Type::Int && self.as_float(e) {
             return;
@@ -1831,6 +1843,22 @@ impl Checker<'_> {
         true
     }
 
+    /// A number written directly, like `3` or `-2`, is a `BigInt` where one is expected
+    /// (`let f: BigInt := 1`, `f * 2`), whatever its size. A variable still needs `.to_big`.
+    fn as_big(&mut self, e: &Expr) -> bool {
+        let inner = match &e.kind {
+            ExprKind::Int(_) | ExprKind::BigInt(_) => None,
+            ExprKind::Unary(UnOp::Neg, x) if matches!(x.kind, ExprKind::Int(_) | ExprKind::BigInt(_)) => Some(x.id),
+            _ => return false,
+        };
+        self.types[e.id] = Type::BigInt;
+        self.spans[e.id] = e.span;
+        if let Some(id) = inner {
+            self.types[id] = Type::BigInt;
+        }
+        true
+    }
+
     /// `a op b`, both of the same type; `2 * x` with a `Float` `x` makes `2` a `Float`.
     fn same_type(&mut self, a: &Expr, b: &Expr, allowed: &[Type], what: &str) -> Type {
         let t = self.one_of(a, allowed, what);
@@ -1843,9 +1871,16 @@ impl Checker<'_> {
             self.expect(b, &t);
             return t;
         }
+        if matches!(b.kind, ExprKind::BigInt(_)) && self.as_big(a) {
+            self.expr(b);
+            return Type::BigInt;
+        }
         let tb = self.expr(b);
         if tb == Type::Float && self.as_float(a) {
             return Type::Float;
+        }
+        if tb == Type::BigInt && self.as_big(a) {
+            return Type::BigInt;
         }
         self.mismatch(b, tb, &t);
         t
@@ -1859,6 +1894,10 @@ impl Checker<'_> {
                 d = d.help(t!("float_inexact", value = v, nearest = crate::kir::float_text(*v as f64)));
             } else if matches!((expected, &t), (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
                 d = d.help(t!("no_conversion"));
+            } else if let (Type::Int, ExprKind::BigInt(_)) = (expected, &e.kind) {
+                d = d.help(t!("big_literal_help"));
+            } else if matches!((expected, &t), (Type::Int, Type::BigInt) | (Type::BigInt, Type::Int)) {
+                d = d.help(t!("no_big_conversion"));
             }
             self.diags.push(d);
         }
@@ -1870,8 +1909,10 @@ impl Checker<'_> {
         if t == Type::Error || allowed.contains(&t) {
             return t;
         }
-        let names: Vec<String> = allowed.iter().map(|t| format!("`{}`", t.text())).collect();
-        let names = names.join(&format!(" {} ", t!("word_or")));
+        // `` `Int`, `Float` or `BigInt` ``
+        let mut names: Vec<String> = allowed.iter().map(|t| format!("`{}`", t.text())).collect();
+        let last = names.pop().unwrap_or_default();
+        let names = if names.is_empty() { last } else { format!("{} {} {last}", names.join(", "), t!("word_or")) };
         self.error(e.span, t!("applies_to", what = what, allowed = names, given = t.text()));
         Type::Error
     }
@@ -2436,7 +2477,7 @@ impl Checker<'_> {
                     return;
                 }
                 let concat = *op == Some(BinOp::Plus) && ty == Type::String;
-                if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::Error) {
+                if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::BigInt | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
                     self.error(target.span(), t!("not_numeric", target = text));
                 }
@@ -2569,6 +2610,7 @@ impl Checker<'_> {
                 }
                 Type::Int
             }
+            ExprKind::BigInt(_) => Type::BigInt,
             ExprKind::Float(_) => Type::Float,
             ExprKind::Char(_) => Type::Char,
             ExprKind::Bool(_) => Type::Bool,
@@ -2848,7 +2890,7 @@ impl Checker<'_> {
                     self.types[x.id] = Type::Int;
                     return Type::Int;
                 }
-                self.one_of(x, &[Type::Int, Type::Float], "`-`")
+                self.one_of(x, &[Type::Int, Type::Float, Type::BigInt], "`-`")
             }
             ExprKind::Unary(UnOp::Not, x) => {
                 self.expect(x, &Type::Bool);
@@ -2922,14 +2964,10 @@ impl Checker<'_> {
                         self.error(e.span, t!("range_only_in_for", op = op.text()));
                         Type::Error
                     }
-                    Rem => {
-                        self.expect(a, &Type::Int);
-                        self.expect(b, &Type::Int);
-                        Type::Int
-                    }
-                    Plus => self.same_type(a, b, &[Type::Int, Type::Float, Type::String], "`+`"),
+                    Rem => self.same_type(a, b, &[Type::Int, Type::BigInt], "`%`"),
+                    Plus => self.same_type(a, b, &[Type::Int, Type::Float, Type::String, Type::BigInt], "`+`"),
                     Minus | Times | Div => {
-                        self.same_type(a, b, &[Type::Int, Type::Float], &format!("`{}`", op.text()))
+                        self.same_type(a, b, &[Type::Int, Type::Float, Type::BigInt], &format!("`{}`", op.text()))
                     }
                 }
             }

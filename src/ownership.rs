@@ -803,6 +803,7 @@ impl Owner<'_> {
             | ExprKind::Char(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
+            | ExprKind::BigInt(_)
             | ExprKind::InMode { .. }
             | ExprKind::None
             | ExprKind::Result => {}

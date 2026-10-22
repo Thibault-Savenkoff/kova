@@ -259,6 +259,153 @@ int64_t kova_str_to_int(int64_t a) {
     return v;
 }
 
+// ---- BigInt: a String holding its decimal text, like "-42" (src/bigint.rs does the same) ----
+// ponytail: one decimal digit at a time, O(n²) for `*` and `/`; limbs of 9 digits when big
+// numbers get thousands of digits long.
+
+// The digits, the units first, in a buffer of `size` bytes (zeros after them); the sign in *neg.
+static unsigned char *digits(String *s, int64_t size, int *neg, int64_t *n) {
+    *neg = s->length > 0 && s->bytes[0] == '-';
+    *n = s->length - *neg;
+    unsigned char *d = calloc(size > *n ? size : *n, 1);
+    if (!d) abort();
+    for (int64_t i = 0; i < *n; i++) d[i] = s->bytes[s->length - 1 - i] - '0';
+    return d;
+}
+
+static int64_t trim(unsigned char *d, int64_t n) {
+    while (n > 1 && d[n - 1] == 0) n--;
+    return n;
+}
+
+// The text of `n` digits (units first, freed here): no leading zeros, "0" never negative.
+static int64_t big_text(int neg, unsigned char *d, int64_t n) {
+    n = trim(d, n);
+    int zero = n == 1 && d[0] == 0;
+    neg = neg && !zero;
+    String *s = new_string(n + neg);
+    if (neg) s->bytes[0] = '-';
+    for (int64_t i = 0; i < n; i++) s->bytes[neg + i] = d[n - 1 - i] + '0';
+    free(d);
+    return (int64_t)s;
+}
+
+static int compare(const unsigned char *a, int64_t na, const unsigned char *b, int64_t nb) {
+    if (na != nb) return na < nb ? -1 : 1;
+    for (int64_t i = na - 1; i >= 0; i--)
+        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+
+// a := a - b, with a >= b; the new length.
+static int64_t minus(unsigned char *a, int64_t na, const unsigned char *b, int64_t nb) {
+    int borrow = 0;
+    for (int64_t i = 0; i < na; i++) {
+        int d = a[i] - (i < nb ? b[i] : 0) - borrow;
+        borrow = d < 0;
+        a[i] = d < 0 ? d + 10 : d;
+    }
+    return trim(a, na);
+}
+
+// |a| + |b| or |a| - |b| (`subtract`), with the sign of the result.
+static int64_t add_signed(int64_t a, int na_neg, int64_t b, int nb_neg) {
+    String *x = (String *)a, *y = (String *)b;
+    int xn, yn;
+    int64_t nx, ny;
+    int64_t size = (x->length > y->length ? x->length : y->length) + 1;
+    unsigned char *da = digits(x, size, &xn, &nx), *db = digits(y, size, &yn, &ny);
+    xn ^= na_neg;
+    yn ^= nb_neg;
+    int64_t n;
+    int neg;
+    if (xn == yn) {
+        int carry = 0;
+        for (int64_t i = 0; i < size; i++) {
+            int s = da[i] + db[i] + carry;
+            da[i] = s % 10;
+            carry = s / 10;
+        }
+        n = size;
+        neg = xn;
+    } else if (compare(da, trim(da, nx), db, trim(db, ny)) < 0) {
+        n = minus(db, ny, da, nx);
+        free(da);
+        return big_text(yn, db, n);
+    } else {
+        n = minus(da, nx, db, ny);
+        neg = xn;
+    }
+    free(db);
+    return big_text(neg, da, n);
+}
+
+int64_t kova_big_add(int64_t a, int64_t b) { return add_signed(a, 0, b, 0); }
+int64_t kova_big_sub(int64_t a, int64_t b) { return add_signed(a, 0, b, 1); }
+
+int64_t kova_big_mul(int64_t a, int64_t b) {
+    int xn, yn;
+    int64_t nx, ny;
+    unsigned char *da = digits((String *)a, 1, &xn, &nx), *db = digits((String *)b, 1, &yn, &ny);
+    uint32_t *sum = calloc(nx + ny, sizeof(uint32_t));
+    unsigned char *out = malloc(nx + ny);
+    if (!sum || !out) abort();
+    for (int64_t i = 0; i < nx; i++)
+        for (int64_t j = 0; j < ny; j++) sum[i + j] += da[i] * db[j];
+    uint32_t carry = 0;
+    for (int64_t i = 0; i < nx + ny; i++) {
+        sum[i] += carry;
+        carry = sum[i] / 10;
+        out[i] = sum[i] % 10;
+    }
+    free(da);
+    free(db);
+    free(sum);
+    return big_text(xn != yn, out, nx + ny);
+}
+
+// Long division, as on paper; `b` is not 0 (checked before). `quotient`: a / b, else a % b.
+static int64_t divide(int64_t a, int64_t b, int quotient) {
+    int xn, yn;
+    int64_t nx, ny;
+    unsigned char *da = digits((String *)a, 1, &xn, &nx), *db = digits((String *)b, 1, &yn, &ny);
+    ny = trim(db, ny);
+    unsigned char *q = calloc(nx, 1), *r = calloc(nx + 2, 1);
+    if (!q || !r) abort();
+    int64_t nr = 1;
+    for (int64_t i = nx - 1; i >= 0; i--) {
+        memmove(r + 1, r, nr);
+        r[0] = da[i];
+        nr = trim(r, nr + 1);
+        while (compare(r, nr, db, ny) >= 0) {
+            nr = minus(r, nr, db, ny);
+            q[i]++;
+        }
+    }
+    free(da);
+    free(db);
+    if (quotient) {
+        free(r);
+        return big_text(xn != yn, q, nx);
+    }
+    free(q);
+    return big_text(xn, r, nr);
+}
+
+int64_t kova_big_div(int64_t a, int64_t b) { return divide(a, b, 1); }
+int64_t kova_big_rem(int64_t a, int64_t b) { return divide(a, b, 0); }
+
+int64_t kova_big_less(int64_t a, int64_t b) {
+    int xn, yn;
+    int64_t nx, ny;
+    unsigned char *da = digits((String *)a, 1, &xn, &nx), *db = digits((String *)b, 1, &yn, &ny);
+    int c = compare(da, nx, db, ny);
+    free(da);
+    free(db);
+    if (xn != yn) return xn;
+    return xn ? c > 0 : c < 0;
+}
+
 // ---- Files and input ----
 
 // Valid UTF-8, as strict as Rust's `String::from_utf8` (src/interp.rs): no overlong form,

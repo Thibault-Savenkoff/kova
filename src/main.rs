@@ -2,6 +2,7 @@
 // See docs/PLAN.md, Part 1 (commands), 2.11 (header) and 2.13 (translations).
 
 mod ast;
+mod bigint;
 mod codegen;
 mod debug;
 mod diag;

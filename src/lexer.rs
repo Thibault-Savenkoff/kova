@@ -15,6 +15,8 @@ pub enum Kind {
     /// Uppercase name: type (`Int`, `Chien`).
     Type,
     Int(u64),
+    /// A decimal number too big even for 64 bits: a `BigInt`, read back from its text.
+    Big,
     Float(f64),
     Char(char),
     /// `"..."`; the content is read back with `string_content`.
@@ -226,7 +228,10 @@ fn read_number(text: &str) -> Result<Kind, String> {
             Err(_) => Err(t!("number_malformed", text = text)),
         };
     }
-    read_int(text).map(Kind::Int)
+    match read_int(text) {
+        Err(_) if decimal && text.replace('_', "").bytes().all(|b| b.is_ascii_digit()) => Ok(Kind::Big),
+        other => other.map(Kind::Int),
+    }
 }
 
 /// `'a'`, `'\n'`, `'\u{1F600}'`. Returns the length read and the character.

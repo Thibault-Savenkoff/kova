@@ -99,7 +99,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
@@ -121,7 +121,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Some(t.clone())],
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
@@ -324,6 +324,14 @@ pub enum StrOp {
     EndsWith,
     /// `s.replace(old, new)`: a new String (`old` is never empty, see `Fault::EmptyText`).
     Replace,
+    /// `a + b`, `a - b`, `a * b`, `a / b`, `a % b` on `BigInt`s (decimal texts): a new one.
+    BigAdd,
+    BigSub,
+    BigMul,
+    BigDiv,
+    BigRem,
+    /// `a < b` on `BigInt`s: 1 or 0.
+    BigLess,
     /// `s.split(separator)`: a new `List<String>` (the separator is never empty).
     Split,
     /// `s.words`: a new `List<String>`, the pieces between spaces, tabs and line ends.
@@ -388,7 +396,8 @@ impl Show {
             Type::Bool => Show::Bool,
             Type::Float => Show::Float,
             Type::Char => Show::Char,
-            Type::String => Show::String,
+            // A `BigInt` is its decimal text.
+            Type::String | Type::BigInt => Show::String,
             other => unreachable!("`{}` is not shown in one slot", other.text()),
         }
     }
@@ -1079,7 +1088,8 @@ impl<'a> Translator<'a> {
     /// the fields (or the variant, then its fields) are compared one by one.
     fn equal(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
         match ty {
-            Type::String => {
+            // A `BigInt` is written one way only: equal texts.
+            Type::String | Type::BigInt => {
                 let d = self.int_local();
                 self.emit(Inst::Str(d, StrOp::Eq, vec![a[0], b[0]]));
                 d
@@ -1140,9 +1150,9 @@ impl<'a> Translator<'a> {
         if matches!(ty, Type::Int | Type::Char | Type::Float) {
             return self.operation(Op::Lt, a[0], b[0], *ty == Type::Float, NOWHERE);
         }
-        if *ty == Type::String {
-            let d = self.int_local();
-            self.emit(Inst::Str(d, StrOp::Less, vec![a[0], b[0]]));
+        if matches!(ty, Type::String | Type::BigInt) {
+            let (d, op) = (self.int_local(), if *ty == Type::BigInt { StrOp::BigLess } else { StrOp::Less });
+            self.emit(Inst::Str(d, op, vec![a[0], b[0]]));
             return d;
         }
         self.call(&method_name(&ty.text(), "less"), [a, b].concat(), vec![], span, &Type::Bool)[0]
@@ -1183,6 +1193,39 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Where an error of `a op b` points: the operator, the first non-blank character after `a`.
+    fn operator(&self, a: &Expr) -> Loc {
+        let after_a = &self.src[a.span.end..];
+        let pos = a.span.end + after_a.len() - after_a.trim_start().len();
+        self.loc(Span::new(pos, pos))
+    }
+
+    /// A `BigInt` of these digits (`-` included), as a temporary.
+    fn big_text(&mut self, digits: &str) -> Local {
+        let l = self.text(if digits.is_empty() || digits == "-" || digits == "-0" { "0" } else { digits });
+        self.temps.push((l, Type::BigInt));
+        l
+    }
+
+    /// `a op b` on `BigInt`s: a new one (not tracked); `/` and `%` by 0 stop the program.
+    fn big(&mut self, op: BinOp, a: Local, b: Local, loc: Loc) -> Local {
+        if matches!(op, BinOp::Div | BinOp::Rem) {
+            let (zero, is_zero) = (self.big_text("0"), self.int_local());
+            self.emit(Inst::Str(is_zero, StrOp::Eq, vec![b, zero]));
+            self.emit(Inst::FaultIf(is_zero, Fault::DivisionByZero, loc));
+        }
+        let op = match op {
+            BinOp::Plus => StrOp::BigAdd,
+            BinOp::Minus => StrOp::BigSub,
+            BinOp::Times => StrOp::BigMul,
+            BinOp::Div => StrOp::BigDiv,
+            _ => StrOp::BigRem,
+        };
+        let dst = self.int_local();
+        self.emit(Inst::Str(dst, op, vec![a, b]));
+        dst
+    }
+
     /// A new String holding `s`.
     fn text(&mut self, s: &str) -> Local {
         let l = self.int_local();
@@ -1202,7 +1245,7 @@ impl<'a> Translator<'a> {
     /// Frees what slot `l` owns (`kind`, see `heap`), then empties it.
     fn free_slot(&mut self, l: Local, kind: &Type) {
         match kind {
-            Type::String => self.emit(Inst::Free(l)),
+            Type::String | Type::BigInt => self.emit(Inst::Free(l)),
             Type::List(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
             Type::Map(k, v) if plain(k) && plain(v) => self.emit(Inst::ListFree(l)),
             list => {
@@ -1219,7 +1262,7 @@ impl<'a> Translator<'a> {
         for ((&d, &l), kind) in copy.iter().zip(v).zip(heap(ty)) {
             match kind {
                 None => self.emit(Inst::Copy(d, l)),
-                Some(Type::String) => self.emit(Inst::Str(d, StrOp::Clone, vec![l])),
+                Some(Type::String | Type::BigInt) => self.emit(Inst::Str(d, StrOp::Clone, vec![l])),
                 Some(list) => {
                     let f = self.helper(Helper::Clone(list));
                     self.emit(Inst::Call(vec![d], f, vec![l]));
@@ -1673,6 +1716,11 @@ impl<'a> Translator<'a> {
                     let r = if ty == Type::String {
                         let r = self.int_local();
                         self.emit(Inst::Str(r, StrOp::Concat, vec![old, v]));
+                        self.emit(Inst::Free(old));
+                        r
+                    } else if ty == Type::BigInt {
+                        let loc = self.loc(value.span);
+                        let r = self.big(*op, old, v, loc);
                         self.emit(Inst::Free(old));
                         r
                     } else {
@@ -2481,6 +2529,9 @@ impl<'a> Translator<'a> {
 
     fn value(&mut self, e: &Expr) -> Slots {
         match &e.kind {
+            ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Unary(UnOp::Neg, _) if self.ty(e) == Type::BigInt && big_literal(e).is_some() => {
+                vec![self.big_text(&big_literal(e).unwrap())]
+            }
             ExprKind::Int(v) if self.ty(e) == Type::Float => vec![self.float_constant(*v as f64)],
             ExprKind::Int(v) => vec![self.constant(*v as i64)],
             ExprKind::Float(v) => vec![self.float_constant(*v)],
@@ -2492,6 +2543,7 @@ impl<'a> Translator<'a> {
                 self.temps.push((l, Type::String));
                 vec![l]
             }
+            ExprKind::BigInt(digits) => vec![self.big_text(digits)],
             ExprKind::Interp(parts) => {
                 let mut pieces = vec![];
                 for p in parts {
@@ -2667,6 +2719,12 @@ impl<'a> Translator<'a> {
                     _ => {}
                 }
                 let a = self.expr1(x);
+                if self.ty(x) == Type::BigInt {
+                    let zero = self.big_text("0");
+                    let dst = self.big(BinOp::Minus, zero, a, NOWHERE);
+                    self.temps.push((dst, Type::BigInt));
+                    return vec![dst];
+                }
                 if self.is_float(x) {
                     let dst = self.new_local(Scalar::Float);
                     self.emit(Inst::FNeg(dst, a));
@@ -2807,6 +2865,13 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(after), after);
                 vec![dst]
             }
+            ExprKind::Binary(op @ (BinOp::Plus | BinOp::Minus | BinOp::Times | BinOp::Div | BinOp::Rem), a, b) if self.ty(a) == Type::BigInt => {
+                let (va, vb) = (self.expr1(a), self.expr1(b));
+                let loc = self.operator(a);
+                let dst = self.big(*op, va, vb, loc);
+                self.temps.push((dst, Type::BigInt));
+                vec![dst]
+            }
             ExprKind::Binary(BinOp::Plus, a, b) if self.ty(a) == Type::String => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
                 let dst = self.int_local();
@@ -2816,10 +2881,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Binary(op, a, b) => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
-                // The error points at the operator: the first non-blank character after `a`.
-                let after_a = &self.src[a.span.end..];
-                let pos = a.span.end + after_a.len() - after_a.trim_start().len();
-                let loc = self.loc(Span::new(pos, pos));
+                let loc = self.operator(a);
                 vec![self.operation(kir_op(*op), va, vb, self.is_float(a), loc)]
             }
             ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
@@ -2977,7 +3039,8 @@ impl<'a> Translator<'a> {
                     }
                     return vec![dst];
                 }
-                if self.ty(receiver) == Type::String && name.text == "to_int" {
+                // A `BigInt` is its decimal text: read like a String's, `none` if too big.
+                if matches!(self.ty(receiver), Type::String | Type::BigInt) && name.text == "to_int" {
                     let (present, n) = (self.int_local(), self.int_local());
                     self.emit(Inst::Str(present, StrOp::IsInt, vec![v]));
                     self.emit(Inst::Str(n, StrOp::ToInt, vec![v]));
@@ -3007,6 +3070,18 @@ impl<'a> Translator<'a> {
                     }
                     return vec![dst];
                 }
+                if self.ty(receiver) == Type::BigInt && name.text == "clone" {
+                    let copy = self.int_local();
+                    self.emit(Inst::Str(copy, StrOp::Clone, vec![v]));
+                    self.temps.push((copy, Type::BigInt));
+                    return vec![copy];
+                }
+                if self.ty(receiver) == Type::Int && name.text == "to_big" {
+                    let digits = self.int_local();
+                    self.emit(Inst::Str(digits, StrOp::Format(Show::Int), vec![v]));
+                    self.temps.push((digits, Type::BigInt));
+                    return vec![digits];
+                }
                 if name.text == "clone" {
                     let copy = self.new_slots(&self.ty(receiver))[0];
                     self.emit(Inst::Copy(copy, v));
@@ -3030,6 +3105,16 @@ impl<'a> Translator<'a> {
                 vec![dst]
             }
         }
+    }
+}
+
+/// The digits of a number written directly (`12`, `-3`, `123456789012345678901`), for a `BigInt`.
+fn big_literal(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Int(v) => Some(v.to_string()),
+        ExprKind::BigInt(d) => Some(d.clone()),
+        ExprKind::Unary(UnOp::Neg, x) => big_literal(x).map(|d| format!("-{d}")),
+        _ => None,
     }
 }
 
@@ -3074,7 +3159,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(a, names);
             names_in(b, names);
         }
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } | ExprKind::None => {}
+        ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } | ExprKind::None => {}
         // ponytail: what a block uses is not shown in a contract's `values:` line.
         ExprKind::Block { .. } => {}
     }
