@@ -1,0 +1,6 @@
+import nowhere
+
+fn main {
+}
+// error: file not found
+// error: nowhere.kova

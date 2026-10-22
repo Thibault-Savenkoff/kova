@@ -1,0 +1,7 @@
+import broken
+
+fn main {
+    print(broken.label(2))
+}
+// error: broken.kova:4:22
+// error: unknown variable `nope`

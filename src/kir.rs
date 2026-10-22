@@ -193,15 +193,28 @@ pub struct KBlock {
     pub end: End,
 }
 
-/// Position in the source file, for runtime error messages.
+/// Position in a source file (`file` = its number, 0 = the program's), for runtime error messages.
 #[derive(Clone, Copy)]
 pub struct Loc {
+    pub file: usize,
     pub line: usize,
     pub col: usize,
 }
 
+impl Loc {
+    /// The file and the line in one number, as the runtime receives them (`kova_fault`).
+    pub fn packed(&self) -> i64 {
+        ((self.file as i64) << 32) | self.line as i64
+    }
+}
+
+/// The text `path:line` of a packed site (`Loc::packed`).
+pub fn site_text(files: &[String], packed: i64) -> String {
+    format!("{}:{}", files[(packed >> 32) as usize], packed & 0xffff_ffff)
+}
+
 /// For an operation that cannot fail (a helper's loop counter).
-const NOWHERE: Loc = Loc { line: 0, col: 0 };
+const NOWHERE: Loc = Loc { file: 0, line: 0, col: 0 };
 
 pub enum Inst {
     /// A constant; for a float slot, `v` holds the bits of the Float.
@@ -291,8 +304,8 @@ pub enum Piece {
     /// so that an executable speaks the language of whoever runs it.
     Label(&'static str),
     Value(Local, Show),
-    /// The name of the running file (unknown at translation time: `kova lsp` translates text).
-    File,
+    /// The name of a source file, by its number (the paths are given to `interp` and `codegen`).
+    File(usize),
 }
 
 /// How to show a slot. Same order as in `runtime/runtime.c`.
@@ -303,6 +316,8 @@ pub enum Show {
     Float = 2,
     Char = 3,
     String = 4,
+    /// A call site: `path:line` of a packed site (`Loc::packed`); only in error messages.
+    Site = 5,
 }
 
 impl Show {
@@ -460,9 +475,9 @@ fn plus_one(digits: &[u8], e: i32) -> (Vec<u8>, i32) {
     (d, e + 1)
 }
 
-pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
+pub fn fault_text(f: Fault, files: &[String], l: Loc) -> String {
     let text = |k| locale::text(k, &[]);
-    format!("{}{}\n  --> {file}:{}:{}\n", text("error_prefix"), text(f.key()), l.line, l.col)
+    format!("{}{}\n  --> {}:{}:{}\n", text("error_prefix"), text(f.key()), files[l.file], l.line, l.col)
 }
 
 // ---- Translation AST → KIR ----
@@ -1158,7 +1173,7 @@ impl<'a> Translator<'a> {
     }
     fn loc(&self, s: Span) -> Loc {
         let (line, col) = line_col(self.src, s.start);
-        Loc { line, col }
+        Loc { file: crate::diag::file_number(self.src, s.start), line, col }
     }
     fn variable(&self, name: &str) -> (Slots, Type) {
         self.names.iter().rev().find_map(|t| t.vars.get(name)).expect("variable checked by the type checker").clone()
@@ -1608,7 +1623,7 @@ impl<'a> Translator<'a> {
         }
         m.extend([
             Piece::Text("\n  --> ".into()),
-            Piece::File,
+            Piece::File(l.file),
             Piece::Text(format!(":{}:{}\n  {} {}\n", l.line, l.col, c.kind.keyword(), cond.join(" "))),
         ]);
         let mut names = vec![];
@@ -1640,9 +1655,7 @@ impl<'a> Translator<'a> {
             m.extend([
                 Piece::Text("  ".into()),
                 Piece::Label("contract_called_from"),
-                Piece::File,
-                Piece::Text(":".into()),
-                Piece::Value(line, Show::Int),
+                Piece::Value(line, Show::Site),
                 Piece::Text(":".into()),
                 Piece::Value(col, Show::Int),
                 Piece::Text("\n".into()),
@@ -1744,7 +1757,7 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(l, StrOp::Format(show), vec![v]));
                     (l, true)
                 }
-                Piece::Label(_) | Piece::File => unreachable!("only in contract messages"),
+                Piece::Label(_) | Piece::File(_) => unreachable!("only in contract messages"),
             };
             let l = match whole {
                 None if fresh => piece,
@@ -1810,7 +1823,7 @@ impl<'a> Translator<'a> {
     fn call_to(&mut self, num: usize, site: bool, mut vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
         if site {
             let l = self.loc(span);
-            let (line, col) = (self.constant(l.line as i64), self.constant(l.col as i64));
+            let (line, col) = (self.constant(l.packed()), self.constant(l.col as i64));
             vals.extend([line, col]);
         }
         let result = self.new_slots(ty);

@@ -1,0 +1,59 @@
+// A module: what `main.kova` uses as `geo.Point`, `geo.distance(a, b)`…
+import shapes
+
+public:
+
+struct Point : Display {
+    x: Float
+    y: Float
+    fn to_string(self) -> String { return "({self.x}, {self.y})" }
+    fn origin -> Point { return Point { x := 0.0, y := 0.0 } }
+}
+
+interface Animal {
+    fn sound(self) -> String
+    fn twice(self) -> String { return self.sound + self.sound }
+}
+
+struct Box<T> {
+    items: List<T>
+    fn empty -> Box<T> { return Box<T> { items := [] } }
+    fn add(var self, x: move T) { self.items.add(move x) }
+}
+
+fn distance(a: Point, b: Point) -> Float {
+    let dx: Float := a.x - b.x
+    let dy: Float := a.y - b.y
+    return dx * dx + dy * dy
+}
+
+fn larger<T: Comparable>(a: T, b: T) -> T {
+    if a < b {
+        return b.clone
+    }
+    return a.clone
+}
+
+// Calls the module it imports itself.
+fn area_of(r: Float) -> Float {
+    return shapes.area(shapes.Shape.Circle(r))
+}
+
+fn halve(n: Int) -> Int
+    require n % 2 = 0 else "{n} is odd"
+{
+    return n / 2
+}
+
+fn overflow(n: Int) -> Int {
+    return n * n * n * n * n
+}
+
+// The `main` of a module is not run.
+fn main {
+    print("geometry's main")
+}
+
+test "not run either" {
+    check false
+}

@@ -68,10 +68,10 @@ impl Heap {
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
 /// With `KOVA_LEAKS` set (the test runner sets it): at the end, a String never freed
 /// is an error (code 102); `KOVA_LEAKS=count` also prints how many were made.
-pub fn run(p: &Program, file: &str) -> i32 {
+pub fn run(p: &Program, files: &[String]) -> i32 {
     let mut out = BufWriter::new(std::io::stdout());
     let mut heap = Heap::default();
-    let result = call(p, p.main, &[], &mut out, file, &mut heap);
+    let result = call(p, p.main, &[], &mut out, files, &mut heap);
     out.flush().unwrap();
     match result {
         Ok(_) => leaks(heap.allocated, heap.live),
@@ -97,15 +97,15 @@ fn leaks(allocated: usize, live: usize) -> i32 {
 }
 
 /// `kova test`: runs every `test` block, even if another one failed. Code 1 if at least one fails.
-pub fn test(p: &Program, file: &str) -> i32 {
+pub fn test(p: &Program, files: &[String]) -> i32 {
     if p.tests.is_empty() {
-        println!("{}", t!("tests_none", file = file));
+        println!("{}", t!("tests_none", file = files[0]));
         return 0;
     }
     let mut out = BufWriter::new(std::io::stdout());
     let mut failed = 0;
     for (name, num) in &p.tests {
-        let result = call(p, *num, &[], &mut out, file, &mut Heap::default());
+        let result = call(p, *num, &[], &mut out, files, &mut Heap::default());
         let _ = match result {
             Ok(_) => writeln!(out, "✅ {name}"),
             Err(message) => {
@@ -126,8 +126,8 @@ type Outcome = Result<Vec<i64>, String>;
 
 // ponytail: Rust recursion = the interpreter's stack; infinite recursion
 // crashes without a nice message (same in native). To handle with stack errors.
-fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file: &str, heap: &mut Heap) -> Outcome {
-    let fault = |f: Fault, loc: &Loc| fault_text(f, file, *loc);
+fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, files: &[String], heap: &mut Heap) -> Outcome {
+    let fault = |f: Fault, loc: &Loc| fault_text(f, files, *loc);
     let f = &p.functions[num];
     // Every slot fits in 64 bits; a Float is stored bit for bit.
     let mut locals = vec![0i64; f.locals.len()];
@@ -148,7 +148,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                 Inst::Not(d, a) => locals[*d] = 1 - locals[*a],
                 Inst::Call(d, g, a) => {
                     let vals: Vec<i64> = a.iter().map(|&l| locals[l]).collect();
-                    let r = call(p, *g, &vals, out, file, heap)?;
+                    let r = call(p, *g, &vals, out, files, heap)?;
                     for (&d, v) in d.iter().zip(r) {
                         locals[d] = v;
                     }
@@ -270,8 +270,9 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         .map(|m| match m {
                             Piece::Text(t) => t.clone(),
                             Piece::Label(k) => locale::text(k, &[]),
+                            Piece::Value(l, Show::Site) => site_text(files, locals[*l]),
                             Piece::Value(l, show) => text(locals[*l], *show, heap),
-                            Piece::File => file.to_string(),
+                            Piece::File(i) => files[*i].clone(),
                         })
                         .collect());
                 }
@@ -293,6 +294,7 @@ fn text(v: i64, show: Show, heap: &Heap) -> String {
         Show::Bool => (v != 0).to_string(),
         Show::Float => float_text(float(v)),
         Show::Char => char::from_u32(v as u32).unwrap().to_string(),
+        Show::Site => unreachable!("a site is only shown in an error message"),
     }
 }
 

@@ -15,7 +15,7 @@ use lsp_types::*;
 use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, Struct, TypeAst};
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
-use crate::{analyze, parser, types};
+use crate::{analyze, diag, parser, types};
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -77,7 +77,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                     }
                     _ => continue,
                 };
-                let diagnostics = docs.get(&uri).map_or(vec![], |src| errors(src));
+                let diagnostics = docs.get(&uri).map_or(vec![], |src| errors(&uri, src));
                 let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
                 connection.sender.send(Notification::new("textDocument/publishDiagnostics".into(), params).into())?;
             }
@@ -113,21 +113,58 @@ fn offset(src: &str, p: Position) -> usize {
     src.len()
 }
 
-fn errors(src: &str) -> Vec<Diagnostic> {
-    analyze(src)
-        .2
+/// An error in an imported file is shown on the `import` line that brings it in
+/// (or on the first line), with the place where it really is.
+fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
+    let (tree, _, diags, sources) = analyze(&file_path(uri), src);
+    diags
         .into_iter()
-        .map(|d| Diagnostic {
-            range: Range::new(position(src, d.span.start), position(src, d.span.end)),
-            severity: Some(DiagnosticSeverity::ERROR),
-            source: Some("kova".into()),
-            message: match d.help {
+        .map(|d| {
+            let mut message = match d.help {
                 Some(help) => format!("{}\n{}{help}", d.message, t!("help_prefix")),
                 None => d.message,
-            },
-            ..Default::default()
+            };
+            let n = diag::file_number(&sources.text, d.span.start);
+            let span = if n == 0 {
+                d.span
+            } else {
+                let path = &sources.files[n].0;
+                let (line, col) = diag::line_col(&sources.text, d.span.start);
+                message = t!("error_in_import", file = path, line = line, col = col, message = message);
+                let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned());
+                tree.imports.iter().find(|i| Some(&i.module.text) == stem.as_ref()).map_or(diag::Span::new(0, 0), |i| i.module.span)
+            };
+            Diagnostic {
+                range: Range::new(position(src, span.start), position(src, span.end)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("kova".into()),
+                message,
+                ..Default::default()
+            }
         })
         .collect()
+}
+
+/// `file:///home/me/my%20code/main.kova` → `/home/me/my code/main.kova`.
+fn file_path(uri: &Uri) -> String {
+    let s = uri.as_str();
+    let s = s.strip_prefix("file://").unwrap_or(s).as_bytes();
+    let mut bytes = vec![];
+    let mut i = 0;
+    while i < s.len() {
+        let hex = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match (s[i], hex) {
+            (b'%', Some(b)) => {
+                bytes.push(b);
+                i += 3;
+            }
+            (c, _) => {
+                bytes.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 // ---- Level 2 completion: variables and functions visible at this place ----

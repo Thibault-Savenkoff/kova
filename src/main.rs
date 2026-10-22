@@ -54,13 +54,14 @@ fn main() {
         Err(e) => fail(t!("cannot_read", file = file, error = e)),
     };
 
-    let (tree, info, diags) = analyze(&source);
+    let (tree, info, diags, sources) = analyze(file, &source);
     let Some(info) = info else {
         for d in &diags {
-            eprintln!("{}", diag::render(d, file, &source));
+            eprintln!("{}", diag::render(d, &sources));
         }
         exit(1);
     };
+    let files: Vec<String> = sources.files.iter().map(|(path, _)| path.clone()).collect();
 
     // A translation file: `kova run` checks it, it is not a program.
     if !tree.langs.is_empty() {
@@ -85,40 +86,37 @@ fn main() {
     }
 
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let program = kir::translate(&tree, &info, &source, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
+    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
 
     match command {
-        Command::Run => exit(interp::run(&program, file)),
+        Command::Run => exit(interp::run(&program, &files)),
         Command::Build { output, .. } => {
             let output = output.unwrap_or_else(|| file.trim_end_matches(".kova").to_string());
             if output == file {
                 fail(t!("output_overwrites", file = file));
             }
             let lang = types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
-            if let Err(e) = codegen::build(&program, file, &output, lang) {
+            if let Err(e) = codegen::build(&program, &files, &output, lang) {
                 fail(e);
             }
         }
-        Command::Test => exit(interp::test(&program, file)),
+        Command::Test => exit(interp::test(&program, &files)),
     }
 }
 
-/// Lexer + parser + type checker. Reads in-memory text: `kova lsp` calls it on
-/// text that isn't saved yet. `Some(info)` only if there is no error at all.
+/// Lexer + parser + type checker. Reads in-memory text for the file `path`: `kova lsp` calls
+/// it on text that isn't saved yet (the files it imports are read from the disk).
+/// `Some(info)` only if there is no error at all.
 /// Also picks the language of the messages: the `header`'s, otherwise the system's.
-fn analyze(source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>) {
-    let read = || {
-        let (tokens, mut diags) = lexer::lex(source);
-        let (file, nb_exprs, d) = parser::parse(tokens, source);
-        diags.extend(d);
-        (file, nb_exprs, diags)
-    };
-    let (mut file, mut nb_exprs, mut diags) = read();
+fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>, diag::Sources) {
+    let read = || load(path, source);
+    let (mut file, mut nb_exprs, mut diags, mut sources) = read();
     let lang = file.header.iter().flat_map(|h| &h.settings).find(|(k, _)| k.text == "lang").map(|(_, v)| v.text.as_str());
     if locale::choose(lang) {
         // The messages were written in the other language: read again.
-        (file, nb_exprs, diags) = read();
+        (file, nb_exprs, diags, sources) = read();
     }
+    let source = sources.text.as_str();
     // Syntax errors: stop here, otherwise the type checker would invent more of them
     // (a variable whose `let` is unreadable would be "unknown" everywhere).
     if diags.is_empty() {
@@ -126,12 +124,87 @@ fn analyze(source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>) {
         // Ownership only on a well-typed program: it relies on the types.
         let d = if d.is_empty() { ownership::check(&file, &mut info, source) } else { d };
         if d.is_empty() {
-            return (file, Some(info), d);
+            return (file, Some(info), d, sources);
         }
         diags = d;
     }
     diags.sort_by_key(|d| d.span.start);
-    (file, None, diags)
+    (file, None, diags, sources)
+}
+
+/// Reads the file `path` (its text: `source`) and the files it imports, one after the other in
+/// one text (`diag::Sources`), into a single tree: the imported files' names come qualified
+/// (`geometry.Point`). Their `main`, `test`s and `header` are not used (PLAN 2.9).
+fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::Sources) {
+    let mut sources = diag::Sources::new();
+    sources.add(path, source);
+    let (tokens, mut diags) = lexer::lex(source);
+    let (mut root, mut ids, d) = parser::parse(tokens, source);
+    diags.extend(d);
+    let dir = std::path::Path::new(path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut loaded: Vec<ast::File> = vec![];
+    let mut done = std::collections::HashSet::new();
+    // Depth first: `chain` = the files being read, to refuse a cycle.
+    fn visit(
+        imports: &[ast::Import],
+        chain: &mut Vec<String>,
+        done: &mut std::collections::HashSet<String>,
+        dir: &std::path::Path,
+        sources: &mut diag::Sources,
+        ids: &mut usize,
+        diags: &mut Vec<diag::Diag>,
+        loaded: &mut Vec<ast::File>,
+    ) {
+        let mut aliases: std::collections::HashMap<&str, diag::Span> = std::collections::HashMap::new();
+        for imp in imports {
+            let m = &imp.module.text;
+            if let Some(first) = aliases.insert(&imp.alias.text, imp.alias.span) {
+                let (line, _) = diag::line_col(&sources.text, first.start);
+                diags.push(diag::Diag::new(imp.alias.span, t!("import_twice", name = imp.alias.text, line = line)));
+                continue;
+            }
+            if chain.contains(m) {
+                let cycle = [&chain[chain.iter().position(|c| c == m).unwrap()..], std::slice::from_ref(m)].concat();
+                diags.push(diag::Diag::new(imp.module.span, t!("import_cycle", cycle = cycle.join(" → "))));
+                continue;
+            }
+            if !done.insert(m.clone()) {
+                continue;
+            }
+            let file = dir.join(format!("{m}.kova"));
+            let shown = file.to_string_lossy().into_owned();
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                diags.push(diag::Diag::new(imp.module.span, t!("import_not_found", file = shown)));
+                continue;
+            };
+            let base = sources.add(&shown, &text);
+            let (mut tokens, d) = lexer::lex(&text);
+            let shift = |s: diag::Span| diag::Span::new(s.start + base, s.end + base);
+            tokens.iter_mut().for_each(|t| t.span = shift(t.span));
+            diags.extend(d.into_iter().map(|d| diag::Diag { span: shift(d.span), ..d }));
+            let (tree, next, d) = parser::parse_in(tokens, &sources.text, *ids, Some(m));
+            *ids = next;
+            diags.extend(d);
+            for l in &tree.langs {
+                diags.push(diag::Diag::new(l.name.span, t!("import_lang_later")));
+            }
+            chain.push(m.clone());
+            visit(&tree.imports, chain, done, dir, sources, ids, diags, loaded);
+            chain.pop();
+            loaded.push(tree);
+        }
+    }
+    let mut chain = vec![stem];
+    let imports = std::mem::take(&mut root.imports);
+    visit(&imports, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
+    root.imports = imports;
+    for m in loaded {
+        root.functions.extend(m.functions);
+        root.structs.extend(m.structs);
+        root.interfaces.extend(m.interfaces);
+    }
+    (root, ids, diags, sources)
 }
 
 /// Reads `-o output` and `--boost`, in any order.

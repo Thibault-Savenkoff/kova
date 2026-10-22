@@ -1,0 +1,5 @@
+public:
+
+fn power5(n: Int) -> Int {
+    return n * n * n * n * n
+}

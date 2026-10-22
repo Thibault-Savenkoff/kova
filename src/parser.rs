@@ -3,7 +3,7 @@
 // It doesn't stop at the first error: it records it, skips to the end of the
 // statement, then continues. So all errors are seen at once.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diag::{Diag, Span};
@@ -59,6 +59,9 @@ fn prelude() -> Vec<Interface> {
         no_literal: false,
         in_interface: false,
         bodiless: false,
+        module: None,
+        own: HashSet::new(),
+        imports: HashMap::new(),
     };
     let mut interfaces = p.file().interfaces;
     debug_assert!(p.diags.is_empty() && p.ids == 0, "the prelude has no expressions");
@@ -67,6 +70,13 @@ fn prelude() -> Vec<Interface> {
 }
 
 pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
+    parse_in(tokens, source, 0, None)
+}
+
+/// Reads one file of a program. `first_id`: the number of its first expression (the numbers
+/// go on from file to file). `module`: the file's name when it is imported (`geometry`); its
+/// own names are then written with it (`geometry.Point`), so that two files never share one.
+pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Option<&str>) -> (File, usize, Vec<Diag>) {
     // The functions without parameters, wherever they are declared: a bare `main` calls `fn main`.
     // ponytail: a scan of `fn name` tokens outside any `{ }` (a struct's methods are not in it).
     let mut depth = 0;
@@ -89,9 +99,45 @@ pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
         .chain(["read_line".to_string()])
         .collect();
-    let mut p = Parser { t: tokens, pos: 0, src: source, diags: vec![], ids: 0, no_params, no_literal: false, in_interface: false, bodiless: false };
+    let text = |t: &Token| source[t.span.start..t.span.end].to_string();
+    let at_top = |i: usize| i == 0 || outside[i - 1];
+    // `import geometry as geo`: `geo.Point` means `geometry.Point` in this file.
+    let mut imports = HashMap::new();
+    for (i, w) in tokens.windows(4).enumerate() {
+        if at_top(i) && w[0].kind == Kind::Keyword("import") && w[1].kind == Kind::Ident {
+            let alias = if w[2].kind == Kind::Ident && text(&w[2]) == "as" && w[3].kind == Kind::Ident { &w[3] } else { &w[1] };
+            imports.insert(text(alias), text(&w[1]));
+        }
+    }
+    // The names this file declares at its top: `fn distance`, `struct Point`, `copy struct`, `enum`, `interface`.
+    let own = (0..tokens.len().saturating_sub(1))
+        .filter(|&i| at_top(i))
+        .filter(|&i| match (tokens[i].kind, tokens[i + 1].kind) {
+            (Kind::Keyword("fn"), Kind::Ident) => true,
+            (Kind::Keyword("struct" | "enum" | "interface"), Kind::Type) => true,
+            _ => false,
+        })
+        .map(|i| text(&tokens[i + 1]))
+        .collect();
+    let module = module.map(str::to_string);
+    let mut p = Parser {
+        t: tokens,
+        pos: 0,
+        src: source,
+        diags: vec![],
+        ids: first_id,
+        no_params,
+        no_literal: false,
+        in_interface: false,
+        bodiless: false,
+        own: if module.is_some() { own } else { HashSet::new() },
+        module,
+        imports,
+    };
     let mut file = p.file();
-    file.interfaces.splice(0..0, prelude());
+    if p.module.is_none() {
+        file.interfaces.splice(0..0, prelude());
+    }
     (file, p.ids, p.diags)
 }
 
@@ -104,6 +150,12 @@ struct Parser<'a> {
     no_params: HashSet<String>,
     /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
     no_literal: bool,
+    /// The name of this file when it is imported (`geometry`), and the names it declares:
+    /// inside it, `Point` is `geometry.Point`.
+    module: Option<String>,
+    own: HashSet<String>,
+    /// `import geometry as geo`: `geo` → `geometry`.
+    imports: HashMap<String, String>,
     /// In an `interface`: a method may have no body (`function_rest` then sets `bodiless`).
     in_interface: bool,
     bodiless: bool,
@@ -163,14 +215,26 @@ impl Parser<'_> {
         Expr { id: self.ids - 1, span, kind }
     }
 
+    fn alias_taken(&mut self, name: &Name, what: &str) {
+        if self.imports.contains_key(&name.text) {
+            self.diags.push(Diag::new(name.span, t!("module_name_taken", name = name.text, what = what)));
+        }
+    }
+
     /// A variable or function name: lowercase required. `what` = the key of its kind (`what_variable`).
-    fn value_name(&mut self, what: &str) -> R<Name> {
-        let what = crate::locale::text(what, &[]);
+    fn value_name(&mut self, key: &str) -> R<Name> {
+        let what = crate::locale::text(key, &[]);
         let t = self.token();
         match t.kind {
             Kind::Ident => {
                 self.advance();
-                Ok(Name { text: self.text(t.span), span: t.span })
+                let text = self.text(t.span);
+                // `geo.area` must stay the module's: a variable or a parameter cannot take
+                // the name of an import (a function: see `function`).
+                if matches!(key, "what_variable" | "what_parameter") {
+                    self.alias_taken(&Name { text: text.clone(), span: t.span }, &what);
+                }
+                Ok(Name { text, span: t.span })
             }
             Kind::Type => {
                 let text = self.text(t.span);
@@ -192,8 +256,40 @@ impl Parser<'_> {
         }
     }
 
-    /// A type name: uppercase required.
+    /// A name declared at this file's top, as the whole program knows it: `geometry.Point`.
+    fn qualified(&self, text: String) -> String {
+        match &self.module {
+            Some(m) if self.own.contains(&text) => format!("{m}.{text}"),
+            _ => text,
+        }
+    }
+
+    /// `geo.` before a name: the file imported as `geo`, whose name is returned (`geometry`).
+    fn import_prefix(&self) -> Option<String> {
+        let t = self.token();
+        if t.kind != Kind::Ident || self.t[self.pos + 1].kind != Kind::Sym(".") {
+            return None;
+        }
+        self.imports.get(&self.text(t.span)).cloned()
+    }
+
+    /// A type name: uppercase required. `Point` declared here, or `geo.Point` from an import,
+    /// as the whole program knows it (`geometry.Point`).
     fn type_name(&mut self) -> R<Name> {
+        if let Some(module) = self.import_prefix()
+            && self.t[self.pos + 2].kind == Kind::Type
+        {
+            let start = self.advance().span;
+            self.advance(); // .
+            let t = self.advance();
+            return Ok(Name { text: format!("{module}.{}", self.text(t.span)), span: start.to(t.span) });
+        }
+        let name = self.plain_type_name()?;
+        Ok(Name { text: self.qualified(name.text), span: name.span })
+    }
+
+    /// A type name as written, never qualified: an enum's variant (`Circle`), a type parameter (`T`).
+    fn plain_type_name(&mut self) -> R<Name> {
         let t = self.token();
         match t.kind {
             Kind::Type => {
@@ -337,7 +433,7 @@ impl Parser<'_> {
 
     fn file(&mut self) -> File {
         let (mut header, mut functions, mut structs, mut tests, mut langs) = (None, vec![], vec![], vec![], vec![]);
-        let mut interfaces = vec![];
+        let (mut interfaces, mut imports) = (vec![], vec![]);
         loop {
             self.skip_newlines();
             let read = match self.kind() {
@@ -354,6 +450,13 @@ impl Parser<'_> {
                         }
                     })
                 }
+                Kind::Keyword("import") => self.import().map(|i| imports.push(i)),
+                // `public:` / `private:` are read but change nothing yet (J6, step 2).
+                Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                    self.advance();
+                    self.advance();
+                    Ok(())
+                }
                 Kind::Keyword("fn") => self.function(false).map(|f| functions.push(f)),
                 Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| structs.push(s)),
                 Kind::Keyword("interface") => self.interface().map(|i| interfaces.push(i)),
@@ -369,7 +472,24 @@ impl Parser<'_> {
                 self.skip_to_next_fn();
             }
         }
-        File { header, functions, structs, interfaces, tests, langs }
+        File { header, imports, functions, structs, interfaces, tests, langs }
+    }
+
+    /// `import geometry` or `import geometry as geo`.
+    fn import(&mut self) -> R<Import> {
+        self.advance(); // import
+        let module = self.value_name("what_module")?;
+        if self.is_sym(".") {
+            let span = self.token().span;
+            return self.error(module.span.to(span), t!("import_folder_later"));
+        }
+        let alias = if self.kind() == Kind::Ident && self.text(self.token().span) == "as" {
+            self.advance();
+            self.value_name("what_module")?
+        } else {
+            module.clone()
+        };
+        Ok(Import { module, alias })
     }
 
     /// `header { key := value ... }`; keys and values are checked by the type checker.
@@ -640,7 +760,7 @@ impl Parser<'_> {
 
     /// `Circle(radius: Float)` or `Red`, followed by `,`, a line break or the `}`.
     fn variant(&mut self) -> R<Variant> {
-        let name = self.type_name()?;
+        let name = self.plain_type_name()?;
         let mut fields = vec![];
         if self.is_sym("(") {
             let open = self.advance().span;
@@ -707,7 +827,11 @@ impl Parser<'_> {
     /// `fn name(params) -> Type`; `in_struct`: the first parameter may be `self`.
     fn function(&mut self, in_struct: bool) -> R<Function> {
         self.advance(); // fn
-        let name = self.value_name("what_function")?;
+        let mut name = self.value_name("what_function")?;
+        if !in_struct {
+            self.alias_taken(&name, &crate::locale::text("what_function", &[]));
+            name.text = self.qualified(name.text);
+        }
         let generics = self.generics()?;
         let mut params = vec![];
         if !self.is_sym("(") {
@@ -743,7 +867,7 @@ impl Parser<'_> {
         }
         self.advance();
         loop {
-            let name = self.type_name()?;
+            let name = self.plain_type_name()?;
             let mut bounds = vec![];
             if self.is_sym(":") {
                 self.advance();
@@ -1065,7 +1189,7 @@ impl Parser<'_> {
         } else {
             let name = match self.kind() {
                 Kind::Keyword(word @ ("ok" | "err")) => Name { text: word.into(), span: self.advance().span },
-                _ => self.type_name()?,
+                _ => self.plain_type_name()?,
             };
             let mut binds = vec![];
             if self.is_sym("(") {
@@ -1230,6 +1354,18 @@ impl Parser<'_> {
         Ok(self.expr(start.to(t.span), ExprKind::InMode { build, negated }))
     }
 
+    /// After a function's name: its arguments, if any (`seven` alone calls `fn seven`).
+    fn call_rest(&mut self, name: Name) -> R<Expr> {
+        if !self.is_sym("(") {
+            return Ok(self.expr(name.span, ExprKind::Call { name, args: vec![] }));
+        }
+        let open = self.advance().span;
+        let args = self.arguments()?;
+        let end = self.advance().span;
+        self.empty_parens(&args, open, end, &name.text);
+        Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
+    }
+
     fn atom(&mut self) -> R<Expr> {
         let t = self.token();
         let kind = match t.kind {
@@ -1249,21 +1385,29 @@ impl Parser<'_> {
                 }
             }
             Kind::Ident if self.text(t.span) == "mode" && self.mode_test() => return self.in_mode(),
+            // `geo.Point { … }`, `geo.Point.origin`: a type of an imported file.
+            Kind::Ident if self.import_prefix().is_some() && self.t[self.pos + 2].kind == Kind::Type => return self.type_atom(),
+            // `geo.distance(a, b)`, `geo.origin`: a function of an imported file.
+            Kind::Ident if self.import_prefix().is_some() => {
+                let module = self.import_prefix().unwrap();
+                self.advance();
+                self.advance(); // .
+                let mut name = self.value_name("what_function")?;
+                name = Name { text: format!("{module}.{}", name.text), span: t.span.to(name.span) };
+                return self.call_rest(name);
+            }
+            Kind::Ident if self.imports.contains_key(&self.text(t.span)) => {
+                let name = self.text(t.span);
+                self.diags.push(Diag::new(t.span, t!("module_as_value", name = name)).help(t!("module_as_value_help", name = name)));
+                return Err(());
+            }
             Kind::Ident => {
-                let name = self.value_name("what_variable")?;
-                if !self.is_sym("(") {
-                    let kind = if self.no_params.contains(&name.text) {
-                        ExprKind::Call { name: name.clone(), args: vec![] }
-                    } else {
-                        ExprKind::Var(name.text.clone())
-                    };
-                    return Ok(self.expr(name.span, kind));
+                let mut name = self.value_name("what_variable")?;
+                if !self.is_sym("(") && !self.no_params.contains(&name.text) {
+                    return Ok(self.expr(name.span, ExprKind::Var(name.text.clone())));
                 }
-                let open = self.advance().span;
-                let args = self.arguments()?;
-                let end = self.advance().span;
-                self.empty_parens(&args, open, end, &name.text);
-                return Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }));
+                name.text = self.qualified(name.text);
+                return self.call_rest(name);
             }
             Kind::Keyword("if") => return self.if_expr(),
             Kind::Keyword(word @ ("ok" | "err")) => {
@@ -1344,7 +1488,7 @@ impl Parser<'_> {
         if self.is_sym(".") && matches!(self.t[self.pos + 1].kind, Kind::Ident | Kind::Type) {
             self.advance();
             let variant = self.kind() == Kind::Type;
-            let name = if variant { self.type_name()? } else { self.value_name("what_function")? };
+            let name = if variant { self.plain_type_name()? } else { self.value_name("what_function")? };
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;

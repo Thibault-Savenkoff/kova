@@ -30,12 +30,23 @@ fn program(path: impl AsRef<std::ffi::OsStr>, lang: &str) -> Command {
 fn files(dir: &str) -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join(dir);
     let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
+    // A program of several files: a folder whose `main.kova` imports the others.
     let mut v: Vec<PathBuf> = entries
         .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "kova"))
+        .map(|p| if p.is_dir() { p.join("main.kova") } else { p })
+        .filter(|p| p.extension().is_some_and(|e| e == "kova") && p.exists())
         .collect();
     v.sort();
     v
+}
+
+/// `square.kova`, or `geometry/main.kova` for a folder.
+fn test_name(f: &Path) -> String {
+    let parent = f.parent().unwrap();
+    match parent.file_name().unwrap().to_string_lossy() {
+        p if p == "ok" || p == "error" => f.file_name().unwrap().to_string_lossy().into_owned(),
+        p => format!("{p}/main.kova"),
+    }
 }
 
 /// The values of the `// <key>: value` comments, in order.
@@ -92,7 +103,7 @@ fn ok_programs() {
     let mut failures = vec![];
 
     for f in files("ok") {
-        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        let name = test_name(&f);
         let source = std::fs::read_to_string(&f).unwrap();
         let expected = Expected {
             output: expectations(&source, "expect"),
@@ -106,7 +117,7 @@ fn ok_programs() {
         check_output(&name, "run", &run, &expected, &mut failures);
 
         // Build mode: compile, then run the produced executable.
-        let exe = tmp.join(name.trim_end_matches(".kova"));
+        let exe = tmp.join(name.trim_end_matches(".kova").replace('/', "_"));
         let out = kova(LANG).arg("build").arg(&f).arg("-o").arg(&exe).output().unwrap();
         if !out.status.success() {
             failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
@@ -131,7 +142,7 @@ fn ok_programs() {
 fn rejected_programs() {
     let mut failures = vec![];
     for f in files("error") {
-        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        let name = test_name(&f);
         let expected = expectations(&std::fs::read_to_string(&f).unwrap(), "error");
         assert!(!expected.is_empty(), "{name}: missing `// error: ...`");
 
@@ -323,6 +334,17 @@ fn language_server() {
     let response = receive();
     let labels: Vec<&str> = response["result"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap()).collect();
     assert!(labels.contains(&"a") && labels.contains(&"main") && labels.contains(&"print"), "{labels:?}");
+
+    // An error in an imported file: shown on the `import` line, with its real place.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error/import_error");
+    let main = format!("file://{}", dir.join("main.kova").display());
+    let text = std::fs::read_to_string(dir.join("main.kova")).unwrap();
+    send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": {"textDocument": {"uri": main, "languageId": "kova", "version": 1, "text": text}}}));
+    let diag = receive();
+    let error = &diag["params"]["diagnostics"][0];
+    assert!(error["message"].as_str().unwrap().contains("broken.kova:4:16: different types"), "{diag}");
+    assert_eq!(error["range"]["start"], serde_json::json!({"line": 0, "character": 7}));
 
     send(serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
     assert_eq!(receive()["id"], 3);

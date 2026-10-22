@@ -1,0 +1,5 @@
+public:
+
+fn label(n: Int) -> String {
+    return "n = {n + nope}"
+}

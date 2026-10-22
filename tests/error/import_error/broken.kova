@@ -1,0 +1,5 @@
+public:
+
+fn twice(n: Int) -> Int {
+    return n + true
+}

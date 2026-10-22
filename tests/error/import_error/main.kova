@@ -1,0 +1,7 @@
+import broken
+
+fn main {
+    print(broken.twice(2))
+}
+// error: broken.kova:4:16
+// error: 4 |     return n + true

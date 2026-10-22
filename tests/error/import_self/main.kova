@@ -1,0 +1,5 @@
+import other
+
+fn main {
+}
+// error: these files import each other: main → other → main

@@ -6,12 +6,22 @@ use crate::diag::Span;
 
 pub struct File {
     pub header: Option<Header>,
+    /// `import geometry as geo`: the other files this one uses.
+    pub imports: Vec<Import>,
     pub functions: Vec<Function>,
     pub structs: Vec<Struct>,
     pub interfaces: Vec<Interface>,
     pub tests: Vec<Test>,
     /// `lang fr { ... }`: only in a translation file (PLAN 2.13).
     pub langs: Vec<Lang>,
+}
+
+/// `import geometry` or `import geometry as geo` (PLAN 2.9).
+pub struct Import {
+    /// The file's name: `geometry` for `geometry.kova`, next to this file.
+    pub module: Name,
+    /// The name used in this file: `geo` (the module's own name without `as`).
+    pub alias: Name,
 }
 
 /// `lang fr { already_exists := "`{name}` existe déjà" }`.

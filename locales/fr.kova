@@ -350,6 +350,18 @@ lang fr {
     interp_result_help := "choisis le texte avec `match {code} \{ ok(v) => …, err(e) => … \}`"
     try_borrowed_result_help := "pour seulement le lire : `match {name} \{ ok(v) => …, err(e) => … \}`"
 
+    // ---- Imports (J6, step 1) ----
+    what_module := "module"
+    module_as_value := "`{name}` est un module importé, pas une valeur"
+    module_as_value_help := "utilise ce qu'il contient : `{name}.Point`, `{name}.distance(a, b)`"
+    import_folder_later := "importer depuis un dossier n'est pas encore possible : mets le fichier à côté de celui-ci et écris `import nom`"
+    import_not_found := "fichier introuvable : `{file}`"
+    import_cycle := "ces fichiers s'importent les uns les autres : {cycle}"
+    import_twice := "`{name}` est déjà importé à la ligne {line}"
+    module_name_taken := "`{name}` est le nom d'un import : il ne peut pas servir de nom de {what}"
+    import_lang_later := "un fichier importé ne peut pas encore contenir de traductions : mets ses blocs `lang` dans le fichier du programme"
+    error_in_import := "erreur dans {file}:{line}:{col} : {message}"
+
     // ---- Editor (`kova lsp`) ----
     not_handled := "pas encore géré"
     completion_default := "{help} (par défaut)"

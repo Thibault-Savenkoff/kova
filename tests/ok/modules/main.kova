@@ -1,0 +1,50 @@
+// A program of several files: `import` reads `geometry.kova` next to this file.
+import geometry as geo
+import shapes
+
+struct Dog : geo.Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+}
+
+fn walk(p: geo.Point) -> geo.Point {
+    return geo.Point { x := p.x + 1.0, y := p.y }
+}
+
+fn main {
+    let a := geo.Point { x := 3.0, y := 4.0 }
+    let o: geo.Point := geo.Point.origin
+    print(geo.distance(a, o))
+    print(walk(a))
+    let points: List<geo.Point> := [a.clone, o.clone]
+    print(points.length)
+    print(geo.larger(3, 9))
+    print(shapes.area(shapes.Shape.Square(2.0)))
+    print(geo.area_of(1.0))
+    // Two `Point`s side by side: each module has its own.
+    let named := shapes.Point { name := "home" }
+    print(named.name)
+    let pets: List<any geo.Animal> := [Dog { name := "Rex" }]
+    for p in pets {
+        print(p.twice)
+    }
+    var box: geo.Box<Int> := geo.Box<Int>.empty
+    box.add(5)
+    print(box.items.length)
+    print(geo.halve(8))
+    print(geo.halve(3))
+}
+// expect: 25.0
+// expect: (4.0, 4.0)
+// expect: 2
+// expect: 9
+// expect: 4.0
+// expect: 3.0
+// expect: home
+// expect: woofwoof
+// expect: 1
+// expect: 4
+// code: 101
+// stderr: error: 3 is odd
+// stderr: geometry.kova:43:13
+// stderr: main.kova:35:11

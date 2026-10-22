@@ -1,0 +1,15 @@
+import maths as m
+
+fn f(m: Int) {
+}
+
+fn m -> Int { return 2 }
+
+fn main {
+    let m: Int := 1
+    print(m)
+}
+// error: `m` is the name of an import: it cannot be used as a parameter name
+// error: `m` is the name of an import: it cannot be used as a function name
+// error: `m` is the name of an import: it cannot be used as a variable name
+// error: `m` is an imported module, not a value

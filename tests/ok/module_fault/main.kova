@@ -1,0 +1,11 @@
+// A runtime error inside an imported file names that file.
+import maths
+
+fn main {
+    print(maths.power5(2))
+    print(maths.power5(10000))
+}
+// expect: 32
+// code: 101
+// stderr: error: integer overflow
+// stderr: maths.kova:4:

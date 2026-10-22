@@ -1,0 +1,6 @@
+import maths as m
+import maths as m
+
+fn main {
+}
+// error: `m` is already imported on line 1

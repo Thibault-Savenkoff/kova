@@ -21,15 +21,15 @@ use crate::locale::{self, t};
 const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
 
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
-pub fn build(p: &Program, file: &str, output: &str, lang: Option<usize>) -> Result<(), String> {
-    let object = make_object(p, file).map_err(|e| t!("codegen_failed", error = e))?;
+pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
+    let object = make_object(p, files).map_err(|e| t!("codegen_failed", error = e))?;
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let (o, c, texts) = (tmp.join("main.o"), tmp.join("runtime.c"), tmp.join("texts.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
-    std::fs::write(&texts, locale::c_texts(lang)).map_err(|e| e.to_string())?;
+    std::fs::write(&texts, locale::c_texts(lang, files)).map_err(|e| e.to_string())?;
 
     let res = Command::new("cc").args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output();
     let _ = std::fs::remove_dir_all(&tmp);
@@ -93,7 +93,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     }
 }
 
-fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
     flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables
@@ -101,12 +101,6 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
     flags.set("enable_multi_ret_implicit_sret", "true")?;
     let isa = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())?.finish(settings::Flags::new(flags))?;
     let mut module = ObjectModule::new(ObjectBuilder::new(isa, "kova", default_libcall_names())?);
-
-    // The file name, read by the runtime for its error messages.
-    let mut name = DataDescription::new();
-    name.define(format!("{file}\0").into_bytes().into_boxed_slice());
-    let id = module.declare_data("kova_file", Linkage::Export, false, false)?;
-    module.define_data(id, &name)?;
 
     let call_conv = module.isa().default_call_conv();
     let config = module.isa().frontend_config();
@@ -169,7 +163,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
                 .iter()
                 .filter_map(|m| match m {
                     Piece::Text(t) => Some(t.as_str()),
-                    Piece::File => Some(file),
+                    Piece::File(i) => Some(files[*i].as_str()),
                     Piece::Value(..) | Piece::Label(_) => None,
                 })
                 .collect(),
@@ -198,7 +192,7 @@ fn make_object(p: &Program, file: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             write_value: module.declare_func_in_func(rt.write_value, b.func),
             stop: module.declare_func_in_func(rt.fail, b.func),
             texts,
-            file: file.to_string(),
+            files: files.to_vec(),
         };
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail, strings, lists }.function(f, &refs, rt_print, config);
@@ -245,7 +239,7 @@ struct Fail {
     write_value: FuncRef,
     stop: FuncRef,
     texts: HashMap<String, GlobalValue>,
-    file: String,
+    files: Vec<String>,
 }
 
 impl Generator<'_> {
@@ -309,7 +303,7 @@ impl Generator<'_> {
         b.set_cold_block(fault_block);
         b.ins().brif(cond, fault_block, &[], next, &[]);
         b.switch_to_block(fault_block);
-        let args = [runtime_text(fault.key()), loc.line as i64, loc.col as i64].map(|v| b.ins().iconst(I64, v));
+        let args = [runtime_text(fault.key()), loc.packed(), loc.col as i64].map(|v| b.ins().iconst(I64, v));
         b.ins().call(self.rt_fault, &args);
         b.ins().trap(TrapCode::unwrap_user(1));
         b.switch_to_block(next);
@@ -422,7 +416,7 @@ impl Generator<'_> {
             }
             Inst::ListCheck(l, i, loc) => {
                 let (l, i) = (self.read(*l), self.read(*i));
-                let line = self.b.ins().iconst(I64, loc.line as i64);
+                let line = self.b.ins().iconst(I64, loc.packed());
                 let col = self.b.ins().iconst(I64, loc.col as i64);
                 self.list_call(L_CHECK, &[l, i, line, col]);
             }
@@ -478,7 +472,7 @@ impl Generator<'_> {
                             continue;
                         }
                         Piece::Text(t) => t,
-                        Piece::File => &self.fail.file,
+                        Piece::File(i) => &self.fail.files[*i],
                     };
                     let address = self.b.ins().symbol_value(I64, self.fail.texts[t]);
                     let n = self.b.ins().iconst(I64, t.len() as i64);
