@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Makes file managers (Dolphin, Nautilus…) see `.kova` files as Kova source, not C.
+     Install: see editors/mime/install.sh -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-kova">
+    <comment>Kova source code</comment>
+    <comment xml:lang="fr">code source Kova</comment>
+    <sub-class-of type="text/plain"/>
+    <icon name="text-x-kova"/>
+    <glob pattern="*.kova" weight="80"/>
+  </mime-type>
+</mime-info>
