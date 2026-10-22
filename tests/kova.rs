@@ -275,7 +275,7 @@ fn static_executable() {
     }
     let exe = std::env::temp_dir().join(format!("kova-static-{}{EXE}", std::process::id()));
     let out = kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).output().unwrap();
-    assert!(out.status.success() && out.stderr.is_empty(), "{}", text(&out.stderr));
+    assert!(out.status.success() && text(&out.stderr).starts_with("✓ "), "{}", text(&out.stderr));
     let elf = std::fs::read(&exe).unwrap();
     let _ = std::fs::remove_file(&exe);
     let number = |at: usize, n: usize| elf[at..at + n].iter().rev().fold(0usize, |v, &b| v << 8 | b as usize);
@@ -296,7 +296,11 @@ fn cross_build() {
         if text(&out.stderr).contains("rustup target add") {
             continue;
         }
-        assert!(out.status.success() && out.stderr.is_empty(), "{target}: {}", text(&out.stderr));
+        // The report: the file, the system, its size and the time taken.
+        let report = text(&out.stderr);
+        let title = [("linux", "Linux"), ("windows", "Windows"), ("mac", "Mac")].iter().find(|(n, _)| *n == target).unwrap().1;
+        assert!(out.status.success() && report.starts_with(&format!("✓ {}", dir.join(file).display())), "{target}: {report}");
+        assert!(report.contains(&format!(" ({title}, ")) && report.contains(" KB) in ") && report.lines().count() == 1, "{report}");
         assert!(std::fs::read(dir.join(file)).unwrap().starts_with(start), "{target}");
         std::fs::remove_file(dir.join(file)).unwrap();
     }

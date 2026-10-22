@@ -63,6 +63,15 @@ impl Target {
         }
     }
 
+    /// Its name in `kova build`'s report.
+    pub fn title(self) -> &'static str {
+        match self {
+            Target::Linux => "Linux",
+            Target::Windows => "Windows",
+            Target::Mac => "Mac",
+        }
+    }
+
     /// The end of its executables' names.
     pub fn suffix(self) -> &'static str {
         if self == Target::Windows { ".exe" } else { "" }

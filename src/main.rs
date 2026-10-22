@@ -32,6 +32,7 @@ enum Command {
 }
 
 fn main() {
+    let started = std::time::Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
@@ -121,6 +122,13 @@ fn main() {
             if let Err(e) = codegen::build(&program, &files, &output, lang, target) {
                 fail(e);
             }
+            // One line on stderr, never mixed with what the program prints: `✓ hello.exe
+            // (Windows, 22 KB) in 12 ms` (user, 2026-10-23).
+            let system = target.or(codegen::Target::host()).map_or(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH), |t| t.title().to_string());
+            let size = std::fs::metadata(&output).map_or(0, |m| m.len()).div_ceil(1024);
+            let ms = started.elapsed().as_millis();
+            let time = if ms < 1000 { format!("{ms} ms") } else { format!("{}{}{} s", ms / 1000, t!("decimal_mark"), ms % 1000 / 100) };
+            eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));
         }
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
     }

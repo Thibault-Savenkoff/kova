@@ -31,6 +31,8 @@ lang fr {
     not_static := "remarque : cet exécutable a besoin de la bibliothèque C d'un Linux comme le tien. Pour qu'il marche sur n'importe quel Linux, installe musl (Fedora : `sudo dnf install musl-gcc musl-libc-static`)"
     no_runtime := "ce `kova` ne sait pas faire d'exécutables pour {target} : la bibliothèque de Rust pour ce système n'était pas installée quand kova a été construit. Installe-la avec `rustup target add {triple}`, puis reconstruis kova (`cargo install --path . --locked`)"
     unknown_target := "système `{name}` inconnu après `--target` : Kova connaît {names}"
+    built := "✓ {file} ({system}, {size} Ko) en {time}"
+    decimal_mark := ","
     cc_missing := "impossible de lancer `cc` (il sert à assembler l'exécutable) : {error}"
     cc_failed := "`cc` a échoué :\n{output}"
     tests_none := "aucun bloc `test` dans {file}"
