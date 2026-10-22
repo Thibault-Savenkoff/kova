@@ -48,6 +48,10 @@ fn or_else<T>(x: T?, d: T) -> T {
     return d.clone
 }
 
+fn show<T>(x: T) {
+    print(x)
+}
+
 interface Animal {
     fn sound(self) -> String
 }
@@ -98,6 +102,10 @@ fn main {
     let nobody: String? := none
     print(or_else(nobody, "nobody"))
     print(or_else(x, "nobody"))
+    show(1)
+    show("s")
+    show(rex)
+    show((2, 'c'))
 }
 // expect: 4
 // expect: 2.5
@@ -119,3 +127,7 @@ fn main {
 // expect: 5
 // expect: nobody
 // expect: right
+// expect: 1
+// expect: s
+// expect: Rex
+// expect: (2, 'c')

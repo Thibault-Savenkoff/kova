@@ -21,6 +21,9 @@ fn k(a: Animal) {
 }
 fn swap(a: var any Animal) {
 }
+fn wrap<T: Animal>(x: move T) -> any Animal {
+    return x
+}
 fn main {
     let a: any Animal := 5
     let b: any Animal := Rock { weight := 3 }
@@ -47,3 +50,4 @@ fn main {
 // error: `leave` takes `move self`: calling it on an `any` value comes later
 // error: a `var any Animal` parameter needs a variable of type `any Animal`
 // error: `any Animal` has no method `fly`
+// error: a `T` cannot become an `any Animal` yet: take an `any Animal` parameter instead

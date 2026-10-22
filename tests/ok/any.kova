@@ -41,6 +41,23 @@ struct Label : Shape, Display {
     fn to_string(self) -> String { return "label {self.text}" }
 }
 
+fn tweak(a: var any Animal) {
+    a.rename("y")
+}
+
+struct Zoo {
+    pet: any Animal
+}
+
+struct Stack<T> {
+    items: List<T>
+    fn push(var self, x: move T) { self.items.add(move x) }
+    fn pop(var self) -> T? {
+        if self.items.length = 0 { return none }
+        return self.items.remove(self.items.length - 1)
+    }
+}
+
 fn describe(a: any Animal) -> String {
     return a.introduce
 }
@@ -85,6 +102,25 @@ fn main {
     var one: any Display := Cat { lives := 1 }
     one := Label { text := "w" }
     print(one)
+    var d: any Animal := Dog { name := "Rex" }
+    d.rename("Max")
+    print(d)
+    tweak(var d)
+    print(d)
+    pets[0].rename("Odie")
+    print(pets[0])
+    let zoo := Zoo { pet := Dog { name := "Z" } }
+    print(zoo)
+    let bob := Dog { name := "Bob" }
+    let zoo2 := Zoo { pet := bob }
+    print(zoo2.pet.sound)
+    var st := Stack<any Animal> { items := [] }
+    st.push(Cat { lives := 2 })
+    st.push(Dog { name := "S" })
+    print(st.pop)
+    print(st)
+    let pair: (Int, any Animal) := (1, Dog { name := "P" })
+    print(pair)
 }
 // expect: I say woof
 // expect: Rex
@@ -101,3 +137,11 @@ fn main {
 // expect: thing: a cat with 2 lives
 // expect: thing: label z
 // expect: label w
+// expect: Dog { name: "Max" }
+// expect: Dog { name: "y" }
+// expect: Dog { name: "Odie" }
+// expect: Zoo { pet: Dog { name: "Z" } }
+// expect: woof
+// expect: Dog { name: "S" }
+// expect: Stack<any Animal> { items: [a cat with 2 lives] }
+// expect: (1, Dog { name: "P" })

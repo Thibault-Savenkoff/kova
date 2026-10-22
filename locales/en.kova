@@ -334,6 +334,7 @@ lang en {
     any_needs_follow := "`{type}` does not follow `{interface}`: write `struct {type} : {interface}` with its methods"
     any_struct_only := "an `any {interface}` holds a struct or an enum following `{interface}`"
     var_arg_any := "`{arg}` has type `{type}`: a `var {declared}` parameter needs a variable of type `{declared}`"
+    any_param_later := "a `{type}` cannot become an `any {interface}` yet: take an `any {interface}` parameter instead"
     any_compare_help := "two `{type}` values may hold different types: compare what their methods give"
     any_display_help := "`print({code})` shows it for debugging; for a text, use a method of `{interface}` that gives a String, or `any Display`"
     any_move_self_later := "`{name}` takes `move self`: calling it on an `any` value comes later"

@@ -1535,7 +1535,9 @@ impl Checker<'_> {
                 self.boxes[e.id] = Some(i.clone());
             } else if t != *expected && t != Type::Error {
                 let mut d = Diag::new(e.span, t!("types_differ", expected = expected.text(), given = t.text()));
-                if matches!(t, Type::Struct(_) | Type::Enum(_)) && !matches!(&t, Type::Struct(s) if !s.args.is_empty()) {
+                if let Type::Param(p) = &t {
+                    d = d.help(t!("any_param_later", type = p.name, interface = i));
+                } else if matches!(t, Type::Struct(_) | Type::Enum(_)) && !matches!(&t, Type::Struct(s) if !s.args.is_empty()) {
                     d = d.help(t!("any_needs_follow", type = t.text(), interface = i));
                 } else if !matches!(t, Type::Any(_)) {
                     d = d.help(t!("any_struct_only", interface = i));
