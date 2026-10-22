@@ -1,7 +1,7 @@
 // Native backend (`kova build`): KIR → machine code with Cranelift → `main.o`,
 // with the runtime's texts as data (`runtime_texts`), then Kova's own linker (src/link.rs) glues
-// it and the runtime (in Rust, `RUNTIME`) into an executable. On a Mac, `cc` links them to
-// libSystem; on the systems the Rust runtime doesn't know yet, `cc` compiles the C runtime.
+// it and the runtime (in Rust, `RUNTIME`) into an executable. On an Intel Mac, `cc` links them;
+// on the systems the Rust runtime doesn't know yet, `cc` compiles the C runtime.
 //
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
@@ -31,11 +31,17 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     let object = make_object(p, files, lang).map_err(|e| t!("codegen_failed", error = e))?;
     // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
     let rust = !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none();
-    if rust && cfg!(all(any(target_os = "linux", windows), target_arch = "x86_64")) {
+    if rust && cfg!(any(all(any(target_os = "linux", windows), target_arch = "x86_64"), all(target_os = "macos", target_arch = "aarch64"))) {
         // Kova's own linker: no `cc`, nor Microsoft's linker (src/link.rs).
-        let link = if cfg!(windows) { crate::link::pe } else { crate::link::elf };
-        let exe = link(&object, RUNTIME).map_err(|e| t!("codegen_failed", error = e))?;
-        return write_executable(output, &exe);
+        let exe = if cfg!(windows) {
+            crate::link::pe(&object, RUNTIME)
+        } else if cfg!(target_os = "macos") {
+            let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy());
+            crate::link::macho(&object, RUNTIME, &name)
+        } else {
+            crate::link::elf(&object, RUNTIME)
+        };
+        return write_executable(output, &exe.map_err(|e| t!("codegen_failed", error = e))?);
     }
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
@@ -45,8 +51,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     if rust {
         let a = tmp.join("runtime.a");
         std::fs::write(&a, RUNTIME).map_err(|e| e.to_string())?;
-        // The runtime brings its own entry point and asks nothing of the C library.
-        // macOS: linked to libSystem, as Apple wants (runtime/macos.rs).
+        // An Intel Mac: linked to libSystem, as Apple wants (runtime/macos.rs).
         let res = Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output();
         let _ = std::fs::remove_dir_all(&tmp);
         return linked(res);

@@ -10,8 +10,10 @@
 // 4. Each relocation is written: the address (or the distance to it) the code needs.
 //
 // `elf`: Linux x86-64, a static executable (no dynamic linker). `pe`: Windows x86-64, whose
-// functions come from `kernel32.dll` through its import table.
+// functions come from `kernel32.dll` through its import table. `macho`: macOS arm64, whose
+// functions come from `libSystem` through `dyld`, signed as the Mac requires.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use object::read::archive::ArchiveFile;
@@ -86,7 +88,8 @@ impl<'a> Inputs<'a> {
 
     fn target(&self, k: usize, t: RelocationTarget) -> Result<Target, String> {
         let s = match t {
-            RelocationTarget::Section(i) => return Ok(Target::At((k, i), 0)),
+            // Mach-O: the place holds the target's address in its object, from its section's.
+            RelocationTarget::Section(i) => return Ok(Target::At((k, i), 0u64.wrapping_sub(self.section((k, i))?.address()))),
             RelocationTarget::Symbol(i) => self.objects[k].symbol_by_index(i).map_err(error)?,
             _ => return Err("absolute relocation".into()),
         };
@@ -212,16 +215,17 @@ impl<'a> Inputs<'a> {
             for (r_offset, r) in section.relocations() {
                 let t = self.target(p.0, r.target())?;
                 let at = o + r_offset as usize;
-                // COFF keeps a part of the value in the code itself.
+                // COFF keeps a part of the value in the code itself; Mach-O only in a pointer
+                // (arm64 instructions get theirs from a relocation of their own).
                 let mut a = r.addend();
-                if r.has_implicit_addend() {
+                if r.has_implicit_addend() && !matches!(r.flags(), RelocationFlags::MachO { r_type, .. } if r_type != object::macho::ARM64_RELOC_UNSIGNED) {
                     a += match r.size() {
                         32 => i32::from_le_bytes(out[at..at + 4].try_into().unwrap()) as i64,
                         64 => i64::from_le_bytes(out[at..at + 8].try_into().unwrap()),
                         n => return Err(format!("relocation of {n} bits")),
                     };
                 }
-                let value = address_of(&t)? as i64 + a;
+                let value = (address_of(&t)? as i64).wrapping_add(a);
                 apply(&mut out[at..], &r, &t, address[&p] + r_offset, value).map_err(|e| format!("{e} in `{}`", section.name().unwrap_or("?")))?;
             }
         }
@@ -531,4 +535,376 @@ fn tables_size(imports: &[String]) -> u64 {
     let n = imports.len() as u64;
     let names: u64 = imports.iter().map(|f| align(2 + f.len() as u64 + 1, 2)).sum();
     16 * (n + 1) + 40 + 16 + names
+}
+
+// ---- macOS: Mach-O ----
+
+/// Under it, 4 GB that no address may be in (`__PAGEZERO`): a pointer cut to 32 bits faults.
+const MACHO_BASE: u64 = 0x1_0000_0000;
+/// The Mac's pages on arm64.
+const MACHO_PAGE: u64 = 0x4000;
+/// The header's commands (see `macho`).
+const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16;
+
+fn macho_got(flags: RelocationFlags) -> bool {
+    use object::macho::*;
+    matches!(flags, RelocationFlags::MachO { r_type: ARM64_RELOC_GOT_LOAD_PAGE21 | ARM64_RELOC_GOT_LOAD_PAGEOFF12 | ARM64_RELOC_POINTER_TO_GOT, .. })
+}
+
+/// The executable of `main` and `runtime` for macOS arm64, named `name`. Four segments: none at
+/// the bottom, `__TEXT` (headers, code, then the stubs that jump to `libSystem`'s functions,
+/// constants), `__DATA` (the GOT, data, zeros), `__LINKEDIT` (what `dyld` writes at launch, then
+/// the signature). An arm64 Mac starts a program anywhere in memory: each address the program
+/// holds is listed ("rebase") for `dyld` to move it, and each function of `libSystem` it reads
+/// ("bind") for `dyld` to write it.
+pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    let inputs = Inputs::read(main, runtime, true)?;
+    let mut r = inputs.reach("_main", macho_got)?;
+    let parts = inputs.sorted(&mut r)?;
+    // ponytail: the runtime's code is one section, kept whole (76 KB); split it by symbol
+    // (`subsections_via_symbols`) if the executables' size matters.
+    for f in &r.imports {
+        let t = Target::Import(f.clone(), false);
+        if !r.got.contains(&t) {
+            r.got.push(t); // its stub reads it
+        }
+    }
+    let n = r.imports.len() as u64;
+    let split = |part| r.kept.iter().position(|p| parts[p] >= part).unwrap_or(r.kept.len());
+    let (constants, data) = (split(Part::Constants), split(Part::Data));
+
+    let mut address = HashMap::new();
+    let code_at = MACHO_BASE + 32 + COMMANDS;
+    let stubs = align(inputs.place(&r.kept[..constants], code_at, |_, _| {}, &mut address)?, 4);
+    let text_end = inputs.place(&r.kept[constants..data], stubs + 12 * n, |_, _| {}, &mut address)?;
+    let data_at = align(text_end, MACHO_PAGE);
+    let got_at = data_at;
+    let mut zeros = None;
+    let end = inputs.place(
+        &r.kept[data..],
+        got_at + 8 * r.got.len() as u64,
+        |part, at| {
+            if part == Part::Zeros && zeros.is_none() {
+                zeros = Some(*at)
+            }
+        },
+        &mut address,
+    )?;
+    let zeros = zeros.unwrap_or(end);
+    // Whole pages in the file; the zeros after them only in memory.
+    let data_file = align(zeros - data_at, MACHO_PAGE);
+    let data_size = align(end - data_at, MACHO_PAGE).max(data_file);
+    let linkedit = data_at - MACHO_BASE + data_file;
+
+    let offset = |a: u64| (a - MACHO_BASE) as usize;
+    let mut out = vec![0u8; linkedit as usize];
+    let slot = |t: &Target| got_at + 8 * r.got.iter().position(|g| g == t).unwrap() as u64;
+    let stub = |f: &str| stubs + 12 * r.imports.iter().position(|g| g == f).unwrap() as u64;
+    let address_of = |t: &Target| match t {
+        Target::At(p, off) => Ok(address[p].wrapping_add(*off)),
+        Target::Nothing => Ok(0),
+        Target::Import(f, _) => Ok(stub(f)),
+    };
+    // The addresses `dyld` writes: the program's own, moved with it (`None`), or a function's.
+    let fixups: RefCell<Vec<(u64, Option<String>)>> = RefCell::new(vec![]);
+    let apply = |out: &mut [u8], rel: &object::Relocation, t: &Target, place: u64, value: i64| {
+        use object::macho::*;
+        let RelocationFlags::MachO { r_type, .. } = rel.flags() else { return Err("not a Mach-O relocation".to_string()) };
+        if rel.subtractor().is_some() {
+            return Err("relocation with a subtractor".into());
+        }
+        match r_type {
+            ARM64_RELOC_UNSIGNED if rel.size() == 64 => {
+                if place < data_at {
+                    return Err("an address outside the data".into());
+                }
+                match t {
+                    Target::Import(f, _) if value == stub(f) as i64 => Ok(fixups.borrow_mut().push((place, Some(f.clone())))),
+                    Target::Import(..) => Err("an address inside a function of the system".into()),
+                    Target::Nothing => put(out, 0, 64),
+                    Target::At(..) => {
+                        fixups.borrow_mut().push((place, None));
+                        put(out, value, 64)
+                    }
+                }
+            }
+            ARM64_RELOC_BRANCH26 => branch(out, value - place as i64),
+            ARM64_RELOC_PAGE21 => page(out, value, place),
+            ARM64_RELOC_PAGEOFF12 => in_page(out, value),
+            ARM64_RELOC_GOT_LOAD_PAGE21 => page(out, slot(t) as i64 + rel.addend(), place),
+            ARM64_RELOC_GOT_LOAD_PAGEOFF12 => in_page(out, slot(t) as i64 + rel.addend()),
+            ARM64_RELOC_POINTER_TO_GOT => put(out, slot(t) as i64 - place as i64, 32),
+            _ => Err(format!("relocation of type {r_type}")),
+        }
+    };
+    inputs.write(&r.kept, &address, offset, &mut out, address_of, apply)?;
+    let mut fixups = fixups.into_inner();
+
+    for (k, t) in r.got.iter().enumerate() {
+        let at = got_at + 8 * k as u64;
+        match t {
+            Target::Import(f, _) => fixups.push((at, Some(f.clone()))),
+            Target::At(..) => {
+                fixups.push((at, None));
+                put(&mut out[offset(at)..], address_of(t)? as i64, 64)?;
+            }
+            Target::Nothing => {}
+        }
+    }
+    for f in &r.imports {
+        // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
+        let (s, g) = (stub(f), slot(&Target::Import(f.clone(), false)) as i64);
+        let o = offset(s);
+        for (k, insn) in [0x9000_0010u32, 0xF940_0210, 0xD61F_0200].into_iter().enumerate() {
+            out[o + 4 * k..o + 4 * k + 4].copy_from_slice(&insn.to_le_bytes());
+        }
+        page(&mut out[o..], g, s)?;
+        in_page(&mut out[o + 4..], g)?;
+    }
+
+    // What `dyld` reads: each address to move (segment 2 = `__DATA`, its place in it), then each
+    // function to write (from library 1 = `libSystem`).
+    fixups.sort();
+    let (mut rebase, mut bind) = (vec![0x11], vec![]); // pointers
+    for (at, f) in &fixups {
+        match f {
+            None => {
+                rebase.push(0x22);
+                uleb(&mut rebase, at - data_at);
+                rebase.push(0x51); // once
+            }
+            Some(f) => {
+                bind.extend_from_slice(&[0x11, 0x40]);
+                bind.extend_from_slice(f.as_bytes());
+                bind.extend_from_slice(&[0, 0x51, 0x72]);
+                uleb(&mut bind, at - data_at);
+                bind.push(0x90);
+            }
+        }
+    }
+    for b in [&mut rebase, &mut bind] {
+        b.push(0);
+        b.resize(align(b.len() as u64, 8) as usize, 0);
+    }
+    let (rebase_at, bind_at) = (linkedit, linkedit + rebase.len() as u64);
+    let strings = bind_at + bind.len() as u64; // no symbols: an empty table of names
+    let signed = align(strings + 8, 16);
+    let pages = signed.div_ceil(SIGNED_PAGE);
+    let signature_size = 20 + 88 + name.len() as u64 + 1 + 32 * pages;
+    let file_end = signed + signature_size;
+    out.extend_from_slice(&rebase);
+    out.extend_from_slice(&bind);
+    out.resize(signed as usize, 0);
+
+    let mut h = Vec::new();
+    let le32 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&(v as u32).to_le_bytes());
+    let le64 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&v.to_le_bytes());
+    let named = |h: &mut Vec<u8>, name: &str, size: usize| {
+        h.extend_from_slice(name.as_bytes());
+        h.resize(h.len() + size - name.len(), 0);
+    };
+    // 64 bits, arm64, an executable; no undefined names, linked by dyld, two-level names, PIE.
+    for v in [0xFEED_FACF, 0x0100_000C, 0, 2, 12, COMMANDS, 0x20_0085, 0] {
+        le32(&mut h, v);
+    }
+    let segment = |h: &mut Vec<u8>, name: &str, at: u64, size: u64, file: u64, file_size: u64, rights: u64, sections: u64| {
+        le32(h, 0x19);
+        le32(h, 72 + 80 * sections);
+        named(h, name, 16);
+        for v in [at, size, file, file_size] {
+            le64(h, v);
+        }
+        for v in [rights, rights, sections, 0] {
+            le32(h, v);
+        }
+    };
+    segment(&mut h, "__PAGEZERO", 0, MACHO_BASE, 0, 0, 0, 0);
+    segment(&mut h, "__TEXT", MACHO_BASE, data_at - MACHO_BASE, 0, data_at - MACHO_BASE, 5, 1); // read, run
+    named(&mut h, "__text", 16);
+    named(&mut h, "__TEXT", 16);
+    le64(&mut h, code_at);
+    le64(&mut h, stubs + 12 * n - code_at);
+    for v in [code_at - MACHO_BASE, 2, 0, 0, 0x8000_0400, 0, 0, 0] {
+        le32(&mut h, v); // aligned on 4, only instructions
+    }
+    segment(&mut h, "__DATA", data_at, data_size, data_at - MACHO_BASE, data_file, 3, 0); // read, write
+    segment(&mut h, "__LINKEDIT", data_at + data_size, align(file_end - linkedit, MACHO_PAGE), linkedit, file_end - linkedit, 1, 0);
+    for v in [0x8000_0022, 48, rebase_at, rebase.len() as u64, bind_at, bind.len() as u64, 0, 0, 0, 0, 0, 0] {
+        le32(&mut h, v); // LC_DYLD_INFO_ONLY: no weak, lazy nor exported names
+    }
+    for v in [2, 24, strings, 0, strings, 8] {
+        le32(&mut h, v); // LC_SYMTAB
+    }
+    le32(&mut h, 0xB); // LC_DYSYMTAB, empty
+    le32(&mut h, 80);
+    h.resize(h.len() + 72, 0);
+    for v in [0xE, 32, 12] {
+        le32(&mut h, v); // LC_LOAD_DYLINKER
+    }
+    named(&mut h, "/usr/lib/dyld", 20);
+    for v in [0x8000_0028, 24] {
+        le32(&mut h, v); // LC_MAIN
+    }
+    le64(&mut h, address[&r.entry.0] + r.entry.1 - MACHO_BASE);
+    le64(&mut h, 0);
+    for v in [0xC, 56, 24, 2, 0x1_0000, 0x1_0000] {
+        le32(&mut h, v); // LC_LOAD_DYLIB, version 1.0
+    }
+    named(&mut h, "/usr/lib/libSystem.B.dylib", 32);
+    for v in [0x32, 24, 1, 0xB_0000, 0xE_0000, 0] {
+        le32(&mut h, v); // LC_BUILD_VERSION: macOS 11 and later
+    }
+    for v in [0x1D, 16, signed, signature_size] {
+        le32(&mut h, v); // LC_CODE_SIGNATURE
+    }
+    debug_assert_eq!(h.len() as u64, 32 + COMMANDS);
+    out[..h.len()].copy_from_slice(&h);
+    let s = signature(&out, name, data_at - MACHO_BASE);
+    debug_assert_eq!(s.len() as u64, signature_size);
+    out.extend_from_slice(&s);
+    Ok(out)
+}
+
+/// `b` / `bl`: a distance in instructions, within 128 MB.
+fn branch(out: &mut [u8], distance: i64) -> Result<(), String> {
+    if distance % 4 != 0 || !(-(1 << 27)..1 << 27).contains(&distance) {
+        return Err("branch too far".into());
+    }
+    let insn = u32::from_le_bytes(out[..4].try_into().unwrap()) & 0xFC00_0000 | (distance >> 2) as u32 & 0x03FF_FFFF;
+    out[..4].copy_from_slice(&insn.to_le_bytes());
+    Ok(())
+}
+
+/// `adrp`: the distance in pages of 4 KB from the instruction's to `target`'s.
+fn page(out: &mut [u8], target: i64, place: u64) -> Result<(), String> {
+    let pages = (target >> 12) - (place as i64 >> 12);
+    if !(-(1 << 20)..1 << 20).contains(&pages) {
+        return Err("address too far".into());
+    }
+    let insn = u32::from_le_bytes(out[..4].try_into().unwrap()) & 0x9F00_001F | ((pages & 3) as u32) << 29 | ((pages >> 2) as u32 & 0x7_FFFF) << 5;
+    out[..4].copy_from_slice(&insn.to_le_bytes());
+    Ok(())
+}
+
+/// After an `adrp`: `target`'s place in its page, counted in the size a load or store reads.
+fn in_page(out: &mut [u8], target: i64) -> Result<(), String> {
+    let insn = u32::from_le_bytes(out[..4].try_into().unwrap());
+    let mut scale = 0;
+    if insn & 0x3B00_0000 == 0x3900_0000 {
+        scale = insn >> 30;
+        if scale == 0 && insn & 0x0480_0000 == 0x0480_0000 {
+            scale = 4; // 128 bits
+        }
+    }
+    let low = (target & 0xFFF) as u32;
+    if low % (1 << scale) != 0 {
+        return Err("misaligned address".into());
+    }
+    let insn = insn & 0xFFC0_03FF | (low >> scale) << 10;
+    out[..4].copy_from_slice(&insn.to_le_bytes());
+    Ok(())
+}
+
+fn uleb(out: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7F) as u8;
+        v >>= 7;
+        if v == 0 {
+            return out.push(byte);
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// The pages the signature checks one by one.
+const SIGNED_PAGE: u64 = 0x1000;
+
+/// The "ad-hoc" signature of `file` (everything before it), as Apple's linker makes it: a
+/// "code directory" with the SHA-256 of each page, signed by no one; an arm64 Mac starts nothing
+/// without it. `text_size`: where the code ends.
+fn signature(file: &[u8], name: &str, text_size: u64) -> Vec<u8> {
+    let pages = file.len().div_ceil(SIGNED_PAGE as usize) as u64;
+    let identifier = name.len() as u64 + 1;
+    let directory = 88 + identifier + 32 * pages;
+    let mut s = Vec::new();
+    let be32 = |s: &mut Vec<u8>, v: u64| s.extend_from_slice(&(v as u32).to_be_bytes());
+    let be64 = |s: &mut Vec<u8>, v: u64| s.extend_from_slice(&v.to_be_bytes());
+    // The blob holding the others (one: the code directory, at 20).
+    for v in [0xFADE_0CC0, 20 + directory, 1, 0, 20] {
+        be32(&mut s, v);
+    }
+    // Version 2.4; ad-hoc, by a linker; where the hashes and the name are; no special slots.
+    for v in [0xFADE_0C02, directory, 0x2_0400, 0x2_0002, 88 + identifier, 88, 0, pages, file.len() as u64] {
+        be32(&mut s, v);
+    }
+    s.extend_from_slice(&[32, 2, 0, 12]); // SHA-256 of 32 bytes, pages of 2^12
+    for _ in 0..4 {
+        be32(&mut s, 0);
+    }
+    for v in [0, 0, text_size, 1] {
+        be64(&mut s, v); // the code: from 0 to `text_size`, of the main program
+    }
+    s.extend_from_slice(name.as_bytes());
+    s.push(0);
+    for page in file.chunks(SIGNED_PAGE as usize) {
+        s.extend_from_slice(&sha256(page));
+    }
+    s
+}
+
+/// SHA-256 (FIPS 180-4).
+fn sha256(data: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let mut m = data.to_vec();
+    m.push(0x80);
+    while m.len() % 64 != 56 {
+        m.push(0);
+    }
+    m.extend_from_slice(&(data.len() as u64 * 8).to_be_bytes());
+    for block in m.chunks(64) {
+        let mut w = [0u32; 64];
+        for i in 0..64 {
+            w[i] = if i < 16 {
+                u32::from_be_bytes(block[4 * i..4 * i + 4].try_into().unwrap())
+            } else {
+                let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+                let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+                w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1)
+            };
+        }
+        let mut v = h;
+        for i in 0..64 {
+            let [a, b, c, d, e, f, g, hh] = v;
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let t1 = hh.wrapping_add(s1).wrapping_add((e & f) ^ (!e & g)).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let t2 = s0.wrapping_add((a & b) ^ (a & c) ^ (b & c));
+            v = [t1.wrapping_add(t2), a, b, c, d.wrapping_add(t1), e, f, g];
+        }
+        for i in 0..8 {
+            h[i] = h[i].wrapping_add(v[i]);
+        }
+    }
+    let mut out = [0; 32];
+    for (i, x) in h.iter().enumerate() {
+        out[4 * i..4 * i + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sha256() {
+        let hex = |d: [u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(hex(super::sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(hex(super::sha256(&[b'a'; 56])), "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a");
+        assert_eq!(hex(super::sha256(&[7; 1000])), "df1329c8b6c7cf3740bbe2f8bab34d253a8d9534a79dceea18177081fdf9f0e9");
+    }
 }
