@@ -285,6 +285,8 @@ lang fr {
     bind_on_enum := "`{name}` seul reçoit la valeur d'un optionnel (`T?`) ; `{type}` est un enum : écris une de ses variantes"
     try_borrowed := "`{name}?` sort la valeur de `{name}`, mais `{name}` est seulement emprunté ici"
     try_borrowed_help := "pour seulement la lire : `if {name} != none \{ … \}`"
+    interp_optional := "`{code}` peut valoir `none` : un texte ne peut pas l'afficher"
+    interp_optional_help := "vérifie-le d'abord : `if {code} != none \{ … \}`, ou choisis le texte avec `match {code} \{ none => …, v => … \}`"
     case_value := "un nom pour la valeur (`x => …`)"
 
     // ---- Editor (`kova lsp`) ----

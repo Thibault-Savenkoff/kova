@@ -75,7 +75,8 @@ fn main {
     let stray := Dog { name := "Max", owner := none }
     print(rex)
     print(stray)
-    print("{stray.owner} / {rex.owner}")
+    print(stray.owner)
+    print(rex.owner)
     let maybe: List<Int?> := [1, none, 3]
     print(maybe)
     var total: Int := 0
@@ -112,7 +113,8 @@ fn main {
 // expect: true
 // expect: Dog { name: "Rex", owner: "Ann" }
 // expect: Dog { name: "Max", owner: none }
-// expect: none / "Ann"
+// expect: none
+// expect: "Ann"
 // expect: [1, none, 3]
 // expect: 4
 // expect: 2.0

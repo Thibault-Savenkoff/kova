@@ -285,6 +285,8 @@ lang en {
     bind_on_enum := "`{name}` alone matches the value of an optional (`T?`); `{type}` is an enum: write one of its variants"
     try_borrowed := "`{name}?` takes the value out of `{name}`, but `{name}` is only borrowed here"
     try_borrowed_help := "to only read it: `if {name} != none \{ … \}`"
+    interp_optional := "`{code}` may be `none`: a text cannot show it"
+    interp_optional_help := "check it first: `if {code} != none \{ … \}`, or choose the text with `match {code} \{ none => …, v => … \}`"
     case_value := "a name for the value (`x => …`)"
 
     // ---- Editor (`kova lsp`) ----

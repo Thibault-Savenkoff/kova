@@ -647,8 +647,17 @@ impl Checker<'_> {
     fn parts(&mut self, parts: &[Part]) {
         for p in parts {
             let Part::Code(e) = p else { continue };
-            if self.expr(e) == Type::Unit {
-                self.error(e.span, t!("interp_no_value"));
+            match self.expr(e) {
+                Type::Unit => self.error(e.span, t!("interp_no_value")),
+                // A `none` written into a text for people is a mistake of older languages
+                // (`undefined`, `None`): the program says what to write instead.
+                Type::Optional(_) => {
+                    let code = &self.src[e.span.start..e.span.end];
+                    self.diags.push(
+                        Diag::new(e.span, t!("interp_optional", code = code)).help(t!("interp_optional_help", code = code)),
+                    );
+                }
+                _ => {}
             }
         }
     }

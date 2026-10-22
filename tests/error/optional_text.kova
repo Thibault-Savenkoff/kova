@@ -1,0 +1,9 @@
+fn main {
+    let name: String? := "Ann"
+    print("hello {name}")
+    if name != none {
+        print("hello {name}")
+    }
+}
+// error: `name` may be `none`: a text cannot show it
+// error: check it first: `if name != none { … }`
