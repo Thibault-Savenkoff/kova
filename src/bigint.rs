@@ -1,9 +1,13 @@
 // `BigInt` under `kova run`: a value is its decimal text, like "-42", without leading zeros
-// ("0" is never negative). `runtime/runtime.c` does the same in `kova_big_*` for `kova build`.
+// ("0" is never negative). The runtime of `kova build` uses this file too (runtime/), so only
+// `core` and `alloc` here.
 // ponytail: one decimal digit at a time, O(n²) for `*` and `/`; limbs of 9 digits when big
 // numbers get thousands of digits long.
 
-use std::cmp::Ordering;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::{format, vec};
+use core::cmp::Ordering;
 
 /// The sign and the digits, the units first: "-120" → (true, [0, 2, 1]).
 fn split(s: &str) -> (bool, Vec<u8>) {

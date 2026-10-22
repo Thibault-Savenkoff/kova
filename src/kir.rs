@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
+pub use crate::shared::{case_of, float_text, parse_float, parse_int};
 use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
@@ -400,87 +401,6 @@ pub fn string_op(name: &str) -> Option<StrOp> {
     })
 }
 
-/// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
-/// any other character stays. The same table as `case_of` in `runtime/runtime.c` (Rust's own
-/// `to_uppercase` knows all of Unicode, the C runtime does not: run and build must agree).
-pub fn case_of(c: char, upper: bool) -> char {
-    let c = c as u32;
-    let pairs = |c: u32, even_upper: bool| {
-        let ranges: &[(u32, u32)] = if even_upper { &[(0x100, 0x12F), (0x132, 0x137), (0x14A, 0x177)] } else { &[(0x139, 0x148), (0x179, 0x17E)] };
-        ranges.iter().any(|&(a, b)| (a..=b).contains(&c))
-    };
-    let code = if upper {
-        match c {
-            0x61..=0x7A | 0x3B1..=0x3C9 | 0x430..=0x44F if c != 0x3C2 => c - 32,
-            0xE0..=0xFE if c != 0xF7 => c - 32,
-            0xFF => 0x178,
-            0x3C2 => 0x3A3,
-            0x450..=0x45F => c - 80,
-            _ if pairs(c, true) && c % 2 == 1 => c - 1,
-            _ if pairs(c, false) && c % 2 == 0 => c - 1,
-            _ => c,
-        }
-    } else {
-        match c {
-            0x41..=0x5A | 0x391..=0x3A9 | 0x410..=0x42F if c != 0x3A2 => c + 32,
-            0xC0..=0xDE if c != 0xD7 => c + 32,
-            0x178 => 0xFF,
-            0x400..=0x40F => c + 80,
-            _ if pairs(c, true) && c % 2 == 0 => c + 1,
-            _ if pairs(c, false) && c % 2 == 1 => c + 1,
-            _ => c,
-        }
-    };
-    char::from_u32(code).expect("a letter of the table")
-}
-
-/// `s.to_float`: an optional `-`, digits, then maybe `.` and digits, then maybe `e`, a sign and
-/// digits (same rule as `parse_float` in `runtime/runtime.c`); `None` if infinite.
-pub fn parse_float(s: &str) -> Option<f64> {
-    let b = s.as_bytes();
-    let mut i = 0;
-    let digits = |i: &mut usize| {
-        let d = *i;
-        while *i < b.len() && b[*i].is_ascii_digit() {
-            *i += 1;
-        }
-        *i > d
-    };
-    if b.first() == Some(&b'-') {
-        i += 1;
-    }
-    if !digits(&mut i) {
-        return None;
-    }
-    if b.get(i) == Some(&b'.') {
-        i += 1;
-        if !digits(&mut i) {
-            return None;
-        }
-    }
-    if matches!(b.get(i), Some(b'e' | b'E')) {
-        i += 1;
-        if matches!(b.get(i), Some(b'+' | b'-')) {
-            i += 1;
-        }
-        if !digits(&mut i) {
-            return None;
-        }
-    }
-    let v: f64 = if i == b.len() { s.parse().ok()? } else { return None };
-    v.is_finite().then_some(v)
-}
-
-/// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
-/// (same rule as `parse_int` in `runtime/runtime.c`).
-pub fn parse_int(s: &str) -> Option<i64> {
-    let digits = s.strip_prefix('-').unwrap_or(s);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    s.parse().ok()
-}
-
 /// A piece of the message of a broken contract.
 pub enum Piece {
     Text(String),
@@ -597,93 +517,6 @@ impl Fault {
             Fault::EmptyRange => "fault_empty_range",
         }
     }
-}
-
-/// A Float the way Kova shows it: `3.0`, `0.30000000000000004`, `1e16`, `NaN`, `-inf`.
-///
-/// The shortest digits that give back exactly the number (on a tie, the even digit,
-/// like Python). Scientific notation below 0.0001 and from 10^16 on.
-/// The C runtime (`write_float`) does exactly the same computation, step by step.
-pub fn float_text(x: f64) -> String {
-    if x.is_nan() {
-        return "NaN".into();
-    }
-    if x.is_infinite() {
-        return if x > 0.0 { "inf" } else { "-inf" }.into();
-    }
-    let a = x.abs();
-    let (digits, exp) = shortest(a);
-    let digits: String = digits.iter().map(|d| (b'0' + d) as char).collect();
-    let n = digits.len() as i32;
-    let body = if a == 0.0 || (1e-4..1e16).contains(&a) {
-        if exp >= 0 {
-            let int_part: String =
-                (0..=exp).map(|i| digits.as_bytes().get(i as usize).map_or('0', |&c| c as char)).collect();
-            let decimals = if n > exp + 1 { &digits[exp as usize + 1..] } else { "0" };
-            format!("{int_part}.{decimals}")
-        } else {
-            format!("0.{}{digits}", "0".repeat((-exp - 1) as usize))
-        }
-    } else if n > 1 {
-        format!("{}.{}e{exp}", &digits[..1], &digits[1..])
-    } else {
-        format!("{digits}e{exp}")
-    };
-    format!("{}{body}", if x.is_sign_negative() { "-" } else { "" })
-}
-
-/// The shortest digits of `a` (≥ 0) that give back `a`, and the exponent of the first one.
-fn shortest(a: f64) -> (Vec<u8>, i32) {
-    if a == 0.0 {
-        return (vec![0], 0);
-    }
-    // The exact digits: a Float has at most ~770 of them, `{:.800e}` gives them all.
-    let s = format!("{a:.800e}");
-    let (m, e) = s.split_once('e').unwrap();
-    let mut exact: Vec<u8> = m.bytes().filter(|&c| c != b'.').map(|c| c - b'0').collect();
-    while exact.len() > 1 && exact.last() == Some(&0) {
-        exact.pop();
-    }
-    let e: i32 = e.parse().unwrap();
-    let reads_back = |d: &[u8], e: i32| {
-        let d: String = d.iter().map(|d| (b'0' + d) as char).collect();
-        format!("{}.{}e{e}", &d[..1], &d[1..]).parse::<f64>().unwrap() == a
-    };
-    for p in 1..=17 {
-        if exact.len() <= p {
-            return (exact, e);
-        }
-        // The two p-digit numbers around `a`: `low` (truncated) and `high`.
-        let low = exact[..p].to_vec();
-        let rest = &exact[p..];
-        let high = plus_one(&low, e);
-        let round_up = rest[0] > 5 || (rest[0] == 5 && (rest[1..].iter().any(|&d| d != 0) || low[p - 1] % 2 == 1));
-        let (near, far) = if round_up { (high, (low, e)) } else { ((low, e), high) };
-        for (mut d, e) in [near, far] {
-            if reads_back(&d, e) {
-                while d.len() > 1 && d.last() == Some(&0) {
-                    d.pop();
-                }
-                return (d, e);
-            }
-        }
-    }
-    unreachable!("17 digits are always enough")
-}
-
-/// `digits + 1` on the last digit, with carry (`999` → `100` and exponent + 1).
-fn plus_one(digits: &[u8], e: i32) -> (Vec<u8>, i32) {
-    let mut d = digits.to_vec();
-    for x in d.iter_mut().rev() {
-        if *x < 9 {
-            *x += 1;
-            return (d, e);
-        }
-        *x = 0;
-    }
-    d.insert(0, 1);
-    d.pop();
-    (d, e + 1)
 }
 
 pub fn fault_text(f: Fault, files: &[String], l: Loc) -> String {

@@ -96,64 +96,15 @@ impl Heap {
     }
 }
 
-/// Element `i` of a Map or a Set goes out of its index (`s`, its slots), and the positions
-/// after it move back by one: the same as `unindex` in runtime.c (comments there).
-fn unindex(s: &mut [i64], i: i64) {
-    let cap = s.len() as i64 / 2 - 1;
-    if i >= s[0] {
-        return;
-    }
-    let mut j = 0;
-    for k in 1..=cap as usize {
-        if s[2 * k + 1] == i + 1 {
-            j = k as i64;
-        }
-        if s[2 * k + 1] > i + 1 {
-            s[2 * k + 1] -= 1;
-        }
-    }
-    s[0] -= 1;
-    let mut k = j % cap + 1;
-    while s[2 * k as usize + 1] != 0 {
-        let home = s[2 * k as usize] % cap + 1;
-        let stays = if j < k { j < home && home <= k } else { j < home || home <= k };
-        if !stays {
-            s[2 * j as usize] = s[2 * k as usize];
-            s[2 * j as usize + 1] = s[2 * k as usize + 1];
-            j = k;
-        }
-        k = k % cap + 1;
-    }
-    s[2 * j as usize] = 0;
-    s[2 * j as usize + 1] = 0;
-}
-
-/// `random(from..to)`, `to` excluded: the same numbers as `kova_random` in runtime.c (comments
-/// there) for the same `KOVA_SEED`.
+/// `random(from..to)`: the state is started at the first call.
 fn random(heap: &mut Heap, from: i64, to: i64) -> i64 {
     let state = heap.chance.get_or_insert_with(|| {
-        let seed = std::env::var("KOVA_SEED").ok().filter(|s| s.starts_with(|c: char| c.is_ascii_digit())).and_then(|s| s.parse::<u64>().ok());
-        seed.unwrap_or_else(|| {
+        crate::shared::seed(std::env::var("KOVA_SEED").ok().as_deref()).unwrap_or_else(|| {
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
             (t.as_secs().wrapping_mul(1_000_000_000).wrapping_add(t.subsec_nanos() as u64)) ^ (std::process::id() as u64) << 32
         })
     });
-    let mut next = || {
-        *state = state.wrapping_add(0x9E3779B97F4A7C15);
-        let mut z = *state;
-        z = (z ^ z >> 30).wrapping_mul(0xBF58476D1CE4E5B9);
-        z = (z ^ z >> 27).wrapping_mul(0x94D049BB133111EB);
-        z ^ z >> 31
-    };
-    let n = (to as u64).wrapping_sub(from as u64);
-    let limit = u64::MAX - u64::MAX % n;
-    let x = loop {
-        let x = next();
-        if x < limit {
-            break x;
-        }
-    };
-    (from as u64).wrapping_add(x % n) as i64
+    crate::shared::random(state, from, to)
 }
 
 /// A failure of the system as an `IoError` variant + 1, like `failure` in runtime.c.
@@ -431,8 +382,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::Eq => (s(0) == s(1)) as i64,
                         StrOp::Hash if locals[a[0]] == 0 => 0,
-                        // FNV-1a, like `kova_str_hash` in runtime.c.
-                        StrOp::Hash => s(0).bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3)) as i64,
+                        StrOp::Hash => crate::shared::hash(s(0)),
                         StrOp::Less => (s(0) < s(1)) as i64,
                         StrOp::BigLess => crate::bigint::less(s(0), s(1)) as i64,
                         StrOp::BigAdd => {
@@ -632,7 +582,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::ListRemove(l, i) => {
                     let index = *heap.index(locals[*l]);
                     if index != 0 {
-                        unindex(heap.list(index).2, locals[*i]);
+                        crate::shared::unindex(heap.list(index).2, locals[*i]);
                     }
                     let i = locals[*i] as usize;
                     let (width, length, slots) = heap.list(locals[*l]);

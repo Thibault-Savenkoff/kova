@@ -1,6 +1,8 @@
 // Entry point: reads the command line and runs the right action.
 // See docs/PLAN.md, Part 1 (commands), 2.11 (header) and 2.13 (translations).
 
+extern crate alloc;
+
 mod ast;
 mod bigint;
 mod codegen;
@@ -14,6 +16,7 @@ mod locale;
 mod lsp;
 mod ownership;
 mod parser;
+mod shared;
 mod types;
 
 use std::process::exit;
