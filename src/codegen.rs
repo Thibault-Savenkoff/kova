@@ -472,6 +472,7 @@ impl Generator<'_> {
                 let newline = self.b.ins().iconst(I64, *newline as i64);
                 self.b.ins().call(rt_print, &[v, show, newline]);
             }
+            Inst::Line(..) => {}
             Inst::Exit(code) => {
                 let code = self.read(*code);
                 self.b.ins().call(self.fail.exit, &[code]);

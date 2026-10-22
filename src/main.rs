@@ -3,6 +3,7 @@
 
 mod ast;
 mod codegen;
+mod debug;
 mod diag;
 mod format;
 mod interp;
@@ -35,6 +36,8 @@ fn main() {
             return;
         }
         ["fmt", files @ ..] if !files.is_empty() => exit(fmt(files)),
+        // The debugger, for the editor (DAP on stdin/stdout): the editor says which program.
+        ["debug"] => exit(debug::serve()),
         ["lsp"] => {
             if let Err(e) = lsp::serve() {
                 fail(t!("lsp_failed", error = e));
@@ -95,7 +98,7 @@ fn main() {
         exit(1);
     }
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }));
+    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
 
     match command {
         Command::Run => {

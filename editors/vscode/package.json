@@ -2,7 +2,7 @@
   "name": "kova",
   "displayName": "Kova",
   "description": "Prise en charge du langage Kova : couleurs, raccourcis, boutons Run / Build / Test, erreurs en direct et complétion.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "thibault-savenkoff",
   "license": "UNLICENSED",
   "engines": {
@@ -60,6 +60,12 @@
         "icon": "$(play)"
       },
       {
+        "command": "kova.debug",
+        "title": "Déboguer (kova debug)",
+        "category": "Kova",
+        "icon": "$(debug-alt)"
+      },
+      {
         "command": "kova.build",
         "title": "Compiler et lancer (kova build)",
         "category": "Kova",
@@ -88,6 +94,11 @@
           "command": "kova.test",
           "when": "resourceLangId == kova",
           "group": "navigation@2"
+        },
+        {
+          "command": "kova.debug",
+          "when": "resourceLangId == kova",
+          "group": "navigation@3"
         }
       ],
       "commandPalette": [
@@ -102,6 +113,10 @@
         {
           "command": "kova.test",
           "when": "editorLangId == kova"
+        },
+        {
+          "command": "kova.debug",
+          "when": "editorLangId == kova"
         }
       ]
     },
@@ -114,7 +129,51 @@
           "description": "Chemin de l'exécutable `kova` (par défaut : celui du PATH). Recharge la fenêtre après un changement."
         }
       }
-    }
+    },
+    "breakpoints": [
+      {
+        "language": "kova"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "kova",
+        "label": "Kova",
+        "languages": [
+          "kova"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Le fichier .kova à déboguer",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Les mots donnés au programme (args)",
+                "default": []
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "kova",
+            "request": "launch",
+            "name": "Déboguer le fichier Kova",
+            "program": "${file}"
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "test": "vscode-tmgrammar-test -g syntaxes/kova.tmLanguage.json 'tests/*.kova' && node tests/commands.test.js",

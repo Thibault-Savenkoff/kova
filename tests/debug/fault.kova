@@ -1,0 +1,8 @@
+// Run by the `debugger` test of tests/kova.rs: stops on the division by zero.
+fn divide(a: Int, b: Int) -> Int {
+    return a / b
+}
+
+fn main {
+    print(divide(6, 0))
+}

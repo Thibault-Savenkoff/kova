@@ -174,6 +174,17 @@ enum Helper {
     /// `a.sound` on an `any Animal` (interface, method): takes the box, the other arguments and
     /// the call location; calls the method of the real type, found by its number in the box.
     Dispatch(String, String),
+    /// For the debugger: returns the text of a value as a contract's `values:` line shows it.
+    Look(Type),
+}
+
+/// For the debugger (`kova debug`): a variable visible at a statement, its slots, and the
+/// function (a `Helper::Look`) that gives its text.
+pub struct Watch {
+    pub name: String,
+    pub ty: String,
+    pub slots: Slots,
+    pub look: usize,
 }
 
 pub struct Program {
@@ -269,6 +280,8 @@ pub enum Inst {
     Fail(Vec<Piece>),
     /// `exit(code)`: stops the program with this code (0 to 255, checked before).
     Exit(Local),
+    /// Only for the debugger (`kova debug`): a statement starts here, these variables are visible.
+    Line(Loc, Vec<Watch>),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -530,7 +543,8 @@ pub fn fault_text(f: Fault, files: &[String], l: Loc) -> String {
 /// `contracts` = false for `kova build --boost`: `require`, `ensure` and `check` disappear.
 /// `tests` = true for `kova test`: each `test` block becomes one more function.
 /// `built` = true for `kova build`: the value of `mode = build`.
-pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
+/// `watching`: for the debugger, an `Inst::Line` before each statement.
+pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool, watching: bool) -> Program {
     // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
     // (a test = a function without parameters, result or contracts).
     // The last element: what the `Type::Param`s stand for (`Self` in a struct's methods and in the
@@ -598,6 +612,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         first_helper: all.len(),
         contracts,
         built,
+        watching,
         ensures,
         ret,
         result: None,
@@ -687,6 +702,8 @@ struct Translator<'a> {
     contracts: bool,
     /// `kova build` (true) or `kova run` / `kova test` (false).
     built: bool,
+    /// For the debugger: an `Inst::Line` before each statement.
+    watching: bool,
     ensures: Vec<&'a Contract>,
     ret: Type,
     /// The value of `result` while checking an `ensure`.
@@ -764,6 +781,17 @@ impl<'a> Translator<'a> {
         if let Helper::Dispatch(interface, method) = h {
             return self.dispatch(interface, method);
         }
+        if let Helper::Look(ty) = h {
+            let v = self.new_slots(ty);
+            self.current = self.new_block();
+            let mut pieces = vec![];
+            self.debug = true;
+            self.value_pieces(&v, ty, &mut pieces);
+            let text = self.join(pieces);
+            self.free_temps(0);
+            self.finish(End::Return(vec![text]));
+            return self.function(format!("look {}", ty.text()), v.len(), vec![Scalar::Int]);
+        }
         let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h else { unreachable!("made by `translate`") };
         let v = self.new_slots(ty);
         self.current = self.new_block();
@@ -832,7 +860,7 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
@@ -1231,6 +1259,34 @@ impl<'a> Translator<'a> {
         self.blocks[self.current].1 = Some(end);
         self.current = next;
     }
+    /// For the debugger: the statement `s` starts here, with the variables visible (in the order
+    /// they were made).
+    fn line(&mut self, s: &Stmt) {
+        let at = match s {
+            Stmt::Declare { value, .. } => value.span,
+            Stmt::Assign { target, .. } => target.span(),
+            Stmt::Return { span, .. } | Stmt::Break(span) | Stmt::Continue(span) => *span,
+            Stmt::Check(c) => c.cond.span,
+            Stmt::If { cond, .. } | Stmt::While { cond, .. } => cond.span,
+            Stmt::Loop { counter, .. } => counter.span,
+            Stmt::Each { list, .. } => list.span,
+            Stmt::Match(m) => m.subject.span,
+            Stmt::Expr(e) => e.span,
+        };
+        let mut seen: HashMap<&String, (&Slots, &Type)> = HashMap::new();
+        for scope in &self.names {
+            seen.extend(scope.vars.iter().map(|(n, (v, t))| (n, (v, t))));
+        }
+        let mut vars: Vec<(String, Slots, Type)> = (seen.into_iter())
+            .filter(|(n, (v, _))| n.starts_with(char::is_alphabetic) && !v.is_empty())
+            .map(|(n, (v, t))| (n.clone(), v.clone(), substitute(t, &self.subst)))
+            .collect();
+        vars.sort_by_key(|(_, v, _)| v[0]);
+        let watches = vars.into_iter().map(|(name, slots, ty)| Watch { name, ty: ty.text(), look: self.helper(Helper::Look(ty)), slots }).collect();
+        let loc = self.loc(at);
+        self.emit(Inst::Line(loc, watches));
+    }
+
     fn loc(&self, s: Span) -> Loc {
         let (line, col) = line_col(self.src, s.start);
         Loc { file: crate::diag::file_number(self.src, s.start), line, col }
@@ -1552,6 +1608,9 @@ impl<'a> Translator<'a> {
     }
 
     fn stmt(&mut self, s: &Stmt) {
+        if self.watching {
+            self.line(s);
+        }
         let mark = self.temps.len();
         self.statement(s);
         self.free_temps(mark);

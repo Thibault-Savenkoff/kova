@@ -405,6 +405,119 @@ fn language_server() {
     assert!(server.wait().unwrap().success());
 }
 
+/// `kova debug`: the editor's side of the DAP protocol, on `tests/debug/dogs.kova`.
+#[test]
+fn debugger() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::{ChildStdin, ChildStdout, Stdio};
+    use serde_json::{Value, json};
+
+    struct Editor {
+        input: ChildStdin,
+        output: BufReader<ChildStdout>,
+        seq: u64,
+        /// What the program printed.
+        printed: String,
+    }
+    impl Editor {
+        fn send(&mut self, command: &str, arguments: Value) {
+            self.seq += 1;
+            let text = json!({"seq": self.seq, "type": "request", "command": command, "arguments": arguments}).to_string();
+            write!(self.input, "Content-Length: {}\r\n\r\n{text}", text.len()).unwrap();
+            self.input.flush().unwrap();
+        }
+        /// Reads until a message `wanted` accepts.
+        fn until(&mut self, wanted: impl Fn(&Value) -> bool) -> Value {
+            loop {
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    self.output.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(n) = line.strip_prefix("Content-Length: ") {
+                        length = n.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                self.output.read_exact(&mut body).unwrap();
+                let msg: Value = serde_json::from_slice(&body).unwrap();
+                if msg["event"] == "output" {
+                    self.printed += msg["body"]["output"].as_str().unwrap();
+                }
+                if wanted(&msg) {
+                    return msg;
+                }
+            }
+        }
+        fn ask(&mut self, command: &'static str, arguments: Value) -> Value {
+            self.send(command, arguments);
+            self.until(|m| m["type"] == "response" && m["command"] == command)
+        }
+        /// Goes on (`continue`, `next`…) until the next stop: its reason.
+        fn go(&mut self, command: &'static str) -> Value {
+            self.send(command, json!({"threadId": 1}));
+            self.until(|m| m["event"] == "stopped")["body"]["reason"].clone()
+        }
+        /// The variables of a function stopped in (frame 0 = `main`, 1 = the function it called).
+        fn variables(&mut self, frame: u64) -> Vec<String> {
+            let r = self.ask("variables", json!({"variablesReference": frame + 1}));
+            let shown = |v: &Value| format!("{} = {}", v["name"].as_str().unwrap(), v["value"].as_str().unwrap());
+            r["body"]["variables"].as_array().unwrap().iter().map(shown).collect()
+        }
+        fn stack(&mut self) -> Vec<(String, u64)> {
+            let r = self.ask("stackTrace", json!({"threadId": 1}));
+            let frame = |f: &Value| (f["name"].as_str().unwrap().to_string(), f["line"].as_u64().unwrap());
+            r["body"]["stackFrames"].as_array().unwrap().iter().map(frame).collect()
+        }
+    }
+
+    let mut adapter = kova(LANG).arg("debug").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut e = Editor { input: adapter.stdin.take().unwrap(), output: BufReader::new(adapter.stdout.take().unwrap()), seq: 0, printed: String::new() };
+    let path = std::fs::canonicalize("tests/debug/dogs.kova").unwrap().display().to_string();
+
+    e.send("initialize", json!({"adapterID": "kova"}));
+    e.until(|m| m["event"] == "initialized");
+    e.ask("launch", json!({"program": path}));
+    let set = e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 15}, {"line": 18}]}));
+    assert_eq!(set["body"]["breakpoints"][0]["verified"], true);
+    e.send("configurationDone", json!({}));
+
+    assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
+    assert_eq!(e.variables(0), ["rex = Dog { name: \"Rex\", age: 3 }", "names = [\"a\", \"b\"]"]);
+    assert_eq!(e.go("stepIn"), "step");
+    assert_eq!(e.stack(), [("older".to_string(), 8), ("main".to_string(), 15)]);
+    e.go("next");
+    assert_eq!(e.variables(1), ["d = Dog { name: \"Rex\", age: 3 }", "years = 4"]);
+    e.go("stepOut");
+    assert_eq!(e.stack(), [("main".to_string(), 16)]);
+    assert_eq!(e.go("continue"), "breakpoint");
+    assert_eq!(e.variables(0), ["rex = (given away)", "names = [\"a\", \"b\"]", "next = 4", "gone = Dog { name: \"Rex\", age: 3 }"]);
+    e.send("continue", json!({"threadId": 1}));
+    assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 0);
+    assert_eq!(e.printed, "4\n3 2\n");
+    e.send("disconnect", json!({}));
+    assert!(adapter.wait().unwrap().success());
+
+    // A runtime error: stops where it happens, with its message, then the program ends (101).
+    let mut adapter = kova(LANG).arg("debug").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut e = Editor { input: adapter.stdin.take().unwrap(), output: BufReader::new(adapter.stdout.take().unwrap()), seq: 0, printed: String::new() };
+    e.send("initialize", json!({"adapterID": "kova"}));
+    e.ask("launch", json!({"program": "tests/debug/fault.kova"}));
+    e.send("configurationDone", json!({}));
+    let stop = e.until(|m| m["event"] == "stopped");
+    assert_eq!(stop["body"]["reason"], "exception");
+    assert!(stop["body"]["text"].as_str().unwrap().starts_with("error: division by zero"), "{stop}");
+    assert_eq!(e.stack()[0], ("divide".to_string(), 3));
+    assert_eq!(e.variables(1), ["a = 6", "b = 0"]);
+    e.send("continue", json!({"threadId": 1}));
+    assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 101);
+    assert!(e.printed.contains("division by zero"), "{}", e.printed);
+    e.send("disconnect", json!({}));
+    assert!(adapter.wait().unwrap().success());
+}
+
 /// A line that is not UTF-8 stops `read_line` loudly (not a silent `none`), in run and in build.
 #[test]
 fn input_not_text() {

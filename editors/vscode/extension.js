@@ -5,6 +5,7 @@
 // - E3 to E6: starts `kova lsp` (errors while typing, completion, hover, renaming, layout
 //   on save…).
 // - E5: a ▶ in the margin before each `test` (and in the Testing panel), which becomes ✅/❌.
+// - E7: the debugger (🐞 button, F5): `kova debug` speaks the DAP protocol.
 
 const fs = require('fs');
 const path = require('path');
@@ -30,6 +31,8 @@ function activate(context) {
       vscode.commands.registerCommand(`kova.${action}`, (/** @type {vscode.Uri=} */ uri) => launch(action, uri))
     );
   }
+
+  debuggerSetup(context);
 
   const kova = kovaPath();
   const server = inFlatpak
@@ -146,6 +149,39 @@ function kovaTest(file, name) {
 
 function deactivate() {
   return client?.stop();
+}
+
+/**
+ * E7: VSCode starts `kova debug` for a `kova` debug session (🐞 button, or F5 without launch.json).
+ * @param {vscode.ExtensionContext} context
+ */
+function debuggerSetup(context) {
+  /** @param {string} file */
+  const session = (file) => ({ type: 'kova', request: 'launch', name: 'Kova', program: file });
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterDescriptorFactory('kova', {
+      createDebugAdapterDescriptor() {
+        return inFlatpak
+          ? new vscode.DebugAdapterExecutable('/usr/bin/flatpak-spawn', ['--host', '--watch-bus', `--env=${lang}`, kovaPath(), 'debug'])
+          : new vscode.DebugAdapterExecutable(kovaPath(), ['debug'], { env: { ...process.env, KOVA_LANG: vscode.env.language } });
+      },
+    }),
+    vscode.debug.registerDebugConfigurationProvider('kova', {
+      // F5 without launch.json: the open file. `kova debug` reads it from disk: saved first.
+      async resolveDebugConfiguration(_folder, config) {
+        const doc = vscode.window.activeTextEditor?.document;
+        if (!config.type && doc?.languageId === 'kova') Object.assign(config, session(doc.uri.fsPath));
+        if (!config.program) return undefined;
+        const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === config.program);
+        if (open?.isDirty) await open.save();
+        return config;
+      },
+    }),
+    vscode.commands.registerCommand('kova.debug', (/** @type {vscode.Uri=} */ uri) => {
+      const file = uri?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+      if (file) vscode.debug.startDebugging(undefined, session(file));
+    })
+  );
 }
 
 /** @returns {string} */

@@ -1,6 +1,8 @@
 // Interpreter (`kova run`): executes the KIR directly, instruction by instruction.
 
-use std::io::{BufRead, BufWriter, Stdout, Write};
+use std::io::{BufRead, BufWriter, Write};
+
+use crate::debug::Debugger;
 
 use crate::kir::*;
 use crate::locale::{self, t};
@@ -22,6 +24,13 @@ struct Heap {
     live: usize,
     /// The program's command-line arguments, for `args`.
     args: Vec<String>,
+    /// Under `kova debug`: what stops the program and shows its variables.
+    debugger: Option<Box<Debugger>>,
+    /// While the debugger shows a variable: a String or a List already given away (slot 0) or
+    /// freed was read (`broken`), as an empty one (`nothing`).
+    looking: bool,
+    broken: std::cell::Cell<bool>,
+    nothing: (usize, Vec<i64>),
 }
 
 impl Heap {
@@ -46,13 +55,22 @@ impl Heap {
         }
     }
     fn get(&self, h: i64) -> &str {
-        match &self.objects[h as usize] {
-            Some(Object::Str(s)) => s,
+        match self.objects.get(h as usize) {
+            Some(Some(Object::Str(s))) => s,
+            _ if self.looking => {
+                self.broken.set(true);
+                ""
+            }
             _ => panic!("String used after being freed"),
         }
     }
     /// The List `h`: (width of an element, its length, its slots).
     fn list(&mut self, h: i64) -> (usize, &mut usize, &mut Vec<i64>) {
+        if self.looking && !matches!(self.objects.get(h as usize), Some(Some(Object::List { .. }))) {
+            self.broken.set(true);
+            self.nothing = (0, vec![]);
+            return (1, &mut self.nothing.0, &mut self.nothing.1);
+        }
         match &mut self.objects[h as usize] {
             Some(Object::List { width, length, slots }) => (*width, length, slots),
             _ => panic!("List used after being freed"),
@@ -85,6 +103,84 @@ pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
         // What is still alive is not counted as a leak (`kova_exit` in runtime/runtime.c).
         Err(Stop::Exit(code)) => code,
     }
+}
+
+/// `kova debug`: runs `main` with the debugger (`debug.rs`); the program's output goes to it.
+/// Returns the exit code (101 after a runtime error), and the debugger back.
+pub fn debug(p: &Program, files: &[String], args: &[String], debugger: Debugger) -> (i32, Box<Debugger>) {
+    crate::debug::files(files);
+    let mut out = crate::debug::Console::default();
+    let mut heap = Heap { args: args.to_vec(), debugger: Some(Box::new(debugger)), ..Heap::default() };
+    let result = call(p, p.main.expect("checked by debug.rs"), &[], &mut out, files, &mut heap);
+    out.flush().unwrap();
+    let code = match result {
+        Ok(_) => 0,
+        Err(Stop::Error(message)) => {
+            crate::debug::output("stderr", &message);
+            101
+        }
+        Err(Stop::Exit(code)) => code,
+    };
+    (code, heap.debugger.expect("given back after each stop"))
+}
+
+/// Under the debugger, at a statement (`Inst::Line` number `at` of block `block`): notes where the
+/// function is and its variables' values, and stops there if it must (a breakpoint, a step).
+fn line(p: &Program, num: usize, at: (usize, usize), loc: Loc, locals: &[i64], out: &mut dyn Write, files: &[String], heap: &mut Heap) {
+    let Some(d) = &mut heap.debugger else { return };
+    if let Some(frame) = d.frames.last_mut() {
+        frame.at = Some((num, at.0, at.1, loc));
+    }
+    snapshot(p, locals, d);
+    if let Some(reason) = d.stops(loc, files) {
+        pause(p, out, files, heap, reason, None);
+    }
+}
+
+/// Copies the current values of the variables of the innermost function, for the debugger.
+fn snapshot(p: &Program, locals: &[i64], d: &mut Debugger) {
+    let Some(frame) = d.frames.last_mut() else { return };
+    frame.values = watches(p, frame.at).iter().flat_map(|w| w.slots.iter().map(|&l| locals[l])).collect();
+}
+
+/// The variables visible at a statement (`Frame::at`).
+fn watches(p: &Program, at: Option<(usize, usize, usize, Loc)>) -> &[Watch] {
+    match at.map(|(f, b, i, _)| &p.functions[f].blocks[b].insts[i]) {
+        Some(Inst::Line(_, w)) => w,
+        _ => &[],
+    }
+}
+
+/// Stopped: the debugger answers the editor (call stack, variables) until it says to go on.
+fn pause(p: &Program, out: &mut dyn Write, files: &[String], heap: &mut Heap, reason: &str, text: Option<&str>) {
+    let _ = out.flush();
+    let Some(mut d) = heap.debugger.take() else { return };
+    d.stopped(reason, text);
+    while let Some(frame) = d.variables_asked() {
+        let at = d.frames.get(frame).and_then(|f| f.at);
+        let values = d.frames.get(frame).map_or(vec![], |f| f.values.clone());
+        let mut shown = vec![];
+        let mut k = 0;
+        for w in watches(p, at) {
+            let v = &values[k..k + w.slots.len()];
+            k += w.slots.len();
+            heap.looking = true;
+            heap.broken.set(false);
+            let text = match call(p, w.look, v, out, files, heap) {
+                Ok(r) => {
+                    let t = heap.get(r[0]).to_string();
+                    heap.release(r[0]);
+                    t
+                }
+                Err(_) => String::new(),
+            };
+            let text = if heap.broken.get() { t!("debug_given_away") } else { text };
+            heap.looking = false;
+            shown.push((w.name.clone(), w.ty.clone(), text));
+        }
+        d.variables(shown);
+    }
+    heap.debugger = Some(d);
 }
 
 /// Same check as `kova_leaks` in `runtime/runtime.c`.
@@ -149,7 +245,24 @@ enum Stop {
 
 // ponytail: Rust recursion = the interpreter's stack; infinite recursion
 // crashes without a nice message (same in native). To handle with stack errors.
-fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, files: &[String], heap: &mut Heap) -> Outcome {
+fn call(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Outcome {
+    let Some(d) = &mut heap.debugger else { return execute(p, num, args, out, files, heap) };
+    d.enter(&p.functions[num].name);
+    let result = execute(p, num, args, out, files, heap);
+    // A runtime error: the debugger stops where it happens, with its message.
+    if let Err(Stop::Error(message)) = &result
+        && heap.debugger.as_mut().is_some_and(|d| d.first_error())
+    {
+        let message = message.clone();
+        pause(p, out, files, heap, "exception", Some(&message));
+    }
+    if let Some(d) = &mut heap.debugger {
+        d.leave();
+    }
+    result
+}
+
+fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Outcome {
     let fault = |f: Fault, loc: &Loc| Stop::Error(fault_text(f, files, *loc));
     let f = &p.functions[num];
     // Every slot fits in 64 bits; a Float is stored bit for bit.
@@ -158,7 +271,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
     let mut block = 0;
     loop {
         let b = &f.blocks[block];
-        for inst in &b.insts {
+        for (i, inst) in b.insts.iter().enumerate() {
             match inst {
                 Inst::Const(d, v) => locals[*d] = *v,
                 Inst::Copy(d, s) => locals[*d] = locals[*s],
@@ -170,6 +283,9 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                 }
                 Inst::Not(d, a) => locals[*d] = 1 - locals[*a],
                 Inst::Call(d, g, a) => {
+                    if let Some(dbg) = &mut heap.debugger {
+                        snapshot(p, &locals, dbg);
+                    }
                     let vals: Vec<i64> = a.iter().map(|&l| locals[l]).collect();
                     let r = call(p, *g, &vals, out, files, heap)?;
                     for (&d, v) in d.iter().zip(r) {
@@ -222,6 +338,8 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                                 _ => -5,
                             },
                         },
+                        // Under the debugger, the input is the editor's: the program reads nothing.
+                        StrOp::ReadLine if heap.debugger.is_some() => 0,
                         StrOp::ReadLine => {
                             out.flush().unwrap();
                             let mut line = vec![];
@@ -328,6 +446,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                         .collect()));
                 }
                 Inst::Exit(code) => return Err(Stop::Exit(locals[*code] as i32)),
+                Inst::Line(loc, _) => line(p, num, (block, i), *loc, &locals, out, files, heap),
             }
         }
         match &b.end {

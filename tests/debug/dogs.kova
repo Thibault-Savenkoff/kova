@@ -1,0 +1,19 @@
+// Run by the `debugger` test of tests/kova.rs: breakpoints on lines 15 and 18.
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn older(d: Dog) -> Int {
+    let years: Int := d.age + 1
+    return years
+}
+
+fn main {
+    let rex := Dog { name := "Rex", age := 3 }
+    let names: List<String> := ["a", "b"]
+    let next: Int := older(rex)
+    print(next)
+    let gone: Dog := rex
+    print("{gone.age} {names.length}")
+}
