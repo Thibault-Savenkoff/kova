@@ -108,7 +108,7 @@ pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
 /// `kova debug`: runs `main` with the debugger (`debug.rs`); the program's output goes to it.
 /// Returns the exit code (101 after a runtime error), and the debugger back.
 pub fn debug(p: &Program, files: &[String], args: &[String], debugger: Debugger) -> (i32, Box<Debugger>) {
-    crate::debug::files(files);
+    let files = &crate::debug::files(files)[..];
     let mut out = crate::debug::Console::default();
     let mut heap = Heap { args: args.to_vec(), debugger: Some(Box::new(debugger)), ..Heap::default() };
     let result = call(p, p.main.expect("checked by debug.rs"), &[], &mut out, files, &mut heap);

@@ -155,8 +155,8 @@ impl Debugger {
             return None;
         }
         let depth = self.frames.len();
-        let file = canonical(&files[loc.file]);
-        if self.breakpoints.get(&file).is_some_and(|lines| lines.contains(&loc.line)) {
+        // `files` are the canonical paths (`debug::files`): nothing to ask the system here.
+        if self.breakpoints.get(&files[loc.file]).is_some_and(|lines| lines.contains(&loc.line)) {
             return Some("breakpoint");
         }
         match self.step {
@@ -267,9 +267,12 @@ fn canonical(path: &str) -> String {
     std::fs::canonicalize(path).map_or(path.to_string(), |p| p.to_string_lossy().into_owned())
 }
 
-/// Called by `interp::debug` before running: the files' paths, for the call stack.
-pub fn files(files: &[String]) {
-    FILES.with(|f| *f.borrow_mut() = files.iter().map(|p| canonical(p)).collect());
+/// Called by `interp::debug` before running: the files' paths as the editor writes them, for
+/// the call stack and the breakpoints.
+pub fn files(files: &[String]) -> Vec<String> {
+    let paths: Vec<String> = files.iter().map(|p| canonical(p)).collect();
+    FILES.with(|f| *f.borrow_mut() = paths.clone());
+    paths
 }
 
 // ---- The protocol: JSON messages, each after a `Content-Length: n` line and an empty line ----
