@@ -19,7 +19,12 @@
   "contributes": {
     "configurationDefaults": {
       "[kova]": {
-        "editor.formatOnSave": true
+        "editor.formatOnSave": true,
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        }
       }
     },
     "languages": [
