@@ -206,7 +206,8 @@ pub extern "C" fn kova_str_format(value: i64, show: i64) -> i64 {
 // ---- Messages ----
 
 /// The language: the `header`'s, otherwise the first non-empty variable among KOVA_LANG,
-/// LC_ALL, LC_MESSAGES, LANG (`fr_FR.UTF-8` → `fr`), otherwise English. Same rule as
+/// LC_ALL, LC_MESSAGES, LANG (`fr_FR.UTF-8` → `fr`), otherwise Windows' settings, otherwise
+/// English. Same rule as
 /// `system` in src/locale.rs.
 fn language() -> usize {
     static LANGUAGE: Global<Option<usize>> = Global::new(None);
@@ -215,8 +216,8 @@ fn language() -> usize {
         if forced >= 0 {
             return forced as usize;
         }
-        let Some(value) = ["KOVA_LANG", "LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| sys::var(v).filter(|s| !s.is_empty()))
-        else {
+        let asked = ["KOVA_LANG", "LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| sys::var(v).filter(|s| !s.is_empty()));
+        let Some(value) = asked.or_else(sys::system_language) else {
             return 0;
         };
         let code = value.split(['_', '.', '@', '-']).next().unwrap_or("").to_ascii_lowercase();

@@ -63,6 +63,11 @@ unsafe extern "C" fn start(stack: *const usize) -> ! {
     crate::run()
 }
 
+/// The environment's variables say it (`LANG`).
+pub fn system_language() -> Option<String> {
+    None
+}
+
 pub fn var(name: &str) -> Option<String> {
     ENVIRONMENT.get().iter().find_map(|&e| {
         let e = unsafe { c_text(e) };

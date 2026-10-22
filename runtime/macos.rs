@@ -57,6 +57,11 @@ fn c_path(s: &str) -> Vec<u8> {
     [s.as_bytes(), &[0]].concat()
 }
 
+/// The environment's variables say it (`LANG`).
+pub fn system_language() -> Option<String> {
+    None
+}
+
 pub fn var(name: &str) -> Option<String> {
     let v = unsafe { c::getenv(c_path(name).as_ptr()) };
     if v.is_null() { None } else { Some(String::from_utf8_lossy(unsafe { c_text(v) }).into_owned()) }

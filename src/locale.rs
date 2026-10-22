@@ -9,7 +9,7 @@
 //
 // `{name}` is replaced by the given value; `\{` and `\}` are plain braces.
 // The language: `header { lang := fr }`, otherwise KOVA_LANG, otherwise
-// LC_ALL / LC_MESSAGES / LANG, otherwise English.
+// LC_ALL / LC_MESSAGES / LANG, otherwise Windows' settings, otherwise English.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -75,8 +75,27 @@ fn system() -> usize {
     ["KOVA_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
+        .or_else(windows_language)
         .and_then(|s| recognize(&s))
         .unwrap_or(0)
+}
+
+/// Windows sets no `LANG`: the language of the user's settings (`fr-FR`), as in
+/// runtime/windows.rs.
+#[cfg(windows)]
+fn windows_language() -> Option<String> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetUserDefaultLocaleName(name: *mut u16, n: i32) -> i32;
+    }
+    let mut name = [0u16; 85];
+    let n = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
+    (n > 1).then(|| String::from_utf16_lossy(&name[..n as usize - 1]))
+}
+
+#[cfg(not(windows))]
+fn windows_language() -> Option<String> {
+    None
 }
 
 /// Uses `code` (`header { lang := fr }`), or the system's language if `None` or `auto`.

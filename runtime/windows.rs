@@ -17,6 +17,7 @@ const INVALID: Handle = -1;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetStdHandle(n: u32) -> Handle;
+    fn GetUserDefaultLocaleName(name: *mut u16, n: i32) -> i32;
     fn WriteFile(h: Handle, b: *const u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn ReadFile(h: Handle, b: *mut u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
@@ -129,6 +130,13 @@ fn words(line: &[u16]) -> Vec<String> {
         words.push(utf8(&word));
     }
     words
+}
+
+/// Windows sets no `LANG`: the language of the user's settings (`fr-FR`).
+pub fn system_language() -> Option<String> {
+    let mut name = [0u16; 85];
+    let n = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
+    (n > 1).then(|| String::from_utf16_lossy(&name[..n as usize - 1]))
 }
 
 pub fn var(name: &str) -> Option<String> {
