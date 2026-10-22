@@ -498,6 +498,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         src,
         info,
         subst,
+        debug: false,
         numbers: &numbers,
         signatures: &signatures,
         sites: &sites,
@@ -569,6 +570,8 @@ struct Translator<'a> {
     info: &'a Info,
     /// What each `Type::Param` stands for in this copy of the function (`Self` → `Dog`).
     subst: Vec<(String, Type)>,
+    /// Showing values for a contract's `values:` line: `to_string` is not used.
+    debug: bool,
     numbers: &'a HashMap<&'a str, usize>,
     /// How each function receives its value (`None`: not a method) and its parameters,
     /// by name (`f`, `Dog.sound`).
@@ -807,11 +810,11 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Str(d, StrOp::Eq, vec![a[0], b[0]]));
                 d
             }
-            Type::Struct(d) if self.numbers.contains_key(method_name(&d.name, "equals").as_str()) => {
-                self.call(&method_name(&d.name, "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
-            }
-            Type::Enum(d) if self.numbers.contains_key(method_name(&d.name, "equals").as_str()) => {
-                self.call(&method_name(&d.name, "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
+            // Only for a type following `Equal`: an `equals` alone changes nothing (nothing implicit).
+            Type::Struct(_) | Type::Enum(_)
+                if self.info.follows(ty, "Equal") && self.numbers.contains_key(method_name(&ty.text(), "equals").as_str()) =>
+            {
+                self.call(&method_name(&ty.text(), "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
             }
             Type::Struct(_) | Type::Tuple(_) => {
                 let same = self.constant(1);
@@ -1458,7 +1461,11 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(", ".into()));
             }
             m.push(Piece::Text(format!("{name} = ")));
+            // For debugging: the fields themselves, even for a type following `Display`.
+            // ponytail: an enum's fields are shown by a shared helper, which still uses `to_string`.
+            self.debug = true;
             self.value_pieces(v, ty, &mut m);
+            self.debug = false;
         }
         if !values.is_empty() {
             m.push(Piece::Text("\n".into()));
@@ -1486,7 +1493,7 @@ impl<'a> Translator<'a> {
     fn value_pieces(&mut self, v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
         match ty {
             // A type following `Display` is always shown by its `to_string`.
-            Type::Struct(_) | Type::Enum(_) if self.info.follows(ty, "Display") => {
+            Type::Struct(_) | Type::Enum(_) if self.info.follows(ty, "Display") && !self.debug => {
                 let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
                 m.push(Piece::Value(text[0], Show::String));
             }

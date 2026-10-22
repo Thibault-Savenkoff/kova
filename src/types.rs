@@ -526,6 +526,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     if !f.langs.is_empty() {
         let others = f.header.iter().map(|h| h.open).chain(f.functions.iter().map(|f| f.name.span));
         let others = others.chain(f.structs.iter().map(|s| s.name.span)).chain(f.tests.iter().map(|t| t.span));
+        let others = others.chain(f.interfaces.iter().filter(|i| !i.builtin).map(|i| i.name.span));
         for span in others {
             c.error(span, t!("lang_file_only"));
         }

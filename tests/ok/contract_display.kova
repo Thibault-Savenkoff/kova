@@ -1,0 +1,20 @@
+// A contract's message uses `to_string`; its `values:` line shows the fields, for debugging.
+struct Dog : Display {
+    name: String
+    fn to_string(self) -> String { return "dog {self.name}" }
+}
+
+fn walk(d: Dog)
+    require d.name.length < 3 else "{d} has a long name"
+{
+    print(d)
+}
+
+fn main {
+    walk(Dog { name := "Al" })
+    walk(Dog { name := "Rexy" })
+}
+// expect: dog Al
+// code: 101
+// stderr: error: dog Rexy has a long name
+// stderr: values: d = Dog { name: "Rexy" }
