@@ -266,10 +266,10 @@ fn command_line() {
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
 }
 
-/// `kova build` makes a 100% static executable when musl is installed: no ELF program header
-/// `PT_INTERP` (3), the loader of the system's C library.
+/// On Linux x86-64, `kova build` makes a 100% static executable (Kova's own linker, src/link.rs):
+/// no ELF program header `PT_INTERP` (3), the loader of the system's C library.
 fn static_executable() {
-    if Command::new("musl-gcc").arg("--version").output().is_err() {
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return;
     }
     let exe = std::env::temp_dir().join(format!("kova-static-{}{EXE}", std::process::id()));

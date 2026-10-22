@@ -12,6 +12,7 @@ mod format;
 mod interp;
 mod kir;
 mod lexer;
+mod link;
 mod locale;
 mod lsp;
 mod ownership;

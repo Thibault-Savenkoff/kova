@@ -28,23 +28,27 @@ const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime.a"));
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
     let object = make_object(p, files, lang).map_err(|e| t!("codegen_failed", error = e))?;
+    // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
+    let rust = !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none();
+    if rust && cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        // Kova's own linker: no `cc` needed (src/link.rs).
+        let exe = crate::link::elf(&object, RUNTIME).map_err(|e| t!("codegen_failed", error = e))?;
+        return write_executable(output, &exe);
+    }
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let (o, c) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
-    // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
-    if !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none() {
+    if rust {
         let a = tmp.join(if cfg!(windows) { "runtime.lib" } else { "runtime.a" });
         std::fs::write(&a, RUNTIME).map_err(|e| e.to_string())?;
         // The runtime brings its own entry point and asks nothing of the C library.
         let res = if cfg!(windows) {
             windows_rust_link(output, &o, &a)
-        } else if cfg!(target_os = "macos") {
-            // Linked to libSystem, as Apple wants (runtime/macos.rs).
-            Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output()
         } else {
-            Command::new("cc").args(["-nostdlib", "-static", "-no-pie", "-Wl,--gc-sections", "-s", "-o"]).arg(output).arg(&o).arg(&a).output()
+            // macOS: linked to libSystem, as Apple wants (runtime/macos.rs).
+            Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output()
         };
         let _ = std::fs::remove_dir_all(&tmp);
         return linked(res);
@@ -81,6 +85,18 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     };
     let _ = std::fs::remove_dir_all(&tmp);
     linked(res)
+}
+
+/// The executable, which may be run.
+fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
+    let _ = std::fs::remove_file(output); // a running one cannot be written over
+    std::fs::write(output, exe).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// What the linker said.

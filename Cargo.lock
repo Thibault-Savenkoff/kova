@@ -312,6 +312,7 @@ dependencies = [
  "find-msvc-tools",
  "lsp-server",
  "lsp-types",
+ "object",
  "serde_json",
  "target-lexicon",
 ]
