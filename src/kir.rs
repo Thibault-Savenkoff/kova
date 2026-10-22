@@ -262,6 +262,8 @@ pub enum Inst {
     Print { value: Local, show: Show, newline: bool },
     /// Broken contract: writes the message to stderr and stops (code 101).
     Fail(Vec<Piece>),
+    /// `exit(code)`: stops the program with this code (0 to 255, checked before).
+    Exit(Local),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -286,6 +288,8 @@ pub enum StrOp {
     ReadFile,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
+    /// `args`: a new `List<String>`, the words given after the program's name.
+    Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
     Trim,
     /// `s.contains(part)`, `s.starts_with(part)`, `s.ends_with(part)`: 1 or 0.
@@ -405,6 +409,8 @@ pub enum Fault {
     NotText,
     /// `split("")` or `replace("", …)`: an empty text cannot be looked for.
     EmptyText,
+    /// `exit(300)`: a program's exit code is between 0 and 255.
+    ExitCode,
 }
 
 impl Fault {
@@ -417,6 +423,7 @@ impl Fault {
             Fault::Index => "fault_index",
             Fault::NotText => "fault_not_text",
             Fault::EmptyText => "fault_empty_text",
+            Fault::ExitCode => "fault_exit_code",
         }
     }
 }
@@ -2102,6 +2109,26 @@ impl<'a> Translator<'a> {
                 }
                 if name.text == "read_file" {
                     return self.read_file(&args[0]);
+                }
+                if name.text == "args" {
+                    let l = self.int_local();
+                    self.emit(Inst::Str(l, StrOp::Args, vec![]));
+                    self.temps.push((l, self.ty(e)));
+                    return vec![l];
+                }
+                if name.text == "exit" {
+                    let code = self.expr1(&args[0]);
+                    let (low, high, (zero, max)) = (self.int_local(), self.int_local(), (self.constant(0), self.constant(255)));
+                    self.emit(Inst::Binary(low, Op::Lt, code, zero, NOWHERE));
+                    self.emit(Inst::Binary(high, Op::Gt, code, max, NOWHERE));
+                    let loc = self.loc(args[0].span);
+                    self.emit(Inst::FaultIf(low, Fault::ExitCode, loc));
+                    self.emit(Inst::FaultIf(high, Fault::ExitCode, loc));
+                    // The program stops: what is still alive is not freed (like a runtime error).
+                    self.emit(Inst::Exit(code));
+                    let next = self.new_block();
+                    self.go(End::Unreachable, next);
+                    return vec![];
                 }
                 if name.text == "read_line" {
                     let line = self.int_local();

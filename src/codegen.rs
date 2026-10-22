@@ -48,10 +48,11 @@ struct Runtime {
     write_label: FuncId,
     write_value: FuncId,
     fail: FuncId,
+    exit: FuncId,
     /// `kova_str_new`, `kova_str_free`, then one per `StrOp` (in `str_op` order).
     str_new: FuncId,
     str_free: FuncId,
-    str_ops: [FuncId; 18],
+    str_ops: [FuncId; 19],
     lists: [FuncId; 8],
 }
 
@@ -98,6 +99,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Split => (15, "kova_str_split", 2),
         StrOp::Words => (16, "kova_str_words", 1),
         StrOp::Chars => (17, "kova_str_chars", 1),
+        StrOp::Args => (18, "kova_args", 0),
     }
 }
 
@@ -126,11 +128,12 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         write_label: module.declare_function("kova_write_label", Linkage::Import, &signature(&ints[..1], &[]))?,
         write_value: module.declare_function("kova_write_value", Linkage::Import, &signature(&ints[..2], &[]))?,
         fail: module.declare_function("kova_fail", Linkage::Import, &signature(&[], &[]))?,
+        exit: module.declare_function("kova_exit", Linkage::Import, &signature(&ints[..1], &[]))?,
         str_new: module.declare_function("kova_str_new", Linkage::Import, &signature(&ints[..2], &ints[..1]))?,
         str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -199,6 +202,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
             write_label: module.declare_func_in_func(rt.write_label, b.func),
             write_value: module.declare_func_in_func(rt.write_value, b.func),
             stop: module.declare_func_in_func(rt.fail, b.func),
+            exit: module.declare_func_in_func(rt.exit, b.func),
             texts,
             files: files.to_vec(),
         };
@@ -237,7 +241,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 18],
+    ops: [FuncRef; 19],
 }
 
 /// What is needed to write the message of a broken contract.
@@ -246,6 +250,8 @@ struct Fail {
     write_label: FuncRef,
     write_value: FuncRef,
     stop: FuncRef,
+    /// `kova_exit`, for `exit(code)`.
+    exit: FuncRef,
     texts: HashMap<String, GlobalValue>,
     files: Vec<String>,
 }
@@ -465,6 +471,10 @@ impl Generator<'_> {
                 let (v, show) = self.value_and_show(*value, *show);
                 let newline = self.b.ins().iconst(I64, *newline as i64);
                 self.b.ins().call(rt_print, &[v, show, newline]);
+            }
+            Inst::Exit(code) => {
+                let code = self.read(*code);
+                self.b.ins().call(self.fail.exit, &[code]);
             }
             Inst::Fail(pieces) => {
                 for m in pieces {

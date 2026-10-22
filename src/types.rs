@@ -213,7 +213,12 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The library's functions (PLAN 2.10), with an ordinary signature: (name, its text for the editor).
 pub const LIBRARY: &[(&str, &str)] =
-    &[("read_file", "fn read_file(path: String) -> String or IoError"), ("read_line", "fn read_line -> String?")];
+    &[
+        ("read_file", "fn read_file(path: String) -> String or IoError"),
+        ("read_line", "fn read_line -> String?"),
+        ("args", "fn args -> List<String>"),
+        ("exit", "fn exit(code: Int)"),
+    ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
 /// `kova_read_file` (runtime/runtime.c) and of the interpreter: number = variant + 1.
@@ -540,6 +545,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
+    c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
+    c.functions.insert("exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
@@ -891,6 +898,8 @@ fn always_returns(b: &Block) -> bool {
         Stmt::Return { .. } => true,
         Stmt::If { then, otherwise: Some(otherwise), .. } => always_returns(then) && always_returns(otherwise),
         Stmt::Match(m) => !m.arms.is_empty() && m.arms.iter().all(|a| always_returns(&a.body)),
+        // `exit(1)` stops the program: nothing after it runs.
+        Stmt::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) => name.text == "exit",
         _ => false,
     })
 }

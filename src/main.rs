@@ -38,14 +38,15 @@ fn main() {
             }
             return;
         }
-        ["run", f] => (Some(Command::Run), *f),
+        // The words after the file go to the program (`args`).
+        ["run", f, ..] => (Some(Command::Run), *f),
         ["test", f] => (Some(Command::Test), *f),
         ["build", f, options @ ..] => match build_options(options) {
             Some((output, boost)) => (Some(Command::Build { output, boost }), *f),
             None => usage_error(),
         },
         // Without a command: the file's `header` decides (run by default).
-        [f] if f.ends_with(".kova") => (None, *f),
+        [f, ..] if f.ends_with(".kova") => (None, *f),
         _ => usage_error(),
     };
 
@@ -93,7 +94,11 @@ fn main() {
     let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test), matches!(command, Command::Build { .. }));
 
     match command {
-        Command::Run => exit(interp::run(&program, &files)),
+        Command::Run => {
+            let skip = if args[0] == "run" { 2 } else { 1 };
+            let given: Vec<String> = args[skip..].iter().map(|a| a.to_string()).collect();
+            exit(interp::run(&program, &files, &given))
+        }
         Command::Build { output, .. } => {
             let output = output.unwrap_or_else(|| file.trim_end_matches(".kova").to_string());
             if output == file {

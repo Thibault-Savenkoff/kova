@@ -99,7 +99,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
         .filter(|(w, _)| !matches!(w[2].kind, Kind::Sym("(" | "<")) || w[3].kind == Kind::Sym(")"))
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
-        .chain(["read_line".to_string()])
+        .chain(["read_line".to_string(), "args".to_string()])
         .collect();
     let text = |t: &Token| source[t.span.start..t.span.end].to_string();
     let at_top = |i: usize| i == 0 || outside[i - 1];

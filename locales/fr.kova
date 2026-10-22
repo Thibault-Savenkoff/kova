@@ -44,6 +44,7 @@ lang fr {
     fault_index := "indice hors de la liste"
     fault_not_text := "la ligne saisie n'est pas du texte (UTF-8 invalide)"
     fault_empty_text := "on ne peut pas chercher un texte vide (`split` ou `replace` avec `\"\"`)"
+    fault_exit_code := "un code de sortie est entre 0 et 255"
 
     // ---- Lexer ----
     comment_unclosed := "commentaire `/*` jamais fermé"

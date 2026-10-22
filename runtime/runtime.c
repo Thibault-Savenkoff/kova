@@ -567,7 +567,25 @@ static int leaks(void) {
     return 102;
 }
 
-int main(void) {
+// `args`: the words after the program's name.
+static int nb_args;
+static char **arg_texts;
+
+int64_t kova_args(void) {
+    int64_t l = kova_list_new(1);
+    for (int i = 1; i < nb_args; i++) push(l, kova_str_new(arg_texts[i], strlen(arg_texts[i])));
+    return l;
+}
+
+// `exit(code)`: what is still alive is not freed, and not counted as a leak (src/interp.rs too).
+void kova_exit(int64_t code) {
+    fflush(stdout);
+    exit((int)code);
+}
+
+int main(int argc, char **argv) {
+    nb_args = argc;
+    arg_texts = argv;
     kova_main();
     return leaks();
 }

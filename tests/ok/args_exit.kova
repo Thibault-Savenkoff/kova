@@ -1,0 +1,31 @@
+// `args`: the words after the program's name; `exit(code)` stops with that code.
+fn total(words: List<String>) -> Int {
+    var sum: Int := 0
+    for w in words {
+        let n: Int? := w.to_int
+        if n != none {
+            sum += n
+        } else {
+            print("not a number: {w}")
+            exit(2)
+        }
+    }
+    return sum
+}
+
+fn main {
+    let words: List<String> := args
+    print(words.length)
+    print(args)
+    let name: String := "still alive"
+    if words.length = 2 {
+        exit(3)
+    }
+    print(total(words))
+    print("never printed")
+}
+// args: 12 30 x
+// expect: 3
+// expect: ["12", "30", "x"]
+// expect: not a number: x
+// code: 2

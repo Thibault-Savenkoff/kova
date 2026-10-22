@@ -111,9 +111,11 @@ fn ok_programs() {
             stderr: expectations(&source, "stderr"),
         };
         let input: String = expectations(&source, "stdin").iter().map(|l| format!("{l}\n")).collect();
+        // `// args: a b`: the words given to the program (`args`).
+        let args: Vec<String> = expectations(&source, "args").iter().flat_map(|l| l.split_whitespace().map(String::from)).collect();
 
         // Run mode
-        let run = with_input(kova(LANG).arg("run").arg(&f), &input);
+        let run = with_input(kova(LANG).arg("run").arg(&f).args(&args), &input);
         check_output(&name, "run", &run, &expected, &mut failures);
 
         // Build mode: compile, then run the produced executable.
@@ -123,7 +125,7 @@ fn ok_programs() {
             failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
             continue;
         }
-        let out = with_input(&mut program(&exe, LANG), &input);
+        let out = with_input(program(&exe, LANG).args(&args), &input);
         check_output(&name, "build", &out, &expected, &mut failures);
         if out.stderr != run.stderr {
             failures.push(format!(

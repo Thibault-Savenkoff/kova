@@ -20,6 +20,8 @@ struct Heap {
     free: Vec<usize>,
     allocated: usize,
     live: usize,
+    /// The program's command-line arguments, for `args`.
+    args: Vec<String>,
 }
 
 impl Heap {
@@ -68,17 +70,20 @@ impl Heap {
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
 /// With `KOVA_LEAKS` set (the test runner sets it): at the end, a String never freed
 /// is an error (code 102); `KOVA_LEAKS=count` also prints how many were made.
-pub fn run(p: &Program, files: &[String]) -> i32 {
+/// `args` = what `args` gives the program.
+pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
     let mut out = BufWriter::new(std::io::stdout());
-    let mut heap = Heap::default();
+    let mut heap = Heap { args: args.to_vec(), ..Heap::default() };
     let result = call(p, p.main.expect("checked by main.rs"), &[], &mut out, files, &mut heap);
     out.flush().unwrap();
     match result {
         Ok(_) => leaks(heap.allocated, heap.live),
-        Err(message) => {
+        Err(Stop::Error(message)) => {
             eprint!("{message}");
             101
         }
+        // What is still alive is not counted as a leak (`kova_exit` in runtime/runtime.c).
+        Err(Stop::Exit(code)) => code,
     }
 }
 
@@ -108,7 +113,12 @@ pub fn test(p: &Program, files: &[String]) -> i32 {
         let result = call(p, *num, &[], &mut out, files, &mut Heap::default());
         let _ = match result {
             Ok(_) => writeln!(out, "✅ {name}"),
-            Err(message) => {
+            // `exit` stops every test, like it stops a program.
+            Err(Stop::Exit(code)) => {
+                out.flush().unwrap();
+                return code;
+            }
+            Err(Stop::Error(message)) => {
                 failed += 1;
                 let message: Vec<String> = message.lines().map(|l| format!("   {l}")).collect();
                 writeln!(out, "❌ {name}\n{}", message.join("\n"))
@@ -121,13 +131,20 @@ pub fn test(p: &Program, files: &[String]) -> i32 {
     if failed > 0 { 1 } else { 0 }
 }
 
-/// `Err` = the message of the runtime error, as it will be printed.
-type Outcome = Result<Vec<i64>, String>;
+type Outcome = Result<Vec<i64>, Stop>;
+
+/// Why a function stopped before its end.
+enum Stop {
+    /// A runtime error: its message, as it will be printed (code 101).
+    Error(String),
+    /// `exit(code)`.
+    Exit(i32),
+}
 
 // ponytail: Rust recursion = the interpreter's stack; infinite recursion
 // crashes without a nice message (same in native). To handle with stack errors.
 fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, files: &[String], heap: &mut Heap) -> Outcome {
-    let fault = |f: Fault, loc: &Loc| fault_text(f, files, *loc);
+    let fault = |f: Fault, loc: &Loc| Stop::Error(fault_text(f, files, *loc));
     let f = &p.functions[num];
     // Every slot fits in 64 bits; a Float is stored bit for bit.
     let mut locals = vec![0i64; f.locals.len()];
@@ -238,6 +255,10 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
                             heap.add(Object::List { width: 1, length: slots.len(), slots })
                         }
+                        StrOp::Args => {
+                            let slots: Vec<i64> = heap.args.clone().into_iter().map(|a| heap.make(a)).collect();
+                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                        }
                         StrOp::Chars => {
                             let slots: Vec<i64> = s(0).chars().map(|c| c as i64).collect();
                             heap.add(Object::List { width: 1, length: slots.len(), slots })
@@ -289,7 +310,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                     }
                 }
                 Inst::Fail(pieces) => {
-                    return Err(pieces
+                    return Err(Stop::Error(pieces
                         .iter()
                         .map(|m| match m {
                             Piece::Text(t) => t.clone(),
@@ -298,8 +319,9 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             Piece::Value(l, show) => text(locals[*l], *show, heap),
                             Piece::File(i) => files[*i].clone(),
                         })
-                        .collect());
+                        .collect()));
                 }
+                Inst::Exit(code) => return Err(Stop::Exit(locals[*code] as i32)),
             }
         }
         match &b.end {

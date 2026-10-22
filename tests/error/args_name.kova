@@ -1,0 +1,7 @@
+fn count(args: List<String>) -> Int {
+    return 0
+}
+
+fn main {
+}
+// error: `args` is a function without parameters: no variable can have its name
