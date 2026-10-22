@@ -335,6 +335,8 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
         }
+        // A plain value given for `T?` is wrapped, as everywhere: `or_else(5, 0)` gives `T = Int`.
+        (Type::Optional(p), t) => deduce(p, t, generics, found),
         _ => {}
     }
 }
@@ -1437,6 +1439,8 @@ impl Checker<'_> {
                 _ => (Mode::Read, a),
             };
             match typed.get(i).cloned().flatten() {
+                // Already typed to deduce `T`: a `T` given for a `T?` still becomes one.
+                Some(given) if matches!(t, Type::Optional(inner) if **inner == given) => self.wraps[value.id] = true,
                 Some(given) => self.mismatch(value, given, t),
                 None => self.expect(value, t),
             }

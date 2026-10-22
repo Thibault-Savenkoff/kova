@@ -28,6 +28,26 @@ fn first_of<K, V>(pair: (K, V)) -> K {
     return pair.0.clone
 }
 
+fn swap<T>(a: var T, b: var T) {
+    let keep: T := a.clone
+    a := b.clone
+    b := keep
+}
+
+fn count<T>(l: List<T>, i: Int) -> Int {
+    if i = 0 {
+        return 0
+    }
+    return count(l, i - 1) + 1
+}
+
+fn or_else<T>(x: T?, d: T) -> T {
+    if x != none {
+        return x.clone
+    }
+    return d.clone
+}
+
 interface Animal {
     fn sound(self) -> String
 }
@@ -66,6 +86,18 @@ fn main {
     print(same(rex, rex.clone))
     print(first_of(("key", 42)))
     print(chorus(rex, 3))
+    var x: String := "left"
+    var y: String := "right"
+    swap(var x, var y)
+    var n: Int := 1
+    var m: Int := 2
+    swap(var n, var m)
+    print("{x} {y} {n} {m}")
+    print(count(["a", "b"], 2))
+    print(or_else(5, 0))
+    let nobody: String? := none
+    print(or_else(nobody, "nobody"))
+    print(or_else(x, "nobody"))
 }
 // expect: 4
 // expect: 2.5
@@ -82,3 +114,8 @@ fn main {
 // expect: true
 // expect: key
 // expect: woofwoofwoof
+// expect: right left 2 1
+// expect: 2
+// expect: 5
+// expect: nobody
+// expect: right
