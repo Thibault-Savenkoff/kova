@@ -534,8 +534,14 @@ impl Generator<'_> {
             // Like `interp::mix`.
             Inst::Mix(d, a, b) => {
                 let (a, b) = (self.read(*a), self.read(*b));
-                let x = self.b.ins().bxor(a, b);
-                let x = self.b.ins().imul_imm_u(x, 0x100000001b3);
+                let mut x = self.b.ins().bxor(a, b);
+                for (shift, times) in [(30, 0xbf58476d1ce4e5b9u64 as i64), (27, 0x94d049bb133111ebu64 as i64)] {
+                    let high = self.b.ins().ushr_imm_u(x, shift);
+                    let y = self.b.ins().bxor(x, high);
+                    x = self.b.ins().imul_imm_u(y, times);
+                }
+                let high = self.b.ins().ushr_imm_u(x, 31);
+                let x = self.b.ins().bxor(x, high);
                 let v = self.b.ins().ushr_imm_u(x, 1);
                 self.b.def_var(self.vars[*d], v);
             }

@@ -34,6 +34,13 @@ fn main {
     }
     print(squares.length)
     print(squares[-5])
+    // Keys far from each other: spread out by `hash` too.
+    var far: Set<Int> := []
+    for i in 0..3000 {
+        far.add(i * 1024)
+    }
+    print(far.contains(2999 * 1024))
+    print(far.contains(1023))
     var words: Map<String, Int> := []
     for w in "the cat and the dog and the bird".words {
         let n: Int? := words[w]
@@ -67,6 +74,8 @@ fn main {
 // expect: 8247000000
 // expect: 2667
 // expect: none
+// expect: true
+// expect: false
 // expect: ["the" := 3, "cat" := 1, "and" := 2, "dog" := 1, "bird" := 1]
 // expect: 2
 // expect: 3

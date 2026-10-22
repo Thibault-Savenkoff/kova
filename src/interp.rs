@@ -128,7 +128,12 @@ fn unindex(s: &mut [i64], i: i64) {
 
 /// `Inst::Mix`: the same in src/codegen.rs.
 fn mix(a: i64, b: i64) -> i64 {
-    (((a ^ b) as u64).wrapping_mul(0x100000001b3) >> 1) as i64
+    // splitmix64's finalizer: every bit counts in the low ones that `% cap` reads (keys like
+    // `i * 1024` spread out).
+    let mut x = (a ^ b) as u64;
+    x = (x ^ x >> 30).wrapping_mul(0xbf58476d1ce4e5b9);
+    x = (x ^ x >> 27).wrapping_mul(0x94d049bb133111eb);
+    ((x ^ x >> 31) >> 1) as i64
 }
 
 /// Runs `main`. On a runtime error: prints the message and returns code 101.
