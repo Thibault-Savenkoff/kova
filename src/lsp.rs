@@ -47,7 +47,10 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                 if connection.handle_shutdown(&req)? {
                     break;
                 }
-                let response = match req.method.as_str() {
+                // A message that cannot be read gets an error back; the server keeps going.
+                let id = req.id.clone();
+                let answer = || -> Result<Response, serde_json::Error> {
+                    Ok(match req.method.as_str() {
                     "textDocument/completion" => {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
@@ -105,26 +108,28 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         Response::new_ok(req.id, help)
                     }
                     _ => Response::new_err(req.id, ErrorCode::MethodNotFound as i32, t!("not_handled")),
+                    })
                 };
+                let response = answer().unwrap_or_else(|e| Response::new_err(id, ErrorCode::InvalidParams as i32, e.to_string()));
                 connection.sender.send(response.into())?;
             }
             Message::Notification(n) => {
                 let uri = match n.method.as_str() {
                     "textDocument/didOpen" => {
-                        let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
+                        let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(n.params) else { continue };
                         docs.insert(p.text_document.uri.clone(), p.text_document.text);
                         p.text_document.uri
                     }
                     "textDocument/didChange" => {
                         // "FULL" sync: each change contains the whole text.
-                        let mut p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
+                        let Ok(mut p) = serde_json::from_value::<DidChangeTextDocumentParams>(n.params) else { continue };
                         if let Some(c) = p.content_changes.pop() {
                             docs.insert(p.text_document.uri.clone(), c.text);
                         }
                         p.text_document.uri
                     }
                     "textDocument/didClose" => {
-                        let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
+                        let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(n.params) else { continue };
                         docs.remove(&p.text_document.uri);
                         p.text_document.uri
                     }

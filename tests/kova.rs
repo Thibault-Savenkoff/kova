@@ -102,44 +102,63 @@ fn check_output(name: &str, mode: &str, out: &Output, e: &Expected, failures: &m
 fn ok_programs() {
     let tmp = std::env::temp_dir().join(format!("kova-tests-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let mut failures = vec![];
-
-    for f in files("ok") {
-        let name = test_name(&f);
-        let source = std::fs::read_to_string(&f).unwrap();
-        let expected = Expected {
-            output: expectations(&source, "expect"),
-            code: expectations(&source, "code").first().map_or(0, |c| c.parse().unwrap()),
-            stderr: expectations(&source, "stderr"),
-        };
-        let input: String = expectations(&source, "stdin").iter().map(|l| format!("{l}\n")).collect();
-        // `// args: a b`: the words given to the program (`args`).
-        let args: Vec<String> = expectations(&source, "args").iter().flat_map(|l| l.split_whitespace().map(String::from)).collect();
-
-        // Run mode
-        let run = with_input(kova(LANG).arg("run").arg(&f).args(&args), &input);
-        check_output(&name, "run", &run, &expected, &mut failures);
-
-        // Build mode: compile, then run the produced executable.
-        let exe = tmp.join(name.trim_end_matches(".kova").replace('/', "_") + EXE);
-        let out = kova(LANG).arg("build").arg(&f).arg("-o").arg(&exe).output().unwrap();
-        if !out.status.success() {
-            failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
-            continue;
+    // One program per core at a time: most of the time goes to the C compiler of `kova build`.
+    let files = files("ok");
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let found = std::sync::Mutex::new(vec![]);
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    std::thread::scope(|s| {
+        for _ in 0..cores {
+            s.spawn(|| {
+                while let Some(f) = files.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
+                    let mut failures = vec![];
+                    check_program(f, &tmp, &mut failures);
+                    found.lock().unwrap().extend(failures.into_iter().map(|m| (f.clone(), m)));
+                }
+            });
         }
-        let out = with_input(program(&exe, LANG).args(&args), &input);
-        check_output(&name, "build", &out, &expected, &mut failures);
-        if out.stderr != run.stderr {
-            failures.push(format!(
-                "{name}: different stderr\n  run:   {}\n  build: {}",
-                text(&run.stderr).trim(),
-                text(&out.stderr).trim()
-            ));
-        }
-    }
+    });
+    let mut failures = found.into_inner().unwrap();
+    failures.sort();
+    let failures: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
 
     let _ = std::fs::remove_dir_all(&tmp);
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
+/// `f` under `kova run`, then built and run: the same output, as its `// expect:` lines say.
+fn check_program(f: &PathBuf, tmp: &Path, failures: &mut Vec<String>) {
+    let name = test_name(&f);
+    let source = std::fs::read_to_string(&f).unwrap();
+    let expected = Expected {
+        output: expectations(&source, "expect"),
+        code: expectations(&source, "code").first().map_or(0, |c| c.parse().unwrap()),
+        stderr: expectations(&source, "stderr"),
+    };
+    let input: String = expectations(&source, "stdin").iter().map(|l| format!("{l}\n")).collect();
+    // `// args: a b`: the words given to the program (`args`).
+    let args: Vec<String> = expectations(&source, "args").iter().flat_map(|l| l.split_whitespace().map(String::from)).collect();
+
+    // Run mode
+    let run = with_input(kova(LANG).arg("run").arg(&f).args(&args), &input);
+    check_output(&name, "run", &run, &expected, failures);
+
+    // Build mode: compile, then run the produced executable.
+    let exe = tmp.join(name.trim_end_matches(".kova").replace('/', "_") + EXE);
+    let out = kova(LANG).arg("build").arg(&f).arg("-o").arg(&exe).output().unwrap();
+    if !out.status.success() {
+        failures.push(format!("{name} [build]: compilation failed\n  {}", text(&out.stderr).trim()));
+        return;
+    }
+    let out = with_input(program(&exe, LANG).args(&args), &input);
+    check_output(&name, "build", &out, &expected, failures);
+    if out.stderr != run.stderr {
+        failures.push(format!(
+            "{name}: different stderr\n  run:   {}\n  build: {}",
+            text(&run.stderr).trim(),
+            text(&out.stderr).trim()
+        ));
+    }
 }
 
 #[test]
@@ -341,6 +360,12 @@ fn languages() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The editor's address of a file: `file:///home/me/x.kova`, `file:///C:/Users/me/x.kova`.
+fn file_uri(path: &Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    format!("file://{}{path}", if path.starts_with('/') { "" } else { "/" })
+}
+
 /// Talks to `kova lsp` like the editor does: opens a wrong file, receives the error,
 /// asks for completion, then shuts the server down cleanly.
 #[test]
@@ -360,7 +385,7 @@ fn language_server() {
         let mut length = 0;
         loop {
             let mut line = String::new();
-            output.read_line(&mut line).unwrap();
+            assert!(output.read_line(&mut line).unwrap() > 0, "kova lsp stopped");
             if line == "\r\n" {
                 break;
             }
@@ -395,7 +420,7 @@ fn language_server() {
 
     // An error in an imported file: shown on the `import` line, with its real place.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error/import_error");
-    let main = format!("file://{}", dir.join("main.kova").display());
+    let main = file_uri(&dir.join("main.kova"));
     let text = std::fs::read_to_string(dir.join("main.kova")).unwrap();
     send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didOpen",
         "params": {"textDocument": {"uri": main, "languageId": "kova", "version": 1, "text": text}}}));
@@ -406,7 +431,7 @@ fn language_server() {
 
     // Imported through another file: shown on the `import` of the file that leads to it.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error/import_deep");
-    let main = format!("file://{}", dir.join("main.kova").display());
+    let main = file_uri(&dir.join("main.kova"));
     let text = std::fs::read_to_string(dir.join("main.kova")).unwrap();
     send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didOpen",
         "params": {"textDocument": {"uri": main, "languageId": "kova", "version": 1, "text": text}}}));
@@ -463,7 +488,7 @@ fn debugger() {
                 let mut length = 0;
                 loop {
                     let mut line = String::new();
-                    self.output.read_line(&mut line).unwrap();
+                    assert!(self.output.read_line(&mut line).unwrap() > 0, "kova debug stopped");
                     if line == "\r\n" {
                         break;
                     }
