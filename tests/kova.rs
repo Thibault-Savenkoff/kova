@@ -50,8 +50,14 @@ fn expectations(source: &str, key: &str) -> Vec<String> {
 
 /// Runs `c` with `input` as its standard input.
 fn with_input(c: &mut Command, input: &str) -> Output {
+    with_bytes(c, input.as_bytes())
+}
+
+/// Runs `c` with these bytes as its standard input.
+fn with_bytes(c: &mut Command, input: &[u8]) -> Output {
     let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    // A program may stop before reading all its input.
+    let _ = child.stdin.take().unwrap().write_all(input);
     child.wait_with_output().unwrap()
 }
 
@@ -322,4 +328,21 @@ fn language_server() {
     assert_eq!(receive()["id"], 3);
     send(serde_json::json!({"jsonrpc": "2.0", "method": "exit"}));
     assert!(server.wait().unwrap().success());
+}
+
+/// A line that is not UTF-8 stops `read_line` loudly (not a silent `none`), in run and in build.
+#[test]
+fn input_not_text() {
+    let source = "tests/ok/read_line.kova";
+    let input = b"12\n\xff\n30\n";
+    let run = with_bytes(kova(LANG).arg("run").arg(source), input);
+    let exe = std::env::temp_dir().join(format!("kova-not-text-{}", std::process::id()));
+    assert!(kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).status().unwrap().success());
+    let build = with_bytes(&mut program(&exe, LANG), input);
+    let _ = std::fs::remove_file(&exe);
+    for out in [&run, &build] {
+        assert_eq!(out.status.code(), Some(101), "{}", text(&out.stderr));
+        assert!(text(&out.stderr).contains("the line typed is not text (invalid UTF-8)"), "{}", text(&out.stderr));
+    }
+    assert_eq!(run.stderr, build.stderr);
 }

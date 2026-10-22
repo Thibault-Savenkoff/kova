@@ -222,6 +222,8 @@ pub enum Inst {
     ListLength(Local, Local),
     /// Stops with "index out of bounds" unless `0 <= index < list.length`.
     ListCheck(Local, Local, Loc),
+    /// Stops the program with this fault if the local is not 0.
+    FaultIf(Local, Fault, Loc),
     /// `dst := slot k of element index` (index checked before).
     ListLoad(Local, Local, Local, usize),
     /// `slot k of element index := value`.
@@ -256,7 +258,7 @@ pub enum StrOp {
     ToInt,
     /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
     ReadFile,
-    /// `read_line`: a new String, or 0 at the end of the input.
+    /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
 }
 
@@ -343,6 +345,7 @@ pub enum Fault {
     DivisionByZero,
     BadConversion,
     Index,
+    NotText,
 }
 
 impl Fault {
@@ -353,6 +356,7 @@ impl Fault {
             Fault::DivisionByZero => "fault_division_by_zero",
             Fault::BadConversion => "fault_bad_conversion",
             Fault::Index => "fault_index",
+            Fault::NotText => "fault_not_text",
         }
     }
 }
@@ -1746,8 +1750,13 @@ impl<'a> Translator<'a> {
                 if name.text == "read_line" {
                     let line = self.int_local();
                     self.emit(Inst::Str(line, StrOp::ReadLine, vec![]));
-                    let present = self.int_local();
                     let zero = self.constant(0);
+                    // Not `none`: a loop reading until `none` would stop in the middle without a word.
+                    let broken = self.int_local();
+                    self.emit(Inst::Binary(broken, Op::Lt, line, zero, NOWHERE));
+                    let loc = self.loc(name.span);
+                    self.emit(Inst::FaultIf(broken, Fault::NotText, loc));
+                    let present = self.int_local();
                     self.emit(Inst::Binary(present, Op::Ne, line, zero, NOWHERE));
                     let v = vec![present, line];
                     self.track(&v, &self.info.types[e.id].clone());

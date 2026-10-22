@@ -19,6 +19,13 @@ fn code(n: Int) -> Int or Bool {
     return ok(n)
 }
 
+fn size(r: Int or String) -> Int {
+    return match r {
+        ok(v) => v
+        err(e) => e.length
+    }
+}
+
 fn main {
     for n in [8, 6, 3] {
         match quarter(n) {
@@ -47,6 +54,12 @@ fn main {
     print(all)
     let pair: (Int or Bool, Int) := (ok(5), 2)
     print(pair)
+    // `ok(…)` / `err(…)` as arguments, on the left of `=`, and owned Strings in a List.
+    print(size(ok(1)) + size(err("abc")))
+    print(ok(3) = code(3))
+    let texts: List<String or Int> := [ok("a"), err(2), ok("bc")]
+    let again2: List<String or Int> := texts.clone
+    print(again2)
 }
 // expect: quarter of 8: 2
 // expect: no quarter: 3 is odd
@@ -60,3 +73,6 @@ fn main {
 // expect: false
 // expect: [ok(1), err(false)]
 // expect: (ok(5), 2)
+// expect: 4
+// expect: true
+// expect: [ok("a"), err(2), ok("bc")]

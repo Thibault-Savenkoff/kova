@@ -307,7 +307,7 @@ int64_t kova_read_file(int64_t p) {
 }
 
 // `read_line`: the next line of the input without its end (`\n` or `\r\n`),
-// or 0 at the end of the input (or if the line is not UTF-8).
+// 0 at the end of the input, -1 if the line is not UTF-8 (src/kir.rs stops the program).
 int64_t kova_read_line(void) {
     fflush(stdout);
     char *line = NULL;
@@ -315,6 +315,7 @@ int64_t kova_read_line(void) {
     ssize_t n = getline(&line, &room, stdin);
     int64_t result = 0;
     if (n >= 0) {
+        result = -1;
         if (n > 0 && line[n - 1] == '\n') n--;
         if (n > 0 && line[n - 1] == '\r') n--;
         if (valid_utf8((unsigned char *)line, n)) result = kova_str_new(line, n);

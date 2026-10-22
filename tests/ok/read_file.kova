@@ -18,12 +18,18 @@ fn first_char(path: String) -> Int or IoError {
     return ok(text.length)
 }
 
+// An `IoError` can be made by hand too.
+fn refuse -> Int or IoError {
+    return err(IoError.Other("boom"))
+}
+
 fn main {
     show("tests/data/poem.txt")
     show("tests/data/missing.txt")
     show("tests/data")
     print(first_char("tests/data/poem.txt"))
     print(first_char("nothing"))
+    print(refuse)
 }
 // expect: read 28 characters:
 // expect: Roses are red,
@@ -32,3 +38,4 @@ fn main {
 // expect: tests/data is a folder
 // expect: ok(28)
 // expect: err(IoError.NotFound(path: "nothing"))
+// expect: err(IoError.Other(path: "boom"))

@@ -42,6 +42,7 @@ lang en {
     leak_live := "Strings and Lists never freed: "
 
     fault_index := "index out of bounds"
+    fault_not_text := "the line typed is not text (invalid UTF-8)"
 
     // ---- Lexer ----
     comment_unclosed := "`/*` comment never closed"

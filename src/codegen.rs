@@ -415,6 +415,10 @@ impl Generator<'_> {
                 let v = self.list_call(L_LENGTH, &[l]);
                 self.b.def_var(self.vars[*d], v.unwrap());
             }
+            Inst::FaultIf(c, f, loc) => {
+                let c = self.read(*c);
+                self.fault_if(c, *f, *loc);
+            }
             Inst::ListCheck(l, i, loc) => {
                 let (l, i) = (self.read(*l), self.read(*i));
                 let line = self.b.ins().iconst(I64, loc.line as i64);

@@ -209,7 +209,7 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                                             line.pop();
                                         }
                                     }
-                                    String::from_utf8(line).map_or(0, |t| heap.make(t))
+                                    String::from_utf8(line).map_or(-1, |t| heap.make(t))
                                 }
                             }
                         }
@@ -228,6 +228,8 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                 }
                 // 0 = a List emptied by a move: its helper (`Drop`) still asks its length.
                 Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.list(locals[*l]).1 as i64 },
+                Inst::FaultIf(c, f, loc) if locals[*c] != 0 => return Err(fault(*f, loc)),
+                Inst::FaultIf(..) => {}
                 Inst::ListCheck(l, i, loc) => {
                     let length = *heap.list(locals[*l]).1 as i64;
                     if !(0..length).contains(&locals[*i]) {

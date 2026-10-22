@@ -45,6 +45,7 @@ pub const RUNTIME: &[&str] = &[
     "leak_live",
     // runtime.c: `FAULT_INDEX`.
     "fault_index",
+    "fault_not_text",
 ];
 
 /// A piece of a translated text.

@@ -1492,8 +1492,8 @@ impl Checker<'_> {
                         Type::Bool
                     }
                     Eq | Ne => {
-                        // `x != none`: `none` takes the type of the other side.
-                        let (a, b) = if matches!(a.kind, ExprKind::None) { (b, a) } else { (a, b) };
+                        // `x != none`, `ok(3) = r`: `none` and `ok(…)` take the type of the other side.
+                        let (a, b) = if matches!(a.kind, ExprKind::None | ExprKind::Outcome { .. }) { (b, a) } else { (a, b) };
                         let ta = self.expr(a);
                         if let ExprKind::None = b.kind {
                             if matches!(ta, Type::Optional(_) | Type::Error) {
