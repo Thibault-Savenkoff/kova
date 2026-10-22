@@ -31,22 +31,32 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
     std::fs::write(&texts, locale::c_texts(lang, files)).map_err(|e| e.to_string())?;
 
-    // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
-    // else the system's static C library; else as usual, with a warning saying what to install.
     let link = |cc: &str, flags: &[&str]| {
         // Only what the program uses: each function in its own section, the unused ones dropped,
         // no symbols nor debug information (Kova's errors give `file:line` themselves).
-        let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
+        // macOS's linker says it differently: `-dead_strip`, `-S -x`.
+        let small: &[&str] = if cfg!(target_os = "macos") {
+            &["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x"]
+        } else {
+            &["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"]
+        };
         Command::new(cc).args(flags).args(small).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output()
     };
-    let res = [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
-        .iter()
-        .map(|(cc, flags)| link(cc, flags))
-        .find(|r| r.as_ref().is_ok_and(|out| out.status.success()))
-        .unwrap_or_else(|| {
-            eprintln!("{}", t!("not_static"));
-            link("cc", &[])
-        });
+    // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
+    // else the system's static C library; else as usual, with a warning saying what to install.
+    // macOS has no static C library: its `libSystem` is on every Mac, so `cc` as usual is fine.
+    let res = if cfg!(target_os = "macos") {
+        link("cc", &[])
+    } else {
+        [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
+            .iter()
+            .map(|(cc, flags)| link(cc, flags))
+            .find(|r| r.as_ref().is_ok_and(|out| out.status.success()))
+            .unwrap_or_else(|| {
+                eprintln!("{}", t!("not_static"));
+                link("cc", &[])
+            })
+    };
     let _ = std::fs::remove_dir_all(&tmp);
     match res {
         Err(e) => Err(t!("cc_missing", error = e)),
@@ -152,7 +162,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
 fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
-    flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables
+    flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables, macOS only those
     // A function returning many values (big tuple): Cranelift stores them in memory.
     flags.set("enable_multi_ret_implicit_sret", "true")?;
     let isa = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())?.finish(settings::Flags::new(flags))?;
