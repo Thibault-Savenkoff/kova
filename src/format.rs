@@ -77,7 +77,9 @@ pub fn format(src: &str) -> Option<String> {
         match t.kind {
             Kind::Sym(s @ ("{" | "(" | "[")) => {
                 open.push(line);
-                typed.push(s == "{" && prev.is_some_and(|(p, _)| p.kind == Kind::Sym(":")));
+                // `x: {Int}`, and `{ {Int} -> Int }`'s inner block type.
+                let in_type = typed.last() == Some(&true);
+                typed.push(s == "{" && prev.is_some_and(|(p, _)| p.kind == Kind::Sym(":") || in_type && matches!(p.kind, Kind::Sym("{" | ","))));
                 heading = false;
             }
             Kind::Sym("}" | ")" | "]") => {

@@ -329,6 +329,8 @@ lang en {
     param_compare := "`{op}` on a `{type}` needs `{type}` to follow `Equal`"
     compare_needs_equal := "`{op}` cannot compare `{type}` values"
     compare_needs_equal_help := "add `: Equal` to `{kind} {name}`: its fields are then compared one by one"
+    sorted_needs_order := "`sorted` alone orders with `<`, which does not order `{type}` values"
+    sorted_needs_order_help := "give the order with a block: `{example}`"
     order_needs_comparable := "`{op}` cannot order `{type}` values"
     order_needs_comparable_help := "write `{kind} {name} : Comparable` and its method `fn less(self, other: Self) -> Bool`"
     param_order_help := "`{type}` must follow `Comparable`"

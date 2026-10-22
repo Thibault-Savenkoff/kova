@@ -613,7 +613,7 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
         Type::List(e) => items.extend(list_methods(&e.text())),
         Type::Map(k, v) => {
             let (k, v) = (k.text(), v.text());
-            let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?"))];
+            let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?")), ("keys", format!("-> List<{k}>")), ("values", format!("-> List<{v}>"))];
             items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
         }
         _ => {}
@@ -666,6 +666,7 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         block("any", format!("{{{elem} -> Bool}} -> Bool"), ""),
         block("all", format!("{{{elem} -> Bool}} -> Bool"), ""),
         fold,
+        plain("sorted", format!("-> List<{elem}>  ·  sorted {{ a: {elem}, b: {elem} => a < b }}")),
     ]
 }
 
@@ -1235,7 +1236,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

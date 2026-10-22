@@ -30,7 +30,7 @@ fn main {
     let fixed: Map<String, Int> := ["a" := 1]
     fixed["b"] := 2
     print(fixed.remove("a"))
-    print(counts.keys)
+    print(counts.size)
     bump(var counts["a"])
     points[1].move_right
 }
@@ -46,6 +46,6 @@ fn main {
 // error: `Map` has no function `Map.empty`
 // error: `Int` expected, `Int?` given
 // error: `fixed` is declared with let
-// error: `Map<String, Int>` has no method `keys`
+// error: `Map<String, Int>` has no method `size`
 // error: `bump` changes this argument: it must be a variable
 // error: `Point?` has no method `move_right`

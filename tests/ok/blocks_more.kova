@@ -1,0 +1,81 @@
+// Blocks, the rest: sorted, keys/values, a block after a static function or a part, a block taking a block.
+struct Dog {
+    name: String
+    age: Int
+
+    fn make(n: Int, name: {Int -> String}) -> List<Dog> {
+        var dogs: List<Dog> := []
+        for i in 0..n {
+            dogs.add(Dog { name := name(i), age := i })
+        }
+        return dogs
+    }
+
+    fn named(name: String) then(after: {String}) -> Dog {
+        after(name)
+        return Dog { name := name.clone, age := 0 }
+    }
+}
+
+struct Card : Comparable {
+    rank: Int
+
+    fn less(self, other: Card) -> Bool { return self.rank < other.rank }
+}
+
+fn by(l: List<Int>, first: {Int, Int -> Bool}) -> List<Int> {
+    return l.sorted(first)
+}
+
+fn twice(f: {Int -> Int}, x: Int) -> Int {
+    return f(f(x))
+}
+
+fn apply(g: {{Int -> Int}, Int -> Int}) -> Int {
+    return g({ x: Int => x + 1 }, 10)
+}
+
+fn main {
+    let l: List<Int> := [3, 1, 2, 1]
+    print(l.sorted)
+    print(l.sorted { x: Int, y: Int => x > y })
+    print(l)
+    let words: List<String> := ["poire", "abricot", "pomme"]
+    print(words.sorted)
+    let dogs: List<Dog> := [Dog { name := "Rex", age := 5 }, Dog { name := "Ida", age := 2 }, Dog { name := "Max", age := 5 }]
+    for d in (dogs.sorted { a: Dog, b: Dog => a.age < b.age }) {
+        print(d.name)
+    }
+    let cards: List<Card> := [Card { rank := 9 }, Card { rank := 4 }]
+    print(cards.sorted[0].rank)
+    print(by([2, 3, 1]) { a: Int, b: Int => a > b })
+    let empty: List<Int> := []
+    print(empty.sorted)
+    let ages: Map<String, Int> := ["Rex" := 5, "Ida" := 2]
+    print(ages.keys)
+    print(ages.values)
+    let pups: List<Dog> := Dog.make(3) { i: Int => "pup {i}" }
+    print(pups[2].name)
+    let rex: Dog := Dog.named("Rex") then { s: String => print("made {s}") }
+    print(rex.name)
+    print(apply { f: {Int -> Int}, x: Int => twice(f, x) })
+    let base: Int := 100
+    print(apply { f: {Int -> Int}, x: Int => f(x) + base })
+}
+// expect: [1, 1, 2, 3]
+// expect: [3, 2, 1, 1]
+// expect: [3, 1, 2, 1]
+// expect: ["abricot", "poire", "pomme"]
+// expect: Ida
+// expect: Rex
+// expect: Max
+// expect: 4
+// expect: [3, 2, 1]
+// expect: []
+// expect: ["Rex", "Ida"]
+// expect: [5, 2]
+// expect: pup 2
+// expect: made Rex
+// expect: Rex
+// expect: 12
+// expect: 111

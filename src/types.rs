@@ -263,8 +263,8 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
 ];
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "clone"];
-pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "clone"];
+pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const STRING_METHODS: &[&str] = &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
 
 /// `` `length`, `add` ``.
@@ -2048,7 +2048,15 @@ impl Checker<'_> {
     /// `l.length`, `l.add(x)`, `l.remove(i)` (PLAN 2.10); `None` for `clone` (shared with the other types).
     fn list_method(&mut self, receiver: &Expr, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
-            "each" | "filter" | "map" | "any" | "all" | "fold" => return Some(self.block_method(elem, name, args)),
+            // `l.sorted`: in the order of `<`.
+            "sorted" if args.is_empty() => {
+                if !self.has(elem, "Comparable") {
+                    let example = format!("l.sorted {{ a: {t}, b: {t} => … }}", t = elem.text());
+                    self.diags.push(Diag::new(name.span, t!("sorted_needs_order", type = elem.text())).help(t!("sorted_needs_order_help", example = example)));
+                }
+                return Some(Type::List(Box::new(elem.clone())));
+            }
+            "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
@@ -2084,7 +2092,11 @@ impl Checker<'_> {
             args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
         });
         let Some(block) = block else {
-            let example = if fold { "l.fold(0) { sum: Int, x: Int => sum + x }".to_string() } else { format!("l.{} {{ x: Int => … }}", name.text) };
+            let example = match name.text.as_str() {
+                "fold" => "l.fold(0) { sum: Int, x: Int => sum + x }".to_string(),
+                "sorted" => "l.sorted { a: Int, b: Int => a > b }".to_string(),
+                n => format!("l.{n} {{ x: Int => … }}"),
+            };
             self.error(name.span, t!("block_expected", name = name.text, example = example));
             args.iter().for_each(|a| {
                 self.expr(a);
@@ -2096,6 +2108,8 @@ impl Checker<'_> {
             "each" => (vec![elem.clone()], Some(Type::Unit)),
             "filter" | "any" | "all" => (vec![elem.clone()], Some(Type::Bool)),
             "map" => (vec![elem.clone()], None),
+            // `{ a: T, b: T => … }`: `true` when `a` comes before `b`.
+            "sorted" => (vec![elem.clone(), elem.clone()], Some(Type::Bool)),
             _ => (vec![acc.clone(), elem.clone()], Some(acc.clone())),
         };
         let t = match &block.kind {
@@ -2122,7 +2136,7 @@ impl Checker<'_> {
         };
         match (name.text.as_str(), t) {
             ("each", _) => Type::Unit,
-            ("filter", _) => Type::List(Box::new(elem.clone())),
+            ("filter" | "sorted", _) => Type::List(Box::new(elem.clone())),
             ("any" | "all", _) => Type::Bool,
             ("map", Type::Block(_, r)) if *r != Type::Error => Type::List(r),
             ("map", _) => Type::Error,
@@ -2198,6 +2212,9 @@ impl Checker<'_> {
             "length" => (vec![], Type::Int),
             "contains" => (vec![(Mode::Read, k.clone())], Type::Bool),
             "remove" => (vec![(Mode::Read, k.clone())], Type::Optional(Box::new(v.clone()))),
+            // Copies, in the order the keys were added.
+            "keys" => (vec![], Type::List(Box::new(k.clone()))),
+            "values" => (vec![], Type::List(Box::new(v.clone()))),
             "clone" => return None,
             _ => {
                 self.diags.push(

@@ -2261,6 +2261,47 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// `l.sorted` or `l.sorted { a: T, b: T => … }`: a sorted copy. An element moves back while it
+    /// comes before the previous one, so equal elements keep their order.
+    /// ponytail: insertion sort, O(n²); a merge sort when Lists of thousands are sorted.
+    fn sorted(&mut self, list: Local, elem: &Type, block: Option<&Expr>, span: Span) -> Slots {
+        let ty = Type::List(Box::new(elem.clone()));
+        let out = self.clone_value(&[list], &ty)[0];
+        let given = block.filter(|b| !matches!(b.kind, ExprKind::Block { .. })).map(|b| self.expr(b));
+        let n = self.int_local();
+        self.emit(Inst::ListLength(n, out));
+        let (i, j, one, zero) = (self.constant(1), self.int_local(), self.constant(1), self.constant(0));
+        let (outer, start, inner, test, swap, next, done) =
+            (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(outer), outer);
+        let more = self.int_local();
+        self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
+        self.go(End::Branch(more, start, done), start);
+        self.emit(Inst::Copy(j, i));
+        self.go(End::Jump(inner), inner);
+        let left = self.int_local();
+        self.emit(Inst::Binary(left, Op::Gt, j, zero, NOWHERE));
+        self.go(End::Branch(left, test, next), test);
+        let before = self.int_local();
+        self.emit(Inst::Binary(before, Op::Minus, j, one, NOWHERE));
+        let (a, b) = (self.load(out, j, elem), self.load(out, before, elem));
+        let first = match block {
+            Some(block) => self.run(block, &given, vec![(a.clone(), elem.clone()), (b.clone(), elem.clone())], Some(&Type::Bool))[0],
+            None => self.less(&a, &b, elem, span),
+        };
+        self.go(End::Branch(first, swap, next), swap);
+        for (k, (&x, &y)) in a.iter().zip(&b).enumerate() {
+            self.emit(Inst::ListStore(out, j, k, y));
+            self.emit(Inst::ListStore(out, before, k, x));
+        }
+        self.emit(Inst::Copy(j, before));
+        self.go(End::Jump(inner), next);
+        self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+        self.go(End::Jump(outer), done);
+        self.track(&[out], &ty);
+        vec![out]
+    }
+
     /// Runs `block` on `vals`: its body copied here, or a call of the block `given`.
     fn run(&mut self, block: &Expr, given: &Option<Slots>, vals: Vec<(Slots, Type)>, result: Option<&Type>) -> Slots {
         match (given, &block.kind) {
@@ -2863,6 +2904,20 @@ impl<'a> Translator<'a> {
                         let key = self.expr(&args[0]);
                         self.lookup(map, &key, &k, &v, true)
                     }
+                    // A copy of each key, or of each value.
+                    "keys" | "values" => {
+                        let (ty, out_elem) = (self.ty(e), if name.text == "keys" { &k } else { &v });
+                        let out = self.int_local();
+                        self.emit(Inst::ListNew(out, scalars(out_elem).len()));
+                        let nk = scalars(&k).len();
+                        self.each_element(map, &pair(&k, &v), |t, _, kv| {
+                            let part = if name.text == "keys" { &kv[..nk] } else { &kv[nk..] };
+                            let copy = t.clone_value(part, out_elem);
+                            t.push(out, &copy);
+                        });
+                        self.track(&[out], &ty);
+                        vec![out]
+                    }
                     other => unreachable!("Map method `{other}` checked by the type checker"),
                 }
             }
@@ -2872,6 +2927,7 @@ impl<'a> Translator<'a> {
                 let list = self.expr1(receiver);
                 match name.text.as_str() {
                     "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, list, &elem, &name.text, args),
+                    "sorted" => self.sorted(list, &elem, args.last(), e.span),
                     "length" => {
                         let n = self.int_local();
                         self.emit(Inst::ListLength(n, list));

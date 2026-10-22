@@ -384,7 +384,8 @@ impl Parser<'_> {
         self.advance(); // {
         let mut params = vec![];
         while !self.is_sym("}") && !self.is_sym("->") {
-            params.push(self.type_()?);
+            // `{ {Int} -> Int }`: a block taking a block, still a parameter's type.
+            params.push(if self.is_sym("{") { self.block_type()? } else { self.type_()? });
             if !self.is_sym("}") && !self.is_sym("->") {
                 self.expect(",")?;
             }
@@ -911,7 +912,7 @@ impl Parser<'_> {
         self.params(&mut params)?;
         // `fn put(value: Int) at(index: Int)`: a keyword message, named `put(…) at(…)`.
         let mut breaks = vec![];
-        while self.next_part(self.t[self.pos - 1].span) {
+        while self.next_part(self.t[self.pos - 1].span) && self.kind_at(1) == Kind::Sym("(") {
             breaks.push(params.len());
             let part = self.value_name("what_function")?;
             let open = self.advance().span;
@@ -941,13 +942,14 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// `at(` on the same line as the `)` ending at `end`: the next part of a keyword message.
+    /// `at(` (or `then {` at a call) on the same line as the `)` ending at `end`: the next part
+    /// of a keyword message.
     /// A reserved word there (`between(1) and(3)`) is one too, refused by `value_name`;
     /// but not `to` and `else`, which may follow an expression (`from i := f(1) to (n)`).
     fn next_part(&self, end: Span) -> bool {
         matches!(self.kind(), Kind::Ident | Kind::Keyword(_))
             && !matches!(self.kind(), Kind::Keyword("to" | "else"))
-            && self.kind_at(1) == Kind::Sym("(")
+            && (self.kind_at(1) == Kind::Sym("(") || self.kind_at(1) == Kind::Sym("{") && !self.no_literal)
             && !self.src[end.end..self.token().span.start].contains('\n')
     }
 
@@ -955,6 +957,13 @@ impl Parser<'_> {
     /// follow the first ones, and the message's name `put(…) at(…)`.
     fn more_parts(&mut self, name: &mut Name, args: &mut Vec<Expr>, end: &mut Span) -> R<()> {
         while self.next_part(*end) {
+            // `Dog.named("Rex") then { … }`: a block alone needs no `()`, as in `l.each { … }`.
+            if self.kind_at(1) == Kind::Sym("{") {
+                let part = self.value_name("what_function")?;
+                *end = self.trailing_block(args)?.expect("a `{` outside a heading");
+                add_part(name, &part.text);
+                break;
+            }
             let part = self.value_name("what_function")?;
             let open = self.advance().span;
             let more = self.arguments()?;
@@ -1535,7 +1544,8 @@ impl Parser<'_> {
             loop {
                 let name = self.value_name("what_parameter")?;
                 self.expect(":")?;
-                params.push(Param { name, mode: Mode::Read, ty: self.type_()? });
+                let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
+                params.push(Param { name, mode: Mode::Read, ty });
                 if !self.is_sym(",") {
                     break;
                 }
@@ -1693,6 +1703,10 @@ impl Parser<'_> {
                 if !variant {
                     self.more_parts(&mut name, &mut args, &mut end)?;
                 }
+            }
+            // `Dog.make(3) { … }`
+            if !variant {
+                end = self.trailing_block(&mut args)?.unwrap_or(end);
             }
             if variant && !types.is_empty() {
                 self.diags.push(Diag::new(ty.span, t!("not_generic", name = ty.text)).help(t!("not_generic_help", name = ty.text)));
