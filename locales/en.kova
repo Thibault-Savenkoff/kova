@@ -388,7 +388,6 @@ lang en {
 
     // ---- Editor (`kova lsp`) ----
     action_add_cases := "Add the missing cases"
-    lens_run_test := "▶ Run this test"
     rename_self := "`self` cannot be renamed"
     rename_invalid := "`{name}` cannot be this name: letters, digits and `_`, starting with a capital only for a type"
     not_handled := "not handled yet"

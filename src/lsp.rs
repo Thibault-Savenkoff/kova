@@ -30,7 +30,6 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
         inlay_hint_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         rename_provider: Some(OneOf::Left(true)),
-        code_lens_provider: Some(CodeLensOptions { resolve_provider: Some(false) }),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             ..Default::default()
@@ -91,10 +90,10 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                             edit => Response::new_ok(req.id, edit.and_then(Result::ok).flatten()),
                         }
                     }
-                    "textDocument/codeLens" => {
-                        let p: CodeLensParams = serde_json::from_value(req.params)?;
-                        let uri = &p.text_document.uri;
-                        Response::new_ok(req.id, docs.get(uri).map(|src| lenses(uri, src)))
+                    // Not in the LSP protocol: the extension asks it to put a ▶ before each `test`.
+                    "kova/tests" => {
+                        let uri: Uri = serde_json::from_value(req.params["textDocument"]["uri"].clone())?;
+                        Response::new_ok(req.id, docs.get(&uri).map(|src| tests(src)))
                     }
                     "textDocument/inlayHint" => {
                         let p: InlayHintParams = serde_json::from_value(req.params)?;
@@ -339,18 +338,11 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
     })]
 }
 
-/// "▶ Run this test" above each `test`: the extension's `kova.runTest` runs `kova test file "name"`.
-fn lenses(uri: &Uri, src: &str) -> Vec<CodeLens> {
+/// Each `test`: its name and where it is written. The extension puts a ▶ in the margin there,
+/// which runs `kova test file "name"`.
+fn tests(src: &str) -> Vec<serde_json::Value> {
     (tree(src).tests.iter())
-        .map(|t| CodeLens {
-            range: Range::new(position(src, t.span.start), position(src, t.span.end)),
-            command: Some(Command {
-                title: t!("lens_run_test"),
-                command: "kova.runTest".into(),
-                arguments: Some(vec![serde_json::json!(uri.as_str()), serde_json::json!(t.name)]),
-            }),
-            data: None,
-        })
+        .map(|t| serde_json::json!({ "name": t.name, "range": Range::new(position(src, t.span.start), position(src, t.span.end)) }))
         .collect()
 }
 
@@ -1180,11 +1172,9 @@ mod tests {
 
     #[test]
     fn test_buttons() {
-        let uri = file_uri("/none/main.kova").unwrap();
         let src = "test \"one\" {\n  check 1 = 1\n}\ntest \"two\" {\n}\n";
-        let lenses = lenses(&uri, src);
-        let names: Vec<_> = lenses.iter().map(|l| (l.range.start.line, l.command.as_ref().unwrap().arguments.as_ref().unwrap()[1].clone())).collect();
-        assert_eq!(names, [(0, serde_json::json!("one")), (3, serde_json::json!("two"))]);
+        let names: Vec<_> = tests(src).iter().map(|t| (t["range"]["start"]["line"].clone(), t["name"].clone())).collect();
+        assert_eq!(names, [(serde_json::json!(0), serde_json::json!("one")), (serde_json::json!(3), serde_json::json!("two"))]);
     }
 
     #[test]

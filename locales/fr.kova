@@ -388,7 +388,6 @@ lang fr {
 
     // ---- Editor (`kova lsp`) ----
     action_add_cases := "Ajouter les cas manquants"
-    lens_run_test := "▶ Lancer ce test"
     rename_self := "`self` ne se renomme pas"
     rename_invalid := "`{name}` ne peut pas être ce nom : lettres, chiffres et `_`, une majuscule au début seulement pour un type"
     not_handled := "pas encore géré"

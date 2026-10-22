@@ -12,9 +12,8 @@ function quote(text) {
  * @param {'run' | 'build' | 'test'} action
  * @param {string} file absolute path of the `.kova`
  * @param {string} kova path of the `kova` executable
- * @param {string=} test the one test to run (the ▶ above a `test`)
  */
-function command(action, file, kova, test) {
+function command(action, file, kova) {
   const dir = quote(path.dirname(file));
   const name = path.basename(file);
   const k = quote(kova);
@@ -27,8 +26,32 @@ function command(action, file, kova, test) {
       return `cd ${dir} && ${k} build ${quote(name)} && ${quote('./' + exe)}`;
     }
     case 'test':
-      return `cd ${dir} && ${k} test ${quote(name)}` + (test === undefined ? '' : ` ${quote(test)}`);
+      return `cd ${dir} && ${k} test ${quote(name)}`;
   }
 }
 
-module.exports = { quote, command };
+/**
+ * What `kova test` printed → each test's result: `✅ name`, or `❌ name` then its message,
+ * indented by 3 spaces.
+ * @param {string} out
+ * @returns {Map<string, { ok: boolean, message: string }>}
+ */
+function results(out) {
+  const found = new Map();
+  /** @type {{ ok: boolean, message: string } | undefined} */
+  let failed;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('✅ ') || line.startsWith('❌ ')) {
+      const result = { ok: line.startsWith('✅'), message: '' };
+      found.set(line.slice(2), result);
+      failed = result.ok ? undefined : result;
+    } else if (failed && line.startsWith('   ')) {
+      failed.message += (failed.message ? '\n' : '') + line.slice(3);
+    } else {
+      failed = undefined;
+    }
+  }
+  return found;
+}
+
+module.exports = { quote, command, results };
