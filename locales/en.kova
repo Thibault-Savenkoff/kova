@@ -99,6 +99,7 @@ lang en {
     block_not_argument := "a block `\{ … \}` is only written as a function's argument: `l.each \{ x: Int => print(x) \}`"
     empty_parens := "a call without arguments is written without `()`: `{name}`"
     empty_parens_fn := "a function without parameters is declared without `()`: `fn {name}`"
+    empty_part := "each part of a message takes its arguments: `{name}(…)`, never `{name}()`"
     lang_unclosed := "missing `\}` at the end of the `lang`"
     lang_text_expected := "text in quotes expected, found {found}"
     lang_one_per_line := "one translation per line: line end expected, found {found}"

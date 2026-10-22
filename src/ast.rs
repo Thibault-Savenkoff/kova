@@ -149,9 +149,24 @@ pub struct Function {
     /// `Some` for a method with `self`; `None` for a function or a static function.
     pub receiver: Option<Mode>,
     pub params: Vec<Param>,
+    /// `fn put(value: Int) at(index: Int)`: where each part after the first starts in `params`
+    /// (empty for an ordinary function). Its name is then `put(…) at(…)`.
+    pub breaks: Vec<usize>,
     pub ret: Option<TypeAst>,
     pub contracts: Vec<Contract>,
     pub body: Block,
+}
+
+impl Function {
+    /// Each part of the name with its parameters: `put` with `value`, then `at` with `index`.
+    pub fn parts(&self) -> Vec<(&str, &[Param])> {
+        let names: Vec<&str> =
+            if self.breaks.is_empty() { vec![&self.name.text] } else { self.name.text.trim_end_matches("(…)").split("(…) ").collect() };
+        let mut bounds = vec![0];
+        bounds.extend(&self.breaks);
+        bounds.push(self.params.len());
+        names.into_iter().zip(bounds.windows(2)).map(|(n, w)| (n, &self.params[w[0]..w[1]])).collect()
+    }
 }
 
 /// `T: Comparable + Display` in `fn larger<T: Comparable + Display>`.

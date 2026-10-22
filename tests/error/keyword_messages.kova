@@ -1,0 +1,18 @@
+struct Grid {
+    cells: List<Int>
+
+    fn put(var self, value: Int) at(index: Int) {
+        self.cells[index] := value
+    }
+}
+
+fn main {
+    var g: Grid := Grid { cells := [1, 2] }
+    g.put(7) at(1, 2)
+    g.put(true) at(1)
+    print(g.put(7))
+}
+// error: `put(…) at(…)` takes 2 argument(s), 3 given
+// error: different types: `Int` expected, `Bool` given
+// error: `Grid` has no field or method `put`
+// error: `Grid` has `cells`, `put(…) at(…)`

@@ -1,0 +1,8 @@
+fn put(value: Int) at() {
+}
+
+fn main {
+    put(1) at()
+}
+// error: each part of a message takes its arguments: `at(…)`, never `at()`
+// error: each part of a message takes its arguments: `at(…)`, never `at()`

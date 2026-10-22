@@ -1,0 +1,5 @@
+// A part is an ordinary name, on the same line, with its arguments.
+fn between(x: Int) and(high: Int) -> Bool {
+    return x < high
+}
+// error: `and` is a Kova reserved word: it cannot be used as a name

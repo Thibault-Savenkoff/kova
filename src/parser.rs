@@ -897,7 +897,7 @@ impl Parser<'_> {
         let generics = self.generics()?;
         let mut params = vec![];
         if !self.is_sym("(") {
-            return self.function_rest(name, generics, None, params);
+            return self.function_rest(name, generics, None, params, vec![]);
         }
         let open = self.advance().span;
         if self.is_sym(")") {
@@ -908,6 +908,25 @@ impl Parser<'_> {
         if receiver.is_some() && !self.is_sym(")") {
             self.expect(",")?;
         }
+        self.params(&mut params)?;
+        // `fn put(value: Int) at(index: Int)`: a keyword message, named `put(…) at(…)`.
+        let mut breaks = vec![];
+        while self.next_part(self.t[self.pos - 1].span) {
+            breaks.push(params.len());
+            let part = self.value_name("what_function")?;
+            let open = self.advance().span;
+            let before = params.len();
+            self.params(&mut params)?;
+            if params.len() == before {
+                self.diags.push(Diag::new(open.to(self.t[self.pos - 1].span), t!("empty_part", name = part.text)));
+            }
+            add_part(&mut name, &part.text);
+        }
+        self.function_rest(name, generics, receiver, params, breaks)
+    }
+
+    /// The parameters up to the `)`, which is consumed.
+    fn params(&mut self, params: &mut Vec<Param>) -> R<()> {
         while !self.is_sym(")") {
             let name = self.value_name("what_parameter")?;
             self.expect(":")?;
@@ -919,7 +938,34 @@ impl Parser<'_> {
             }
         }
         self.advance(); // )
-        self.function_rest(name, generics, receiver, params)
+        Ok(())
+    }
+
+    /// `at(` on the same line as the `)` ending at `end`: the next part of a keyword message.
+    /// A reserved word there (`between(1) and(3)`) is one too, refused by `value_name`;
+    /// but not `to` and `else`, which may follow an expression (`from i := f(1) to (n)`).
+    fn next_part(&self, end: Span) -> bool {
+        matches!(self.kind(), Kind::Ident | Kind::Keyword(_))
+            && !matches!(self.kind(), Kind::Keyword("to" | "else"))
+            && self.kind_at(1) == Kind::Sym("(")
+            && !self.src[end.end..self.token().span.start].contains('\n')
+    }
+
+    /// `at(5)` after `grid.put(3)`: the other parts of a keyword message, whose arguments
+    /// follow the first ones, and the message's name `put(…) at(…)`.
+    fn more_parts(&mut self, name: &mut Name, args: &mut Vec<Expr>, end: &mut Span) -> R<()> {
+        while self.next_part(*end) {
+            let part = self.value_name("what_function")?;
+            let open = self.advance().span;
+            let more = self.arguments()?;
+            *end = self.advance().span;
+            if more.is_empty() {
+                self.diags.push(Diag::new(open.to(*end), t!("empty_part", name = part.text)));
+            }
+            args.extend(more);
+            add_part(name, &part.text);
+        }
+        Ok(())
     }
 
     /// `<T: Comparable + Display, U>` after a function's name (nothing if there is no `<`).
@@ -979,7 +1025,14 @@ impl Parser<'_> {
     }
 
     /// After the parameters: `-> Type`, the contracts, the body.
-    fn function_rest(&mut self, name: Name, generics: Vec<Generic>, receiver: Option<Mode>, params: Vec<Param>) -> R<Function> {
+    fn function_rest(
+        &mut self,
+        name: Name,
+        generics: Vec<Generic>,
+        receiver: Option<Mode>,
+        params: Vec<Param>,
+        breaks: Vec<usize>,
+    ) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
             Some(self.type_()?)
@@ -1001,10 +1054,10 @@ impl Parser<'_> {
             self.bodiless = true;
             let at = self.token().span;
             let body = Block { open: at, stmts: vec![], close: at };
-            return Ok(Function { name, generics, receiver, params, ret, contracts, body });
+            return Ok(Function { name, generics, receiver, params, breaks, ret, contracts, body });
         }
         let body = self.block()?;
-        Ok(Function { name, generics, receiver, params, ret, contracts, body })
+        Ok(Function { name, generics, receiver, params, breaks, ret, contracts, body })
     }
 
     /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.
@@ -1376,13 +1429,14 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Field(Box::new(e), i as usize));
                 continue;
             }
-            let name = self.value_name("what_method")?;
+            let mut name = self.value_name("what_method")?;
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;
                 args = self.arguments()?;
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
+                self.more_parts(&mut name, &mut args, &mut end)?;
             }
             end = self.trailing_block(&mut args)?.unwrap_or(end);
             e = self.expr(e.span.to(end), ExprKind::Method { receiver: Box::new(e), name, args });
@@ -1435,13 +1489,14 @@ impl Parser<'_> {
     }
 
     /// After a function's name: its arguments, if any (`seven` alone calls `fn seven`).
-    fn call_rest(&mut self, name: Name) -> R<Expr> {
+    fn call_rest(&mut self, mut name: Name) -> R<Expr> {
         let (mut args, mut end) = (vec![], name.span);
         if self.is_sym("(") {
             let open = self.advance().span;
             args = self.arguments()?;
             end = self.advance().span;
             self.empty_parens(&args, open, end, &name.text);
+            self.more_parts(&mut name, &mut args, &mut end)?;
         }
         end = self.trailing_block(&mut args)?.unwrap_or(end);
         Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
@@ -1628,13 +1683,16 @@ impl Parser<'_> {
         if self.is_sym(".") && matches!(self.t[self.pos + 1].kind, Kind::Ident | Kind::Type) {
             self.advance();
             let variant = self.kind() == Kind::Type;
-            let name = if variant { self.plain_type_name()? } else { self.value_name("what_function")? };
+            let mut name = if variant { self.plain_type_name()? } else { self.value_name("what_function")? };
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;
                 args = self.arguments()?;
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
+                if !variant {
+                    self.more_parts(&mut name, &mut args, &mut end)?;
+                }
             }
             if variant && !types.is_empty() {
                 self.diags.push(Diag::new(ty.span, t!("not_generic", name = ty.text)).help(t!("not_generic_help", name = ty.text)));
@@ -1674,4 +1732,12 @@ impl Parser<'_> {
             }
         }
     }
+}
+
+/// `put` then `at` → `put(…) at(…)`: a keyword message's name, which no identifier can take.
+fn add_part(name: &mut Name, part: &str) {
+    if !name.text.ends_with(')') {
+        name.text += "(…)";
+    }
+    name.text += &format!(" {part}(…)");
 }

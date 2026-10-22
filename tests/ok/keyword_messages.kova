@@ -1,0 +1,73 @@
+// Keyword messages: the name is cut into parts, each with its arguments.
+interface Shape {
+    fn scaled(self, k: Int) plus(extra: Int) -> Int
+}
+
+struct Grid {
+    cells: List<Int>
+
+    fn put(var self, value: Int) at(index: Int) {
+        self.cells[index] := value
+    }
+
+    fn make(size: Int) filled(value: Int) -> Grid {
+        var cells: List<Int> := []
+        for i in 0..size {
+            cells.add(value)
+        }
+        return Grid { cells := cells }
+    }
+}
+
+struct Square : Shape {
+    side: Int
+
+    fn scaled(self, k: Int) plus(extra: Int) -> Int {
+        return self.side * k + extra
+    }
+}
+
+fn between(x: Int, low: Int) upto(high: Int) -> Bool {
+    return low <= x && x <= high
+}
+
+fn count(start: Int) upto(stop: Int, body: {Int}) {
+    var i: Int := start
+    while i <= stop {
+        body(i)
+        i += 1
+    }
+}
+
+fn larger<T: Comparable>(a: T) than(b: T) -> T {
+    if a < b {
+        return b.clone
+    }
+    return a.clone
+}
+
+// Not the same function as `put(…) at(…)`.
+fn put(value: Int) -> Int {
+    return value
+}
+
+fn main {
+    var g: Grid := Grid.make(3) filled(0)
+    g.put(7) at(1)
+    print(g.cells)
+    print(between(5, 1) upto(10))
+    print(between(11, 1) upto(10))
+    count(1) upto(3) { i: Int => print(i * 10) }
+    print(larger("pomme") than("poire"))
+    print(Square { side := 2 }.scaled(3) plus(1))
+    print(put(4))
+}
+// expect: [0, 7, 0]
+// expect: true
+// expect: false
+// expect: 10
+// expect: 20
+// expect: 30
+// expect: pomme
+// expect: 7
+// expect: 4

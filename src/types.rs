@@ -472,11 +472,20 @@ pub fn heading_text(f: &Function) -> String {
         Mode::Var => "var ",
         Mode::Move => "move ",
     };
-    let mut params: Vec<String> = f.receiver.iter().map(|&m| format!("{}self", mode(m))).collect();
-    params.extend(f.params.iter().map(|p| format!("{}: {}{}", p.name.text, mode(p.mode), p.ty.text())));
-    let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
+    let mut text = String::from("fn");
+    for (i, (part, params)) in f.parts().into_iter().enumerate() {
+        let mut written: Vec<String> = f.receiver.iter().filter(|_| i == 0).map(|&m| format!("{}self", mode(m))).collect();
+        written.extend(params.iter().map(|p| format!("{}: {}{}", p.name.text, mode(p.mode), p.ty.text())));
+        text += &format!(" {part}");
+        if i == 0 {
+            text += &generics_text(f);
+        }
+        if !written.is_empty() {
+            text += &format!("({})", written.join(", "));
+        }
+    }
     let ret = f.ret.as_ref().map_or(String::new(), |t| format!(" -> {}", t.text()));
-    format!("fn {}{}{params}{ret}", f.name.text, generics_text(f))
+    text + &ret
 }
 
 /// `<T: Comparable + Display, K>`, or nothing when the function has no type parameters.

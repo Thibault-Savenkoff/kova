@@ -61,6 +61,10 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                                 .or_else(|| promised(&path, src, cursor))
                                 .unwrap_or_else(|| complete(src, cursor))
                         });
+                        let items = items.map(|mut items| {
+                            parts_snippets(&mut items);
+                            items
+                        });
                         Response::new_ok(req.id, items)
                     }
                     "textDocument/hover" => {
@@ -385,6 +389,16 @@ fn is_word(c: char) -> bool {
 }
 
 /// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
+/// A keyword message `put(…) at(…)` is offered as `put($1) at($2)`: the cursor goes to each argument.
+fn parts_snippets(items: &mut [CompletionItem]) {
+    for item in items.iter_mut().filter(|i| i.insert_text.is_none() && i.label.contains("(…)")) {
+        // `put`, ` at`, ``: each piece after the first follows an argument.
+        let pieces = item.label.split("(…)").enumerate();
+        item.insert_text = Some(pieces.map(|(i, piece)| if i == 0 { piece.into() } else { format!("(${i}){piece}") }).collect());
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+    }
+}
+
 fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
     let dot = src[..cursor].trim_end_matches(is_word).strip_suffix('.')?.len();
     let before = &src[..dot];
@@ -707,20 +721,30 @@ fn tree(src: &str) -> File {
 
 /// `fn square(x: Int) -> Int`, and the position of each parameter in this text.
 fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
-    let mut text = format!("fn {}{}", f.name.text, crate::types::generics_text(f));
+    let mut text = String::from("fn");
     let mut params = vec![];
-    // `self` is not an argument at the call (`rex.rename(n)`): it gets no position.
-    if let Some(r) = f.receiver {
-        text += &format!("({}", r.text());
-    }
-    for (i, p) in f.params.iter().enumerate() {
-        text += if i > 0 || f.receiver.is_some() { ", " } else { "(" };
-        let start = text.encode_utf16().count() as u32;
-        text += &format!("{}: {}", p.name.text, p.ty_text());
-        params.push([start, text.encode_utf16().count() as u32]);
-    }
-    if !f.params.is_empty() || f.receiver.is_some() {
-        text += ")";
+    // `fn put(value: Int) at(index: Int)`: each part writes its own parameters.
+    for (i, (part, ps)) in f.parts().into_iter().enumerate() {
+        text += &format!(" {part}");
+        let mut open = false;
+        if i == 0 {
+            text += &crate::types::generics_text(f);
+            // `self` is not an argument at the call (`rex.rename(n)`): it gets no position.
+            if let Some(r) = f.receiver {
+                text += &format!("({}", r.text());
+                open = true;
+            }
+        }
+        for p in ps {
+            text += if open { ", " } else { "(" };
+            open = true;
+            let start = text.encode_utf16().count() as u32;
+            text += &format!("{}: {}", p.name.text, p.ty_text());
+            params.push([start, text.encode_utf16().count() as u32]);
+        }
+        if open {
+            text += ")";
+        }
     }
     if let Some(r) = &f.ret {
         text += &format!(" -> {}", r.text());
@@ -970,7 +994,7 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
             Kind::Sym(")") => depth += 1,
             Kind::Sym("(") if depth > 0 => depth -= 1,
             Kind::Sym("(") => {
-                name = before.get(k.wrapping_sub(1)).filter(|p| p.kind == Kind::Ident).map(|p| &src[p.span.start..p.span.end]);
+                name = before.get(k.wrapping_sub(1)).filter(|p| p.kind == Kind::Ident).map(|p| (k - 1, &src[p.span.start..p.span.end]));
                 break;
             }
             Kind::Sym(",") if depth == 0 => commas += 1,
@@ -978,7 +1002,26 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
             _ => {}
         }
     }
-    let name = name?;
+    let (mut k, name) = name?;
+    // `grid.put(3) at(`: the parts already written, each with its arguments.
+    let mut parts = vec![name];
+    while k >= 2 && before[k - 1].kind == Kind::Sym(")") {
+        let (mut depth, mut args) = (0, 1);
+        let open = (0..k - 1).rev().find(|&j| {
+            match before[j].kind {
+                Kind::Sym(")") => depth += 1,
+                Kind::Sym("(") if depth == 0 => return true,
+                Kind::Sym("(") => depth -= 1,
+                Kind::Sym(",") if depth == 0 => args += 1,
+                _ => {}
+            }
+            false
+        });
+        let Some(open) = open.filter(|&j| j >= 1 && before[j - 1].kind == Kind::Ident) else { break };
+        k = open - 1;
+        parts.insert(0, &src[before[k].span.start..before[k].span.end]);
+        commas += args;
+    }
 
     let (label, params) = if types::BUILTINS.contains(&name) {
         let label = format!("fn {name}(value)");
@@ -991,7 +1034,12 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
     } else {
         let file = tree(src);
         let methods = file.structs.iter().flat_map(|s| &s.methods).chain(file.interfaces.iter().flat_map(|i| i.methods.iter().map(|(m, _)| m)));
-        heading(file.functions.iter().chain(methods).find(|f| f.name.text == name)?)
+        // The function whose parts start with those written: `put` already shows `put(…) at(…)`.
+        let starts = |f: &&Function| {
+            let names: Vec<&str> = f.parts().into_iter().map(|(n, _)| n).collect();
+            names.len() >= parts.len() && names[..parts.len()] == parts[..]
+        };
+        heading(file.functions.iter().chain(methods).filter(starts).min_by_key(|f| f.breaks.len())?)
     };
     let parameters = params.into_iter().map(|p| ParameterInformation { label: ParameterLabel::LabelOffsets(p), documentation: None });
     Some(SignatureHelp {
@@ -1320,5 +1368,19 @@ mod tests {
         assert_eq!(help.active_parameter, Some(0));
         let help = signature(src, src.find("square(1").unwrap()).unwrap(); // inside `print(`
         assert_eq!(help.signatures[0].label, "fn print(value)");
+    }
+
+    #[test]
+    fn keyword_messages() {
+        let src = "struct Grid {\n  n: Int\n  fn put(var self, value: Int) at(index: Int) {}\n}\nfn main {\n  var g: Grid := Grid { n := 1 }\n  g.put(1) at(";
+        let help = signature(src, src.len()).unwrap();
+        assert_eq!(help.signatures[0].label, "fn put(var self, value: Int) at(index: Int)");
+        assert_eq!(help.active_parameter, Some(1));
+        // While the first part is typed, the bubble already shows the whole message.
+        let help = signature(src, src.find("put(1").unwrap() + 4).unwrap();
+        assert_eq!(help.active_parameter, Some(0));
+        let mut items = vec![CompletionItem { label: "put(…) at(…)".into(), ..Default::default() }];
+        parts_snippets(&mut items);
+        assert_eq!(items[0].insert_text.as_deref(), Some("put($1) at($2)"));
     }
 }
