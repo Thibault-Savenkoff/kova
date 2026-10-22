@@ -314,7 +314,7 @@ lang en {
     interp_display_help := "write `{kind} {name} : Display` and its method `fn to_string(self) -> String`"
     param_display_help := "`{type}` must follow `Display`"
     param_bound_help := "write `<{type}: {bound}>` where `{type}` is declared"
-    interp_display_list_help := "build the text you want (a `for` loop for a List, `.0`, `.1` for a tuple); `print({code})` shows it as it is, for debugging"
+    interp_display_list_help := "build the text you want (a `for` loop for a List or a Map, `.0`, `.1` for a tuple); `print({code})` shows it as it is, for debugging"
     interface_item := "an interface contains only methods (`fn`), found {found}"
     interface_static := "`{name}` has no `self`: an interface lists methods called on a value"
     interface_static_help := "write `fn {name}(self, …)`; static functions in interfaces come later"
@@ -369,6 +369,21 @@ lang en {
     private_in_public := "`{name}` is public but uses `{type}`, which is private: another file could not write its type"
     private_in_public_help := "put `{type}` under `public:` too, or `{name}` under `private:`"
     error_in_import := "error in {file}:{line}:{col}: {message}"
+
+    // ---- Maps (J6, step 4) ----
+    map_two_types := "`Map` takes two types, not {count}: `Map<String, Int>`"
+    map_key := "`{type}` cannot be the key of a Map: a key is found with `=`"
+    map_key_help := "a key is an `Int`, a `String`, a `Char`, a `Bool`, or a type following `Equal` (not a `Float`: `NaN` is not equal to itself)"
+    map_compare := "`{op}` does not compare Maps yet"
+    map_literal := "a `Map` has no fields"
+    map_made_help := "a `Map` is made with `[\"Rex\" := 3]`, or `[]` where its type is written (`let ages: Map<String, Int> := []`)"
+    map_entry_part := "a value inside a Map is changed as a whole"
+    map_entry_part_help := "read it (`let d: Dog? := dogs[\"Rex\"]`), change the copy, then write it back (`dogs[\"Rex\"] := d`)"
+    map_entry_op := "`{target}` may be missing: it is an optional value, it cannot be computed with"
+    map_entry_op_help := "read it first: `let n: Int? := {target}`, then `if n != none \{ {target} := n + 1 \} else \{ {target} := 1 \}`"
+    for_two_names := "two names after `for` walk over a Map (its keys and values), not over `{type}`"
+    for_map_one_name := "a Map is walked over with two names: its key and its value"
+    for_map_one_name_help := "`for {name}, value in …`"
 
     // ---- Editor (`kova lsp`) ----
     not_handled := "not handled yet"

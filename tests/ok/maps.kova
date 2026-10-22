@@ -1,0 +1,87 @@
+// `Map<K, V>`: keys and their values, in the order they were added (PLAN 2.10).
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn older(ages: Map<String, Int>) -> Map<String, Int> {
+    var next: Map<String, Int> := []
+    for name, age in ages {
+        next[name] := age + 1
+    }
+    return next
+}
+
+fn main {
+    // The three lines chosen on 2026-10-22, as they were shown.
+    var ages: Map<String, Int> := ["Rex" := 3, "Fido" := 5]
+    ages["Milo"] := 1
+    let none_yet: Map<String, Int> := []
+    let age: Int? := ages["Rex"]
+    if age != none {
+        print(age + 1)
+    }
+    for name, years in ages {
+        print("{name} a {years} ans")
+    }
+    print(ages)
+    print(none_yet)
+    print(ages.length)
+    print(ages["Nobody"])
+    print(ages.contains("Fido"))
+    print(ages.contains("Nobody"))
+    // Replaced, removed.
+    ages["Rex"] := 4
+    print(ages["Rex"])
+    print(ages.remove("Fido"))
+    print(ages.remove("Fido"))
+    print(ages)
+    print(older(ages))
+    // Strings as values: replaced and removed without leaks; a key given twice keeps the last.
+    var names: Map<Int, String> := [1 := "one", 2 := "two", 1 := "uno"]
+    print(names)
+    names[2] := "dos"
+    names[3] := "tres"
+    let gone: String? := names.remove(1)
+    print(gone)
+    print(names)
+    let saved: Map<Int, String> := names.clone
+    names[3] := "three"
+    print(saved[3])
+    print(names[3])
+    // Lists and structs as values; a struct as key.
+    var scores: Map<String, List<Int>> := ["ada" := [1, 2]]
+    scores["bob"] := []
+    print(scores)
+    var dogs: Map<Char, Dog> := ['r' := Dog { name := "Rex", age := 3 }]
+    let rex: Dog? := dogs['r']
+    print(rex)
+    let moved: Map<Char, Dog> := dogs
+    print(moved.length)
+    let maybe: Map<String, Int>? := ["a" := 1]
+    print(maybe)
+}
+// expect: 4
+// expect: Rex a 3 ans
+// expect: Fido a 5 ans
+// expect: Milo a 1 ans
+// expect: ["Rex" := 3, "Fido" := 5, "Milo" := 1]
+// expect: []
+// expect: 3
+// expect: none
+// expect: true
+// expect: false
+// expect: 4
+// expect: 5
+// expect: none
+// expect: ["Rex" := 4, "Milo" := 1]
+// expect: ["Rex" := 5, "Milo" := 2]
+// expect: [1 := "uno", 2 := "two"]
+// expect: "uno"
+// expect: [2 := "dos", 3 := "tres"]
+// expect: "tres"
+// expect: "three"
+// expect: ["ada" := [1, 2], "bob" := []]
+// expect: Dog { name: "Rex", age: 3 }
+// expect: 1
+// expect: ["a" := 1]

@@ -1,0 +1,37 @@
+// A Map in a struct, changed by a `var self` method; a Map given to a generic function.
+struct Census {
+    ages: Map<String, Int>
+    fn add(var self, name: String, age: Int) {
+        self.ages[name] := age
+    }
+}
+
+fn size<K: Equal, V>(m: Map<K, V>) -> Int {
+    return m.length
+}
+
+fn count(words: List<String>) -> Map<String, Int> {
+    var counts: Map<String, Int> := []
+    for w in words {
+        let n: Int? := counts[w]
+        if n != none {
+            counts[w] := n + 1
+        } else {
+            counts[w] := 1
+        }
+    }
+    return counts
+}
+
+fn main {
+    var c := Census { ages := [] }
+    c.add("Ada", 36)
+    c.add("Bob", 4)
+    c.add("Ada", 37)
+    print(c)
+    print(size(c.ages))
+    print(count("the cat and the hat and the bat".words))
+}
+// expect: Census { ages: ["Ada" := 37, "Bob" := 4] }
+// expect: 2
+// expect: ["the" := 3, "cat" := 1, "and" := 2, "hat" := 1, "bat" := 1]

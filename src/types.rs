@@ -34,6 +34,9 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
+    /// `Map<String, Int>`: keys and their values, in the order they were added. Laid out like a
+    /// `List<(String, Int)>` (PLAN Part 4, "J6, step 4").
+    Map(Box<Type>, Box<Type>),
     /// `any Animal`: a value of any type following the interface, known at run time (PLAN 2.5).
     /// One slot: a box holding the real type's number, then its slots.
     Any(String),
@@ -75,6 +78,7 @@ impl Type {
             Type::Optional(t) => format!("{}?", t.text()),
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
+            Type::Map(k, v) => format!("Map<{}, {}>", k.text(), v.text()),
             Type::Param(p) => p.name.clone(),
             Type::Any(i) => format!("any {i}"),
             Type::Unit => t!("type_nothing"),
@@ -99,6 +103,7 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Optional(t) => Type::Optional(sub(t)),
         Type::Result(t, e) => Type::Result(sub(t), sub(e)),
         Type::List(t) => Type::List(sub(t)),
+        Type::Map(k, v) => Type::Map(sub(k), sub(v)),
         // `Stack<T>` → `Stack<Int>`: its fields change with it.
         Type::Struct(d) if !d.args.is_empty() => Type::Struct(Rc::new(StructDef {
             name: d.name.clone(),
@@ -278,7 +283,7 @@ fn primitive_follows(t: &Type, interface: &str) -> bool {
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
 pub fn is_copy(t: &Type) -> bool {
     match t {
-        Type::String | Type::List(_) => false,
+        Type::String | Type::List(_) | Type::Map(..) => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
@@ -382,7 +387,7 @@ fn mentions(t: &Type, name: &str) -> bool {
         Type::Param(p) => p.name == name,
         Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
         Type::Optional(t) | Type::List(t) => mentions(t, name),
-        Type::Result(a, b) => mentions(a, name) || mentions(b, name),
+        Type::Result(a, b) | Type::Map(a, b) => mentions(a, name) || mentions(b, name),
         Type::Struct(d) => d.args.iter().any(|t| mentions(t, name)),
         _ => false,
     }
@@ -400,7 +405,7 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
         }
         (Type::Tuple(ps), Type::Tuple(ts)) => ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found)),
         (Type::Optional(p), Type::Optional(t)) | (Type::List(p), Type::List(t)) => deduce(p, t, generics, found),
-        (Type::Result(p, q), Type::Result(t, u)) => {
+        (Type::Result(p, q), Type::Result(t, u)) | (Type::Map(p, q), Type::Map(t, u)) => {
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
         }
@@ -449,6 +454,8 @@ pub fn method_name(ty: &str, name: &str) -> String {
 pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     match &e.kind {
         ExprKind::Var(n) => Some((n, e.span)),
+        // `ages["Rex"]` is not a place: reading it gives a copy (a Map has no slot per key).
+        ExprKind::Index(x, _) if matches!(types[x.id], Type::Map(..)) => None,
         ExprKind::Field(x, _) | ExprKind::Index(x, _) => place_root(x, types),
         ExprKind::Method { receiver, name, .. } if types[receiver.id].is_field(&name.text) => place_root(receiver, types),
         _ => None,
@@ -484,6 +491,8 @@ struct Checker<'a> {
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
     private: HashMap<String, Span>,
+    /// The `ages["Rex"]` targets met (`target`), to refuse `ages["Rex"] += 1`.
+    map_entries: Vec<Span>,
     diags: Vec<Diag>,
 }
 
@@ -507,6 +516,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
+        map_entries: vec![],
         diags: vec![],
     };
     // A method that an interface promises is reached through the interface: it stays visible.
@@ -550,7 +560,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
-        if primitive(name).is_some() || c.structs.contains_key(name) || name == "Self" || builtin_interface(f, name) {
+        if primitive(name).is_some() || c.structs.contains_key(name) || matches!(name, "Self" | "List" | "Map") || builtin_interface(f, name) {
             c.error(s.name.span, t!("type_builtin", name = name));
         } else if let Some(&j) = decls.get(name) {
             let (line, _) = line_col(src, f.structs[j].name.span.start);
@@ -873,6 +883,10 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
         TypeAst::Generic(n, ts) if n.text == "List" && ts.len() == 1 => match type_of(&ts[0], structs) {
             Type::Error => Type::Error,
             t => Type::List(Box::new(t)),
+        },
+        TypeAst::Generic(n, ts) if n.text == "Map" && ts.len() == 2 => match (type_of(&ts[0], structs), type_of(&ts[1], structs)) {
+            (Type::Error, _) | (_, Type::Error) => Type::Error,
+            (k, v) => Type::Map(Box::new(k), Box::new(v)),
         },
         TypeAst::Generic(n, ts) => {
             let types: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
@@ -1333,6 +1347,21 @@ impl Checker<'_> {
                 }
             };
         }
+        if n.text == "Map" {
+            return match types {
+                [Type::Error, _] | [_, Type::Error] => Type::Error,
+                // A key is found by `=`; a Float key would get lost (`NaN` is not equal to itself).
+                [k, _] if *k == Type::Float || !self.equatable(k) => {
+                    self.diags.push(Diag::new(n.span, t!("map_key", type = k.text())).help(t!("map_key_help")));
+                    Type::Error
+                }
+                [k, v] => Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                _ => {
+                    self.error(n.span, t!("map_two_types", count = types.len()));
+                    Type::Error
+                }
+            };
+        }
         let d = match template {
             Some(t @ Type::Struct(d)) if is_template(t, &n.text) => d.clone(),
             Some(Type::Param(_)) | None => {
@@ -1547,6 +1576,21 @@ impl Checker<'_> {
             self.types[e.id] = expected.clone();
             return;
         }
+        // `[]` and `["Rex" := 3]` where a `Map<String, Int>` is expected.
+        if let (ExprKind::List(elems), Type::Map(..)) = (&e.kind, expected)
+            && elems.is_empty()
+        {
+            self.types[e.id] = expected.clone();
+            return;
+        }
+        if let (ExprKind::MapLit(pairs), Type::Map(k, v)) = (&e.kind, expected) {
+            for (key, value) in pairs {
+                self.expect(key, k);
+                self.expect(value, v);
+            }
+            self.types[e.id] = expected.clone();
+            return;
+        }
         if let ExprKind::If { cond, then, otherwise } = &e.kind {
             self.types[e.id] = self.if_value(cond, then, otherwise, Some(expected));
             return;
@@ -1568,7 +1612,7 @@ impl Checker<'_> {
                 return;
             }
             // Typed by where they go: `[]`, `2` as a Float.
-            if matches!(e.kind, ExprKind::List(_) | ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
+            if matches!(e.kind, ExprKind::List(_) | ExprKind::MapLit(_) | ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
                 self.expect(e, inner);
                 self.wraps[e.id] = true;
                 return;
@@ -1700,10 +1744,21 @@ impl Checker<'_> {
                 };
                 let (mut ty, kind) = (var.ty.clone(), var.kind);
                 self.may_change(n, name.span, kind);
-                for step in fields {
+                for (k, step) in fields.iter().enumerate() {
                     ty = match step {
                         Step::Index(i) => self.field(ty, *i, *span),
                         Step::Name(f) => self.named_field(ty, f),
+                        // `ages["Rex"] := 3`: adds the key or replaces its value; only as a whole.
+                        Step::At(i) if matches!(ty, Type::Map(..)) => {
+                            let Type::Map(key, value) = ty else { unreachable!() };
+                            self.expect(i, &key);
+                            if k + 1 < fields.len() {
+                                self.diags.push(Diag::new(*span, t!("map_entry_part")).help(t!("map_entry_part_help")));
+                                return Type::Error;
+                            }
+                            self.map_entries.push(*span);
+                            *value
+                        }
                         Step::At(i) => {
                             self.expect(i, &Type::Int);
                             match ty {
@@ -1865,10 +1920,41 @@ impl Checker<'_> {
         Some(result)
     }
 
+    /// `ages.length`, `ages.contains("Rex")`, `ages.remove("Rex")` (an `Int?`: `none` if absent).
+    /// `None` for `.clone`, common to every type.
+    fn map_method(&mut self, receiver: &Expr, t: &Type, k: &Type, v: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
+        let (params, result) = match name.text.as_str() {
+            "length" => (vec![], Type::Int),
+            "contains" => (vec![(Mode::Read, k.clone())], Type::Bool),
+            "remove" => (vec![(Mode::Read, k.clone())], Type::Optional(Box::new(v.clone()))),
+            "clone" => return None,
+            _ => {
+                self.diags.push(
+                    Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
+                        .help(t!("methods_of", type = t.text(), methods = "`length`, `contains`, `remove`, `clone`")),
+                );
+                args.iter().for_each(|a| {
+                    self.expr(a);
+                });
+                return Some(Type::Error);
+            }
+        };
+        if name.text == "remove" {
+            self.changes(receiver, t!("var_method_temporary", name = name.text));
+        }
+        if params.is_empty() && !args.is_empty() {
+            self.error(name.span, t!("no_arguments", name = name.text));
+        } else if !params.is_empty() {
+            self.arguments(name, args, &params, &[]);
+        }
+        Some(result)
+    }
+
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
-        if ty.text == "List" {
-            self.diags.push(Diag::new(ty.span, t!("no_static", type = "List", name = name.text)).help(t!("list_made_help")));
+        if let kind @ ("List" | "Map") = ty.text.as_str() {
+            let help = if kind == "List" { t!("list_made_help") } else { t!("map_made_help") };
+            self.diags.push(Diag::new(ty.span, t!("no_static", type = kind, name = name.text)).help(help));
             return self.unchecked(args);
         }
         // `Stack<Int>.empty`: the function of `Stack<T>` with `T` = `Int`.
@@ -2032,7 +2118,15 @@ impl Checker<'_> {
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
             Stmt::Assign { target, op, value } => {
+                let mark = self.map_entries.len();
                 let ty = self.target(target, &mut vec![]);
+                // `counts[w] += 1`: the key may be missing, its value is an `Int?`.
+                if op.is_some() && self.map_entries.len() > mark {
+                    let text = &self.src[target.span().start..target.span().end];
+                    self.diags.push(Diag::new(target.span(), t!("map_entry_op", target = text)).help(t!("map_entry_op_help", target = text)));
+                    self.expect(value, &ty);
+                    return;
+                }
                 let concat = *op == Some(BinOp::Plus) && ty == Type::String;
                 if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
@@ -2082,9 +2176,26 @@ impl Checker<'_> {
                 self.block(body, vec![(counter, Type::Int, VarKind::Counter)]);
                 self.loops -= 1;
             }
-            Stmt::Each { name, list, body } => {
+            Stmt::Each { name, value: Some(value), list, body } => {
+                let (k, v) = match self.expr(list) {
+                    Type::Map(k, v) => (*k, *v),
+                    Type::Error => (Type::Error, Type::Error),
+                    t => {
+                        self.error(value.span, t!("for_two_names", type = t.text()));
+                        (Type::Error, Type::Error)
+                    }
+                };
+                self.loops += 1;
+                self.block(body, vec![(name, k, VarKind::Element), (value, v, VarKind::Element)]);
+                self.loops -= 1;
+            }
+            Stmt::Each { name, value: None, list, body } => {
                 let elem = match self.expr(list) {
                     Type::List(elem) => *elem,
+                    Type::Map(..) => {
+                        self.diags.push(Diag::new(name.span, t!("for_map_one_name")).help(t!("for_map_one_name_help", name = name.text)));
+                        Type::Error
+                    }
                     Type::Error => Type::Error,
                     t => {
                         self.diags.push(
@@ -2107,6 +2218,7 @@ impl Checker<'_> {
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
+                        Type::Map(..) => name.text == "remove",
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         // An unknown method is already reported.
                         Type::Any(_) => true,
@@ -2204,9 +2316,21 @@ impl Checker<'_> {
                 others.iter().for_each(|x| self.expect(x, &t));
                 if t == Type::Error { Type::Error } else { Type::List(Box::new(t)) }
             }
+            ExprKind::MapLit(pairs) => {
+                let (k, v) = (self.expr(&pairs[0].0), self.expr(&pairs[0].1));
+                for (key, value) in &pairs[1..] {
+                    self.expect(key, &k);
+                    self.expect(value, &v);
+                }
+                if k == Type::Error || v == Type::Error {
+                    return Type::Error;
+                }
+                let n = Name { text: "Map".into(), span: e.span };
+                self.generic(&n, None, &[k, v])
+            }
             ExprKind::New(ty) => {
                 let t = self.written_type(ty);
-                if !matches!(t, Type::List(_) | Type::Error) {
+                if !matches!(t, Type::List(_) | Type::Map(..) | Type::Error) {
                     self.error(e.span, t!("new_not_generic", type = t.text()));
                     return Type::Error;
                 }
@@ -2214,6 +2338,11 @@ impl Checker<'_> {
             }
             ExprKind::Index(x, i) => {
                 let t = self.expr(x);
+                // `ages["Rex"]`: an `Int?`, `none` if the key is not there.
+                if let Type::Map(k, v) = t {
+                    self.expect(i, &k);
+                    return Type::Optional(v);
+                }
                 self.expect(i, &Type::Int);
                 match t {
                     Type::List(elem) => *elem,
@@ -2292,6 +2421,11 @@ impl Checker<'_> {
                 {
                     return r;
                 }
+                if let Type::Map(k, v) = &t
+                    && let Some(r) = self.map_method(receiver, &t, k, v, name, args)
+                {
+                    return r;
+                }
                 // `self.sound` in a default method: what the interface promises.
                 if let Type::Param(p) = &t
                     && let Some((b, sig)) =
@@ -2309,7 +2443,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Param(_) | Type::Any(_))
+                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Param(_) | Type::Any(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -2416,6 +2550,7 @@ impl Checker<'_> {
                             None => {}
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
                             Some(Type::List(_)) => self.error(e.span, t!("list_compare", op = op.text())),
+                            Some(Type::Map(..)) => self.error(e.span, t!("map_compare", op = op.text())),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
                             Some(culprit @ Type::Any(_)) => self.diags.push(
                                 Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(t!("any_compare_help", type = culprit.text())),
@@ -2471,6 +2606,10 @@ impl Checker<'_> {
     fn struct_literal(&mut self, ty: &Name, types: &[TypeAst], fields: &[(Name, Expr)]) -> Type {
         if ty.text == "List" {
             self.diags.push(Diag::new(ty.span, t!("list_literal")).help(t!("list_made_help")));
+            return self.unchecked_fields(fields);
+        }
+        if ty.text == "Map" {
+            self.diags.push(Diag::new(ty.span, t!("map_literal")).help(t!("map_made_help")));
             return self.unchecked_fields(fields);
         }
         let d = match self.structs.get(&ty.text).cloned() {

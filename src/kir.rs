@@ -67,6 +67,11 @@ fn slice_of(t: &Type, i: usize) -> (usize, usize) {
     (start, scalars(&ts[i]).len())
 }
 
+/// A Map's element: its key and its value, side by side (a `Map<K, V>` = a `List<(K, V)>`).
+fn pair(k: &Type, v: &Type) -> Type {
+    Type::Tuple(vec![k.clone(), v.clone()])
+}
+
 fn element(t: &Type, i: usize) -> Type {
     members(t)[i].clone()
 }
@@ -94,7 +99,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) | Type::Any(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -114,7 +119,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::List(_) | Type::Any(_) => vec![Some(t.clone())],
+        Type::String | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
@@ -771,7 +776,12 @@ impl<'a> Translator<'a> {
             return self.function(format!("show {}", ty.text()), v.len(), vec![Scalar::Int]);
         }
         let list = v[0];
-        let Type::List(elem) = ty else { unreachable!("helpers work on Lists and enums") };
+        let (elem, map) = match ty {
+            Type::List(elem) => ((**elem).clone(), false),
+            Type::Map(k, v) => (pair(k, v), true),
+            _ => unreachable!("helpers work on Lists, Maps and enums"),
+        };
+        let elem = &elem;
         let (name, result) = match h {
             Helper::Drop(_) => {
                 self.each_element(list, elem, |t, _, v| t.free_value(&v, elem));
@@ -804,7 +814,16 @@ impl<'a> Translator<'a> {
                     t.go(End::Jump(next), next);
                     let mark = t.temps.len();
                     let mut pieces = vec![];
-                    t.value_pieces(&v, elem, &mut pieces);
+                    if map {
+                        // `"Rex" := 3`, as in the literal.
+                        let (key, value) = (element(elem, 0), element(elem, 1));
+                        let n = scalars(&key).len();
+                        t.value_pieces(&v[..n], &key, &mut pieces);
+                        pieces.push(Piece::Text(" := ".into()));
+                        t.value_pieces(&v[n..], &value, &mut pieces);
+                    } else {
+                        t.value_pieces(&v, elem, &mut pieces);
+                    }
                     let piece = t.join(pieces);
                     t.append(text, piece);
                     t.free_temps(mark);
@@ -1133,6 +1152,7 @@ impl<'a> Translator<'a> {
         match kind {
             Type::String => self.emit(Inst::Free(l)),
             Type::List(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
+            Type::Map(k, v) if plain(k) && plain(v) => self.emit(Inst::ListFree(l)),
             list => {
                 let f = self.helper(Helper::Drop(list.clone()));
                 self.emit(Inst::Call(vec![], f, vec![l]));
@@ -1348,6 +1368,13 @@ impl<'a> Translator<'a> {
                             let i = field_index(&ty, &n.text);
                             (place.narrow(slice_of(&ty, i)), element(&ty, i))
                         }
+                        // `ages["Rex"] := 3`: the place of the key's value, added if missing.
+                        Step::At(i) if matches!(ty, Type::Map(..)) => {
+                            let Type::Map(k, v) = ty.clone() else { unreachable!() };
+                            let map = self.read(&place)[0];
+                            let key = self.expr(i);
+                            (self.entry(map, &key, &k, &v), *v)
+                        }
                         Step::At(i) => self.element_place(place, &ty, i),
                     };
                 }
@@ -1371,12 +1398,85 @@ impl<'a> Translator<'a> {
                 let (p, t) = self.place(receiver);
                 (p.narrow(slice_of(&t, field_index(&t, &name.text))), ty)
             }
-            ExprKind::Index(x, i) => {
+            ExprKind::Index(x, i) if !matches!(self.ty(x), Type::Map(..)) => {
                 let (p, t) = self.place(x);
                 self.element_place(p, &t, i)
             }
             _ => (Place::Slots(self.expr(e)), ty),
         }
+    }
+
+    /// The index of `key` in the Map `map` (keys of type `k`), or -1.
+    /// ponytail: a linear search; hashing (an interface `Hash`) if Maps get big.
+    fn find(&mut self, map: Local, key: &[Local], k: &Type) -> Local {
+        let found = self.constant(-1);
+        let n = self.int_local();
+        self.emit(Inst::ListLength(n, map));
+        let i = self.constant(0);
+        let (head, body, hit, next, exit) = (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(head), head);
+        let more = self.int_local();
+        self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
+        self.go(End::Branch(more, body, exit), body);
+        let keys = self.load(map, i, k);
+        let same = self.equal(&keys, key, k, Span::new(0, 0));
+        self.go(End::Branch(same, hit, next), hit);
+        self.emit(Inst::Copy(found, i));
+        self.go(End::Jump(exit), next);
+        let one = self.constant(1);
+        self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+        self.go(End::Jump(head), exit);
+        found
+    }
+
+    /// Where the value of `key` lives in the Map `map`: added at the end if missing
+    /// (with a copy of the key; its value's slots hold 0, so freeing them does nothing).
+    fn entry(&mut self, map: Local, key: &[Local], k: &Type, v: &Type) -> Place {
+        let i = self.find(map, key, k);
+        let (zero, missing) = (self.constant(0), self.int_local());
+        self.emit(Inst::Binary(missing, Op::Lt, i, zero, NOWHERE));
+        let (add, done) = (self.new_block(), self.new_block());
+        self.go(End::Branch(missing, add, done), add);
+        let copy = self.clone_value(key, k);
+        self.emit(Inst::ListGrow(i, map));
+        for (s, &l) in copy.iter().enumerate() {
+            self.emit(Inst::ListStore(map, i, s, l));
+        }
+        self.go(End::Jump(done), done);
+        Place::Element { list: map, index: i, start: scalars(k).len(), kinds: scalars(v) }
+    }
+
+    /// `ages["Rex"]` (`remove`: and takes it out): an `Int?`, a copy of the value or `none`.
+    fn lookup(&mut self, map: Local, key: &[Local], k: &Type, v: &Type, remove: bool) -> Slots {
+        let i = self.find(map, key, k);
+        let ty = Type::Optional(Box::new(v.clone()));
+        let result = self.new_slots(&ty);
+        let zero = self.constant(0);
+        self.emit(Inst::Binary(result[0], Op::Ge, i, zero, NOWHERE));
+        let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Branch(result[0], yes, no), yes);
+        let n = scalars(k).len();
+        let value = self.new_slots(v);
+        for (s, &d) in value.iter().enumerate() {
+            self.emit(Inst::ListLoad(d, map, i, n + s));
+        }
+        if remove {
+            // The key goes, the value is given to the caller.
+            let keys = self.load(map, i, k);
+            self.free_value(&keys, k);
+            self.copy(&result[1..], &value);
+            self.emit(Inst::ListRemove(map, i));
+        } else {
+            let copy = self.clone_value(&value, v);
+            self.copy(&result[1..], &copy);
+        }
+        self.go(End::Jump(done), no);
+        for &l in &result[1..] {
+            self.emit(Inst::Const(l, 0));
+        }
+        self.go(End::Jump(done), done);
+        self.track(&result, &ty);
+        result
     }
 
     /// Element `index` of the List at `list` (of type `ty`): the index is checked here.
@@ -1588,8 +1688,12 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(i, Op::Plus, i, one, loc));
                 self.go(End::Jump(head), exit);
             }
-            Stmt::Each { name, list, body } => {
-                let Type::List(elem) = self.ty(list) else { unreachable!("List checked by the type checker") };
+            Stmt::Each { name, value, list, body } => {
+                let elem = match self.ty(list) {
+                    Type::List(elem) => *elem,
+                    Type::Map(k, v) => pair(&k, &v),
+                    _ => unreachable!("List or Map checked by the type checker"),
+                };
                 // The List cannot change during the loop (`ownership.rs`): its length is read once.
                 let l = self.expr1(list);
                 let n = self.int_local();
@@ -1603,7 +1707,18 @@ impl<'a> Translator<'a> {
                 let v = self.load(l, i, &elem);
                 self.loops.push((next, exit, self.names.len()));
                 // Borrowed from the List: nobody frees it.
-                self.borrowing(&name.text, v, *elem, body);
+                match value {
+                    None => self.borrowing(&name.text, v, elem, body),
+                    // `for name, age in ages`: the key's slots, then the value's.
+                    Some(value) => {
+                        let (k, t) = (element(&elem, 0), element(&elem, 1));
+                        let n = scalars(&k).len();
+                        let vars = HashMap::from([(name.text.clone(), (v[..n].to_vec(), k)), (value.text.clone(), (v[n..].to_vec(), t))]);
+                        self.names.push(Scope { borrowed: true, vars });
+                        self.block(body);
+                        self.names.pop();
+                    }
+                }
                 self.loops.pop();
                 self.go(End::Jump(next), next);
                 let one = self.constant(1);
@@ -1739,7 +1854,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(")".into()));
             }
             // Its text is made by a helper, and freed at the end of the statement.
-            Type::List(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Any(_) => {
+            Type::List(_) | Type::Map(..) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Any(_) => {
                 let f = self.helper(Helper::Show(ty.clone()));
                 let text = self.int_local();
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -1762,7 +1877,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.ty(e) {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -2062,6 +2177,32 @@ impl<'a> Translator<'a> {
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             ExprKind::Var(name) => self.slots_of(name),
             ExprKind::Mark(_, x) => self.expr(x),
+            // `[]` or `Map<String, Int>()` where a Map is expected.
+            ExprKind::List(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Map(..)) => {
+                let ty = self.ty(e);
+                let Type::Map(k, v) = &ty else { unreachable!() };
+                let l = self.int_local();
+                self.emit(Inst::ListNew(l, scalars(&pair(k, v)).len()));
+                self.track(&[l], &ty);
+                vec![l]
+            }
+            // Written one after the other: a key given twice keeps its last value.
+            ExprKind::MapLit(pairs) => {
+                let ty = self.ty(e);
+                let Type::Map(k, v) = &ty else { unreachable!("Map checked by the type checker") };
+                let l = self.int_local();
+                self.emit(Inst::ListNew(l, scalars(&pair(k, v)).len()));
+                for (key, value) in pairs {
+                    let (key, value) = (self.owned(key), self.owned(value));
+                    let place = self.entry(l, &key, k, v);
+                    let old = self.read(&place);
+                    self.free_value(&old, v);
+                    self.write(&place, &value);
+                    self.free_value(&key, k);
+                }
+                self.track(&[l], &ty);
+                vec![l]
+            }
             ExprKind::List(_) | ExprKind::New(_) => {
                 let ty = self.ty(e);
                 let Type::List(elem) = &ty else { unreachable!("List checked by the type checker") };
@@ -2075,6 +2216,12 @@ impl<'a> Translator<'a> {
                 }
                 self.track(&[l], &ty);
                 vec![l]
+            }
+            ExprKind::Index(x, i) if matches!(self.ty(x), Type::Map(..)) => {
+                let Type::Map(k, v) = self.ty(x) else { unreachable!() };
+                let map = self.expr1(x);
+                let key = self.expr(i);
+                self.lookup(map, &key, &k, &v, false)
             }
             ExprKind::Index(..) => {
                 let (p, _) = self.place(e);
@@ -2095,7 +2242,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.given(&args[0]) {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -2373,13 +2520,37 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) =>
+                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) =>
             {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
                 let copy = self.clone_value(&v, &ty);
                 self.track(&copy, &ty);
                 copy
+            }
+            // `remove` changes the Map, but its slot (the address of its block) stays the same.
+            ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::Map(..)) => {
+                let Type::Map(k, v) = self.ty(receiver) else { unreachable!() };
+                let map = self.expr1(receiver);
+                match name.text.as_str() {
+                    "length" => {
+                        let n = self.int_local();
+                        self.emit(Inst::ListLength(n, map));
+                        vec![n]
+                    }
+                    "contains" => {
+                        let key = self.expr(&args[0]);
+                        let i = self.find(map, &key, &k);
+                        let (zero, d) = (self.constant(0), self.int_local());
+                        self.emit(Inst::Binary(d, Op::Ge, i, zero, NOWHERE));
+                        vec![d]
+                    }
+                    "remove" => {
+                        let key = self.expr(&args[0]);
+                        self.lookup(map, &key, &k, &v, true)
+                    }
+                    other => unreachable!("Map method `{other}` checked by the type checker"),
+                }
             }
             // `add` and `remove` change the List, but its slot (the address of its block) stays the same.
             ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::List(_)) => {
@@ -2512,6 +2683,10 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
         }
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => names_in(x, names),
         ExprKind::List(elems) => elems.iter().for_each(|a| names_in(a, names)),
+        ExprKind::MapLit(pairs) => pairs.iter().for_each(|(k, v)| {
+            names_in(k, names);
+            names_in(v, names);
+        }),
         ExprKind::Index(x, i) => {
             names_in(x, names);
             names_in(i, names);

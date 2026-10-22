@@ -329,8 +329,11 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
                 vars.push((counter.text.clone(), "Int".into()));
                 visible(body, cursor, vars);
             }
-            Stmt::Each { name, body, .. } if inside(body) => {
+            Stmt::Each { name, value, body, .. } if inside(body) => {
                 vars.push((name.text.clone(), String::new()));
+                if let Some(v) = value {
+                    vars.push((v.text.clone(), String::new()));
+                }
                 visible(body, cursor, vars);
             }
             Stmt::Match(m) => {

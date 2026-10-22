@@ -1,0 +1,11 @@
+fn main {
+    var ages: Map<String, Int> := ["Rex" := 3]
+    for name, age in ages {
+        ages["Milo"] := 1
+    }
+    let names: Map<Int, String> := [1 := "one"]
+    let taken: Map<Int, String> := names
+    print(names)
+}
+// error: ages
+// error: names

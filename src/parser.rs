@@ -1091,6 +1091,13 @@ impl Parser<'_> {
             Kind::Keyword("for") => {
                 self.advance();
                 let counter = self.value_name("what_variable")?;
+                // `for name, age in ages`: a Map's key and value.
+                let value = if self.is_sym(",") {
+                    self.advance();
+                    Some(self.value_name("what_variable")?)
+                } else {
+                    None
+                };
                 if !self.is_keyword("in") {
                     let msg = t!("expected_symbol", symbol = "in", found = self.describe());
                     return self.error(self.token().span, msg);
@@ -1101,9 +1108,12 @@ impl Parser<'_> {
                 let body = self.block()?;
                 match e.kind {
                     ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) => {
+                        if let Some(v) = &value {
+                            self.diags.push(Diag::new(v.span, t!("for_two_names", type = "Int")));
+                        }
                         Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
                     }
-                    _ => Ok(Stmt::Each { name: counter, list: e, body }),
+                    _ => Ok(Stmt::Each { name: counter, value, list: e, body }),
                 }
             }
             Kind::Keyword("from") => {
@@ -1473,15 +1483,23 @@ impl Parser<'_> {
             }
             Kind::Sym("[") => {
                 self.advance();
-                let mut elems = vec![];
+                let (mut elems, mut pairs) = (vec![], vec![]);
                 while !self.is_sym("]") {
-                    elems.push(self.inner_expr()?);
+                    let x = self.inner_expr()?;
+                    // `["Rex" := 3]`: a Map, as soon as the first element has its `:=`.
+                    if self.is_sym(":=") || !pairs.is_empty() {
+                        self.expect(":=")?;
+                        pairs.push((x, self.inner_expr()?));
+                    } else {
+                        elems.push(x);
+                    }
                     if !self.is_sym("]") {
                         self.expect(",")?;
                     }
                 }
                 let end = self.advance().span;
-                return Ok(self.expr(t.span.to(end), ExprKind::List(elems)));
+                let kind = if pairs.is_empty() { ExprKind::List(elems) } else { ExprKind::MapLit(pairs) };
+                return Ok(self.expr(t.span.to(end), kind));
             }
             _ => {
                 let msg = t!("expression_expected", found = self.describe());

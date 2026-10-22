@@ -1,0 +1,42 @@
+struct Point {
+    x: Int
+}
+
+struct Map {
+    n: Int
+}
+
+fn main {
+    let a: Map<Float, Int> := []
+    let b: Map<Point, Int> := []
+    let c: Map<Int> := []
+    var counts: Map<String, Int> := ["a" := 1]
+    counts["a"] += 1
+    var points: Map<Int, Point> := [1 := Point { x := 1 }]
+    points[1].x := 2
+    print(counts = counts)
+    for k in counts {
+    }
+    let l: List<Int> := [1]
+    for i, x in l {
+    }
+    let e: Map<String, Int> := Map<String, Int>.empty
+    let n: Int := counts["a"]
+    let fixed: Map<String, Int> := ["a" := 1]
+    fixed["b"] := 2
+    print(fixed.remove("a"))
+    print(counts.keys)
+}
+// error: `Map` is
+// error: `Float` cannot be the key of a Map
+// error: `Point` cannot be the key of a Map
+// error: `Map` takes two types, not 1
+// error: `counts["a"]` may be missing
+// error: a value inside a Map is changed as a whole
+// error: `=` does not compare Maps yet
+// error: a Map is walked over with two names
+// error: two names after `for` walk over a Map (its keys and values), not over `List<Int>`
+// error: `Map` has no function `Map.empty`
+// error: `Int` expected, `Int?` given
+// error: `fixed` is declared with let
+// error: `Map<String, Int>` has no method `keys`

@@ -314,7 +314,7 @@ lang fr {
     interp_display_help := "écris `{kind} {name} : Display` et sa méthode `fn to_string(self) -> String`"
     param_bound_help := "écris `<{type}: {bound}>` là où `{type}` est déclaré"
     param_display_help := "`{type}` doit suivre `Display`"
-    interp_display_list_help := "construis le texte voulu (une boucle `for` pour une List, `.0`, `.1` pour un tuple) ; `print({code})` le montre tel quel, pour déboguer"
+    interp_display_list_help := "construis le texte voulu (une boucle `for` pour une List ou une Map, `.0`, `.1` pour un tuple) ; `print({code})` le montre tel quel, pour déboguer"
     interface_item := "une interface ne contient que des méthodes (`fn`), trouvé {found}"
     interface_static := "`{name}` n'a pas de `self` : une interface liste des méthodes appelées sur une valeur"
     interface_static_help := "écris `fn {name}(self, …)` ; les fonctions statiques dans les interfaces viendront plus tard"
@@ -369,6 +369,21 @@ lang fr {
     private_in_public := "`{name}` est public mais utilise `{type}`, qui est privé : un autre fichier ne pourrait pas écrire son type"
     private_in_public_help := "mets aussi `{type}` sous `public:`, ou `{name}` sous `private:`"
     error_in_import := "erreur dans {file}:{line}:{col} : {message}"
+
+    // ---- Maps (J6, step 4) ----
+    map_two_types := "`Map` prend deux types, pas {count} : `Map<String, Int>`"
+    map_key := "`{type}` ne peut pas être la clé d'une Map : une clé se retrouve avec `=`"
+    map_key_help := "une clé est un `Int`, un `String`, un `Char`, un `Bool`, ou un type qui suit `Equal` (pas un `Float` : `NaN` n'est pas égal à lui-même)"
+    map_compare := "`{op}` ne compare pas encore les Maps"
+    map_literal := "une `Map` n'a pas de champs"
+    map_made_help := "une `Map` se fabrique avec `[\"Rex\" := 3]`, ou `[]` là où son type est écrit (`let ages: Map<String, Int> := []`)"
+    map_entry_part := "une valeur dans une Map se change en entier"
+    map_entry_part_help := "lis-la (`let d: Dog? := dogs[\"Rex\"]`), change la copie, puis réécris-la (`dogs[\"Rex\"] := d`)"
+    map_entry_op := "`{target}` peut manquer : c'est une valeur optionnelle, on ne peut pas calculer avec"
+    map_entry_op_help := "lis-la d'abord : `let n: Int? := {target}`, puis `if n != none \{ {target} := n + 1 \} else \{ {target} := 1 \}`"
+    for_two_names := "deux noms après `for` parcourent une Map (ses clés et ses valeurs), pas `{type}`"
+    for_map_one_name := "une Map se parcourt avec deux noms : sa clé et sa valeur"
+    for_map_one_name_help := "`for {name}, value in …`"
 
     // ---- Editor (`kova lsp`) ----
     not_handled := "pas encore géré"

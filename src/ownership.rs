@@ -76,6 +76,7 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
     // The List methods that change or take (PLAN 2.10).
     signatures.insert(method_name("List", "add"), (Some(Mode::Var), vec![Mode::Move]));
     signatures.insert(method_name("List", "remove"), (Some(Mode::Var), vec![Mode::Read]));
+    signatures.insert(method_name("Map", "remove"), (Some(Mode::Var), vec![Mode::Read]));
     let mut functions: Vec<&Function> = f.functions.iter().collect();
     for s in &f.structs {
         for m in &s.methods {
@@ -383,23 +384,24 @@ impl Owner<'_> {
             }
             Stmt::While { cond, body } => {
                 self.borrow(cond);
-                self.body_of_loop(body, None);
+                self.body_of_loop(body, &[], false);
             }
             Stmt::Loop { counter, start, end, body, .. } => {
                 self.borrow(start);
                 self.borrow(end);
-                self.body_of_loop(body, Some((counter, false)));
+                self.body_of_loop(body, &[counter], false);
             }
-            // The List stays `pending` during the whole loop: frozen (PLAN 2.7.9).
-            Stmt::Each { name, list, body } => {
+            // The List (or Map) stays `pending` during the whole loop: frozen (PLAN 2.7.9).
+            Stmt::Each { name, value, list, body } => {
                 self.borrow(list);
+                let names: Vec<&Name> = std::iter::once(name).chain(value).collect();
                 if let Some((root, _)) = place_root(list, &self.info.types) {
                     let id = self.lookup(root).id;
                     self.looped.push((id, "loop_frozen"));
-                    self.body_of_loop(body, Some((name, true)));
+                    self.body_of_loop(body, &names, true);
                     self.looped.pop();
                 } else {
-                    self.body_of_loop(body, Some((name, true)));
+                    self.body_of_loop(body, &names, true);
                 }
             }
             Stmt::Match(m) => self.match_(m, false),
@@ -410,13 +412,14 @@ impl Owner<'_> {
     /// The body runs again and again: a variable from outside the loop that is still moved
     /// at the end of the body (or at a `continue`) would be moved again on the next turn.
     /// `counter`: the loop's variable, and whether it borrows (`for x in l`).
-    fn body_of_loop(&mut self, body: &Block, counter: Option<(&Name, bool)>) {
+    /// `names`: the loop's own variables (`borrowed`: from the List or Map walked over).
+    fn body_of_loop(&mut self, body: &Block, names: &[&Name], borrowed: bool) {
         let entry = self.state.clone();
         let depth = self.scopes.len();
         self.loops.push(Loop { depth, breaks: None, continues: None });
         self.scopes.push(HashMap::new());
-        if let Some((c, borrowed)) = counter {
-            self.declare(&c.text, borrowed);
+        for n in names {
+            self.declare(&n.text, borrowed);
         }
         self.block(body);
         self.scopes.pop();
@@ -478,8 +481,8 @@ impl Owner<'_> {
                     Diag::new(e.span, t!("struct_field_move", place = place)).help(t!("field_move_help", place = place)),
                 );
             }
-            // PLAN 2.7.8: an element is borrowed, never moved out.
-            ExprKind::Index(list, i) => {
+            // PLAN 2.7.8: an element is borrowed, never moved out (a Map gives a copy).
+            ExprKind::Index(list, i) if !matches!(self.info.types[list.id], Type::Map(..)) => {
                 self.borrow(e);
                 let place = &self.src[e.span.start..e.span.end];
                 let (list, i) = (&self.src[list.span.start..list.span.end], &self.src[i.span.start..i.span.end]);
@@ -509,6 +512,7 @@ impl Owner<'_> {
         let q = match &self.info.types[receiver.id] {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),
+            Type::Map(..) => method_name("Map", &name.text),
             Type::Any(i) => method_name(i, &name.text),
             Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,
@@ -624,8 +628,12 @@ impl Owner<'_> {
                 self.borrow(x);
                 self.borrow(i);
             }
-            // A new List owns its elements.
+            // A new List owns its elements; a new Map, its keys and values.
             ExprKind::List(elems) => elems.iter().for_each(|x| self.give(x)),
+            ExprKind::MapLit(pairs) => pairs.iter().for_each(|(k, v)| {
+                self.give(k);
+                self.give(v);
+            }),
             ExprKind::New(_) => {}
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), a, b) => {
                 // `b` is computed only sometimes: what it moves is "maybe moved" afterwards.

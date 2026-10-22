@@ -317,7 +317,8 @@ pub enum Stmt {
     /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` / `from i := a to b` (`inclusive` = true).
     Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
     /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).
-    Each { name: Name, list: Expr, body: Block },
+    /// `for x in l`, or `for name, age in ages` on a Map (`value`).
+    Each { name: Name, value: Option<Name>, list: Expr, body: Block },
     Match(Match),
     Expr(Expr),
 }
@@ -357,6 +358,8 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// `[12, 5, 18]`: a new List.
     List(Vec<Expr>),
+    /// `["Rex" := 3, "Fido" := 5]`: a new Map (`[]` is an empty one, typed by where it goes).
+    MapLit(Vec<(Expr, Expr)>),
     /// `List<Int>()`: a new empty List of this type.
     New(TypeAst),
     /// `scores[i]`: an element of a List (a place, like a field).
