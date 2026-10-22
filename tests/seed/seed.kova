@@ -1,0 +1,7 @@
+// With the same `KOVA_SEED`, run and build draw the same numbers (tests/kova.rs `seeded`).
+fn main {
+    for i in 0..5 {
+        write("{random(1..=100)} ")
+    }
+    print(random(-9223372036854775807..9223372036854775807))
+}

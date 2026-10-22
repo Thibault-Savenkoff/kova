@@ -237,6 +237,7 @@ fn command_line() {
     languages();
     modes();
     leak_counter();
+    seeded();
     static_executable();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
@@ -270,6 +271,17 @@ fn leak_counter() {
     let exe = std::env::temp_dir().join(format!("kova-leaks-{}", std::process::id()));
     assert!(kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).status().unwrap().success());
     assert_eq!(count(&mut program(&exe, LANG)), run);
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// `KOVA_SEED`: the same random numbers again, and the same in run and build.
+fn seeded() {
+    let seeded = |c: &mut Command| text(&c.env("KOVA_SEED", "42").output().unwrap().stdout);
+    let run = seeded(kova(LANG).args(["run", "tests/seed/seed.kova"]));
+    assert_eq!(run, "14 92 59 65 51 6792609088808213255\n");
+    let exe = std::env::temp_dir().join(format!("kova-seed-{}", std::process::id()));
+    assert!(kova(LANG).args(["build", "tests/seed/seed.kova", "-o"]).arg(&exe).status().unwrap().success());
+    assert_eq!(seeded(&mut program(&exe, LANG)), run);
     let _ = std::fs::remove_file(&exe);
 }
 

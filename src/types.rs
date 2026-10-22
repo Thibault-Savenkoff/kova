@@ -246,6 +246,9 @@ pub const LIBRARY: &[(&str, &str)] =
         ("list_dir", "fn list_dir(path: String) -> List<String> or IoError"),
         ("make_dir", "fn make_dir(path: String) -> Nothing or IoError"),
         ("remove_file", "fn remove_file(path: String) -> Nothing or IoError"),
+        ("now", "fn now -> Float"),
+        ("sleep", "fn sleep(seconds: Float)"),
+        ("random", "fn random(from..to) -> Int"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
@@ -716,6 +719,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
     }
+    c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
+    c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
     c.functions.insert("exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
@@ -3499,6 +3504,22 @@ impl Checker<'_> {
             return r;
         }
         self.hidden(&name.text, name.span);
+        // `random(1..=6)`: a range of `Int`s, written there (a range is not a value of its own).
+        if name.text == "random" && self.lookup("random").is_none() {
+            match args {
+                [r] if r.range().is_some() => {
+                    let (_, a, b) = r.range().unwrap();
+                    self.expect(a, &Type::Int);
+                    self.expect(b, &Type::Int);
+                    self.types[r.id] = Type::Unit;
+                }
+                _ => {
+                    self.unchecked(args);
+                    self.diags.push(Diag::new(name.span, t!("random_range")).help(t!("random_range_help")));
+                }
+            }
+            return Type::Int;
+        }
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
                 self.error(name.span, t!("builtin_one_arg", name = name.text));

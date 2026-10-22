@@ -25,6 +25,8 @@ struct Heap {
     live: usize,
     /// The program's command-line arguments, for `args`.
     args: Vec<String>,
+    /// The state of `random` (splitmix64, like runtime.c), once started.
+    chance: Option<u64>,
     /// Under `kova debug`: what stops the program and shows its variables.
     debugger: Option<Box<Debugger>>,
     /// While the debugger shows a variable: a String or a List already given away (slot 0) or
@@ -124,6 +126,34 @@ fn unindex(s: &mut [i64], i: i64) {
     }
     s[2 * j as usize] = 0;
     s[2 * j as usize + 1] = 0;
+}
+
+/// `random(from..to)`, `to` excluded: the same numbers as `kova_random` in runtime.c (comments
+/// there) for the same `KOVA_SEED`.
+fn random(heap: &mut Heap, from: i64, to: i64) -> i64 {
+    let state = heap.chance.get_or_insert_with(|| {
+        let seed = std::env::var("KOVA_SEED").ok().filter(|s| s.starts_with(|c: char| c.is_ascii_digit())).and_then(|s| s.parse::<u64>().ok());
+        seed.unwrap_or_else(|| {
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            (t.as_secs().wrapping_mul(1_000_000_000).wrapping_add(t.subsec_nanos() as u64)) ^ (std::process::id() as u64) << 32
+        })
+    });
+    let mut next = || {
+        *state = state.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = *state;
+        z = (z ^ z >> 30).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ z >> 27).wrapping_mul(0x94D049BB133111EB);
+        z ^ z >> 31
+    };
+    let n = (to as u64).wrapping_sub(from as u64);
+    let limit = u64::MAX - u64::MAX % n;
+    let x = loop {
+        let x = next();
+        if x < limit {
+            break x;
+        }
+    };
+    (from as u64).wrapping_add(x % n) as i64
 }
 
 /// A failure of the system as an `IoError` variant + 1, like `failure` in runtime.c.
@@ -380,7 +410,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::Convert(d, c, a, loc) => {
                     locals[*d] = match c {
                         Conversion::IntToFloat => bits(locals[*a] as f64),
-                        Conversion::FromBits => locals[*a],
+                        Conversion::FromBits | Conversion::ToBits => locals[*a],
                         Conversion::FloatToInt => {
                             let x = float(locals[*a]);
                             // False for NaN too: any comparison with NaN is false.
@@ -544,6 +574,19 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = parts.join(heap.get(locals[a[1]]));
                             heap.make(t)
                         }
+                        StrOp::Now => {
+                            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                            (t.as_secs() as f64 + t.subsec_nanos() as f64 / 1e9).to_bits() as i64
+                        }
+                        StrOp::Sleep => {
+                            out.flush().unwrap();
+                            let s = float(locals[a[0]]);
+                            if s > 0.0 && s < 1e9 {
+                                std::thread::sleep(std::time::Duration::from_secs_f64(s));
+                            }
+                            0
+                        }
+                        StrOp::Random => random(heap, locals[a[0]], locals[a[1]]),
                         StrOp::IsFloat => crate::kir::parse_float(s(0)).is_some() as i64,
                         StrOp::ToFloat => crate::kir::parse_float(s(0)).unwrap_or(0.0).to_bits() as i64,
                         StrOp::Chars => {

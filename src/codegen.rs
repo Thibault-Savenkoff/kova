@@ -70,7 +70,7 @@ struct Runtime {
     /// `kova_show_int`… (in `Show` order): given by address to `kova_print` and the others, so
     /// that only the ones a program uses are linked (no Float formatting to print a String).
     shows: [FuncId; 6],
-    str_ops: [FuncId; 40],
+    str_ops: [FuncId; 43],
     lists: [FuncId; 10],
 }
 
@@ -143,6 +143,9 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Join => (37, "kova_str_join", 2),
         StrOp::IsFloat => (38, "kova_str_is_float", 1),
         StrOp::ToFloat => (39, "kova_str_to_float", 1),
+        StrOp::Now => (40, "kova_now", 0),
+        StrOp::Sleep => (41, "kova_sleep", 1),
+        StrOp::Random => (42, "kova_random", 2),
     }
 }
 
@@ -186,7 +189,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -297,7 +300,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 40],
+    ops: [FuncRef; 43],
     shows: [FuncRef; 6],
 }
 
@@ -428,6 +431,7 @@ impl Generator<'_> {
                 let v = match c {
                     Conversion::IntToFloat => self.b.ins().fcvt_from_sint(F64, a),
                     Conversion::FromBits => self.b.ins().bitcast(F64, MemFlagsData::new(), a),
+                    Conversion::ToBits => self.b.ins().bitcast(I64, MemFlagsData::new(), a),
                     Conversion::FloatToInt => {
                         // "Ordered" comparisons: false for NaN, so NaN is refused.
                         let min = self.b.ins().f64const(-9223372036854775808.0);

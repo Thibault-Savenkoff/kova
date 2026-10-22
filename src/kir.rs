@@ -346,6 +346,12 @@ pub enum StrOp {
     /// `s.to_float`: 1 if `s` is a Float (`parse_float`), else 0; then its bits.
     IsFloat,
     ToFloat,
+    /// `now`: the bits of a Float, the seconds since 1970.
+    Now,
+    /// `sleep(seconds)`, given the bits of the Float: gives 0.
+    Sleep,
+    /// `random(from..to)`, `to` excluded (`from < to`, checked before).
+    Random,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
     /// `args`: a new `List<String>`, the words given after the program's name.
@@ -529,6 +535,8 @@ pub enum Conversion {
     IntToFloat,
     /// The bits of a Float, given by the runtime in an integer slot (`StrOp::ToFloat`).
     FromBits,
+    /// The other way: a Float given to the runtime (`StrOp::Sleep`).
+    ToBits,
     /// `x.to_int()`: drops the decimals; error if NaN or too big.
     FloatToInt,
 }
@@ -570,6 +578,8 @@ pub enum Fault {
     ExitCode,
     /// `n.pow(-1)` on an `Int`.
     NegativePower,
+    /// `random(5..5)`: nothing to draw from.
+    EmptyRange,
 }
 
 impl Fault {
@@ -584,6 +594,7 @@ impl Fault {
             Fault::EmptyText => "fault_empty_text",
             Fault::ExitCode => "fault_exit_code",
             Fault::NegativePower => "fault_negative_power",
+            Fault::EmptyRange => "fault_empty_range",
         }
     }
 }
@@ -3117,6 +3128,37 @@ impl<'a> Translator<'a> {
                 if let Some(op) = io {
                     let ty = self.ty(e);
                     return self.io_call(op, args, &ty);
+                }
+                if name.text == "now" {
+                    let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);
+                    self.emit(Inst::Str(bits, StrOp::Now, vec![]));
+                    self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
+                    return vec![x];
+                }
+                if name.text == "sleep" {
+                    let (s, bits, done) = (self.expr1(&args[0]), self.int_local(), self.int_local());
+                    self.emit(Inst::Convert(bits, Conversion::ToBits, s, NOWHERE));
+                    self.emit(Inst::Str(done, StrOp::Sleep, vec![bits]));
+                    return vec![];
+                }
+                // `random(1..=6)`: the end made exclusive, then the range must hold a number.
+                if name.text == "random" {
+                    let (inclusive, a, b) = args[0].range().expect("a range checked by the type checker");
+                    let (from, last) = (self.expr1(a), self.expr1(b));
+                    let loc = self.loc(args[0].span);
+                    let to = self.int_local();
+                    if inclusive {
+                        let one = self.constant(1);
+                        self.emit(Inst::Binary(to, Op::Plus, last, one, loc));
+                    } else {
+                        self.emit(Inst::Copy(to, last));
+                    }
+                    let empty = self.int_local();
+                    self.emit(Inst::Binary(empty, Op::Ge, from, to, NOWHERE));
+                    self.emit(Inst::FaultIf(empty, Fault::EmptyRange, loc));
+                    let n = self.int_local();
+                    self.emit(Inst::Str(n, StrOp::Random, vec![from, to]));
+                    return vec![n];
                 }
                 if name.text == "exists" {
                     let (p, d) = (self.expr1(&args[0]), self.int_local());
