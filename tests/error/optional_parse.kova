@@ -1,0 +1,4 @@
+fn main {
+    let x: Int?? := none
+}
+// error: `Int?` is already optional

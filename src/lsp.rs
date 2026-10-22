@@ -12,7 +12,7 @@ use std::error::Error;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
-use crate::ast::{Block, Case, ExprKind, File, Function, Pattern, Stmt, TypeAst};
+use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, TypeAst};
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
 use crate::{analyze, parser, types};
@@ -278,8 +278,8 @@ fn visible(b: &Block, cursor: usize, vars: &mut Vec<(String, String)>) {
             }
             Stmt::Match(m) => {
                 for arm in m.arms.iter().filter(|a| inside(&a.body)) {
-                    if let Case::Variant { binds, .. } = &arm.case {
-                        binds.iter().for_each(|p| pattern_names(p, None, vars));
+                    if let Some((_, binds)) = arm.case.variant() {
+                        binds.into_iter().for_each(|p| pattern_names(p, None, vars));
                     }
                     visible(&arm.body, cursor, vars);
                 }

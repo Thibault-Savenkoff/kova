@@ -266,6 +266,25 @@ lang fr {
     cases_missing := "cas de `{type}` non traités : {cases}"
     cases_missing_help := "ajoute-les, ou termine par `_ => …` pour tous les autres"
 
+    // ---- Optionnels `T?` (J4) ----
+    optional_twice := "`{type}?` est déjà optionnel : un seul `?` suffit"
+    none_needs_type := "`none` a besoin d'un type : il va là où un optionnel (`T?`) est attendu"
+    none_needs_type_help := "par exemple `let x: Int? := none`"
+    never_none := "un `{type}` n'est jamais `none` : seul un optionnel peut l'être"
+    never_none_help := "déclare-le `{type}?` s'il peut ne pas avoir de valeur"
+    optional_compare := "`{op}` compare un `{type}` seulement avec `none`"
+    optional_compare_help := "vérifie-le d'abord : `if x != none \{ … \}`, puis compare sa valeur dedans"
+    narrowed_immutable := "`{name}` est la valeur d'un optionnel dans ce `if` : il ne peut pas changer ici"
+    narrowed_immutable_help := "change `{name}` après le `if`, ou copie sa valeur : `var v: … := {name}`"
+    var_arg_optional := "`{arg}` est un `{type}` : un paramètre `var {declared}` demande une variable `{declared}`, car il peut recevoir `none`"
+    try_not_optional := "`?` s'applique à un optionnel (`T?`), pas à `{type}`"
+    try_needs_optional := "`?` rend `none` à l'appelant : la fonction doit renvoyer un optionnel (`T?`) ; elle renvoie {type}"
+    try_needs_optional_help := "ou vérifie la valeur toi-même : `if x != none \{ … \}`"
+    try_in_contract := "`?` ne peut pas quitter la fonction depuis un contrat"
+    optional_cases := "un optionnel (`{type}`) s'examine avec `none => …` et un nom pour sa valeur : `x => …`"
+    bind_on_enum := "`{name}` seul reçoit la valeur d'un optionnel (`T?`) ; `{type}` est un enum : écris une de ses variantes"
+    case_value := "un nom pour la valeur (`x => …`)"
+
     // ---- Editor (`kova lsp`) ----
     not_handled := "pas encore géré"
     completion_default := "{help} (par défaut)"

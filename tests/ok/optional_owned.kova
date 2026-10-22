@@ -1,0 +1,60 @@
+// Optionals holding owned values: `?` leaving while Strings are alive, moves, narrowing borrows.
+
+fn first_word(words: List<String>) -> String? {
+    if words.length = 0 { return none }
+    return words[0].clone
+}
+
+// Leaves with `none` while `kept` and a temporary text are alive: both must be freed.
+fn shout(words: List<String>) -> String? {
+    let kept: String := "kept"
+    let loud: String := "{kept} " + first_word(words)? + "!"
+    return loud
+}
+
+fn length_of(s: String?) -> Int {
+    if s != none {
+        return s.length
+    }
+    return -1
+}
+
+fn take(s: move String?) -> Int {
+    return match s {
+        none => 0
+        t => t.length
+    }
+}
+
+fn main {
+    print(shout(["hey", "you"]))
+    print(shout([]))
+    let name: String? := first_word(["Ann"])
+    print(length_of(name))
+    print(length_of(none))
+    print(take(move name))
+    let pair: (Int, String)? := (1, "one")
+    match pair {
+        none => print("nothing")
+        (n, s) => print("{n} is {s}")
+    }
+    var i: Int := 0
+    while i < 3 {
+        let w: String? := if i = 1 { none } else { "w{i}" }
+        if w = none {
+            i += 1
+            continue
+        } else {
+            print(w)
+        }
+        i += 1
+    }
+}
+// expect: "kept hey!"
+// expect: none
+// expect: 3
+// expect: -1
+// expect: 3
+// expect: 1 is one
+// expect: w0
+// expect: w2

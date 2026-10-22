@@ -1,0 +1,10 @@
+fn keep(s: move String) {
+}
+
+fn main {
+    let s: String? := "a"
+    if s != none {
+        keep(move s)
+    }
+}
+// error: `s` is borrowed here: it cannot be moved

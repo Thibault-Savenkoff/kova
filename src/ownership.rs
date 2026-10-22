@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
-use crate::types::{Info, Type, is_copy, method_name, place_root};
+use crate::types::{Info, Type, enum_view, is_copy, method_name, narrowed, place_root};
 
 /// A visible name.
 #[derive(Clone)]
@@ -176,10 +176,22 @@ impl Owner<'_> {
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) {
         self.borrow(cond);
         let start = self.state.clone();
+        self.narrow(&narrowed(cond, true));
         self.block_value(then);
+        self.scopes.pop();
         let after_then = std::mem::replace(&mut self.state, start);
+        self.narrow(&narrowed(cond, false));
         self.block_value(otherwise);
+        self.scopes.pop();
         self.state = join(after_then, self.state.take());
+    }
+
+    /// Opens a scope where each of `names` is the value of its optional: a borrow (PLAN 2.7.6).
+    fn narrow(&mut self, names: &[&str]) {
+        self.scopes.push(HashMap::new());
+        for n in names {
+            self.declare(n, true);
+        }
     }
 
     /// `match x { … }` (PLAN 2.7.6). On a place, the arms borrow its fields, and `x` stays frozen
@@ -187,7 +199,7 @@ impl Owner<'_> {
     fn match_(&mut self, m: &Match, value: bool) {
         self.borrow(&m.subject);
         let ty = self.info.types[m.subject.id].clone();
-        let Type::Enum(d) = &ty else { unreachable!("enum checked by the type checker") };
+        let d = enum_view(&ty).expect("enum checked by the type checker");
         let root = place_root(&m.subject, &self.info.types).map(|(r, _)| self.lookup(r).id);
         let frozen = root.filter(|_| !is_copy(&ty));
         if let Some(id) = frozen {
@@ -198,9 +210,9 @@ impl Owner<'_> {
         for arm in &m.arms {
             self.state = start.clone();
             self.scopes.push(HashMap::new());
-            if let Case::Variant { name, binds } = &arm.case {
-                let (_, fields) = d.variant(&name.text).expect("variant checked by the type checker");
-                for (p, (_, t)) in binds.iter().zip(fields) {
+            if let Some((name, binds)) = arm.case.variant() {
+                let (_, fields) = d.variant(name).expect("variant checked by the type checker");
+                for (p, (_, t)) in binds.into_iter().zip(fields) {
                     self.bind(p, t, root.is_some());
                 }
             }
@@ -344,10 +356,14 @@ impl Owner<'_> {
             Stmt::If { cond, then, otherwise } => {
                 self.borrow(cond);
                 let start = self.state.clone();
+                self.narrow(&narrowed(cond, true));
                 self.block(then);
+                self.scopes.pop();
                 let after_then = std::mem::replace(&mut self.state, start);
                 if let Some(o) = otherwise {
+                    self.narrow(&narrowed(cond, false));
                     self.block(o);
+                    self.scopes.pop();
                 }
                 self.state = join(after_then, self.state.take());
             }
@@ -595,11 +611,13 @@ impl Owner<'_> {
             // A new List owns its elements.
             ExprKind::List(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::New(_) => {}
-            ExprKind::Binary(BinOp::And | BinOp::Or, a, b) => {
+            ExprKind::Binary(op @ (BinOp::And | BinOp::Or), a, b) => {
                 // `b` is computed only sometimes: what it moves is "maybe moved" afterwards.
                 self.borrow(a);
                 let start = self.state.clone();
+                self.narrow(&if *op == BinOp::And { narrowed(a, true) } else { vec![] });
                 self.borrow(b);
+                self.scopes.pop();
                 self.state = join(start, self.state.take());
             }
             ExprKind::Binary(_, a, b) => {
@@ -610,6 +628,13 @@ impl Owner<'_> {
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
+            // `x?` takes its value; on `none` it leaves the function, like a `return`.
+            ExprKind::Try(x) => {
+                self.give(x);
+                if self.state.is_some() {
+                    self.check_ensures();
+                }
+            }
             ExprKind::Match(m) => self.match_(m, true),
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
             ExprKind::Interp(parts) => self.parts(parts.iter()),
@@ -619,6 +644,7 @@ impl Owner<'_> {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::InMode { .. }
+            | ExprKind::None
             | ExprKind::Result => {}
         }
     }

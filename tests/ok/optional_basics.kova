@@ -1,0 +1,120 @@
+// Optionals: none, implicit wrap, narrowing, ?, match, to_int, to_char.
+
+struct Dog {
+    name: String,
+    owner: String?,
+}
+
+fn find(names: List<String>, wanted: String) -> Int? {
+    var i: Int := 0
+    while i < names.length {
+        if names[i] = wanted { return i }
+        i += 1
+    }
+    return none
+}
+
+fn half(n: Int) -> Int? {
+    if n % 2 = 0 { return n / 2 }
+    return none
+}
+
+// `?` passes `none` up at once.
+fn quarter(n: Int) -> Int? {
+    let h: Int := half(n)?
+    return half(h)
+}
+
+fn sum_of(a: String, b: String) -> Int? {
+    return a.to_int? + b.to_int?
+}
+
+fn greeting(name: String?) -> String {
+    return match name {
+        none => "hello, stranger"
+        n => "hello, {n}"
+    }
+}
+
+fn main {
+    let names: List<String> := ["ann", "bob", "cid"]
+    let at: Int? := find(names, "bob")
+    print(at)
+    print(find(names, "zoe"))
+    if at != none {
+        print(at + 100)
+    }
+    let missing: Int? := find(names, "zoe")
+    if missing = none {
+        print("no zoe")
+    } else {
+        print(missing)
+    }
+    if at != none && at > 0 {
+        print("after the first")
+    }
+    print(quarter(12))
+    print(quarter(6))
+    print(sum_of("40", "2"))
+    print(sum_of("40", "x"))
+    print("-9223372036854775808".to_int)
+    print("9223372036854775808".to_int)
+    print("".to_int)
+    print("-".to_int)
+    print(65.to_char)
+    print(55296.to_char)
+    print(greeting(none))
+    print(greeting("Rex"))
+    var who: String? := none
+    print(who)
+    who := "Ann"
+    print(who)
+    who := none
+    print(who = none)
+    let rex := Dog { name := "Rex", owner := "Ann" }
+    let stray := Dog { name := "Max", owner := none }
+    print(rex)
+    print(stray)
+    print("{stray.owner} / {rex.owner}")
+    let maybe: List<Int?> := [1, none, 3]
+    print(maybe)
+    var total: Int := 0
+    for m in maybe {
+        if m != none { total += m }
+    }
+    print(total)
+    let f: Float? := 2
+    print(f)
+    let c: Int? := if total > 3 { total } else { none }
+    print(c)
+    let twin: String? := who.clone
+    print(twin != none)
+}
+// expect: 1
+// expect: none
+// expect: 101
+// expect: no zoe
+// expect: after the first
+// expect: 3
+// expect: none
+// expect: 42
+// expect: none
+// expect: -9223372036854775808
+// expect: none
+// expect: none
+// expect: none
+// expect: 'A'
+// expect: none
+// expect: hello, stranger
+// expect: hello, Rex
+// expect: none
+// expect: "Ann"
+// expect: true
+// expect: Dog { name: "Rex", owner: "Ann" }
+// expect: Dog { name: "Max", owner: none }
+// expect: none / "Ann"
+// expect: [1, none, 3]
+// expect: 4
+// expect: 2.0
+// expect: 4
+// expect: false

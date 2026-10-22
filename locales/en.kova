@@ -266,6 +266,25 @@ lang en {
     cases_missing := "cases of `{type}` not handled: {cases}"
     cases_missing_help := "add them, or end with `_ => …` for all the others"
 
+    // ---- Optionals `T?` (J4) ----
+    optional_twice := "`{type}?` is already optional: a single `?` is enough"
+    none_needs_type := "`none` needs a type: it goes where an optional (`T?`) is expected"
+    none_needs_type_help := "for example `let x: Int? := none`"
+    never_none := "`{type}` is never `none`: only an optional can be"
+    never_none_help := "declare it `{type}?` if it may have no value"
+    optional_compare := "`{op}` compares `{type}` values only with `none`"
+    optional_compare_help := "check it first: `if x != none \{ … \}`, then compare its value inside"
+    narrowed_immutable := "`{name}` is the value of an optional inside this `if`: it cannot change here"
+    narrowed_immutable_help := "change `{name}` after the `if`, or copy its value: `var v: … := {name}`"
+    var_arg_optional := "`{arg}` has type `{type}`: a `var {declared}` parameter needs a variable of type `{declared}`, since it may receive `none`"
+    try_not_optional := "`?` applies to an optional (`T?`), not to `{type}`"
+    try_needs_optional := "`?` gives `none` back to the caller: the function must return an optional (`T?`); it returns {type}"
+    try_needs_optional_help := "or check the value yourself: `if x != none \{ … \}`"
+    try_in_contract := "`?` cannot leave the function from a contract"
+    optional_cases := "an optional (`{type}`) is matched with `none => …` and a name for its value: `x => …`"
+    bind_on_enum := "`{name}` alone matches the value of an optional (`T?`); `{type}` is an enum: write one of its variants"
+    case_value := "a name for the value (`x => …`)"
+
     // ---- Editor (`kova lsp`) ----
     not_handled := "not handled yet"
     completion_default := "{help} (default)"

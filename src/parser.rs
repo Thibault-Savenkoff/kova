@@ -171,8 +171,21 @@ impl Parser<'_> {
         }
     }
 
-    /// `Int` or `(Int, Float)`.
+    /// `Int`, `(Int, Float)`, `List<Int>`, each maybe followed by `?` (`Int?`).
     fn type_(&mut self) -> R<TypeAst> {
+        let t = self.base_type()?;
+        if !self.is_sym("?") {
+            return Ok(t);
+        }
+        let mark = self.advance().span;
+        if self.is_sym("?") {
+            let span = self.token().span;
+            return self.error(mark.to(span), t!("optional_twice", type = t.text()));
+        }
+        Ok(TypeAst::Optional(Box::new(t)))
+    }
+
+    fn base_type(&mut self) -> R<TypeAst> {
         if !self.is_sym("(") {
             let name = self.type_name()?;
             return if self.is_sym("<") { self.type_arguments(name) } else { Ok(TypeAst::Name(name)) };
@@ -898,6 +911,11 @@ impl Parser<'_> {
     fn arm(&mut self) -> R<Arm> {
         let case = if self.kind() == Kind::Ident && self.text(self.token().span) == "_" {
             Case::Any(self.advance().span)
+        } else if self.is_keyword("none") {
+            let span = self.advance().span;
+            Case::Variant { name: Name { text: "none".into(), span }, binds: vec![] }
+        } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
+            Case::Bind(self.pattern()?)
         } else {
             let name = self.type_name()?;
             let mut binds = vec![];
@@ -992,6 +1010,12 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Index(Box::new(e), Box::new(index)));
                 continue;
             }
+            // `x?`: on the same line (a `?` never starts a line anyway).
+            if self.is_sym("?") {
+                let end = self.advance().span;
+                e = self.expr(e.span.to(end), ExprKind::Try(Box::new(e)));
+                continue;
+            }
             if !self.is_sym(".") {
                 break;
             }
@@ -1064,6 +1088,7 @@ impl Parser<'_> {
             Kind::Float(v) => ExprKind::Float(v),
             Kind::Char(c) => ExprKind::Char(c),
             Kind::Keyword("true") => ExprKind::Bool(true),
+            Kind::Keyword("none") => ExprKind::None,
             Kind::Keyword("false") => ExprKind::Bool(false),
             Kind::Keyword("result") => ExprKind::Result,
             Kind::Keyword("self") => ExprKind::Var("self".into()),

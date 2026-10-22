@@ -63,9 +63,23 @@ pub struct Arm {
 
 pub enum Case {
     /// `Circle(r)`, `Red`: a variant (without its type's name) and what receives its fields.
+    /// `none` on an optional (`T?`) is a variant too.
     Variant { name: Name, binds: Vec<Pattern> },
+    /// `n =>` on an optional: a name alone receives the value (PLAN Part 4, J4 step 2).
+    Bind(Pattern),
     /// `_`: every other case.
     Any(Span),
+}
+
+impl Case {
+    /// The variant of the arm and what receives its fields; the value of an optional is `some`.
+    pub fn variant(&self) -> Option<(&str, Vec<&Pattern>)> {
+        match self {
+            Case::Variant { name, binds } => Some((&name.text, binds.iter().collect())),
+            Case::Bind(p) => Some(("some", vec![p])),
+            Case::Any(_) => None,
+        }
+    }
 }
 
 /// How a function receives a value (PLAN 2.7.4): a parameter `x: var T`, or the value
@@ -157,6 +171,8 @@ pub enum TypeAst {
     Tuple(Vec<TypeAst>),
     /// `List<Int>`: a generic type and its arguments.
     Generic(Name, Vec<TypeAst>),
+    /// `Int?`: an `Int` or `none`.
+    Optional(Box<TypeAst>),
 }
 
 impl TypeAst {
@@ -166,6 +182,7 @@ impl TypeAst {
             TypeAst::Name(n) => n.text.clone(),
             TypeAst::Tuple(ts) => format!("({})", ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
             TypeAst::Generic(n, ts) => format!("{}<{}>", n.text, ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
+            TypeAst::Optional(t) => format!("{}?", t.text()),
         }
     }
 }
@@ -308,6 +325,10 @@ pub enum ExprKind {
     If { cond: Box<Expr>, then: Block, otherwise: Block },
     /// `match` giving a value: the last line of the chosen arm.
     Match(Box<Match>),
+    /// `none`: no value, in an optional (`T?`); its type comes from where it goes.
+    None,
+    /// `x?`: the value of the optional `x`, or else the function returns `none` at once.
+    Try(Box<Expr>),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

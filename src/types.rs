@@ -28,6 +28,8 @@ pub enum Type {
     Struct(Rc<StructDef>),
     /// An `enum`: one slot for the variant's number, then the fields of every variant.
     Enum(Rc<EnumDef>),
+    /// `Int?`: an `Int` or `none`. Laid out like an enum with 2 variants, `none` and `some`.
+    Optional(Box<Type>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
     /// What a function without `->` returns.
@@ -53,6 +55,7 @@ impl Type {
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(d) => d.name.clone(),
             Type::Enum(d) => d.name.clone(),
+            Type::Optional(t) => format!("{}?", t.text()),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
@@ -93,6 +96,32 @@ impl EnumDef {
     }
 }
 
+/// An enum or an optional seen as variants (an optional = `none`, then `some(value)`):
+/// what `match`, the layout and the display share.
+pub fn enum_view(t: &Type) -> Option<Rc<EnumDef>> {
+    match t {
+        Type::Enum(d) => Some(d.clone()),
+        Type::Optional(inner) => Some(Rc::new(EnumDef {
+            name: t.text(),
+            variants: vec![("none".into(), vec![]), ("some".into(), vec![("value".into(), (**inner).clone())])],
+        })),
+        _ => None,
+    }
+}
+
+/// The variables an `if` condition proves present: `x != none`, on each side of `&&`.
+/// `then` false: for the `else` branch, `x = none`.
+pub fn narrowed(cond: &Expr, then: bool) -> Vec<&str> {
+    match &cond.kind {
+        ExprKind::Binary(op @ (BinOp::Ne | BinOp::Eq), a, b) if (*op == BinOp::Ne) == then => match (&a.kind, &b.kind) {
+            (ExprKind::Var(n), ExprKind::None) | (ExprKind::None, ExprKind::Var(n)) => vec![n.as_str()],
+            _ => vec![],
+        },
+        ExprKind::Binary(BinOp::And, a, b) if then => [narrowed(a, true), narrowed(b, true)].concat(),
+        _ => vec![],
+    }
+}
+
 /// The structs and enums of the program, by name: a `Type::Struct` or a `Type::Enum`.
 pub type Structs = HashMap<String, Type>;
 
@@ -113,13 +142,15 @@ pub fn setting<'a>(f: &'a File, src: &str, key: &str) -> Option<(&'a str, usize)
 /// Built-in functions: `print(x)` ends the line, `write(x)` doesn't.
 pub const BUILTINS: &[&str] = &["print", "write"];
 
-/// Built-in methods (J2: conversions): (receiver type, name, result).
-pub const METHODS: &[(Type, &str, Type)] = &[
-    (Type::Int, "to_float", Type::Float),
-    (Type::Float, "to_int", Type::Int),
-    (Type::Char, "to_int", Type::Int),
-    (Type::String, "length", Type::Int),
-    (Type::String, "clone", Type::String),
+/// Built-in methods: (receiver type, name, result, true if the result is optional: `Int?`).
+pub const METHODS: &[(Type, &str, Type, bool)] = &[
+    (Type::Int, "to_float", Type::Float, false),
+    (Type::Int, "to_char", Type::Char, true),
+    (Type::Float, "to_int", Type::Int, false),
+    (Type::Char, "to_int", Type::Int, false),
+    (Type::String, "length", Type::Int, false),
+    (Type::String, "clone", Type::String, false),
+    (Type::String, "to_int", Type::Int, true),
 ];
 
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
@@ -130,6 +161,7 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
         Type::Enum(d) => d.variants.iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
+        Type::Optional(t) => is_copy(t),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -139,7 +171,17 @@ pub struct Info {
     pub types: Vec<Type>,
     /// By `Expr::id`: true if this variable is moved here (filled by `ownership.rs`).
     pub moves: Vec<bool>,
+    /// By `Expr::id`: true if this `T` value goes where a `T?` is expected (`let x: Int? := 5`).
+    pub wraps: Vec<bool>,
     pub structs: Structs,
+}
+
+impl Info {
+    /// The type of the value `e` gives where it goes: a `T?` if its `T` is wrapped.
+    pub fn given(&self, e: &Expr) -> Type {
+        let t = self.types[e.id].clone();
+        if self.wraps[e.id] { Type::Optional(Box::new(t)) } else { t }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -152,6 +194,8 @@ enum VarKind {
     Element,
     /// `r` in `Circle(r) =>`: a field of the value matched.
     Matched,
+    /// `x` inside `if x != none { … }`: the value of the optional `x`, borrowed.
+    Narrowed,
     /// `self` in a method.
     Receiver(Mode),
 }
@@ -196,7 +240,10 @@ struct Checker<'a> {
     /// The type of `result`: `Some` only inside an `ensure`.
     result: Option<Type>,
     loops: usize,
+    /// In a contract: `x?` cannot leave the function from there.
+    in_contract: bool,
     types: Vec<Type>,
+    wraps: Vec<bool>,
     diags: Vec<Diag>,
 }
 
@@ -209,7 +256,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         ret: Type::Unit,
         result: None,
         loops: 0,
+        in_contract: false,
         types: vec![Type::Error; nb_exprs],
+        wraps: vec![false; nb_exprs],
         diags: vec![],
     };
 
@@ -350,7 +399,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     let moves = vec![false; c.types.len()];
-    (Info { types: c.types, moves, structs: c.structs }, c.diags)
+    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs }, c.diags)
 }
 
 fn primitive(name: &str) -> Option<Type> {
@@ -379,6 +428,10 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             t => Type::List(Box::new(t)),
         },
         TypeAst::Generic(..) => Type::Error,
+        TypeAst::Optional(t) => match type_of(t, structs) {
+            Type::Error => Type::Error,
+            t => Type::Optional(Box::new(t)),
+        },
     }
 }
 
@@ -492,6 +545,11 @@ impl Checker<'_> {
     /// The type of a field, building the structs it uses first (see `define`).
     fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
         match t {
+            // ponytail: `next: Node?` would need a pointer too; for now it contains itself like a field.
+            TypeAst::Optional(t) => match self.field_type(f, decls, t, open) {
+                Type::Error => Type::Error,
+                t => Type::Optional(Box::new(t)),
+            },
             TypeAst::Tuple(ts) => {
                 let ts: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
                 if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
@@ -539,6 +597,7 @@ impl Checker<'_> {
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
             TypeAst::Generic(n, ts) => self.generic(n, ts, |c, t| c.report_unknown(t)),
+            TypeAst::Optional(t) => self.report_unknown(t),
         }
     }
 
@@ -562,10 +621,26 @@ impl Checker<'_> {
     }
 
     fn contract(&mut self, k: &Contract) {
+        self.in_contract = true;
         self.expect(&k.cond, &Type::Bool);
         if let Some(m) = &k.message {
             self.parts(m);
         }
+        self.in_contract = false;
+    }
+
+    /// Opens a scope where each of `names`, an optional variable, is its value:
+    /// `x` is an `Int` inside `if x != none { … }` (PLAN 2.5, like Eiffel's object test).
+    fn narrow(&mut self, names: &[&str]) {
+        let mut scope = HashMap::new();
+        for n in names {
+            if let Some(v) = self.lookup(n)
+                && let Type::Optional(t) = &v.ty
+            {
+                scope.insert(n.to_string(), Variable { ty: (**t).clone(), kind: VarKind::Narrowed, span: v.span });
+            }
+        }
+        self.scopes.push(scope);
     }
 
     /// The `{values}` of a text: anything `print` can show.
@@ -653,6 +728,26 @@ impl Checker<'_> {
         }
         if let ExprKind::Match(m) = &e.kind {
             self.types[e.id] = self.match_(m, Some(expected), true);
+            return;
+        }
+        // Where a `T?` is expected: `none`, a `T?`, or a `T` that becomes one (`wraps`).
+        if let Type::Optional(inner) = expected {
+            if let ExprKind::None = e.kind {
+                self.types[e.id] = expected.clone();
+                return;
+            }
+            // Typed by where they go: `[]`, `2` as a Float.
+            if matches!(e.kind, ExprKind::List(_) | ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
+                self.expect(e, inner);
+                self.wraps[e.id] = true;
+                return;
+            }
+            let t = self.expr(e);
+            if t == **inner {
+                self.wraps[e.id] = true;
+            } else {
+                self.mismatch(e, t, expected);
+            }
             return;
         }
         let t = self.expr(e);
@@ -786,6 +881,9 @@ impl Checker<'_> {
             VarKind::Counter => self.error(span, t!("counter_immutable", name = n)),
             VarKind::Element => self.error(span, t!("element_immutable", name = n)),
             VarKind::Matched => self.error(span, t!("matched_immutable", name = n)),
+            VarKind::Narrowed => self.diags.push(
+                Diag::new(span, t!("narrowed_immutable", name = n)).help(t!("narrowed_immutable_help", name = n)),
+            ),
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
             }
@@ -823,6 +921,10 @@ impl Checker<'_> {
             self.expect(value, t);
             self.types[a.id] = self.types[value.id].clone();
             let arg = &self.src[value.span.start..value.span.end];
+            if *mode == Mode::Var && self.wraps[value.id] {
+                // The changed value comes back into the caller's variable: it must be a `T?` too.
+                self.error(value.span, t!("var_arg_optional", arg = arg, type = self.types[value.id].text(), declared = t.text()));
+            }
             match (mode, mark) {
                 (Mode::Var, Mode::Var) => self.changes(value, t!("var_arg_temporary", name = name.text)),
                 (Mode::Var, _) => self.error(a.span, t!("var_mark_missing", name = name.text, arg = arg)),
@@ -1028,9 +1130,13 @@ impl Checker<'_> {
             }
             Stmt::If { cond, then, otherwise } => {
                 self.expect(cond, &Type::Bool);
+                self.narrow(&narrowed(cond, true));
                 self.block(then, vec![]);
+                self.scopes.pop();
                 if let Some(o) = otherwise {
+                    self.narrow(&narrowed(cond, false));
                     self.block(o, vec![]);
+                    self.scopes.pop();
                 }
             }
             Stmt::While { cond, body } => {
@@ -1189,6 +1295,26 @@ impl Checker<'_> {
             ExprKind::Call { name, args } => self.call(name, args),
             ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
             ExprKind::Variant { ty, name, args } => self.variant(ty, name, args),
+            ExprKind::None => {
+                self.diags.push(Diag::new(e.span, t!("none_needs_type")).help(t!("none_needs_type_help")));
+                Type::Error
+            }
+            ExprKind::Try(x) => match self.expr(x) {
+                Type::Optional(inner) => {
+                    if self.in_contract {
+                        self.error(e.span, t!("try_in_contract"));
+                    } else if !matches!(self.ret, Type::Optional(_) | Type::Error) {
+                        let ret = if self.ret == Type::Unit { self.ret.text() } else { format!("`{}`", self.ret.text()) };
+                        self.diags.push(Diag::new(e.span, t!("try_needs_optional", type = ret)).help(t!("try_needs_optional_help")));
+                    }
+                    *inner
+                }
+                Type::Error => Type::Error,
+                t => {
+                    self.error(e.span, t!("try_not_optional", type = t.text()));
+                    Type::Error
+                }
+            },
             ExprKind::Match(m) => self.match_(m, None, true),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
@@ -1209,7 +1335,7 @@ impl Checker<'_> {
                     return Type::Error;
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
-                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
+                if name.text == "clone" && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) && !t.is_field("clone") {
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
@@ -1229,9 +1355,9 @@ impl Checker<'_> {
                     }
                     return ft.clone();
                 }
-                let Some((_, _, result)) = METHODS.iter().find(|(r, n, _)| *r == t && *n == name.text) else {
+                let Some((_, _, result, maybe)) = METHODS.iter().find(|(r, n, ..)| *r == t && *n == name.text) else {
                     let known: Vec<String> =
-                        METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, _)| format!("`{n}`")).collect();
+                        METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, ..)| format!("`{n}`")).collect();
                     let mut d = Diag::new(name.span, t!("no_method", type = t.text(), name = name.text));
                     if !known.is_empty() {
                         d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));
@@ -1242,7 +1368,7 @@ impl Checker<'_> {
                 if !args.is_empty() {
                     self.error(name.span, t!("no_arguments", name = name.text));
                 }
-                result.clone()
+                if *maybe { Type::Optional(Box::new(result.clone())) } else { result.clone() }
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // `-9223372036854775808`: the only case where the number alone would be too big.
@@ -1264,12 +1390,31 @@ impl Checker<'_> {
                 match op {
                     Or | And => {
                         self.expect(a, &Type::Bool);
+                        // `x != none && x > 3`: `x` is its value on the right.
+                        self.narrow(&if *op == And { narrowed(a, true) } else { vec![] });
                         self.expect(b, &Type::Bool);
+                        self.scopes.pop();
                         Type::Bool
                     }
                     Eq | Ne => {
+                        // `x != none`: `none` takes the type of the other side.
+                        let (a, b) = if matches!(a.kind, ExprKind::None) { (b, a) } else { (a, b) };
                         let ta = self.expr(a);
+                        if let ExprKind::None = b.kind {
+                            if matches!(ta, Type::Optional(_) | Type::Error) {
+                                self.types[b.id] = ta;
+                            } else {
+                                self.diags.push(
+                                    Diag::new(e.span, t!("never_none", type = ta.text())).help(t!("never_none_help", type = ta.text())),
+                                );
+                            }
+                            return Type::Bool;
+                        }
                         match ta {
+                            Type::Optional(_) if !is_copy(&ta) => self.diags.push(
+                                Diag::new(e.span, t!("optional_compare", op = op.text(), type = ta.text()))
+                                    .help(t!("optional_compare_help")),
+                            ),
                             Type::Unit => self.error(a.span, t!("expression_nothing")),
                             Type::Tuple(_) => self.diags.push(
                                 Diag::new(e.span, t!("tuple_compare", op = op.text())).help(t!("tuple_compare_help")),
@@ -1395,8 +1540,9 @@ impl Checker<'_> {
     /// `match x { … }`; `value`: each arm gives a value (of the `expected` type if known).
     fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
         let t = self.expr(&m.subject);
+        let optional = matches!(t, Type::Optional(_));
         let d = match &t {
-            Type::Enum(d) => Some(d.clone()),
+            Type::Enum(_) | Type::Optional(_) => enum_view(&t),
             Type::Error => None,
             t => {
                 self.error(m.subject.span, t!("match_needs_enum", type = t.text()));
@@ -1410,38 +1556,56 @@ impl Checker<'_> {
         for arm in &m.arms {
             let span = match &arm.case {
                 Case::Variant { name, .. } => name.span,
-                Case::Any(s) => *s,
+                Case::Bind(Pattern::Name(n)) => n.span,
+                Case::Bind(Pattern::Tuple(_, s) | Pattern::Ignore(s)) | Case::Any(s) => *s,
             };
+            let shown = self.src[span.start..span.end].to_string();
             if let Some(a) = any {
                 let (line, _) = line_col(self.src, a.start);
                 self.error(span, t!("case_after_any", line = line));
             }
             self.scopes.push(HashMap::new());
-            match (&arm.case, &d) {
-                (Case::Any(s), Some(d)) => {
+            match (arm.case.variant(), &d) {
+                (None, Some(d)) => {
                     if any.is_none() && seen.len() == d.variants.len() {
-                        self.error(*s, t!("case_any_useless", type = d.name));
+                        self.error(span, t!("case_any_useless", type = d.name));
                     }
-                    any = Some(*s);
+                    any = Some(span);
                 }
-                (Case::Any(s), None) => any = Some(*s),
-                (Case::Variant { name, binds }, d) => {
-                    let fields = match d.as_ref().map(|d| (d.variant(&name.text), d)) {
+                (None, None) => any = Some(span),
+                (Some((name, binds)), d) => {
+                    // An optional takes `none` and a name; an enum, its variants.
+                    let wrong = match &arm.case {
+                        Case::Bind(_) => !optional,
+                        _ => optional && name != "none",
+                    };
+                    let fields = match d.as_ref().map(|d| (d.variant(name), d)) {
+                        Some((_, d)) if wrong => {
+                            if optional {
+                                self.error(span, t!("optional_cases", type = d.name));
+                            } else {
+                                self.diags.push(
+                                    Diag::new(span, t!("bind_on_enum", name = shown, type = d.name))
+                                        .help(t!("variants_of", type = d.name, variants = d.names())),
+                                );
+                            }
+                            vec![]
+                        }
                         Some((Some((i, fields)), _)) => {
-                            if let Some(first) = seen.insert(i, name.span) {
+                            if let Some(first) = seen.insert(i, span) {
                                 let (line, _) = line_col(self.src, first.start);
-                                self.error(name.span, t!("case_twice", name = name.text, line = line));
+                                self.error(span, t!("case_twice", name = shown, line = line));
                             }
                             // `Circle =>` without its fields: they are not needed.
                             if !binds.is_empty() && binds.len() != fields.len() {
                                 let names: Vec<String> = fields.iter().map(|(n, _)| format!("`{n}`")).collect();
-                                self.error(name.span, t!("case_fields", name = name.text, count = fields.len(), fields = names.join(", "), given = binds.len()));
+                                self.error(span, t!("case_fields", name = name, count = fields.len(), fields = names.join(", "), given = binds.len()));
                             }
                             fields.iter().map(|(_, t)| t.clone()).collect()
                         }
                         Some((None, d)) => {
                             self.diags.push(
-                                Diag::new(name.span, t!("no_variant", type = d.name, name = name.text))
+                                Diag::new(span, t!("no_variant", type = d.name, name = name))
                                     .help(t!("variants_of", type = d.name, variants = d.names())),
                             );
                             vec![]
@@ -1469,7 +1633,7 @@ impl Checker<'_> {
         {
             let missing: Vec<String> = (0..d.variants.len())
                 .filter(|i| !seen.contains_key(i))
-                .map(|i| format!("`{}`", d.variants[i].0))
+                .map(|i| if optional && i == 1 { t!("case_value") } else { format!("`{}`", d.variants[i].0) })
                 .collect();
             if !missing.is_empty() {
                 self.diags.push(
@@ -1485,7 +1649,12 @@ impl Checker<'_> {
     /// so that `[]` or `2` take it as after a `:=`.
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, expected: Option<&Type>) -> Type {
         self.expect(cond, &Type::Bool);
-        let (a, b) = (self.block_value(then, expected), self.block_value(otherwise, expected));
+        self.narrow(&narrowed(cond, true));
+        let a = self.block_value(then, expected);
+        self.scopes.pop();
+        self.narrow(&narrowed(cond, false));
+        let b = self.block_value(otherwise, expected);
+        self.scopes.pop();
         if a != b && a != Type::Error && b != Type::Error {
             let msg = t!("branches_differ", a = a.text(), b = b.text());
             self.error(otherwise.open, msg);

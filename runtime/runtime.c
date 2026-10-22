@@ -216,6 +216,36 @@ int64_t kova_str_clone(int64_t a) {
     return kova_str_new(x->bytes, x->length);
 }
 
+// `s.to_int`: an optional `-` then digits only, within the range of an Int
+// (same rule as `parse_int` in src/kir.rs). Returns 1 and sets `*out`, or returns 0.
+static int parse_int(int64_t a, int64_t *out) {
+    String *x = (String *)a;
+    int64_t i = 0, n = x->length;
+    int negative = n > 0 && x->bytes[0] == '-';
+    if (negative) i = 1;
+    if (i == n) return 0;
+    uint64_t v = 0, limit = negative ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
+    for (; i < n; i++) {
+        unsigned char c = x->bytes[i];
+        if (c < '0' || c > '9') return 0;
+        if (v > (limit - (c - '0')) / 10) return 0;
+        v = v * 10 + (c - '0');
+    }
+    *out = negative ? (int64_t)(0 - v) : (int64_t)v;
+    return 1;
+}
+
+int64_t kova_str_is_int(int64_t a) {
+    int64_t v;
+    return parse_int(a, &v);
+}
+
+int64_t kova_str_to_int(int64_t a) {
+    int64_t v = 0;
+    parse_int(a, &v);
+    return v;
+}
+
 // ---- Lists ----
 // A List is a fixed block (so its address never changes) pointing to its elements,
 // `width` slots each, one after the other. 0 = no List (moved): freeing it does nothing.

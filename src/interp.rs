@@ -186,6 +186,8 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             let copy = s(0).to_string();
                             heap.make(copy)
                         }
+                        StrOp::IsInt => crate::kir::parse_int(s(0)).is_some() as i64,
+                        StrOp::ToInt => crate::kir::parse_int(s(0)).unwrap_or(0),
                         StrOp::Format(show) => {
                             let t = text(locals[a[0]], *show, heap);
                             heap.make(t)

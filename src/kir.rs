@@ -33,10 +33,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
-use crate::types::{EnumDef, Info, Type, is_copy, method_name, place_root, type_of};
+use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -101,6 +101,8 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         // ponytail: no slot is shared between variants (a Float and a String never meet in one),
         // so a value is wider than its largest variant; slots of the other variants hold 0.
         Type::Enum(d) => std::iter::once(Scalar::Int).chain(variant_fields(d).flat_map(scalars)).collect(),
+        // Slot 0: 1 if there is a value (0 = `none`); then the value's slots, 0 for `none`.
+        Type::Optional(t) => std::iter::once(Scalar::Int).chain(scalars(t)).collect(),
         Type::Unit => vec![],
         Type::Error => unreachable!("erroneous type after type checking"),
     }
@@ -113,6 +115,7 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
+        Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => vec![None; scalars(t).len()],
     }
 }
@@ -244,6 +247,20 @@ pub enum StrOp {
     Clone,
     /// The text of a value, as `print` writes it: a new String.
     Format(Show),
+    /// `s.to_int`: 1 if `s` is an Int (`-12`), else 0 (see `parse_int`).
+    IsInt,
+    /// `s.to_int`: its value, 0 if it is not an Int.
+    ToInt,
+}
+
+/// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
+/// (same rule as `parse_int` in `runtime/runtime.c`).
+pub fn parse_int(s: &str) -> Option<i64> {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
 }
 
 /// A piece of the message of a broken contract.
@@ -593,8 +610,8 @@ impl<'a> Translator<'a> {
         let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h;
         let v = self.new_slots(ty);
         self.current = self.new_block();
-        if let Type::Enum(d) = ty {
-            let text = self.show_enum(&v, d);
+        if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
+            let text = self.show_enum(&v, &d, matches!(ty, Type::Optional(_)));
             self.finish(End::Return(vec![text]));
             return self.function(format!("show {}", ty.text()), v.len(), vec![Scalar::Int]);
         }
@@ -647,8 +664,9 @@ impl<'a> Translator<'a> {
         self.function(format!("{name} {}", ty.text()), 1, returns)
     }
 
-    /// The text of an enum value `v`: `Shape.Circle(radius: 2.0)`, `Light.Red`.
-    fn show_enum(&mut self, v: &[Local], d: &EnumDef) -> Local {
+    /// The text of an enum value `v`: `Shape.Circle(radius: 2.0)`, `Light.Red`; of an
+    /// `optional`: `none` or its value as is.
+    fn show_enum(&mut self, v: &[Local], d: &EnumDef, optional: bool) -> Local {
         let text = self.int_local();
         let after = self.new_block();
         for (i, (name, fields)) in d.variants.iter().enumerate() {
@@ -658,16 +676,25 @@ impl<'a> Translator<'a> {
             self.go(End::Branch(test, yes, no), yes);
             // Before the pieces: showing a List or an enum field makes a temporary text.
             let mark = self.temps.len();
-            let mut pieces = vec![Piece::Text(format!("{}.{name}", d.name))];
+            let mut pieces = vec![];
             let mut at = variant_slice(d, i).0;
-            for (j, (field, t)) in fields.iter().enumerate() {
-                pieces.push(Piece::Text(format!("{}{field}: ", if j == 0 { "(" } else { ", " })));
-                let n = scalars(t).len();
-                self.value_pieces(&v[at..at + n], t, &mut pieces);
-                at += n;
-            }
-            if !fields.is_empty() {
-                pieces.push(Piece::Text(")".into()));
+            if optional {
+                match &fields[..] {
+                    [] => pieces.push(Piece::Text("none".into())),
+                    [(_, t)] => self.value_pieces(&v[at..], t, &mut pieces),
+                    _ => unreachable!("an optional has one value"),
+                }
+            } else {
+                pieces.push(Piece::Text(format!("{}.{name}", d.name)));
+                for (j, (field, t)) in fields.iter().enumerate() {
+                    pieces.push(Piece::Text(format!("{}{field}: ", if j == 0 { "(" } else { ", " })));
+                    let n = scalars(t).len();
+                    self.value_pieces(&v[at..at + n], t, &mut pieces);
+                    at += n;
+                }
+                if !fields.is_empty() {
+                    pieces.push(Piece::Text(")".into()));
+                }
             }
             let piece = self.join(pieces);
             self.emit(Inst::Copy(text, piece));
@@ -870,7 +897,28 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Const(l, 0));
             }
         }
-        v
+        self.wrapped(e, v)
+    }
+
+    /// A `T` going where a `T?` is expected (`types::Info::wraps`) gets its slot "there is a value".
+    fn wrapped(&mut self, e: &Expr, v: Slots) -> Slots {
+        if !self.info.wraps[e.id] {
+            return v;
+        }
+        let present = self.constant(1);
+        std::iter::once(present).chain(v).collect()
+    }
+
+    /// Opens a scope where each of `names` is the value of its optional, borrowing its slots:
+    /// inside `if x != none { … }`, `x` is a `T`.
+    fn narrow(&mut self, names: &[&str]) {
+        let mut vars = HashMap::new();
+        for n in names {
+            let (v, ty) = self.variable(n);
+            let Type::Optional(inner) = ty else { unreachable!("optional checked by the type checker") };
+            vars.insert(n.to_string(), (v[1..].to_vec(), *inner));
+        }
+        self.names.push(Scope { borrowed: true, vars });
     }
 
     /// A condition: its temporaries are freed right away (a `while` computes it at each turn).
@@ -1026,7 +1074,7 @@ impl<'a> Translator<'a> {
         match s {
             Stmt::Declare { pattern, value, .. } => {
                 let v = self.owned(value);
-                let ty = self.info.types[value.id].clone();
+                let ty = self.info.given(value);
                 let slots = self.new_slots(&ty);
                 self.copy(&slots, &v);
                 self.bind(pattern, &slots, &ty);
@@ -1036,7 +1084,7 @@ impl<'a> Translator<'a> {
                 // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
                 None => {
                     let v = self.owned(value);
-                    let ty = self.info.types[value.id].clone();
+                    let ty = self.info.given(value);
                     let new = self.new_slots(&ty);
                     self.copy(&new, &v);
                     let mut at = 0;
@@ -1096,10 +1144,14 @@ impl<'a> Translator<'a> {
                 let c = self.cond1(cond);
                 let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
                 self.go(End::Branch(c, b_then, b_else), b_then);
+                self.narrow(&narrowed(cond, true));
                 self.block(then);
+                self.names.pop();
                 self.go(End::Jump(b_after), b_else);
                 if let Some(o) = otherwise {
+                    self.narrow(&narrowed(cond, false));
                     self.block(o);
+                    self.names.pop();
                 }
                 self.go(End::Jump(b_after), b_after);
             }
@@ -1293,7 +1345,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(")".into()));
             }
             // Its text is made by a helper, and freed at the end of the statement.
-            Type::List(_) | Type::Enum(_) => {
+            Type::List(_) | Type::Enum(_) | Type::Optional(_) => {
                 let f = self.helper(Helper::Show(ty.clone()));
                 let text = self.int_local();
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -1316,7 +1368,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.info.types[e.id] {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Tuple(_) | Type::List(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -1444,10 +1496,14 @@ impl<'a> Translator<'a> {
         let c = self.cond1(cond);
         let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
         self.go(End::Branch(c, b_then, b_else), b_then);
+        self.narrow(&narrowed(cond, true));
         let v = self.block_value(then, ty);
+        self.names.pop();
         self.copy(&dst, &v);
         self.go(End::Jump(b_after), b_else);
+        self.narrow(&narrowed(cond, false));
         let v = self.block_value(otherwise, ty);
+        self.names.pop();
         self.copy(&dst, &v);
         self.go(End::Jump(b_after), b_after);
         self.track(&dst, ty);
@@ -1486,7 +1542,7 @@ impl<'a> Translator<'a> {
     /// what it does not bind.
     fn match_(&mut self, m: &Match, dst: Option<(&[Local], &Type)>) {
         let ty = self.info.types[m.subject.id].clone();
-        let Type::Enum(d) = &ty else { unreachable!("enum checked by the type checker") };
+        let d = &enum_view(&ty).expect("enum checked by the type checker");
         let borrowed = place_root(&m.subject, &self.info.types).is_some();
         let v = if borrowed {
             let (p, _) = self.place(&m.subject);
@@ -1506,21 +1562,21 @@ impl<'a> Translator<'a> {
         let after = self.new_block();
         for (k, arm) in m.arms.iter().enumerate() {
             let (body, next) = (self.new_block(), self.new_block());
-            match &arm.case {
+            match arm.case.variant() {
                 // The last arm takes what is left: the type checker made sure nothing else is.
-                Case::Variant { name, .. } if k + 1 < m.arms.len() => {
-                    let (number, test) = (self.constant(d.variant(&name.text).unwrap().0 as i64), self.int_local());
+                Some((name, _)) if k + 1 < m.arms.len() => {
+                    let (number, test) = (self.constant(d.variant(name).unwrap().0 as i64), self.int_local());
                     self.emit(Inst::Binary(test, Op::Eq, v[0], number, NOWHERE));
                     self.go(End::Branch(test, body, next), body);
                 }
                 _ => self.go(End::Jump(body), body),
             }
             self.names.push(Scope { borrowed, vars: HashMap::new() });
-            match &arm.case {
-                Case::Variant { name, binds } if !binds.is_empty() => {
-                    let (i, fields) = d.variant(&name.text).unwrap();
+            match arm.case.variant() {
+                Some((name, binds)) if !binds.is_empty() => {
+                    let (i, fields) = d.variant(name).unwrap();
                     let mut at = variant_slice(d, i).0;
-                    for (p, (_, t)) in binds.iter().zip(fields) {
+                    for (p, (_, t)) in binds.into_iter().zip(fields) {
                         let n = scalars(t).len();
                         self.bind(p, &v[at..at + n], t);
                         at += n;
@@ -1549,6 +1605,11 @@ impl<'a> Translator<'a> {
     }
 
     fn expr(&mut self, e: &Expr) -> Slots {
+        let v = self.value(e);
+        self.wrapped(e, v)
+    }
+
+    fn value(&mut self, e: &Expr) -> Slots {
         match &e.kind {
             ExprKind::Int(v) if self.info.types[e.id] == Type::Float => vec![self.float_constant(*v as f64)],
             ExprKind::Int(v) => vec![self.constant(*v as i64)],
@@ -1617,7 +1678,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.info.types[args[0].id] {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Tuple(_) | Type::List(_)) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -1670,6 +1731,24 @@ impl<'a> Translator<'a> {
                 let ty = self.info.types[e.id].clone();
                 self.if_value(cond, then, otherwise, &ty)
             }
+            ExprKind::None => {
+                let v = self.new_slots(&self.info.types[e.id].clone());
+                v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+                v
+            }
+            // On `none`, leaves the function with `none`; otherwise the value, owned by the expression.
+            ExprKind::Try(x) => {
+                let v = self.owned(x);
+                let (empty, present) = (self.new_block(), self.new_block());
+                self.go(End::Branch(v[0], present, empty), empty);
+                let nothing = self.new_slots(&self.ret.clone());
+                nothing.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+                self.exit(nothing);
+                self.current = present;
+                let value = v[1..].to_vec();
+                self.track(&value, &self.info.types[e.id].clone());
+                value
+            }
             ExprKind::Match(m) => {
                 let ty = self.info.types[e.id].clone();
                 let v = self.new_slots(&ty);
@@ -1697,7 +1776,8 @@ impl<'a> Translator<'a> {
                 v
             }
             // Slot by slot: only for enums made of copied values (checked by the type checker).
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.info.types[a.id], Type::Enum(_)) => {
+            // With `none` (all slots 0), this also tests whether an optional holding a String is empty.
+            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.info.types[a.id], Type::Enum(_) | Type::Optional(_)) => {
                 let kinds = scalars(&self.info.types[a.id]);
                 let (va, vb) = (self.expr(a), self.expr(b));
                 let same = self.constant(1);
@@ -1720,7 +1800,9 @@ impl<'a> Translator<'a> {
                 let (compute_b, after) = (self.new_block(), self.new_block());
                 let end = if *op == BinOp::And { End::Branch(va, compute_b, after) } else { End::Branch(va, after, compute_b) };
                 self.go(end, compute_b);
+                self.narrow(&if *op == BinOp::And { narrowed(a, true) } else { vec![] });
                 let vb = self.expr1(b);
+                self.names.pop();
                 self.emit(Inst::Copy(dst, vb));
                 self.go(End::Jump(after), after);
                 vec![dst]
@@ -1776,7 +1858,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Enum(_) | Type::Tuple(_) | Type::List(_)) =>
+                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Tuple(_) | Type::List(_)) =>
             {
                 let ty = self.info.types[receiver.id].clone();
                 let v = self.expr(receiver);
@@ -1818,6 +1900,28 @@ impl<'a> Translator<'a> {
                     "length" => StrOp::Length,
                     _ => StrOp::Clone,
                 };
+                if self.info.types[receiver.id] == Type::String && name.text == "to_int" {
+                    let (present, n) = (self.int_local(), self.int_local());
+                    self.emit(Inst::Str(present, StrOp::IsInt, vec![v]));
+                    self.emit(Inst::Str(n, StrOp::ToInt, vec![v]));
+                    return vec![present, n];
+                }
+                // A Char is a Unicode code: 0 to 0x10FFFF, without the surrogates 0xD800 to 0xDFFF.
+                if self.info.types[receiver.id] == Type::Int && name.text == "to_char" {
+                    let test = |t: &mut Self, op, bound| {
+                        let (b, d) = (t.constant(bound), t.int_local());
+                        t.emit(Inst::Binary(d, op, v, b, NOWHERE));
+                        d
+                    };
+                    let (low, high, s1, s2) = (test(self, Op::Ge, 0), test(self, Op::Le, 0x10FFFF), test(self, Op::Ge, 0xD800), test(self, Op::Le, 0xDFFF));
+                    let (surrogate, not_surrogate, present, code) = (self.int_local(), self.int_local(), self.int_local(), self.int_local());
+                    self.emit(Inst::Binary(surrogate, Op::Times, s1, s2, NOWHERE));
+                    self.emit(Inst::Not(not_surrogate, surrogate));
+                    self.emit(Inst::Binary(present, Op::Times, low, high, NOWHERE));
+                    self.emit(Inst::Binary(present, Op::Times, present, not_surrogate, NOWHERE));
+                    self.emit(Inst::Binary(code, Op::Times, v, present, NOWHERE));
+                    return vec![present, code];
+                }
                 if self.info.types[receiver.id] == Type::String {
                     let (dst, op) = (self.int_local(), string(name.text.as_str()));
                     self.emit(Inst::Str(dst, op, vec![v]));
@@ -1855,6 +1959,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names))
         }
         ExprKind::Match(m) => names_in(&m.subject, names),
+        ExprKind::Try(x) => names_in(x, names),
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));
@@ -1877,7 +1982,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(a, names);
             names_in(b, names);
         }
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } => {}
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } | ExprKind::None => {}
     }
 }
 
