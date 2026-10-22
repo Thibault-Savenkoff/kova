@@ -395,6 +395,8 @@ fn parts_snippets(items: &mut [CompletionItem]) {
         let pieces = item.label.split("(…)").enumerate();
         item.insert_text = Some(pieces.map(|(i, piece)| if i == 0 { piece.into() } else { format!("(${i}){piece}") }).collect());
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        // No `(` is typed: the parameter bubble is asked for, it then follows the cursor.
+        item.command = Some(Command::new(String::new(), "editor.action.triggerParameterHints".into(), None));
     }
 }
 
