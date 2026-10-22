@@ -39,6 +39,9 @@ pub enum Type {
     /// `Map<String, Int>`: keys and their values, in the order they were added. Laid out like a
     /// `List<(String, Int)>` (PLAN Part 4, "J6, step 4").
     Map(Box<Type>, Box<Type>),
+    /// `Set<String>`: values without duplicates, in the order they were added. Laid out like a
+    /// `List<String>` (PLAN Part 4, "Slices, `Set<T>`, default arguments").
+    Set(Box<Type>),
     /// `any Animal`: a value of any type following the interface, known at run time (PLAN 2.5).
     /// One slot: a box holding the real type's number, then its slots.
     Any(String),
@@ -84,6 +87,7 @@ impl Type {
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Map(k, v) => format!("Map<{}, {}>", k.text(), v.text()),
+            Type::Set(t) => format!("Set<{}>", t.text()),
             Type::Param(p) => p.name.clone(),
             Type::Any(i) => format!("any {i}"),
             Type::Block(ps, r) => {
@@ -113,6 +117,7 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Result(t, e) => Type::Result(sub(t), sub(e)),
         Type::List(t) => Type::List(sub(t)),
         Type::Map(k, v) => Type::Map(sub(k), sub(v)),
+        Type::Set(t) => Type::Set(sub(t)),
         Type::Block(ps, r) => Type::Block(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
         // `Stack<T>` → `Stack<Int>`: its fields change with it.
         Type::Struct(d) if !d.args.is_empty() => Type::Struct(Rc::new(StructDef {
@@ -273,6 +278,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
 pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "clone"];
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
+pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] = &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
 
 /// `` `length`, `add` ``.
@@ -308,7 +314,7 @@ fn primitive_follows(t: &Type, interface: &str) -> bool {
 /// Copied when given away (like an `Int`), instead of moved (like a `String`).
 pub fn is_copy(t: &Type) -> bool {
     match t {
-        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) => false,
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) => false,
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
@@ -436,7 +442,7 @@ fn mentions(t: &Type, name: &str) -> bool {
     match t {
         Type::Param(p) => p.name == name,
         Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
-        Type::Optional(t) | Type::List(t) => mentions(t, name),
+        Type::Optional(t) | Type::List(t) | Type::Set(t) => mentions(t, name),
         Type::Result(a, b) | Type::Map(a, b) => mentions(a, name) || mentions(b, name),
         Type::Struct(d) => d.args.iter().any(|t| mentions(t, name)),
         Type::Block(ps, r) => ps.iter().any(|t| mentions(t, name)) || mentions(r, name),
@@ -455,7 +461,7 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
             }
         }
         (Type::Tuple(ps), Type::Tuple(ts)) => ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found)),
-        (Type::Optional(p), Type::Optional(t)) | (Type::List(p), Type::List(t)) => deduce(p, t, generics, found),
+        (Type::Optional(p), Type::Optional(t)) | (Type::List(p), Type::List(t)) | (Type::Set(p), Type::Set(t)) => deduce(p, t, generics, found),
         (Type::Result(p, q), Type::Result(t, u)) | (Type::Map(p, q), Type::Map(t, u)) => {
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
@@ -1020,6 +1026,10 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             (Type::Error, _) | (_, Type::Error) => Type::Error,
             (k, v) => Type::Map(Box::new(k), Box::new(v)),
         },
+        TypeAst::Generic(n, ts) if n.text == "Set" && ts.len() == 1 => match type_of(&ts[0], structs) {
+            Type::Error => Type::Error,
+            t => Type::Set(Box::new(t)),
+        },
         TypeAst::Generic(n, ts) => {
             let types: Vec<Type> = ts.iter().map(|t| type_of(t, structs)).collect();
             if types.contains(&Type::Error) {
@@ -1492,6 +1502,21 @@ impl Checker<'_> {
                 }
             };
         }
+        if n.text == "Set" {
+            return match types {
+                [Type::Error] => Type::Error,
+                // Found by `=`, like a Map's keys.
+                [t] if *t == Type::Float || !self.equatable(t) => {
+                    self.diags.push(Diag::new(n.span, t!("set_element", type = t.text())).help(t!("set_element_help")));
+                    Type::Error
+                }
+                [t] => Type::Set(Box::new(t.clone())),
+                _ => {
+                    self.error(n.span, t!("set_one_type", count = types.len()));
+                    Type::Error
+                }
+            };
+        }
         if n.text == "Map" {
             return match types {
                 [Type::Error, _] | [_, Type::Error] => Type::Error,
@@ -1712,6 +1737,12 @@ impl Checker<'_> {
     /// Checks that `e` has type `expected`.
     fn expect(&mut self, e: &Expr, expected: &Type) {
         self.spans[e.id] = e.span;
+        // `[]` where the written type is wrong: already reported.
+        if let (ExprKind::List(elems), Type::Error) = (&e.kind, expected)
+            && elems.is_empty()
+        {
+            return;
+        }
         // `(1, none)` where an `(Int, String?)` is expected: each element against its type.
         if let (ExprKind::Tuple(elems), Type::Tuple(ts)) = (&e.kind, expected)
             && elems.len() == ts.len()
@@ -1744,6 +1775,12 @@ impl Checker<'_> {
         if let (ExprKind::List(elems), Type::Map(..)) = (&e.kind, expected)
             && elems.is_empty()
         {
+            self.types[e.id] = expected.clone();
+            return;
+        }
+        // `["a", "b"]` where a `Set<String>` is expected.
+        if let (ExprKind::List(elems), Type::Set(t)) = (&e.kind, expected) {
+            elems.iter().for_each(|x| self.expect(x, t));
             self.types[e.id] = expected.clone();
             return;
         }
@@ -2284,10 +2321,45 @@ impl Checker<'_> {
         Some(result)
     }
 
+    /// `seen.add("Rex")` (nothing if already there), `seen.contains("Rex")`, `seen.remove("Rex")`
+    /// (`true` if it was there). `None` for `.clone`, common to every type.
+    fn set_method(&mut self, receiver: &Expr, t: &Type, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
+        let (params, result) = match name.text.as_str() {
+            "length" => (vec![], Type::Int),
+            "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
+            "contains" => (vec![(Mode::Read, elem.clone())], Type::Bool),
+            "remove" => (vec![(Mode::Read, elem.clone())], Type::Bool),
+            "clone" => return None,
+            _ => {
+                self.diags.push(
+                    Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
+                        .help(t!("methods_of", type = t.text(), methods = quoted(SET_METHODS))),
+                );
+                args.iter().for_each(|a| {
+                    self.expr(a);
+                });
+                return Some(Type::Error);
+            }
+        };
+        if matches!(name.text.as_str(), "add" | "remove") {
+            self.changes(receiver, t!("var_method_temporary", name = name.text));
+        }
+        if params.is_empty() && !args.is_empty() {
+            self.error(name.span, t!("no_arguments", name = name.text));
+        } else if !params.is_empty() {
+            self.arguments(name, args, &params, &[]);
+        }
+        Some(result)
+    }
+
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
-        if let kind @ ("List" | "Map") = ty.text.as_str() {
-            let help = if kind == "List" { t!("list_made_help") } else { t!("map_made_help") };
+        if let kind @ ("List" | "Map" | "Set") = ty.text.as_str() {
+            let help = match kind {
+                "List" => t!("list_made_help"),
+                "Map" => t!("map_made_help"),
+                _ => t!("set_made_help"),
+            };
             self.diags.push(Diag::new(ty.span, t!("no_static", type = kind, name = name.text)).help(help));
             return self.unchecked(args);
         }
@@ -2548,7 +2620,7 @@ impl Checker<'_> {
             }
             Stmt::Each { name, value: None, list, body } => {
                 let elem = match self.expr(list) {
-                    Type::List(elem) => *elem,
+                    Type::List(elem) | Type::Set(elem) => *elem,
                     Type::Map(..) => {
                         self.diags.push(Diag::new(name.span, t!("for_map_one_name")).help(t!("for_map_one_name_help", name = name.text)));
                         Type::Error
@@ -2577,6 +2649,7 @@ impl Checker<'_> {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
                         Type::Map(..) => name.text == "remove",
+                        Type::Set(_) => matches!(name.text.as_str(), "add" | "remove"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         // An unknown method is already reported.
                         Type::Any(_) => true,
@@ -2584,7 +2657,8 @@ impl Checker<'_> {
                     },
                     _ => false,
                 };
-                if !call {
+                // `s.push(3)`: the unknown method is already reported.
+                if !call && self.types[e.id] != Type::Error {
                     let mut d = Diag::new(e.span, t!("does_nothing"));
                     if let ExprKind::Binary(BinOp::Eq, ..) = e.kind {
                         d = d.help(t!("eq_vs_assign"));
@@ -2705,7 +2779,7 @@ impl Checker<'_> {
             }
             ExprKind::New(ty) => {
                 let t = self.written_type(ty);
-                if !matches!(t, Type::List(_) | Type::Map(..) | Type::Error) {
+                if !matches!(t, Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Error) {
                     self.error(e.span, t!("new_not_generic", type = t.text()));
                     return Type::Error;
                 }
@@ -2819,6 +2893,11 @@ impl Checker<'_> {
                 {
                     return r;
                 }
+                if let Type::Set(elem) = &t
+                    && let Some(r) = self.set_method(receiver, &t, elem, name, args)
+                {
+                    return r;
+                }
                 // `self.sound` in a default method: what the interface promises.
                 if let Type::Param(p) = &t
                     && let Some((b, sig)) =
@@ -2836,7 +2915,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Param(_) | Type::Any(_))
+                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Param(_) | Type::Any(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -2944,6 +3023,7 @@ impl Checker<'_> {
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
                             Some(Type::List(_)) => self.error(e.span, t!("list_compare", op = op.text())),
                             Some(Type::Map(..)) => self.error(e.span, t!("map_compare", op = op.text())),
+                            Some(Type::Set(_)) => self.error(e.span, t!("set_compare", op = op.text())),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
                             Some(culprit @ Type::Any(_)) => self.diags.push(
                                 Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(t!("any_compare_help", type = culprit.text())),

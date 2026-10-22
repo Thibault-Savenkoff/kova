@@ -114,3 +114,6 @@ fn grand(f: BigInt) -> BigInt {
     return f * 123456789012345678901234567890
 //             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constant.numeric.integer.kova
 }
+
+let vus: Set<String> := ["a"]
+//       ^^^ support.type.kova

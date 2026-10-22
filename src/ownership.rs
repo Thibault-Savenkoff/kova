@@ -83,6 +83,8 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
     signatures.insert(method_name("List", "add"), (Some(Mode::Var), vec![Mode::Move]));
     signatures.insert(method_name("List", "remove"), (Some(Mode::Var), vec![Mode::Read]));
     signatures.insert(method_name("Map", "remove"), (Some(Mode::Var), vec![Mode::Read]));
+    signatures.insert(method_name("Set", "add"), (Some(Mode::Var), vec![Mode::Move]));
+    signatures.insert(method_name("Set", "remove"), (Some(Mode::Var), vec![Mode::Read]));
     let mut functions: Vec<&Function> = f.functions.iter().collect();
     for s in &f.structs {
         for m in &s.methods {
@@ -563,6 +565,7 @@ impl Owner<'_> {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),
             Type::Map(..) => method_name("Map", &name.text),
+            Type::Set(_) => method_name("Set", &name.text),
             Type::Any(i) => method_name(i, &name.text),
             Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,

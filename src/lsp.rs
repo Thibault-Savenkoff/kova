@@ -616,9 +616,14 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?")), ("keys", format!("-> List<{k}>")), ("values", format!("-> List<{v}>"))];
             items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
         }
+        Type::Set(e) => {
+            let e = e.text();
+            let details = [("length", "-> Int".to_string()), ("add", format!("(value: {e})")), ("contains", format!("(value: {e}) -> Bool")), ("remove", format!("(value: {e}) -> Bool"))];
+            items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
+        }
         _ => {}
     }
-    if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..)) {
+    if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..) | Type::Set(_)) {
         items.push(item("clone", CompletionItemKind::METHOD, t.text()));
     }
     for (receiver, name, result, optional) in types::METHODS {

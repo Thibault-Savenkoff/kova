@@ -99,7 +99,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
@@ -121,7 +121,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Some(t.clone())],
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
@@ -838,7 +838,7 @@ impl<'a> Translator<'a> {
         }
         let list = v[0];
         let (elem, map) = match ty {
-            Type::List(elem) => ((**elem).clone(), false),
+            Type::List(elem) | Type::Set(elem) => ((**elem).clone(), false),
             Type::Map(k, v) => (pair(k, v), true),
             _ => unreachable!("helpers work on Lists, Maps and enums"),
         };
@@ -1246,7 +1246,7 @@ impl<'a> Translator<'a> {
     fn free_slot(&mut self, l: Local, kind: &Type) {
         match kind {
             Type::String | Type::BigInt => self.emit(Inst::Free(l)),
-            Type::List(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
+            Type::List(elem) | Type::Set(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
             Type::Map(k, v) if plain(k) && plain(v) => self.emit(Inst::ListFree(l)),
             list => {
                 let f = self.helper(Helper::Drop(list.clone()));
@@ -1529,8 +1529,8 @@ impl<'a> Translator<'a> {
         }
     }
 
-    /// The index of `key` in the Map `map` (keys of type `k`), or -1.
-    /// ponytail: a linear search; hashing (an interface `Hash`) if Maps get big.
+    /// The index of `key` in the Map `map` (keys of type `k`), or -1; also a value in a Set.
+    /// ponytail: a linear search; hashing (an interface `Hash`) if Maps or Sets get big.
     fn find(&mut self, map: Local, key: &[Local], k: &Type) -> Local {
         let found = self.constant(-1);
         let n = self.int_local();
@@ -1550,6 +1550,19 @@ impl<'a> Translator<'a> {
         self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
         self.go(End::Jump(head), exit);
         found
+    }
+
+    /// Adds `v` (owned) to the Set `set`, or frees it if an equal value is already there.
+    fn set_add(&mut self, set: Local, v: &[Local], elem: &Type) {
+        let i = self.find(set, v, elem);
+        let (zero, missing) = (self.constant(0), self.int_local());
+        self.emit(Inst::Binary(missing, Op::Lt, i, zero, NOWHERE));
+        let (add, there, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Branch(missing, add, there), add);
+        self.push(set, v);
+        self.go(End::Jump(done), there);
+        self.free_value(v, elem);
+        self.go(End::Jump(done), done);
     }
 
     /// Where the value of `key` lives in the Map `map`: added at the end if missing
@@ -1821,7 +1834,7 @@ impl<'a> Translator<'a> {
             }
             Stmt::Each { name, value, list, body } => {
                 let elem = match self.ty(list) {
-                    Type::List(elem) => *elem,
+                    Type::List(elem) | Type::Set(elem) => *elem,
                     Type::Map(k, v) => pair(&k, &v),
                     _ => unreachable!("List or Map checked by the type checker"),
                 };
@@ -1985,7 +1998,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(")".into()));
             }
             // Its text is made by a helper, and freed at the end of the statement.
-            Type::List(_) | Type::Map(..) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Any(_) => {
+            Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Any(_) => {
                 let f = self.helper(Helper::Show(ty.clone()));
                 let text = self.int_local();
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -2009,7 +2022,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.ty(e) {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -2626,6 +2639,21 @@ impl<'a> Translator<'a> {
                 self.track(&[l], &ty);
                 vec![l]
             }
+            // `["a", "b"]` or `Set<String>()`: added one after the other, a value given twice is kept once.
+            ExprKind::List(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Set(_)) => {
+                let ty = self.ty(e);
+                let Type::Set(elem) = &ty else { unreachable!() };
+                let l = self.int_local();
+                self.emit(Inst::ListNew(l, scalars(elem).len()));
+                if let ExprKind::List(elems) = &e.kind {
+                    for x in elems {
+                        let v = self.owned(x);
+                        self.set_add(l, &v, elem);
+                    }
+                }
+                self.track(&[l], &ty);
+                vec![l]
+            }
             // Written one after the other: a key given twice keeps its last value.
             ExprKind::MapLit(pairs) => {
                 let ty = self.ty(e);
@@ -2683,7 +2711,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.given(&args[0]) {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -2972,7 +3000,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Any(_)) =>
+                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) =>
             {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
@@ -3016,6 +3044,39 @@ impl<'a> Translator<'a> {
                         vec![out]
                     }
                     other => unreachable!("Map method `{other}` checked by the type checker"),
+                }
+            }
+            ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::Set(_)) => {
+                let Type::Set(elem) = self.ty(receiver) else { unreachable!() };
+                let set = self.expr1(receiver);
+                match name.text.as_str() {
+                    "length" => {
+                        let n = self.int_local();
+                        self.emit(Inst::ListLength(n, set));
+                        vec![n]
+                    }
+                    "add" => {
+                        let x = if let ExprKind::Mark(_, x) = &args[0].kind { x } else { &args[0] };
+                        let v = self.owned(x);
+                        self.set_add(set, &v, &elem);
+                        vec![]
+                    }
+                    "contains" | "remove" => {
+                        let x = self.expr(&args[0]);
+                        let i = self.find(set, &x, &elem);
+                        let (zero, d) = (self.constant(0), self.int_local());
+                        self.emit(Inst::Binary(d, Op::Ge, i, zero, NOWHERE));
+                        if name.text == "remove" {
+                            let (yes, done) = (self.new_block(), self.new_block());
+                            self.go(End::Branch(d, yes, done), yes);
+                            let old = self.load(set, i, &elem);
+                            self.free_value(&old, &elem);
+                            self.emit(Inst::ListRemove(set, i));
+                            self.go(End::Jump(done), done);
+                        }
+                        vec![d]
+                    }
+                    other => unreachable!("Set method `{other}` checked by the type checker"),
                 }
             }
             // `add` and `remove` change the List, but its slot (the address of its block) stays the same.
