@@ -255,6 +255,16 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "to_string", Type::String, false),
 ];
 
+/// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "clone"];
+pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "clone"];
+pub const STRING_METHODS: &[&str] = &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
+
+/// `` `length`, `add` ``.
+fn quoted(names: &[&str]) -> String {
+    names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+}
+
 /// The String methods with arguments or a List result (PLAN 2.10): their parameters, their result.
 /// Each one is a `kir::StrOp` (`kir::string_op`).
 pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
@@ -319,6 +329,21 @@ pub struct Info {
     pub impls: HashMap<String, Vec<Type>>,
     /// `Animal.sound` → the types of its parameters (without `self`) and of its result.
     pub methods: HashMap<String, (Vec<Type>, Type)>,
+    /// For the editor (`kova lsp`): where each expression is written, by `Expr::id`.
+    pub spans: Vec<Span>,
+    /// For the editor: each name met (variable, function, type, field, method), where it is
+    /// written, where it is declared, and what hovering it shows.
+    pub seen: Vec<Seen>,
+    /// For the editor: the variables declared without their type written anywhere
+    /// (`for score in scores`, `Circle(r) =>`), shown in grey after their name.
+    pub hints: Vec<(Span, Type)>,
+}
+
+/// A name met while checking: `rex` at `span`, declared at `decl`, shown as `rex: Dog`.
+pub struct Seen {
+    pub span: Span,
+    pub decl: Span,
+    pub text: String,
 }
 
 impl Info {
@@ -493,7 +518,42 @@ struct Checker<'a> {
     private: HashMap<String, Span>,
     /// The `ages["Rex"]` targets met (`target`), to refuse `ages["Rex"] += 1`.
     map_entries: Vec<Span>,
+    /// Name → where it is declared and what hovering it shows (`places`).
+    places: HashMap<String, (Span, String)>,
+    spans: Vec<Span>,
+    seen: Vec<Seen>,
+    hints: Vec<(Span, Type)>,
     diags: Vec<Diag>,
+}
+
+/// Where each name of the program is declared, and what hovering it shows: functions
+/// (`geometry.distance`), types, fields, methods and variants (`geometry.Point.x`).
+fn places(f: &File) -> HashMap<String, (Span, String)> {
+    let mut p = HashMap::new();
+    let field = |owner: &str, x: &Param| (method_name(owner, &x.name.text), (x.name.span, format!("{}: {}", x.name.text, x.ty_text())));
+    for func in &f.functions {
+        p.insert(func.name.text.clone(), (func.name.span, heading_text(func)));
+    }
+    for s in &f.structs {
+        let word = if s.variants.is_some() { "enum" } else { "struct" };
+        p.insert(s.name.text.clone(), (s.name.span, format!("{word} {}", s.name.text)));
+        p.extend(s.fields.iter().map(|x| field(&s.name.text, x)));
+        for v in s.variants.iter().flatten() {
+            let fields: Vec<String> = v.fields.iter().map(|x| format!("{}: {}", x.name.text, x.ty_text())).collect();
+            let shown = if fields.is_empty() { v.name.text.clone() } else { format!("{}({})", v.name.text, fields.join(", ")) };
+            p.insert(method_name(&s.name.text, &v.name.text), (v.name.span, shown));
+        }
+        for m in &s.methods {
+            p.insert(method_name(&s.name.text, &m.name.text), (m.name.span, heading_text(m)));
+        }
+    }
+    for i in f.interfaces.iter().filter(|i| !i.builtin) {
+        p.insert(i.name.text.clone(), (i.name.span, format!("interface {}", i.name.text)));
+        for (m, _) in &i.methods {
+            p.insert(method_name(&i.name.text, &m.name.text), (m.name.span, heading_text(m)));
+        }
+    }
+    p
 }
 
 pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
@@ -517,8 +577,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
         map_entries: vec![],
+        places: places(f),
+        spans: vec![Span::new(0, 0); nb_exprs],
+        seen: vec![],
+        hints: vec![],
         diags: vec![],
     };
+    // Hovering a declaration shows it too.
+    c.seen = c.places.values().map(|(decl, text)| Seen { span: *decl, decl: *decl, text: text.clone() }).collect();
     // A method that an interface promises is reached through the interface: it stays visible.
     for s in &f.structs {
         let promised = s.interfaces.iter().filter_map(|n| f.interfaces.iter().find(|i| i.name.text == n.text));
@@ -821,7 +887,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
-    (Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods }, c.diags)
+    let (spans, seen, hints) = (c.spans, c.seen, c.hints);
+    let info = Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods, spans, seen, hints };
+    (info, c.diags)
 }
 
 /// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
@@ -1158,7 +1226,9 @@ impl Checker<'_> {
             self.function_name(&p.name);
             // `x: var T` changes like a `var`; `x: move T` cannot change, like `move self`.
             let kind = if p.mode == Mode::Var { VarKind::Var } else { VarKind::Param };
-            params.insert(p.name.text.clone(), Variable { ty: type_of(&p.ty, &self.structs), kind, span: p.name.span });
+            let ty = type_of(&p.ty, &self.structs);
+            self.mention_variable(&p.name.text, &ty, p.name.span, p.name.span);
+            params.insert(p.name.text.clone(), Variable { ty, kind, span: p.name.span });
         }
         self.scopes = vec![params];
         // Contracts only see the parameters (and `result` in an `ensure`).
@@ -1522,6 +1592,10 @@ impl Checker<'_> {
             );
             return;
         }
+        self.mention_variable(&name.text, &ty, name.span, name.span);
+        if matches!(kind, VarKind::Element | VarKind::Matched) {
+            self.hints.push((name.span, ty.clone()));
+        }
         let v = Variable { ty, kind, span: name.span };
         self.scopes.last_mut().unwrap().insert(name.text.clone(), v);
     }
@@ -1562,6 +1636,7 @@ impl Checker<'_> {
 
     /// Checks that `e` has type `expected`.
     fn expect(&mut self, e: &Expr, expected: &Type) {
+        self.spans[e.id] = e.span;
         // `(1, none)` where an `(Int, String?)` is expected: each element against its type.
         if let (ExprKind::Tuple(elems), Type::Tuple(ts)) = (&e.kind, expected)
             && elems.len() == ts.len()
@@ -1901,7 +1976,7 @@ impl Checker<'_> {
                 let t = Type::List(Box::new(elem.clone())).text();
                 self.diags.push(
                     Diag::new(name.span, t!("no_method", type = t, name = name.text))
-                        .help(t!("methods_of", type = t, methods = "`length`, `add`, `remove`, `clone`")),
+                        .help(t!("methods_of", type = t, methods = quoted(LIST_METHODS))),
                 );
                 args.iter().for_each(|a| {
                     self.expr(a);
@@ -1931,7 +2006,7 @@ impl Checker<'_> {
             _ => {
                 self.diags.push(
                     Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
-                        .help(t!("methods_of", type = t.text(), methods = "`length`, `contains`, `remove`, `clone`")),
+                        .help(t!("methods_of", type = t.text(), methods = quoted(MAP_METHODS))),
                 );
                 args.iter().for_each(|a| {
                     self.expr(a);
@@ -2045,6 +2120,7 @@ impl Checker<'_> {
 
     /// `name` (`geometry.helper`, `geometry.Point.x`) is private in another file than `span`'s.
     fn hidden(&mut self, name: &str, span: Span) -> bool {
+        self.mention(name, span);
         let Some(decl) = self.private.get(name) else { return false };
         if file_number(self.src, decl.start) == file_number(self.src, span.start) {
             return false;
@@ -2052,6 +2128,24 @@ impl Checker<'_> {
         let file = format!("{}.kova", name.split('.').next().unwrap_or(name));
         self.diags.push(Diag::new(span, t!("private_name", name = name, file = file)).help(t!("private_name_help", file = file)));
         true
+    }
+
+    /// Notes for the editor that `name` (`geometry.Point.x`) is written at `span`.
+    fn mention(&mut self, name: &str, span: Span) {
+        // `rex.introduce`: a default method is declared in the interface (`Animal.introduce`).
+        let place = self.places.get(name).or_else(|| {
+            let (owner, method) = name.rsplit_once('.')?;
+            let interfaces = self.follows.get(owner)?;
+            interfaces.iter().find_map(|i| self.places.get(&method_name(i, method)))
+        });
+        if let Some((decl, text)) = place {
+            self.seen.push(Seen { span, decl: *decl, text: text.clone() });
+        }
+    }
+
+    /// Notes for the editor that the variable `name` of type `ty`, declared at `decl`, is written at `span`.
+    fn mention_variable(&mut self, name: &str, ty: &Type, span: Span, decl: Span) {
+        self.seen.push(Seen { span, decl, text: format!("{name}: {}", ty.text()) });
     }
 
     /// The type of `x.name` when `x` has type `ty` and `name` is not a method.
@@ -2238,6 +2332,7 @@ impl Checker<'_> {
     }
 
     fn expr(&mut self, e: &Expr) -> Type {
+        self.spans[e.id] = e.span;
         let t = self.expr_kind(e);
         self.types[e.id] = t.clone();
         t
@@ -2273,7 +2368,11 @@ impl Checker<'_> {
                 }
             },
             ExprKind::Var(name) => match self.lookup(name) {
-                Some(v) => v.ty.clone(),
+                Some(v) => {
+                    let (ty, decl) = (v.ty.clone(), v.span);
+                    self.mention_variable(name, &ty, e.span, decl);
+                    ty
+                }
                 None if name == "self" => {
                     self.error(e.span, t!("self_outside_method"));
                     Type::Error
@@ -2656,6 +2755,7 @@ impl Checker<'_> {
                 self.error(name.span, t!("field_twice", name = name.text));
             }
             given.push(&name.text);
+            self.mention(&method_name(&owner, &name.text), name.span);
             self.expect(value, t);
         }
         let missing: Vec<String> =
@@ -2687,6 +2787,7 @@ impl Checker<'_> {
     /// `Shape.Circle(2.0)`: the fields in their declared order.
     fn variant(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
         self.hidden(&ty.text, ty.span);
+        self.mention(&method_name(&ty.text, &name.text), name.span);
         let d = match self.structs.get(&ty.text).cloned() {
             Some(Type::Enum(d)) => Some(d),
             Some(_) => {

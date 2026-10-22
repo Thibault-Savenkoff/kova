@@ -366,6 +366,21 @@ fn language_server() {
     assert!(error["message"].as_str().unwrap().contains("deep.kova:2:"), "{diag}");
     assert_eq!(error["range"]["start"], serde_json::json!({"line": 1, "character": 7}));
 
+    // E4: the type on hover, Ctrl+click, the types in grey.
+    let text = "fn main {\n    let l: List<Int> := [1]\n    for x in l {\n        print(x)\n    }\n}\n";
+    send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": text}]}}));
+    receive();
+    let at = serde_json::json!({"textDocument": {"uri": uri}, "position": {"line": 3, "character": 14}});
+    send(serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at}));
+    assert_eq!(receive()["result"]["contents"]["value"], "```kova\nx: Int\n```");
+    send(serde_json::json!({"jsonrpc": "2.0", "id": 5, "method": "textDocument/definition", "params": at}));
+    assert_eq!(receive()["result"]["range"]["start"], serde_json::json!({"line": 2, "character": 8}));
+    let range = serde_json::json!({"start": {"line": 0, "character": 0}, "end": {"line": 6, "character": 0}});
+    send(serde_json::json!({"jsonrpc": "2.0", "id": 6, "method": "textDocument/inlayHint",
+        "params": {"textDocument": {"uri": uri}, "range": range}}));
+    assert_eq!(receive()["result"][0]["label"], ": Int");
+
     send(serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
     assert_eq!(receive()["id"], 3);
     send(serde_json::json!({"jsonrpc": "2.0", "method": "exit"}));

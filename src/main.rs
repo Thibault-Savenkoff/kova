@@ -56,7 +56,7 @@ fn main() {
     };
 
     let (tree, info, diags, sources) = analyze(file, &source);
-    let Some(info) = info else {
+    let (Some(info), true) = (info, diags.is_empty()) else {
         for d in &diags {
             eprintln!("{}", diag::render(d, &sources));
         }
@@ -115,7 +115,7 @@ fn main() {
 
 /// Lexer + parser + type checker. Reads in-memory text for the file `path`: `kova lsp` calls
 /// it on text that isn't saved yet (the files it imports are read from the disk).
-/// `Some(info)` only if there is no error at all.
+/// `Some(info)` once the types are checked, even with errors: the editor still shows them.
 /// Also picks the language of the messages: the `header`'s, otherwise the system's.
 fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>, diag::Sources) {
     let read = || load(path, source);
@@ -131,11 +131,9 @@ fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<dia
     if diags.is_empty() {
         let (mut info, d) = types::check(&file, nb_exprs, source);
         // Ownership only on a well-typed program: it relies on the types.
-        let d = if d.is_empty() { ownership::check(&file, &mut info, source) } else { d };
-        if d.is_empty() {
-            return (file, Some(info), d, sources);
-        }
-        diags = d;
+        diags = if d.is_empty() { ownership::check(&file, &mut info, source) } else { d };
+        diags.sort_by_key(|d| d.span.start);
+        return (file, Some(info), diags, sources);
     }
     diags.sort_by_key(|d| d.span.start);
     (file, None, diags, sources)

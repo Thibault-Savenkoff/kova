@@ -1,5 +1,5 @@
 // Language server (`kova lsp`): the editor sends it the text, it answers with
-// errors, completion and parameter help (LSP protocol).
+// errors, completion, parameter help, types on hover, definitions (LSP protocol).
 //
 //   editor ──"here is the text"──► kova lsp ──analyze()──► underlined errors
 //
@@ -13,6 +13,8 @@ use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::*;
 
 use crate::ast::{Block, ExprKind, File, Function, Pattern, Stmt, Struct, TypeAst};
+use crate::diag::Span;
+use crate::types::Type;
 use crate::lexer::{Kind, lex};
 use crate::locale::{self, t};
 use crate::{analyze, diag, parser, types};
@@ -21,7 +23,10 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
-        completion_provider: Some(CompletionOptions::default()),
+        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into()]), ..Default::default() }),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             ..Default::default()
@@ -42,8 +47,31 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                     "textDocument/completion" => {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
-                        let items = docs.get(&doc.text_document.uri).map(|src| complete(src, offset(src, doc.position)));
+                        let path = file_path(&doc.text_document.uri);
+                        let items = docs.get(&doc.text_document.uri).map(|src| {
+                            let cursor = offset(src, doc.position);
+                            (members(&path, src, cursor).or_else(|| literal_fields(&path, src, cursor))).unwrap_or_else(|| complete(src, cursor))
+                        });
                         Response::new_ok(req.id, items)
+                    }
+                    "textDocument/hover" => {
+                        let p: HoverParams = serde_json::from_value(req.params)?;
+                        let doc = &p.text_document_position_params;
+                        let path = file_path(&doc.text_document.uri);
+                        let shown = docs.get(&doc.text_document.uri).and_then(|src| hover(&path, src, offset(src, doc.position)));
+                        Response::new_ok(req.id, shown)
+                    }
+                    "textDocument/definition" => {
+                        let p: GotoDefinitionParams = serde_json::from_value(req.params)?;
+                        let doc = &p.text_document_position_params;
+                        let uri = &doc.text_document.uri;
+                        let place = docs.get(uri).and_then(|src| definition(uri, src, offset(src, doc.position)));
+                        Response::new_ok(req.id, place.map(GotoDefinitionResponse::Scalar))
+                    }
+                    "textDocument/inlayHint" => {
+                        let p: InlayHintParams = serde_json::from_value(req.params)?;
+                        let path = file_path(&p.text_document.uri);
+                        Response::new_ok(req.id, docs.get(&p.text_document.uri).map(|src| hints(&path, src)))
                     }
                     "textDocument/signatureHelp" => {
                         let p: SignatureHelpParams = serde_json::from_value(req.params)?;
@@ -164,6 +192,230 @@ fn file_path(uri: &Uri) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// `/home/me/my code/main.kova` → `file:///home/me/my%20code/main.kova` (the reverse of `file_path`).
+fn file_uri(path: &str) -> Option<Uri> {
+    let mut s = String::from("file://");
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            s.push(b as char);
+        } else {
+            s += &format!("%{b:02X}");
+        }
+    }
+    s.parse().ok()
+}
+
+// ---- What the type checker saw: types on hover, definitions, types in grey ----
+
+/// The type checker's table for this text (`None` while it doesn't read: a syntax error).
+fn info(path: &str, src: &str) -> Option<(File, types::Info, diag::Sources)> {
+    let (file, info, _, sources) = analyze(path, src);
+    Some((file, info?, sources))
+}
+
+/// The name under the cursor, in this file (the imported files come after it in the text).
+fn seen_at<'a>(info: &'a types::Info, src: &str, cursor: usize) -> Option<&'a types::Seen> {
+    let under = |s: &Span| s.start <= cursor && cursor < s.end && s.end <= src.len();
+    info.seen.iter().filter(|s| under(&s.span)).min_by_key(|s| s.span.end - s.span.start)
+}
+
+/// Hovering: what the name is (`rex: Dog`, `fn bark(self) -> String`), otherwise the type
+/// of the smallest expression under the cursor (`a + b` → `Int`).
+fn hover(path: &str, src: &str, cursor: usize) -> Option<Hover> {
+    let (_, info, _) = info(path, src)?;
+    let text = match seen_at(&info, src, cursor) {
+        Some(s) => s.text.clone(),
+        None => {
+            let under = |s: &Span| s.start <= cursor && cursor < s.end && s.end <= src.len();
+            let id = (0..info.spans.len()).filter(|&i| under(&info.spans[i])).min_by_key(|&i| info.spans[i].end - info.spans[i].start)?;
+            match &info.types[id] {
+                Type::Error | Type::Unit => return None,
+                t => t.text(),
+            }
+        }
+    };
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: format!("```kova\n{text}\n```") }),
+        range: None,
+    })
+}
+
+/// Ctrl+click: where the name under the cursor is declared, maybe in an imported file.
+fn definition(uri: &Uri, src: &str, cursor: usize) -> Option<Location> {
+    let (_, info, sources) = info(&file_path(uri), src)?;
+    let decl = seen_at(&info, src, cursor)?.decl;
+    let k = sources.file_of(decl.start);
+    let (start, text) = (sources.files[k].1, sources.file_text(k));
+    let uri = if k == 0 { uri.clone() } else { file_uri(&sources.files[k].0)? };
+    Some(Location::new(uri, Range::new(position(text, decl.start - start), position(text, decl.end - start))))
+}
+
+/// The types nobody wrote, in grey after the name: `for score in scores` → `score: Int`.
+fn hints(path: &str, src: &str) -> Vec<InlayHint> {
+    let Some((_, info, _)) = info(path, src) else { return vec![] };
+    (info.hints.iter())
+        .filter(|(s, t)| s.end <= src.len() && *t != Type::Error)
+        .map(|(s, t)| InlayHint {
+            position: position(src, s.end),
+            label: InlayHintLabel::String(format!(": {}", t.text())),
+            kind: Some(InlayHintKind::TYPE),
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: None,
+        })
+        .collect()
+}
+
+// ---- Level 3 completion: after `.`, and the fields of `Dog {` ----
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
+fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let dot = src[..cursor].trim_end_matches(is_word).strip_suffix('.')?.len();
+    // `1.5` being typed: a number, not a method.
+    let before = &src[..dot];
+    let digits = before.trim_end_matches(|c: char| c.is_ascii_digit());
+    if digits.len() < before.len() && !digits.ends_with(is_word) && !digits.ends_with('.') {
+        return Some(vec![]);
+    }
+    // The text without `.na`: `rex` alone reads (and only gives an error the editor won't show).
+    let end = src.len() - src[cursor..].trim_start_matches(is_word).len();
+    let cut = format!("{before}{}", &src[end..]);
+    let Some((file, info, _)) = info(path, &cut) else { return Some(vec![]) };
+    // `a + rex.`: the smallest expression ending at the `.` (`rex`, not `a + rex`).
+    let id = (0..info.spans.len())
+        .filter(|&i| info.spans[i].end == dot && info.spans[i].start < dot)
+        .min_by_key(|&i| dot - info.spans[i].start);
+    Some(id.map_or(vec![], |id| members_of(&file, &info.types[id], cut.len())))
+}
+
+/// The fields and methods of a value of type `t`. `root`: the length of the edited file, the
+/// first in the text: what the other files hide is not offered.
+fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
+    let item = |label: &str, kind, detail: String| CompletionItem {
+        label: label.into(),
+        kind: Some(kind),
+        detail: Some(detail),
+        ..Default::default()
+    };
+    let owner = t.owner();
+    let hidden = |name: &str| (file.private.iter()).any(|(n, s)| *n == types::method_name(&owner, name) && s.start > root);
+    let mut items = vec![];
+    if let Type::Struct(d) = t {
+        let fields = d.fields.iter().filter(|(n, _)| !hidden(n));
+        items.extend(fields.map(|(n, ft)| item(n, CompletionItemKind::FIELD, format!("{n}: {}", ft.text()))));
+    }
+    if let Type::Tuple(ts) = t {
+        items.extend(ts.iter().enumerate().map(|(i, ft)| item(&i.to_string(), CompletionItemKind::FIELD, ft.text())));
+    }
+    let interface = |name: &str| file.interfaces.iter().find(|i| i.name.text == name);
+    let method = |m: &Function| item(&m.name.text, CompletionItemKind::METHOD, types::heading_text(m));
+    match t {
+        Type::Struct(_) | Type::Enum(_) => {
+            if let Some(s) = file.structs.iter().find(|s| s.name.text == owner) {
+                let own = s.methods.iter().filter(|m| m.receiver.is_some() && !hidden(&m.name.text));
+                items.extend(own.map(method));
+                // The default methods of its interfaces it doesn't write itself.
+                for i in s.interfaces.iter().filter_map(|n| interface(&n.text)) {
+                    let defaults = i.methods.iter().filter(|(m, body)| *body && !s.methods.iter().any(|x| x.name.text == m.name.text));
+                    items.extend(defaults.map(|(m, _)| method(m)));
+                }
+            }
+        }
+        Type::Any(i) => items.extend(interface(i).into_iter().flat_map(|i| &i.methods).map(|(m, _)| method(m))),
+        Type::List(_) => items.extend(types::LIST_METHODS.iter().map(|m| item(m, CompletionItemKind::METHOD, String::new()))),
+        Type::Map(..) => items.extend(types::MAP_METHODS.iter().map(|m| item(m, CompletionItemKind::METHOD, String::new()))),
+        _ => {}
+    }
+    if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_)) {
+        items.push(item("clone", CompletionItemKind::METHOD, t.text()));
+    }
+    for (receiver, name, result, optional) in types::METHODS {
+        if receiver == t {
+            let result = if *optional { format!("{}?", result.text()) } else { result.text() };
+            items.push(item(name, CompletionItemKind::METHOD, format!("-> {result}")));
+        }
+    }
+    if *t == Type::String {
+        for name in types::STRING_METHODS {
+            let (params, result) = types::string_method(name).expect("a String method");
+            let params: Vec<String> = params.iter().map(Type::text).collect();
+            let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
+            items.push(item(name, CompletionItemKind::METHOD, format!("{params} -> {}", result.text())));
+        }
+    }
+    items
+}
+
+/// `Dog { na|`: the fields of `Dog` not written yet. `None` when the cursor is not where a
+/// field's name goes.
+fn literal_fields(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let tokens = lex(src).0;
+    let mut before: Vec<_> = tokens.iter().take_while(|t| t.span.end <= cursor && t.kind != Kind::Eof).collect();
+    // The name being typed.
+    if before.last().is_some_and(|t| t.span.end == cursor && t.kind == Kind::Ident) {
+        before.pop();
+    }
+    if !matches!(before.last()?.kind, Kind::Sym("{" | ",") | Kind::Newline) {
+        return None;
+    }
+    let (mut depth, mut written) = (0, vec![]);
+    for (k, t) in before.iter().enumerate().rev() {
+        match t.kind {
+            Kind::Sym("}" | ")" | "]") => depth += 1,
+            Kind::Sym("{" | "(" | "[") if depth > 0 => depth -= 1,
+            Kind::Sym(":=") if depth == 0 && k > 0 && before[k - 1].kind == Kind::Ident => {
+                written.push(&src[before[k - 1].span.start..before[k - 1].span.end]);
+            }
+            Kind::Sym("{") => return struct_fields(path, src, &before[..k], &written),
+            Kind::Sym("(" | "[") => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The fields of the struct named by the last tokens of `before` (`Dog`, `geo.Point`), minus `written`.
+fn struct_fields(path: &str, src: &str, before: &[&crate::lexer::Token], written: &[&str]) -> Option<Vec<CompletionItem>> {
+    let text = |k: usize| &src[before[k].span.start..before[k].span.end];
+    let k = before.len().checked_sub(1).filter(|&k| before[k].kind == Kind::Type)?;
+    let (mut name, mut first) = (text(k).to_string(), k);
+    if k >= 2 && before[k - 1].kind == Kind::Sym(".") && before[k - 2].kind == Kind::Ident {
+        name = format!("{}.{name}", text(k - 2));
+        first = k - 2;
+    }
+    // `struct Dog {`: a declaration, not a value.
+    if first > 0 && matches!(before[first - 1].kind, Kind::Keyword("struct" | "enum")) {
+        return None;
+    }
+    let (file, _, _, _) = analyze(path, src);
+    // `geo.Point` → `geometry.Point`.
+    if let Some((alias, rest)) = name.split_once('.')
+        && let Some(imp) = file.imports.iter().find(|i| i.alias.text == alias)
+    {
+        name = format!("{}.{rest}", imp.module.text);
+    }
+    let s = file.structs.iter().find(|s| s.name.text == name && s.variants.is_none())?;
+    let hidden = |n: &str| (file.private.iter()).any(|(p, at)| *p == types::method_name(&name, n) && at.start > src.len());
+    let fields = s.fields.iter().filter(|f| !written.contains(&f.name.text.as_str()) && !hidden(&f.name.text));
+    Some(
+        fields
+            .map(|f| CompletionItem {
+                label: f.name.text.clone(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some(format!("{}: {}", f.name.text, f.ty_text())),
+                insert_text: Some(format!("{} := ", f.name.text)),
+                ..Default::default()
+            })
+            .collect(),
+    )
 }
 
 // ---- Level 2 completion: variables and functions visible at this place ----
@@ -488,6 +740,99 @@ mod tests {
             .map(|i| (i.label.as_str(), i.detail.as_deref().unwrap()))
             .collect();
         assert_eq!(vars, [("a", "Int"), ("b", "Float")]);
+    }
+
+    fn shown(src: &str, at: &str) -> Option<String> {
+        let h = hover("/none/main.kova", src, src.find(at).unwrap())?;
+        let HoverContents::Markup(m) = h.contents else { panic!() };
+        Some(m.value.trim_start_matches("```kova\n").trim_end_matches("\n```").to_string())
+    }
+
+    const DOGS: &str = "struct Dog {\n  name: String\n  age: Int\n  fn bark(self) -> String { return \"woof\" }\n}\nfn main {\n  let rex := Dog { name := \"Rex\", age := 3 }\n  let ages: List<Int> := [1, 2]\n  for a in ages {\n    print(a + rex.age)\n  }\n  print(rex.bark)\n}";
+
+    #[test]
+    fn hover_types() {
+        assert_eq!(shown(DOGS, "rex :=").as_deref(), Some("rex: Dog"));
+        assert_eq!(shown(DOGS, "a + ").as_deref(), Some("a: Int"));
+        assert_eq!(shown(DOGS, "+ rex").as_deref(), Some("Int")); // the sum
+        assert_eq!(shown(DOGS, "age)").as_deref(), Some("age: Int"));
+        assert_eq!(shown(DOGS, "bark)").as_deref(), Some("fn bark(self) -> String"));
+        assert_eq!(shown(DOGS, "Dog {").as_deref(), Some("struct Dog"));
+        // Still there with an error elsewhere.
+        let broken = DOGS.replace("print(rex.bark)", "print(rex.color)");
+        assert_eq!(shown(&broken, "rex :=").as_deref(), Some("rex: Dog"));
+    }
+
+    #[test]
+    fn grey_types() {
+        let labels: Vec<String> = hints("/none/main.kova", DOGS)
+            .into_iter()
+            .map(|h| match h.label {
+                InlayHintLabel::String(s) => format!("{}:{s}", h.position.line),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(labels, ["8:: Int"]);
+    }
+
+    #[test]
+    fn definition_in_another_file() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/modules/main.kova");
+        let src = std::fs::read_to_string(path).unwrap();
+        let uri = file_uri(path).unwrap();
+        let place = definition(&uri, &src, src.find("distance(a").unwrap()).unwrap();
+        assert!(place.uri.as_str().ends_with("/tests/ok/modules/geometry.kova"));
+        let geometry = std::fs::read_to_string(path.replace("main.kova", "geometry.kova")).unwrap();
+        let line = geometry.lines().nth(place.range.start.line as usize).unwrap();
+        assert!(line.contains("fn distance"), "{line}");
+        // A variable: its `let`.
+        let place = definition(&uri, &src, src.find("a, o)").unwrap()).unwrap();
+        assert_eq!(place.uri, uri);
+        assert_eq!(place.range.start, position(&src, src.find("a := geo").unwrap()));
+    }
+
+    #[test]
+    fn uri_round_trip() {
+        let path = "/home/me/my code/é.kova";
+        assert_eq!(file_uri(path).unwrap().as_str(), "file:///home/me/my%20code/%C3%A9.kova");
+        assert_eq!(file_path(&file_uri(path).unwrap()), path);
+    }
+
+    fn labels(items: Option<Vec<CompletionItem>>) -> Vec<String> {
+        items.unwrap().into_iter().map(|i| i.label).collect()
+    }
+
+    #[test]
+    fn completion_after_a_dot() {
+        let at = |src: &str, cursor: usize| labels(members("/none/main.kova", src, cursor));
+        let src = DOGS.replace("print(rex.bark)", "print(rex.ba)");
+        assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "clone"]);
+        // Right after the `.`, and on a List.
+        let src = DOGS.replace("print(rex.bark)", "ages.");
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "clone"]);
+        let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
+        let found = at(src, src.find(".)").unwrap() + 1);
+        assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");
+        // `1.5` being typed; not after a dot.
+        let src = "fn main {\n  let x: Float := 1.\n}";
+        assert!(at(src, src.find("1.").unwrap() + 2).is_empty());
+        assert!(members("/none/main.kova", DOGS, DOGS.find("rex :=").unwrap() + 2).is_none());
+    }
+
+    #[test]
+    fn completion_of_literal_fields() {
+        let at = |src: &str| labels(literal_fields("/none/main.kova", src, src.len()));
+        let src = DOGS.replace("{ name := \"Rex\", age := 3 }", "{ name := \"Rex\", ");
+        let src = &src[..src.find("Rex\", ").unwrap() + 6];
+        assert_eq!(at(src), ["age"]);
+        assert_eq!(at(&format!("{src}a")), ["age"]);
+        // While typing a value, or a declaration: not fields.
+        assert!(literal_fields("/none/main.kova", src, src.find("Rex").unwrap()).is_none());
+        assert!(literal_fields("/none/main.kova", "struct Dog {\n  ", 15).is_none());
+        // A struct from another file, through its alias.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/modules/main.kova");
+        let src = "import geometry as geo\nfn main {\n  let p := geo.Point { ";
+        assert_eq!(labels(literal_fields(path, src, src.len())), ["x", "y"]);
     }
 
     #[test]
