@@ -1,0 +1,32 @@
+// `Nothing or E`: a success without a value, given by `ok` alone.
+enum Problem {
+    TooBig,
+}
+
+fn verify(n: Int) -> Nothing or Problem {
+    if n > 10 {
+        return err(Problem.TooBig)
+    }
+    return ok
+}
+
+fn both(a: Int, b: Int) -> Nothing or Problem {
+    verify(a)?
+    verify(b)?
+    return ok
+}
+
+fn main {
+    print(verify(3))
+    print(verify(30))
+    match both(1, 20) {
+        ok => print("fine")
+        err(p) => print(p)
+    }
+    let r: Nothing or Problem := ok
+    print(r)
+}
+// expect: ok
+// expect: err(Problem.TooBig)
+// expect: Problem.TooBig
+// expect: ok

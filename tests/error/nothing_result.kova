@@ -1,0 +1,23 @@
+enum Problem {
+    TooBig,
+}
+
+fn verify(n: Int) -> Nothing or Problem {
+    return ok
+}
+
+fn main {
+    let a: Nothing := 3
+    let b: List<Nothing> := []
+    let r: Nothing or Problem := ok(3)
+    let s: Int or Problem := ok
+    match verify(2) {
+        ok(x) => print(1)
+        err(p) => print(2)
+    }
+}
+// error: `Nothing` is only written as the success of a result
+// error: `Nothing` is only written as the success of a result
+// error: `ok` takes no value: the success of `Nothing or Problem` is `Nothing`
+// error: here the success is `Int`: write `ok(value)`
+// error: `ok` has 0 field(s) (), 1 given

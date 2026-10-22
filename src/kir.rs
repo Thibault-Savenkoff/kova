@@ -1043,6 +1043,9 @@ impl<'a> Translator<'a> {
                 pieces.push(Piece::Text(format!("{name}(")));
                 self.value_pieces(&v[at..at + scalars(t).len()], t, &mut pieces);
                 pieces.push(Piece::Text(")".into()));
+            } else if let Type::Result(..) = ty {
+                // `ok` of a `Nothing or E`.
+                pieces.push(Piece::Text(name.clone()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", d.name)));
                 for (j, (field, t)) in fields.iter().enumerate() {

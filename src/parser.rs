@@ -1609,6 +1609,12 @@ impl Parser<'_> {
                 return self.call_rest(name);
             }
             Kind::Keyword("if") => return self.if_expr(),
+            // `ok` alone: the success of a `Nothing or E`.
+            Kind::Keyword("ok") if self.kind_at(1) != Kind::Sym("(") => {
+                let span = self.advance().span;
+                let nothing = self.expr(span, ExprKind::Tuple(vec![]));
+                return Ok(self.expr(span, ExprKind::Outcome { ok: true, value: Box::new(nothing) }));
+            }
             Kind::Keyword(word @ ("ok" | "err")) => {
                 self.advance();
                 self.expect("(")?;

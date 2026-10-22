@@ -144,7 +144,7 @@
     },
     "types": {
       "patterns": [
-        { "name": "support.type.primitive.kova", "match": "\\b(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|BigInt)\\b" },
+        { "name": "support.type.primitive.kova", "match": "\\b(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|BigInt|Nothing)\\b" },
         { "name": "support.type.kova", "match": "\\b(List|Map|Set)\\b" },
         { "name": "entity.name.type.kova", "match": "\\b\\p{Lu}[\\p{L}\\p{N}_]*\\b" }
       ]

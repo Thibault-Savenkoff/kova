@@ -84,6 +84,7 @@ impl Type {
             Type::Struct(d) => format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Enum(d) => d.name.clone(),
             Type::Optional(t) => format!("{}?", t.text()),
+            Type::Result(t, e) if **t == Type::Unit => format!("Nothing or {}", e.text()),
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Map(k, v) => format!("Map<{}, {}>", k.text(), v.text()),
@@ -190,9 +191,13 @@ pub fn enum_view(t: &Type) -> Option<Rc<EnumDef>> {
             variants: vec![("none".into(), vec![]), ("some".into(), vec![("value".into(), (**inner).clone())])],
         })),
         // `err` first: as for an optional, slot 0 is 1 when there is a value.
+        // `Nothing or IoError`: `ok` alone, without a value.
         Type::Result(ok, err) => Some(Rc::new(EnumDef {
             name: t.text(),
-            variants: vec![("err".into(), vec![("error".into(), (**err).clone())]), ("ok".into(), vec![("value".into(), (**ok).clone())])],
+            variants: vec![
+                ("err".into(), vec![("error".into(), (**err).clone())]),
+                ("ok".into(), if **ok == Type::Unit { vec![] } else { vec![("value".into(), (**ok).clone())] }),
+            ],
         })),
         _ => None,
     }
@@ -1006,6 +1011,11 @@ fn primitive(name: &str) -> Option<Type> {
     })
 }
 
+/// `Nothing`, written as the success of a result.
+fn is_nothing(t: &TypeAst) -> bool {
+    matches!(t, TypeAst::Name(n) if n.text == "Nothing")
+}
+
 /// The written type; `Error` if it contains an unknown name.
 pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
@@ -1041,7 +1051,8 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             Type::Error => Type::Error,
             t => Type::Optional(Box::new(t)),
         },
-        TypeAst::Result(t, e) => match (type_of(t, structs), type_of(e, structs)) {
+        // `Nothing or IoError`: a success without a value, only written there.
+        TypeAst::Result(t, e) => match (if is_nothing(t) { Type::Unit } else { type_of(t, structs) }, type_of(e, structs)) {
             (Type::Error, _) | (_, Type::Error) => Type::Error,
             (t, e) => Type::Result(Box::new(t), Box::new(e)),
         },
@@ -1472,6 +1483,9 @@ impl Checker<'_> {
             TypeAst::Name(n) if self.structs.get(&n.text).is_some_and(|t| is_template(t, &n.text)) => {
                 self.generic_without_types(n)
             }
+            TypeAst::Name(n) if n.text == "Nothing" => {
+                self.diags.push(Diag::new(n.span, t!("nothing_only_in_result")).help(t!("nothing_only_in_result_help")));
+            }
             TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
@@ -1483,7 +1497,9 @@ impl Checker<'_> {
             }
             TypeAst::Optional(t) => self.report_unknown(t),
             TypeAst::Result(t, e) => {
-                self.report_unknown(t);
+                if !is_nothing(t) {
+                    self.report_unknown(t);
+                }
                 self.report_unknown(e);
             }
             TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.report_unknown(t)),
@@ -1801,7 +1817,25 @@ impl Checker<'_> {
             return;
         }
         // `ok(v)` / `err(e)` where a `T or E` is expected.
+        // `ok` alone (an empty tuple, made by the parser) where `Nothing or E` is expected.
+        if let (ExprKind::Tuple(elems), Type::Unit) = (&e.kind, expected)
+            && elems.is_empty()
+        {
+            self.types[e.id] = Type::Unit;
+            return;
+        }
         if let (ExprKind::Outcome { ok, value }, Type::Result(t, er)) = (&e.kind, expected) {
+            let alone = matches!(&value.kind, ExprKind::Tuple(elems) if elems.is_empty());
+            if *ok && (**t == Type::Unit) != alone {
+                if alone {
+                    self.diags.push(Diag::new(e.span, t!("ok_needs_value", type = t.text())));
+                } else {
+                    self.expr(value);
+                    self.diags.push(Diag::new(e.span, t!("ok_without_value", type = expected.text())).help(t!("ok_without_value_help")));
+                }
+                self.types[e.id] = expected.clone();
+                return;
+            }
             self.expect(value, if *ok { t } else { er });
             self.types[e.id] = expected.clone();
             return;
@@ -2642,9 +2676,11 @@ impl Checker<'_> {
             }
             Stmt::Expr(e) => {
                 self.expr(e);
-                let call = match &e.kind {
+                // `save(text)?`: the call is what counts.
+                let called = if let ExprKind::Try(x) = &e.kind { x } else { e };
+                let call = match &called.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
-                    ExprKind::Var(_) => self.invoked.contains(&e.id),
+                    ExprKind::Var(_) => self.invoked.contains(&called.id),
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
