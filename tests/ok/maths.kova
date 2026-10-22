@@ -1,0 +1,60 @@
+// Maths on `Int` and `Float`, as methods (like `x.to_float`): the same digits in run and build.
+fn main {
+    let n: Int := -7
+    print(n.abs)
+    print(n.min(3))
+    print(n.max(3))
+    print(2.pow(10))
+    print(n.pow(3))
+    print(5.pow(0))
+    let x: Float := 2.0
+    print(x.sqrt)
+    print((3.0 * 3.0 + 4.0 * 4.0).sqrt)
+    print(x.pow(-2))
+    print(1.5.pow(3))
+    print((-2.5).abs)
+    print(2.5.round)
+    print((-2.5).round)
+    print(2.4999.round)
+    print((-0.4).round)
+    print(2.7.floor)
+    print((-2.7).floor)
+    print(2.1.ceil)
+    print((-2.1).ceil)
+    print(x.min(1.5))
+    print(x.max(1.5))
+    print(Float.pi)
+    print((-1.0).sqrt)
+    let r: Float := 3.0
+    print(Float.pi * r.pow(2))
+    print(2.pow(62))
+    print(2.pow(-1))
+}
+// expect: 7
+// expect: -7
+// expect: 3
+// expect: 1024
+// expect: -343
+// expect: 1
+// expect: 1.4142135623730951
+// expect: 5.0
+// expect: 0.25
+// expect: 3.375
+// expect: 2.5
+// expect: 3
+// expect: -3
+// expect: 2
+// expect: 0
+// expect: 2
+// expect: -3
+// expect: 3
+// expect: -2
+// expect: 1.5
+// expect: 2.0
+// expect: 3.141592653589793
+// expect: NaN
+// expect: 28.274333882308138
+// expect: 4611686018427387904
+// code: 101
+// stderr: error: an `Int` to a negative power is not an `Int`: use a `Float` (`x.to_float.pow(-1)`)
+// stderr: maths.kova:31:13

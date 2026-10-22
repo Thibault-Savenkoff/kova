@@ -48,6 +48,7 @@ pub const RUNTIME: &[&str] = &[
     "fault_not_text",
     "fault_empty_text",
     "fault_exit_code",
+    "fault_negative_power",
 ];
 
 /// A piece of a translated text.

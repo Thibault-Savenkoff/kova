@@ -640,6 +640,13 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             items.push(item(name, CompletionItemKind::METHOD, format!("{params} -> {}", result.text())));
         }
     }
+    for name in types::NUMBER_METHODS {
+        if let Some((params, result)) = types::number_method(t, name) {
+            let params: Vec<String> = params.iter().map(Type::text).collect();
+            let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
+            items.push(item(name, CompletionItemKind::METHOD, format!("{params} -> {}", result.text())));
+        }
+    }
     items
 }
 

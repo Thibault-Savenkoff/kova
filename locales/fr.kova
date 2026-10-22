@@ -49,6 +49,7 @@ lang fr {
     fault_not_text := "la ligne saisie n'est pas du texte (UTF-8 invalide)"
     fault_empty_text := "on ne peut pas chercher un texte vide (`split` ou `replace` avec `\"\"`)"
     fault_exit_code := "un code de sortie est entre 0 et 255"
+    fault_negative_power := "un `Int` à une puissance négative n'est pas un `Int` : utilise un `Float` (`x.to_float.pow(-1)`)"
 
     // ---- Lexer ----
     comment_unclosed := "commentaire `/*` jamais fermé"
@@ -132,6 +133,7 @@ lang fr {
     ok_without_value_help := "écris `ok` tout seul"
     result_ignored := "ce résultat n'est pas regardé : un échec passerait inaperçu"
     result_ignored_help := "écris `{code}?` pour faire remonter l'échec, ou traite-le avec `match`"
+    float_method := "`{name}` est une méthode des `Float` : `{code}`"
     nothing_only_in_result := "`Nothing` ne s'écrit que comme succès d'un résultat"
     nothing_only_in_result_help := "par exemple `fn save(text: String) -> Nothing or IoError`, qui finit par `return ok`"
     type_unknown := "type inconnu `{name}`"

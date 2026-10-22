@@ -297,6 +297,22 @@ fn quoted(names: &[&str]) -> String {
     names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
 }
 
+pub const NUMBER_METHODS: &[&str] = &["abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round"];
+
+/// `n.abs`, `a.max(b)`, `x.sqrt`, `x.round` on an `Int` or a `Float` (Part 4, "Standard library
+/// v2"): their parameters, their result. `floor`, `ceil` and `round` give an `Int`.
+pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
+    let (int, float) = (|| Type::Int, || Type::Float);
+    Some(match (t, name) {
+        (Type::Int | Type::Float, "abs") => (vec![], t.clone()),
+        (Type::Int | Type::Float, "min" | "max") => (vec![t.clone()], t.clone()),
+        (Type::Int | Type::Float, "pow") => (vec![int()], t.clone()),
+        (Type::Float, "sqrt") => (vec![], float()),
+        (Type::Float, "floor" | "ceil" | "round") => (vec![], int()),
+        _ => return None,
+    })
+}
+
 /// The String methods with arguments or a List result (PLAN 2.10): their parameters, their result.
 /// Each one is a `kir::StrOp` (`kir::string_op`).
 pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
@@ -2406,6 +2422,13 @@ impl Checker<'_> {
 
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
+        // `Float.pi`, like Smalltalk's `Float pi`.
+        if ty.text == "Float" && name.text == "pi" {
+            if !args.is_empty() {
+                self.error(name.span, t!("no_arguments", name = name.text));
+            }
+            return Type::Float;
+        }
         if let kind @ ("List" | "Map" | "Set") = ty.text.as_str() {
             let help = match kind {
                 "List" => t!("list_made_help"),
@@ -3011,6 +3034,15 @@ impl Checker<'_> {
                     }
                     return ft.clone();
                 }
+                if let Some((params, result)) = number_method(&t, &name.text) {
+                    let params: Vec<(Mode, Type)> = params.into_iter().map(|p| (Mode::Read, p)).collect();
+                    if params.is_empty() && !args.is_empty() {
+                        self.error(name.span, t!("no_arguments", name = name.text));
+                    } else if !params.is_empty() {
+                        self.arguments(name, args, &params, &[]);
+                    }
+                    return result;
+                }
                 if t == Type::String
                     && let Some((params, result)) = string_method(&name.text)
                 {
@@ -3025,8 +3057,12 @@ impl Checker<'_> {
                         let more = ["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
                         known.extend(more.iter().map(|n| format!("`{n}`")));
                     }
+                    known.extend(NUMBER_METHODS.iter().filter(|n| number_method(&t, n).is_some()).map(|n| format!("`{n}`")));
                     let mut d = Diag::new(name.span, t!("no_method", type = t.text(), name = name.text));
-                    if !known.is_empty() {
+                    if t == Type::Int && number_method(&Type::Float, &name.text).is_some() {
+                        let code = format!("{}.to_float.{}", &self.src[receiver.span.start..receiver.span.end], name.text);
+                        d = d.help(t!("float_method", name = name.text, code = code));
+                    } else if !known.is_empty() {
                         d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));
                     }
                     self.diags.push(d);

@@ -253,6 +253,8 @@ pub enum Inst {
     /// Comparisons give a Bool (integer slot).
     FBinary(Local, Op, Local, Local, Loc),
     FNeg(Local, Local),
+    /// `x.abs`, `x.sqrt`, `x.floor`, `x.ceil`, `x.round` on a Float, giving a Float.
+    FUnary(Local, FloatOp, Local),
     Convert(Local, Conversion, Local, Loc),
     /// `results := f(args)`.
     Call(Slots, usize, Slots),
@@ -424,6 +426,16 @@ impl Show {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
+pub enum FloatOp {
+    Abs,
+    Sqrt,
+    Floor,
+    Ceil,
+    /// Half away from zero: `2.5` → `3.0`, `-2.5` → `-3.0` (like Rust's `round`, unlike Python's).
+    Round,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Conversion {
     /// `n.to_float()`
     IntToFloat,
@@ -466,6 +478,8 @@ pub enum Fault {
     EmptyText,
     /// `exit(300)`: a program's exit code is between 0 and 255.
     ExitCode,
+    /// `n.pow(-1)` on an `Int`.
+    NegativePower,
 }
 
 impl Fault {
@@ -479,6 +493,7 @@ impl Fault {
             Fault::NotText => "fault_not_text",
             Fault::EmptyText => "fault_empty_text",
             Fault::ExitCode => "fault_exit_code",
+            Fault::NegativePower => "fault_negative_power",
         }
     }
 }
@@ -2523,6 +2538,108 @@ impl<'a> Translator<'a> {
         vec![out]
     }
 
+    /// `n.abs`, `a.min(b)`, `n.pow(k)`, `x.sqrt`, `x.round`… on the number `v` (Part 4, "Standard
+    /// library v2"): the same instructions in run and build, so the same digits.
+    fn number_method(&mut self, e: &Expr, v: Local, name: &str, args: &[Expr]) -> Slots {
+        let ExprKind::Method { receiver, name: n, .. } = &e.kind else { unreachable!("a method call") };
+        let ty = self.ty(receiver);
+        let float = ty == Type::Float;
+        let loc = self.loc(n.span);
+        let out = self.new_slots(&ty)[0];
+        let f = |op| match op {
+            "abs" => FloatOp::Abs,
+            "sqrt" => FloatOp::Sqrt,
+            "floor" => FloatOp::Floor,
+            "ceil" => FloatOp::Ceil,
+            _ => FloatOp::Round,
+        };
+        match name {
+            _ if float && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
+                self.emit(Inst::FUnary(out, f(name), v));
+                if name == "abs" || name == "sqrt" {
+                    return vec![out];
+                }
+                // Too big or NaN: the same error as `x.to_int`.
+                let n = self.int_local();
+                self.emit(Inst::Convert(n, Conversion::FloatToInt, out, loc));
+                vec![n]
+            }
+            // `-n`, an overflow for the smallest `Int`.
+            "abs" => {
+                let (zero, negative) = (self.constant(0), self.int_local());
+                self.emit(Inst::Copy(out, v));
+                self.emit(Inst::Binary(negative, Op::Lt, v, zero, NOWHERE));
+                let (flip, done) = (self.new_block(), self.new_block());
+                self.go(End::Branch(negative, flip, done), flip);
+                self.emit(Inst::Neg(out, v, loc));
+                self.go(End::Jump(done), done);
+                vec![out]
+            }
+            // `a.min(b)`: `b` if `b < a`, else `a`.
+            "min" | "max" => {
+                let b = self.expr1(&args[0]);
+                self.emit(Inst::Copy(out, v));
+                let (l, r) = if name == "min" { (b, v) } else { (v, b) };
+                let other = self.operation(Op::Lt, l, r, float, NOWHERE);
+                let (take, done) = (self.new_block(), self.new_block());
+                self.go(End::Branch(other, take, done), take);
+                self.emit(Inst::Copy(out, b));
+                self.go(End::Jump(done), done);
+                vec![out]
+            }
+            // `pow`: squared again and again (`x⁵ = x · x⁴`); a Float to a negative power is `1 / x^k`.
+            _ => {
+                let k = self.int_local();
+                let given = self.expr1(&args[0]);
+                self.emit(Inst::Copy(k, given));
+                let (zero, two) = (self.constant(0), self.constant(2));
+                let negative = self.int_local();
+                self.emit(Inst::Binary(negative, Op::Lt, k, zero, NOWHERE));
+                if !float {
+                    self.emit(Inst::FaultIf(negative, Fault::NegativePower, loc));
+                } else {
+                    let (flip, go_on) = (self.new_block(), self.new_block());
+                    self.go(End::Branch(negative, flip, go_on), flip);
+                    self.emit(Inst::Neg(k, k, loc));
+                    self.go(End::Jump(go_on), go_on);
+                }
+                let base = self.new_slots(&ty)[0];
+                self.emit(Inst::Copy(base, v));
+                self.emit(Inst::Const(out, if float { 1f64.to_bits() as i64 } else { 1 }));
+                let (head, body, odd, after_odd, square, done) =
+                    (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
+                self.go(End::Jump(head), head);
+                let more = self.int_local();
+                self.emit(Inst::Binary(more, Op::Gt, k, zero, NOWHERE));
+                self.go(End::Branch(more, body, done), body);
+                let bit = self.int_local();
+                self.emit(Inst::Binary(bit, Op::Rem, k, two, NOWHERE));
+                self.go(End::Branch(bit, odd, after_odd), odd);
+                let times = self.operation(Op::Times, out, base, float, loc);
+                self.emit(Inst::Copy(out, times));
+                self.go(End::Jump(after_odd), after_odd);
+                self.emit(Inst::Binary(k, Op::Div, k, two, NOWHERE));
+                // Squared only if still needed: `x.pow(1)` must not overflow on `x * x`.
+                let left = self.int_local();
+                self.emit(Inst::Binary(left, Op::Gt, k, zero, NOWHERE));
+                self.go(End::Branch(left, square, head), square);
+                let squared = self.operation(Op::Times, base, base, float, loc);
+                self.emit(Inst::Copy(base, squared));
+                self.go(End::Jump(head), done);
+                if float {
+                    let (flip, after) = (self.new_block(), self.new_block());
+                    self.go(End::Branch(negative, flip, after), flip);
+                    let unit = self.new_slots(&ty)[0];
+                    self.emit(Inst::Const(unit, 1f64.to_bits() as i64));
+                    let inverse = self.operation(Op::Div, unit, out, true, loc);
+                    self.emit(Inst::Copy(out, inverse));
+                    self.go(End::Jump(after), after);
+                }
+                vec![out]
+            }
+        }
+    }
+
     /// `l.sorted` or `l.sorted { a: T, b: T => … }`: a sorted copy. An element moves back while it
     /// comes before the previous one, so equal elements keep their order.
     /// ponytail: insertion sort, O(n²); a merge sort when Lists of thousands are sorted.
@@ -2948,6 +3065,11 @@ impl<'a> Translator<'a> {
                 let ty = self.ty(e);
                 self.call_at(e.id, &name.text, vals, places, name.span, &ty)
             }
+            ExprKind::Static { ty, name, .. } if ty.text == "Float" && name.text == "pi" => {
+                let x = self.new_slots(&Type::Float)[0];
+                self.emit(Inst::Const(x, std::f64::consts::PI.to_bits() as i64));
+                vec![x]
+            }
             ExprKind::Static { ty, name, args, .. } => {
                 let q = method_name(&ty.text, &name.text);
                 let (mut vals, mut places) = (vec![], vec![]);
@@ -3370,6 +3492,9 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(text, StrOp::Format(Show::of(&self.ty(receiver))), vec![v]));
                     self.temps.push((text, Type::String));
                     return vec![text];
+                }
+                if crate::types::number_method(&self.ty(receiver), &name.text).is_some() {
+                    return self.number_method(e, v, &name.text, args);
                 }
                 let conversion = match (&self.ty(receiver), name.text.as_str()) {
                     (Type::Int, "to_float") => Conversion::IntToFloat,

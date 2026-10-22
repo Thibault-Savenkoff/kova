@@ -1,0 +1,12 @@
+fn main {
+    let n: Int := 4
+    print(n.sqrt)
+    print(n.min(2.5))
+    print(n.abs(1))
+    print(Float.pi(2))
+}
+// error: `Int` has no method `sqrt`
+// error: `sqrt` is a `Float` method: `n.to_float.sqrt`
+// error: different types: `Int` expected, `Float` given
+// error: `abs` takes no argument
+// error: `pi` takes no argument

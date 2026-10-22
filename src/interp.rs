@@ -367,6 +367,16 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*d] = compute_float(*op, float(locals[*a]), float(locals[*b])).map_err(|e| fault(e, loc))?;
                 }
                 Inst::FNeg(d, a) => locals[*d] = bits(-float(locals[*a])),
+                Inst::FUnary(d, op, a) => {
+                    let x = float(locals[*a]);
+                    locals[*d] = bits(match op {
+                        FloatOp::Abs => x.abs(),
+                        FloatOp::Sqrt => x.sqrt(),
+                        FloatOp::Floor => x.floor(),
+                        FloatOp::Ceil => x.ceil(),
+                        FloatOp::Round => x.round(),
+                    })
+                }
                 Inst::Convert(d, c, a, loc) => {
                     locals[*d] = match c {
                         Conversion::IntToFloat => bits(locals[*a] as f64),

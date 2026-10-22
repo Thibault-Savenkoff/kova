@@ -391,6 +391,30 @@ impl Generator<'_> {
                 let v = self.b.ins().fneg(a);
                 self.b.def_var(self.vars[*d], v);
             }
+            Inst::FUnary(d, op, a) => {
+                let a = self.read(*a);
+                let ins = self.b.ins();
+                let v = match op {
+                    FloatOp::Abs => ins.fabs(a),
+                    FloatOp::Sqrt => ins.sqrt(a),
+                    FloatOp::Floor => ins.floor(a),
+                    FloatOp::Ceil => ins.ceil(a),
+                    // Like Rust's `round` (interp.rs): the whole part, one further when the rest
+                    // is at least a half (`x - trunc(x)` is exact).
+                    FloatOp::Round => {
+                        let t = ins.trunc(a);
+                        let rest = self.b.ins().fsub(a, t);
+                        let rest = self.b.ins().fabs(rest);
+                        let half = self.b.ins().f64const(0.5);
+                        let up = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, rest, half);
+                        let one = self.b.ins().f64const(1.0);
+                        let step = self.b.ins().fcopysign(one, a);
+                        let further = self.b.ins().fadd(t, step);
+                        self.b.ins().select(up, further, t)
+                    }
+                };
+                self.b.def_var(self.vars[*d], v);
+            }
             Inst::Convert(d, c, a, loc) => {
                 let a = self.read(*a);
                 let v = match c {
