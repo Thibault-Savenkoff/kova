@@ -716,6 +716,14 @@ impl Checker<'_> {
 
     /// Checks that `e` has type `expected`.
     fn expect(&mut self, e: &Expr, expected: &Type) {
+        // `(1, none)` where an `(Int, String?)` is expected: each element against its type.
+        if let (ExprKind::Tuple(elems), Type::Tuple(ts)) = (&e.kind, expected)
+            && elems.len() == ts.len()
+        {
+            elems.iter().zip(ts).for_each(|(x, t)| self.expect(x, t));
+            self.types[e.id] = expected.clone();
+            return;
+        }
         // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
         if let (ExprKind::List(elems), Type::List(elem)) = (&e.kind, expected) {
             elems.iter().for_each(|x| self.expect(x, elem));

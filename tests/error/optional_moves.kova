@@ -1,6 +1,10 @@
 fn keep(s: move String) {
 }
 
+fn size(s: String?) -> Int? {
+    return s?.length
+}
+
 fn main {
     let s: String? := "a"
     if s != none {
@@ -8,3 +12,4 @@ fn main {
     }
 }
 // error: `s` is borrowed here: it cannot be moved
+// error: `s?` takes the value out of `s`, but `s` is only borrowed here

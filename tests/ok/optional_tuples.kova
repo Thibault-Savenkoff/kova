@@ -1,0 +1,42 @@
+// Optionals inside tuples and Lists, given to `move` parameters and to `add`.
+
+fn split(s: String) -> (String, String?) {
+    if s.length < 2 { return (s.clone, none) }
+    return ("head", "tail of {s}")
+}
+
+fn keep(s: move String?) -> Bool {
+    return s != none
+}
+
+fn main {
+    print(split("a"))
+    print(split("abc"))
+    let pairs: List<(Int, Int?)> := [(1, 2), (3, none)]
+    print(pairs)
+    let p: (Float, Float) := (1, 2)
+    print(p)
+    let n: Int? := 4
+    let t: (Int, Int?) := match n {
+        none => (0, none)
+        v => (v, v * 2)
+    }
+    print(t)
+    let s: String := "moved"
+    print(keep(move s))
+    print(keep("temp"))
+    var l: List<String?> := []
+    let w: String := "word"
+    l.add(move w)
+    l.add("temp")
+    l.add(none)
+    print(l)
+}
+// expect: ("a", none)
+// expect: ("head", "tail of abc")
+// expect: [(1, 2), (3, none)]
+// expect: (1.0, 2.0)
+// expect: (4, 8)
+// expect: true
+// expect: true
+// expect: ["word", "temp", none]

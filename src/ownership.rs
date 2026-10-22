@@ -630,7 +630,14 @@ impl Owner<'_> {
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
             // `x?` takes its value; on `none` it leaves the function, like a `return`.
             ExprKind::Try(x) => {
-                self.give(x);
+                match &x.kind {
+                    // `s?` on a parameter: the message says how to only read it.
+                    ExprKind::Var(n) if !is_copy(&self.info.types[x.id]) && self.lookup(n).borrowed => {
+                        self.use_var(n, x.span);
+                        self.diags.push(Diag::new(e.span, t!("try_borrowed", name = n)).help(t!("try_borrowed_help", name = n)));
+                    }
+                    _ => self.give(x),
+                }
                 if self.state.is_some() {
                     self.check_ensures();
                 }

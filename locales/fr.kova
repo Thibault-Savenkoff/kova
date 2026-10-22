@@ -283,6 +283,8 @@ lang fr {
     try_in_contract := "`?` ne peut pas quitter la fonction depuis un contrat"
     optional_cases := "un optionnel (`{type}`) s'examine avec `none => …` et un nom pour sa valeur : `x => …`"
     bind_on_enum := "`{name}` seul reçoit la valeur d'un optionnel (`T?`) ; `{type}` est un enum : écris une de ses variantes"
+    try_borrowed := "`{name}?` sort la valeur de `{name}`, mais `{name}` est seulement emprunté ici"
+    try_borrowed_help := "pour seulement la lire : `if {name} != none \{ … \}`"
     case_value := "un nom pour la valeur (`x => …`)"
 
     // ---- Editor (`kova lsp`) ----
