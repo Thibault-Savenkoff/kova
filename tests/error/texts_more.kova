@@ -1,0 +1,13 @@
+fn main {
+    let n: List<Int> := [1, 2]
+    print(n.join(", "))
+    let s: String := "abc"
+    let i: Int := s.find("b")
+    print(s.repeat("2"))
+    var t: String := "abc"
+    t[0..1] := "x"
+}
+// error: `join` puts Strings together, not the elements of a `List<Int>`
+// error: different types: `Int` expected, `Int?` given
+// error: different types: `Int` expected, `String` given
+// error: a slice is a copy: it cannot be changed

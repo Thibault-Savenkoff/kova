@@ -798,6 +798,159 @@ int64_t kova_str_chars(int64_t a) {
     return l;
 }
 
+// ---- More String methods (Part 4, "Standard library v2"); src/interp.rs does the same ----
+
+// How many characters the first `bytes` bytes of `x` hold.
+static int64_t chars_in(String *x, int64_t bytes) {
+    int64_t n = 0;
+    for (int64_t i = 0; i < bytes; i++) n += ((unsigned char)x->bytes[i] & 0xC0) != 0x80;
+    return n;
+}
+
+// Where character number `k` starts in `x` (its length for `k` = the number of characters).
+static int64_t byte_of(String *x, int64_t k) {
+    int64_t i = 0;
+    for (; i < x->length; i++)
+        if (((unsigned char)x->bytes[i] & 0xC0) != 0x80 && k-- == 0) break;
+    return i;
+}
+
+// `s.find(part)`: the number of the character where `part` starts first, -1 if nowhere.
+int64_t kova_str_find(int64_t a, int64_t b) {
+    String *x = (String *)a;
+    int64_t i = find(x, (String *)b, 0);
+    return i < 0 ? -1 : chars_in(x, i);
+}
+
+// `s[from..to]`: characters `from` to `to` (without it), checked before by src/kir.rs.
+int64_t kova_str_slice(int64_t a, int64_t from, int64_t to) {
+    String *x = (String *)a;
+    int64_t i = byte_of(x, from), j = byte_of(x, to);
+    return kova_str_new(x->bytes + i, j - i);
+}
+
+// `s.repeat(n)`: `s` `n` times; nothing for `n` <= 0.
+int64_t kova_str_repeat(int64_t a, int64_t n) {
+    String *x = (String *)a;
+    if (n <= 0 || x->length == 0) return kova_str_new("", 0);
+    if (x->length > INT64_MAX / n) abort();
+    char *bytes = malloc(x->length * n + 1);
+    if (!bytes) abort();
+    for (int64_t k = 0; k < n; k++) memcpy(bytes + k * x->length, x->bytes, x->length);
+    int64_t r = kova_str_new(bytes, x->length * n);
+    free(bytes);
+    return r;
+}
+
+// `words.join(", ")`: the Strings of the List with `sep` between them.
+int64_t kova_str_join(int64_t l, int64_t sep) {
+    String *s = (String *)sep;
+    int64_t n = kova_list_length(l), size = 0;
+    for (int64_t k = 0; k < n; k++) size += ((String *)kova_list_load(l, k, 0))->length + (k ? s->length : 0);
+    char *bytes = malloc(size + 1), *at = bytes;
+    if (!bytes) abort();
+    for (int64_t k = 0; k < n; k++) {
+        String *w = (String *)kova_list_load(l, k, 0);
+        if (k) at = memcpy(at, s->bytes, s->length), at += s->length;
+        memcpy(at, w->bytes, w->length);
+        at += w->length;
+    }
+    int64_t r = kova_str_new(bytes, size);
+    free(bytes);
+    return r;
+}
+
+// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
+// any other character stays. The same table as `case_of` in src/kir.rs.
+// ponytail: simple rules, no table of all of Unicode (`ß` stays `ß`, Armenian, Georgian… stay).
+static uint32_t case_of(uint32_t c, int upper) {
+    if (upper) {
+        if ((c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE && c != 0xF7) || (c >= 0x3B1 && c <= 0x3C9 && c != 0x3C2) || (c >= 0x430 && c <= 0x44F)) return c - 32;
+        if (c == 0xFF) return 0x178;
+        if (c == 0x3C2) return 0x3A3;
+        if (c >= 0x450 && c <= 0x45F) return c - 80;
+        if (((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) && c % 2 == 1) return c - 1;
+        if (((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) && c % 2 == 0) return c - 1;
+    } else {
+        if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) || (c >= 0x410 && c <= 0x42F)) return c + 32;
+        if (c == 0x178) return 0xFF;
+        if (c >= 0x400 && c <= 0x40F) return c + 80;
+        if (((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) && c % 2 == 0) return c + 1;
+        if (((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) && c % 2 == 1) return c + 1;
+    }
+    return c;
+}
+
+static int64_t change_case(int64_t a, int upper) {
+    String *x = (String *)a;
+    // A capital may take more bytes than its small letter (ÿ, 2 bytes → Ÿ, 2 bytes; ı is left out):
+    // at most 3 bytes per byte is always enough.
+    char *bytes = malloc(3 * x->length + 1);
+    if (!bytes) abort();
+    int64_t size = 0;
+    for (int64_t i = 0; i < x->length;) {
+        unsigned char c = x->bytes[i];
+        int n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        uint32_t code = n == 1 ? c : c & (0x7F >> n);
+        for (int k = 1; k < n; k++) code = (code << 6) | (x->bytes[i + k] & 0x3F);
+        code = case_of(code, upper);
+        if (code < 0x80) bytes[size++] = code;
+        else if (code < 0x800) bytes[size++] = 0xC0 | code >> 6, bytes[size++] = 0x80 | (code & 0x3F);
+        else if (code < 0x10000) bytes[size++] = 0xE0 | code >> 12, bytes[size++] = 0x80 | (code >> 6 & 0x3F), bytes[size++] = 0x80 | (code & 0x3F);
+        else bytes[size++] = 0xF0 | code >> 18, bytes[size++] = 0x80 | (code >> 12 & 0x3F), bytes[size++] = 0x80 | (code >> 6 & 0x3F), bytes[size++] = 0x80 | (code & 0x3F);
+        i += n;
+    }
+    int64_t r = kova_str_new(bytes, size);
+    free(bytes);
+    return r;
+}
+
+int64_t kova_str_to_upper(int64_t a) { return change_case(a, 1); }
+int64_t kova_str_to_lower(int64_t a) { return change_case(a, 0); }
+
+// `s.to_float`: an optional `-`, digits, then maybe `.` and digits, then maybe `e`, a sign and
+// digits; the same rule as `parse_float` in src/kir.rs. Too big (infinite) is not a Float either.
+static int parse_float(int64_t a, double *v) {
+    String *x = (String *)a;
+    int64_t i = 0, n = x->length, d;
+    const char *b = x->bytes;
+    if (i < n && b[i] == '-') i++;
+    for (d = i; i < n && isdigit((unsigned char)b[i]); i++) {}
+    if (i == d) return 0;
+    if (i < n && b[i] == '.') {
+        for (d = ++i; i < n && isdigit((unsigned char)b[i]); i++) {}
+        if (i == d) return 0;
+    }
+    if (i < n && (b[i] == 'e' || b[i] == 'E')) {
+        i++;
+        if (i < n && (b[i] == '+' || b[i] == '-')) i++;
+        for (d = i; i < n && isdigit((unsigned char)b[i]); i++) {}
+        if (i == d) return 0;
+    }
+    if (i != n) return 0;
+    char *text = malloc(n + 1);
+    if (!text) abort();
+    memcpy(text, b, n);
+    text[n] = 0;
+    *v = strtod(text, NULL);
+    free(text);
+    return !isinf(*v);
+}
+
+int64_t kova_str_is_float(int64_t a) {
+    double v;
+    return parse_float(a, &v);
+}
+
+// Its bits (src/kir.rs turns them back into a Float).
+int64_t kova_str_to_float(int64_t a) {
+    double v = 0;
+    if (!parse_float(a, &v)) v = 0;
+    int64_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    return bits;
+}
+
 // How a value is written, one function per `Show` of src/kir.rs: the generated code gives the
 // address of the one it needs, so a program that never shows a Float doesn't carry their formatting.
 typedef void (*Writer)(FILE *f, int64_t value);

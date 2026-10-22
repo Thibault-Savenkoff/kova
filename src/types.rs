@@ -268,6 +268,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "length", Type::Int, false),
     (Type::String, "clone", Type::String, false),
     (Type::String, "to_int", Type::Int, true),
+    (Type::String, "to_float", Type::Float, true),
     (Type::Int, "to_big", Type::BigInt, false),
     // `none` if it is too big for an `Int`.
     (Type::BigInt, "to_int", Type::Int, true),
@@ -287,10 +288,11 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
 ];
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "join", "clone"];
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
-pub const STRING_METHODS: &[&str] = &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
+pub const STRING_METHODS: &[&str] =
+    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat"];
 
 /// `` `length`, `add` ``.
 fn quoted(names: &[&str]) -> String {
@@ -325,6 +327,9 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "split" => (vec![s()], list(s())),
         "words" => (vec![], list(s())),
         "chars" => (vec![], list(Type::Char)),
+        "to_upper" | "to_lower" => (vec![], s()),
+        "find" => (vec![s()], Type::Optional(Box::new(Type::Int))),
+        "repeat" => (vec![Type::Int], s()),
         _ => return None,
     })
 }
@@ -2211,6 +2216,15 @@ impl Checker<'_> {
             "length" => (vec![], Type::Int),
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
+            // `words.join(", ")`: only Strings are joined (a number has no single text).
+            "join" if *elem == Type::String => (vec![(Mode::Read, Type::String)], Type::String),
+            "join" => {
+                self.error(name.span, t!("join_needs_strings", type = Type::List(Box::new(elem.clone())).text()));
+                args.iter().for_each(|a| {
+                    self.expr(a);
+                });
+                return Some(Type::Error);
+            }
             "clone" => return None,
             _ => {
                 let t = Type::List(Box::new(elem.clone())).text();
@@ -2224,7 +2238,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if name.text != "length" {
+        if !matches!(name.text.as_str(), "length" | "join") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -2874,12 +2888,12 @@ impl Checker<'_> {
                     self.expect(i, &k);
                     return Type::Optional(v);
                 }
-                // `scores[1..3]`: a new List.
+                // `scores[1..3]`: a new List; `name[0..3]`: a new String.
                 if let Some((_, a, b)) = i.range() {
                     self.expect(a, &Type::Int);
                     self.expect(b, &Type::Int);
                     return match t {
-                        Type::List(_) | Type::Error => t,
+                        Type::List(_) | Type::String | Type::Error => t,
                         t => {
                             self.error(e.span, t!("index_not_list", type = t.text()));
                             Type::Error
@@ -3054,8 +3068,7 @@ impl Checker<'_> {
                     let mut known: Vec<String> =
                         METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, ..)| format!("`{n}`")).collect();
                     if t == Type::String {
-                        let more = ["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
-                        known.extend(more.iter().map(|n| format!("`{n}`")));
+                        known.extend(STRING_METHODS.iter().map(|n| format!("`{n}`")));
                     }
                     known.extend(NUMBER_METHODS.iter().filter(|n| number_method(&t, n).is_some()).map(|n| format!("`{n}`")));
                     let mut d = Diag::new(name.span, t!("no_method", type = t.text(), name = name.text));

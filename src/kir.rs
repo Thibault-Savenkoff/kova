@@ -332,6 +332,20 @@ pub enum StrOp {
     ListDir,
     /// `exists(path)`: 1 or 0.
     Exists,
+    /// `s.to_upper`, `s.to_lower`: a new String (`case_of`).
+    ToUpper,
+    ToLower,
+    /// `s.find(part)`: the number of the character where `part` starts, -1 if nowhere.
+    Find,
+    /// `s[from..to]`: a new String (the bounds checked before, in characters).
+    Slice,
+    /// `s.repeat(n)`: a new String.
+    Repeat,
+    /// `words.join(sep)` on a `List<String>`: a new String.
+    Join,
+    /// `s.to_float`: 1 if `s` is a Float (`parse_float`), else 0; then its bits.
+    IsFloat,
+    ToFloat,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
     /// `args`: a new `List<String>`, the words given after the program's name.
@@ -373,8 +387,82 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "split" => StrOp::Split,
         "words" => StrOp::Words,
         "chars" => StrOp::Chars,
+        "to_upper" => StrOp::ToUpper,
+        "to_lower" => StrOp::ToLower,
+        "repeat" => StrOp::Repeat,
         _ => return None,
     })
+}
+
+/// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
+/// any other character stays. The same table as `case_of` in `runtime/runtime.c` (Rust's own
+/// `to_uppercase` knows all of Unicode, the C runtime does not: run and build must agree).
+pub fn case_of(c: char, upper: bool) -> char {
+    let c = c as u32;
+    let pairs = |c: u32, even_upper: bool| {
+        let ranges: &[(u32, u32)] = if even_upper { &[(0x100, 0x12F), (0x132, 0x137), (0x14A, 0x177)] } else { &[(0x139, 0x148), (0x179, 0x17E)] };
+        ranges.iter().any(|&(a, b)| (a..=b).contains(&c))
+    };
+    let code = if upper {
+        match c {
+            0x61..=0x7A | 0x3B1..=0x3C9 | 0x430..=0x44F if c != 0x3C2 => c - 32,
+            0xE0..=0xFE if c != 0xF7 => c - 32,
+            0xFF => 0x178,
+            0x3C2 => 0x3A3,
+            0x450..=0x45F => c - 80,
+            _ if pairs(c, true) && c % 2 == 1 => c - 1,
+            _ if pairs(c, false) && c % 2 == 0 => c - 1,
+            _ => c,
+        }
+    } else {
+        match c {
+            0x41..=0x5A | 0x391..=0x3A9 | 0x410..=0x42F if c != 0x3A2 => c + 32,
+            0xC0..=0xDE if c != 0xD7 => c + 32,
+            0x178 => 0xFF,
+            0x400..=0x40F => c + 80,
+            _ if pairs(c, true) && c % 2 == 0 => c + 1,
+            _ if pairs(c, false) && c % 2 == 1 => c + 1,
+            _ => c,
+        }
+    };
+    char::from_u32(code).expect("a letter of the table")
+}
+
+/// `s.to_float`: an optional `-`, digits, then maybe `.` and digits, then maybe `e`, a sign and
+/// digits (same rule as `parse_float` in `runtime/runtime.c`); `None` if infinite.
+pub fn parse_float(s: &str) -> Option<f64> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let digits = |i: &mut usize| {
+        let d = *i;
+        while *i < b.len() && b[*i].is_ascii_digit() {
+            *i += 1;
+        }
+        *i > d
+    };
+    if b.first() == Some(&b'-') {
+        i += 1;
+    }
+    if !digits(&mut i) {
+        return None;
+    }
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        if !digits(&mut i) {
+            return None;
+        }
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        if !digits(&mut i) {
+            return None;
+        }
+    }
+    let v: f64 = if i == b.len() { s.parse().ok()? } else { return None };
+    v.is_finite().then_some(v)
 }
 
 /// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
@@ -439,6 +527,8 @@ pub enum FloatOp {
 pub enum Conversion {
     /// `n.to_float()`
     IntToFloat,
+    /// The bits of a Float, given by the runtime in an integer slot (`StrOp::ToFloat`).
+    FromBits,
     /// `x.to_int()`: drops the decimals; error if NaN or too big.
     FloatToInt,
 }
@@ -2509,7 +2599,7 @@ impl<'a> Translator<'a> {
     fn slice(&mut self, e: &Expr, x: &Expr, i: &Expr) -> Slots {
         let (inclusive, a, b) = i.range().unwrap();
         let ty = self.ty(e);
-        let Type::List(elem) = &ty else { unreachable!("a List checked by the type checker") };
+        let string = ty == Type::String;
         let list = self.expr1(x);
         let (i, end, zero, one) = (self.int_local(), self.int_local(), self.constant(0), self.constant(1));
         let first = self.expr1(a);
@@ -2517,11 +2607,19 @@ impl<'a> Translator<'a> {
         let last = self.expr1(b);
         self.emit(Inst::Binary(end, if inclusive { Op::Plus } else { Op::Minus }, last, if inclusive { one } else { zero }, NOWHERE));
         let (n, bad, loc) = (self.int_local(), self.int_local(), self.loc(e.span));
-        self.emit(Inst::ListLength(n, list));
+        // In characters for a String.
+        self.emit(if string { Inst::Str(n, StrOp::Length, vec![list]) } else { Inst::ListLength(n, list) });
         for (op, l, r) in [(Op::Lt, i, zero), (Op::Lt, end, i), (Op::Gt, end, n)] {
             self.emit(Inst::Binary(bad, op, l, r, NOWHERE));
             self.emit(Inst::FaultIf(bad, Fault::Index, loc));
         }
+        if string {
+            let text = self.int_local();
+            self.emit(Inst::Str(text, StrOp::Slice, vec![list, i, end]));
+            self.temps.push((text, Type::String));
+            return vec![text];
+        }
+        let Type::List(elem) = &ty else { unreachable!("a List checked by the type checker") };
         let out = self.int_local();
         self.emit(Inst::ListNew(out, scalars(elem).len()));
         let (test, body, done) = (self.new_block(), self.new_block(), self.new_block());
@@ -3390,6 +3488,12 @@ impl<'a> Translator<'a> {
                 match name.text.as_str() {
                     "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, list, &elem, &name.text, args),
                     "sorted" => self.sorted(list, &elem, args.last(), e.span),
+                    "join" => {
+                        let (sep, text) = (self.expr1(&args[0]), self.int_local());
+                        self.emit(Inst::Str(text, StrOp::Join, vec![list, sep]));
+                        self.temps.push((text, Type::String));
+                        vec![text]
+                    }
                     "length" => {
                         let n = self.int_local();
                         self.emit(Inst::ListLength(n, list));
@@ -3438,6 +3542,23 @@ impl<'a> Translator<'a> {
                         ty => self.temps.push((dst, ty)),
                     }
                     return vec![dst];
+                }
+                // `s.find(part)`: `none` if it is not there.
+                if self.ty(receiver) == Type::String && name.text == "find" {
+                    let part = self.expr1(&args[0]);
+                    let (at, zero, present, value) = (self.int_local(), self.constant(0), self.int_local(), self.int_local());
+                    self.emit(Inst::Str(at, StrOp::Find, vec![v, part]));
+                    self.emit(Inst::Binary(present, Op::Ge, at, zero, NOWHERE));
+                    self.emit(Inst::Binary(value, Op::Times, at, present, NOWHERE));
+                    return vec![present, value];
+                }
+                if self.ty(receiver) == Type::String && name.text == "to_float" {
+                    let (present, bits) = (self.int_local(), self.int_local());
+                    self.emit(Inst::Str(present, StrOp::IsFloat, vec![v]));
+                    self.emit(Inst::Str(bits, StrOp::ToFloat, vec![v]));
+                    let x = self.new_slots(&Type::Float)[0];
+                    self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
+                    return vec![present, x];
                 }
                 // A `BigInt` is its decimal text: read like a String's, `none` if too big.
                 if matches!(self.ty(receiver), Type::String | Type::BigInt) && name.text == "to_int" {

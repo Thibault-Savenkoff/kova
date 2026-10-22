@@ -380,6 +380,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::Convert(d, c, a, loc) => {
                     locals[*d] = match c {
                         Conversion::IntToFloat => bits(locals[*a] as f64),
+                        Conversion::FromBits => locals[*a],
                         Conversion::FloatToInt => {
                             let x = float(locals[*a]);
                             // False for NaN too: any comparison with NaN is false.
@@ -524,6 +525,27 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let slots: Vec<i64> = heap.args.clone().into_iter().map(|a| heap.make(a)).collect();
                             heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
                         }
+                        StrOp::ToUpper | StrOp::ToLower => {
+                            let t: String = s(0).chars().map(|c| crate::kir::case_of(c, matches!(op, StrOp::ToUpper))).collect();
+                            heap.make(t)
+                        }
+                        StrOp::Find => s(0).find(s(1)).map_or(-1, |i| s(0)[..i].chars().count() as i64),
+                        StrOp::Slice => {
+                            let (from, to) = (locals[a[1]] as usize, locals[a[2]] as usize);
+                            let t: String = s(0).chars().skip(from).take(to - from).collect();
+                            heap.make(t)
+                        }
+                        StrOp::Repeat => {
+                            let t = s(0).repeat(locals[a[1]].max(0) as usize);
+                            heap.make(t)
+                        }
+                        StrOp::Join => {
+                            let parts: Vec<String> = heap.list(locals[a[0]]).2.clone().into_iter().map(|w| heap.get(w).to_string()).collect();
+                            let t = parts.join(heap.get(locals[a[1]]));
+                            heap.make(t)
+                        }
+                        StrOp::IsFloat => crate::kir::parse_float(s(0)).is_some() as i64,
+                        StrOp::ToFloat => crate::kir::parse_float(s(0)).unwrap_or(0.0).to_bits() as i64,
                         StrOp::Chars => {
                             let slots: Vec<i64> = s(0).chars().map(|c| c as i64).collect();
                             heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
