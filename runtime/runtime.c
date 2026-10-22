@@ -1099,6 +1099,23 @@ static uint64_t clock_now(void) {
 }
 
 // `now`: the seconds since 1970 (UTC), as a Float's bits.
+// `x.sin`, `x.pow(y)`… in the order of `kir::Math`. The C library's, which may differ by a last
+// digit from src/shared.rs `math` (`kova run`): Linux on arm64 only, until it gets the Rust runtime.
+double kova_math(int64_t op, double x, double y) {
+    switch (op) {
+    case 0: return sin(x);
+    case 1: return cos(x);
+    case 2: return tan(x);
+    case 3: return asin(x);
+    case 4: return acos(x);
+    case 5: return atan(x);
+    case 6: return log(x);
+    case 7: return log10(x);
+    case 8: return exp(x);
+    default: return pow(x, y);
+    }
+}
+
 int64_t kova_now(void) {
     uint64_t t = clock_now();
     double s = (double)(t / 1000000000u) + (double)(t % 1000000000u) / 1e9;

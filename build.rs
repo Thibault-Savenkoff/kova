@@ -22,6 +22,7 @@ fn main() {
         println!("cargo:rerun-if-changed={f}");
     }
     let rustc = var("RUSTC");
+    let libm = libm_source();
     let installed = |triple: &str| {
         let dir = Command::new(&rustc).args(["--print", "target-libdir", "--target", triple]).output().ok();
         dir.is_some_and(|d| d.status.success() && Path::new(String::from_utf8_lossy(&d.stdout).trim()).is_dir())
@@ -36,7 +37,7 @@ fn main() {
     for (name, triples) in targets {
         let lib = out.join(format!("runtime-{name}.a"));
         match triples.iter().find(|t| installed(t)) {
-            Some(triple) => compile(&rustc, triple, &lib),
+            Some(triple) => compile(&rustc, triple, &lib, &libm, &out),
             None => {
                 println!("cargo:warning=no runtime for `kova build --target {name}`: `rustup target add {}`, then build kova again", triples[0]);
                 std::fs::write(&lib, []).unwrap();
@@ -46,18 +47,44 @@ fn main() {
     let host = var("TARGET");
     let lib = out.join("runtime-host.a");
     if host == "x86_64-apple-darwin" {
-        compile(&rustc, &host, &lib);
+        compile(&rustc, &host, &lib, &libm, &out);
     } else {
         std::fs::write(&lib, []).unwrap();
     }
 }
 
-fn compile(rustc: &str, triple: &str, lib: &Path) {
+/// `libm`'s sources, which cargo downloaded for Cargo.toml before running build.rs.
+fn libm_source() -> PathBuf {
+    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".cargo"))
+    });
+    let registry = home.expect("no home directory").join("registry").join("src");
+    let found = std::fs::read_dir(&registry).into_iter().flatten().flatten().map(|d| d.path().join("libm-0.2.16").join("src").join("lib.rs")).find(|p| p.is_file());
+    found.unwrap_or_else(|| panic!("`libm` 0.2.16 not found in {}", registry.display()))
+}
+
+fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path) {
+    // Linux executables are static, not "position independent".
+    let model: &[&str] = if triple.contains("linux") { &["-C", "relocation-model=static"] } else { &[] };
+    let codegen = ["-C", "panic=abort", "-C", "opt-level=2", "-C", "codegen-units=1"];
+    let rlib = out.join(format!("libm-{triple}.rlib"));
+    let status = Command::new(rustc)
+        .args(["--edition", "2021", "--crate-type", "rlib", "--crate-name", "libm", "--cap-lints", "allow", "--target", triple])
+        .args(codegen)
+        .args(model)
+        .arg("-o")
+        .arg(&rlib)
+        .arg(libm)
+        .status()
+        .expect("the Rust compiler");
+    assert!(status.success(), "`libm` does not compile for {triple}");
     let status = Command::new(rustc)
         .args(["--edition", "2024", "--crate-type", "staticlib", "--crate-name", "kova_runtime", "--target", triple])
-        .args(["-C", "panic=abort", "-C", "opt-level=2", "-C", "lto=fat", "-C", "codegen-units=1"])
-        // Linux executables are static, not "position independent".
-        .args(if triple.contains("linux") { &["-C", "relocation-model=static"][..] } else { &[] })
+        .args(codegen)
+        .args(["-C", "lto=fat"])
+        .args(model)
+        .arg("--extern")
+        .arg(format!("libm={}", rlib.display()))
         .arg("-o")
         .arg(lib)
         .arg("runtime/kova.rs")

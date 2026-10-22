@@ -203,6 +203,7 @@ struct Runtime {
     shows: [FuncId; 6],
     str_ops: [FuncId; 43],
     lists: [FuncId; 10],
+    math: FuncId,
 }
 
 /// The runtime functions for Lists (`kova_list_*` in `runtime/runtime.c`):
@@ -309,6 +310,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         write_value: module.declare_function("kova_write_value", Linkage::Import, &signature(&ints[..2], &[]))?,
         fail: module.declare_function("kova_fail", Linkage::Import, &signature(&[], &[]))?,
         exit: module.declare_function("kova_exit", Linkage::Import, &signature(&ints[..1], &[]))?,
+        math: module.declare_function("kova_math", Linkage::Import, &signature(&[Scalar::Int, Scalar::Float, Scalar::Float], &[Scalar::Float]))?,
         str_new: module.declare_function("kova_str_new", Linkage::Import, &signature(&ints[..2], &ints[..1]))?,
         str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
         shows: {
@@ -395,7 +397,8 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
             files: files.to_vec(),
         };
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists }.function(f, &refs, rt_print, config);
+        let math = module.declare_func_in_func(rt.math, b.func);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -463,6 +466,8 @@ struct Generator<'a> {
     strings: Strings,
     /// See `LIST_FUNCTIONS`.
     lists: [FuncRef; 10],
+    /// `kova_math(op, x, y)`: `sin`, `pow`… (`shared::math`).
+    math: FuncRef,
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/runtime.c`).
@@ -569,6 +574,13 @@ impl Generator<'_> {
             Inst::FNeg(d, a) => {
                 let a = self.read(*a);
                 let v = self.b.ins().fneg(a);
+                self.b.def_var(self.vars[*d], v);
+            }
+            Inst::Math(d, m, x, y) => {
+                let op = self.b.ins().iconst(I64, *m as i64);
+                let (x, y) = (self.read(*x), self.read(*y));
+                let call = self.b.ins().call(self.math, &[op, x, y]);
+                let v = self.b.inst_results(call)[0];
                 self.b.def_var(self.vars[*d], v);
             }
             Inst::FUnary(d, op, a) => {

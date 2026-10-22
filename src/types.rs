@@ -302,7 +302,8 @@ fn quoted(names: &[&str]) -> String {
     names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
 }
 
-pub const NUMBER_METHODS: &[&str] = &["abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round"];
+pub const NUMBER_METHODS: &[&str] =
+    &["abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp"];
 
 /// `n.abs`, `a.max(b)`, `x.sqrt`, `x.round` on an `Int` or a `Float` (Part 4, "Standard library
 /// v2"): their parameters, their result. `floor`, `ceil` and `round` give an `Int`.
@@ -313,6 +314,8 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         (Type::Int | Type::Float, "min" | "max") => (vec![t.clone()], t.clone()),
         (Type::Int | Type::Float, "pow") => (vec![int()], t.clone()),
         (Type::Float, "sqrt") => (vec![], float()),
+        // `libm`'s (musl's, in Rust): the same digits in run and build (`shared::math`).
+        (Type::Float, "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "ln" | "log10" | "exp") => (vec![], float()),
         (Type::Float, "floor" | "ceil" | "round") => (vec![], int()),
         _ => return None,
     })
@@ -3052,6 +3055,14 @@ impl Checker<'_> {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
                     return ft.clone();
+                }
+                if t == Type::Float && name.text == "pow" && args.len() == 1 {
+                    // `x.pow(2)`: an `Int`, squared again and again; `x.pow(0.5)`: a `Float`,
+                    // `libm`'s `pow` (`shared::math`).
+                    let given = self.expr(&args[0]);
+                    let param = if given == Type::Float { Type::Float } else { Type::Int };
+                    self.arguments(name, args, &[(Mode::Read, param)], &[Some(given)]);
+                    return Type::Float;
                 }
                 if let Some((params, result)) = number_method(&t, &name.text) {
                     let params: Vec<(Mode, Type)> = params.into_iter().map(|p| (Mode::Read, p)).collect();

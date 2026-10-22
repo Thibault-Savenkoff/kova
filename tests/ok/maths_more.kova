@@ -1,0 +1,58 @@
+// expect: 0.479425538604203
+// expect: 0.8775825618903728
+// expect: 0.5463024898437905
+// expect: 0.5235987755982989
+// expect: 1.0471975511965979
+// expect: 0.4636476090008061
+// expect: 0.6931471805599453
+// expect: 3.0
+// expect: 2.718281828459045
+// expect: 1.4142135623730951
+// expect: 0.03162277660168379
+// expect: 1.2246467991473532e-16
+// expect: 6.123233995736766e-17
+// expect: -0.8522008497671888
+// expect: -inf
+// expect: NaN
+// expect: NaN
+// expect: inf
+// expect: NaN
+// expect: 1.3310000000000004
+// expect: 1.2100000000000002
+// expect: 1.2100000000000002
+// expect: -1201.928213731988
+// `sin`, `cos`, `ln`, `exp`… and `pow` with a `Float`: the same digits in run and build, on every
+// system. `ln`, `log10`, `exp`, `pow` are exactly rounded (src/shared.rs `math`).
+fn main {
+    let x: Float := 0.5
+    print(x.sin)
+    print(x.cos)
+    print(x.tan)
+    print(x.asin)
+    print(x.acos)
+    print(x.atan)
+    print(2.0.ln)
+    print(1000.0.log10)
+    print(1.0.exp)
+    print(2.0.pow(0.5))
+    print(10.0.pow(-1.5))
+    print(Float.pi.sin)
+    print((Float.pi / 2.0).cos)
+    print(1e22.sin)
+    print(0.0.ln)
+    print((-1.0).ln)
+    print(2.0.asin)
+    print(800.0.exp)
+    print((-8.0).pow(1.0 / 3.0))
+    // An `Int` exponent is still squared again and again, as before.
+    let y: Float := 1.1
+    print(y.pow(3))
+    let k: Int := 2
+    print(y.pow(k))
+    print(y.pow(2.0))
+    var total: Float := 0.0
+    for i in 0..1000 {
+        total += (i.to_float / 10.0).sin * (i.to_float / 7.0).exp.ln
+    }
+    print(total)
+}

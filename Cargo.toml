@@ -9,6 +9,9 @@ cranelift-codegen = { version = "=0.137.0", features = ["x86", "arm64"] }
 cranelift-frontend = "=0.137.0"
 cranelift-module = "=0.137.0"
 cranelift-object = "=0.137.0"
+# `sin`, `pow`… for `kova run` and the runtime alike (src/shared.rs `math`, build.rs): musl's maths
+# in Rust, without the processor's own instructions (`arch`), so the same digits everywhere.
+libm = { version = "=0.2.16", default-features = false }
 lsp-server = "0.10"
 # Reading the objects for Kova's own linker (src/link.rs); already used by cranelift-object.
 object = { version = "0.40", default-features = false, features = ["read_core", "archive", "elf", "coff", "macho", "std"] }

@@ -303,6 +303,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "libm",
  "lsp-server",
  "lsp-types",
  "object",

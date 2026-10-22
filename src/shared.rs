@@ -78,6 +78,276 @@ pub fn parse_float(s: &str) -> Option<f64> {
     v.is_finite().then_some(v)
 }
 
+/// The maths Rust's `core` doesn't have (`kir::Math`, in its order), from `libm`: musl's, in Rust,
+/// with no instruction of the processor, so the same digits in `kova run` and `kova build` on
+/// every system (PLAN Part 4 "Maths").
+pub fn math(op: i64, x: f64, y: f64) -> f64 {
+    match op {
+        0 => libm::sin(x),
+        1 => libm::cos(x),
+        2 => libm::tan(x),
+        3 => libm::asin(x),
+        4 => libm::acos(x),
+        5 => libm::atan(x),
+        6 => ln(x),
+        7 => log10(x),
+        8 => exp(x),
+        _ => pow(x, y),
+    }
+}
+
+// `exp`, `ln`, `log10` and `pow` exactly rounded (the Float nearest to the true value, like
+// Python's on Linux), where `libm`'s may be one last digit off (`1.0.exp` = 2.7182818284590455):
+// computed with about 32 digits ("double-double": a Float plus the small Float it misses), then
+// rounded. The rare cases (NaN, infinities, results near the limits or tiny) go to `libm`.
+
+/// `hi + lo`, with `|lo|` under half a last digit of `hi`.
+#[derive(Clone, Copy)]
+struct Dd(f64, f64);
+
+/// `a + b` exactly (Knuth).
+fn two_sum(a: f64, b: f64) -> Dd {
+    let s = a + b;
+    let v = s - a;
+    Dd(s, (a - (s - v)) + (b - v))
+}
+
+/// `a * b` exactly (Dekker: each cut into two halves of 26 bits).
+fn two_prod(a: f64, b: f64) -> Dd {
+    let p = a * b;
+    let split = |x: f64| {
+        let t = 134217729.0 * x;
+        let hi = t - (t - x);
+        (hi, x - hi)
+    };
+    let ((ah, al), (bh, bl)) = (split(a), split(b));
+    Dd(p, ((ah * bh - p) + ah * bl + al * bh) + al * bl)
+}
+
+impl Dd {
+    fn add(self, o: Dd) -> Dd {
+        let s = two_sum(self.0, o.0);
+        let t = two_sum(self.1, o.1);
+        let s = two_sum(s.0, s.1 + t.0);
+        two_sum(s.0, s.1 + t.1)
+    }
+    fn neg(self) -> Dd {
+        Dd(-self.0, -self.1)
+    }
+    fn mul(self, o: Dd) -> Dd {
+        let p = two_prod(self.0, o.0);
+        two_sum(p.0, p.1 + (self.0 * o.1 + self.1 * o.0))
+    }
+    fn div(self, o: Dd) -> Dd {
+        let q = self.0 / o.0;
+        let r = self.add(o.mul(Dd(q, 0.0)).neg());
+        let q2 = r.0 / o.0;
+        let r = r.add(o.mul(Dd(q2, 0.0)).neg());
+        two_sum(q, q2).add(Dd(r.0 / o.0, 0.0))
+    }
+    fn round(self) -> f64 {
+        self.0 + self.1
+    }
+}
+
+// Written from Python's `decimal` with 80 digits.
+/// `e^(j/32)` for j from -12 to 12.
+const EXP_TABLE: [Dd; 25] = [
+    Dd(0.6872892787909722, -3.7088003061371396e-17),
+    Dd(0.7091061824373984, -1.2868055655346304e-17),
+    Dd(0.7316156289466418, 8.35576468031604e-18),
+    Dd(0.7548396019890073, -9.844076038651084e-18),
+    Dd(0.7788007830714049, -1.0231869534531498e-17),
+    Dd(0.8035225736890608, -3.661886830920417e-17),
+    Dd(0.8290291181804004, -2.7604408719539223e-17),
+    Dd(0.8553453273074225, 1.7204900005057594e-17),
+    Dd(0.8824969025845955, -5.224526916735663e-17),
+    Dd(0.9105103613800342, -3.325048324577564e-17),
+    Dd(0.9394130628134758, -2.152447043447057e-17),
+    Dd(0.9692332344763441, -4.801151707083219e-17),
+    Dd(1.0, 0.0),
+    Dd(1.0317434074991028, -8.944417741043132e-17),
+    Dd(1.0644944589178593, 1.0872888143211957e-16),
+    Dd(1.0982851403078258, 9.070644949793751e-17),
+    Dd(1.1331484530668263, -5.370737708558031e-18),
+    Dd(1.1691184461695043, 6.945488167320411e-17),
+    Dd(1.2062302494209807, 3.9295715071105525e-17),
+    Dd(1.2445201077660952, -7.440512295261056e-17),
+    Dd(1.2840254166877414, 8.968972781793724e-17),
+    Dd(1.3247847587288655, 9.422682377542367e-17),
+    Dd(1.3668379411737963, 5.1449446596411544e-17),
+    Dd(1.4102260349257107, -4.1758810273684196e-17),
+    Dd(1.4549914146182013, 8.517923078996071e-17),
+];
+/// `ln(1 + j/64)` for j from -19 to 27.
+const LN_TABLE: [Dd; 47] = [
+    Dd(-0.3522205935893521, -5.7233316949182485e-18),
+    Dd(-0.33024168687057687, 1.0828321637483858e-17),
+    Dd(-0.3087354816496133, 1.6199186085148102e-17),
+    Dd(-0.2876820724517809, -2.607160616442564e-17),
+    Dd(-0.26706278524904525, 7.32891532732017e-18),
+    Dd(-0.24686007793152578, -1.361743371748368e-17),
+    Dd(-0.22705745063534608, -9.551415762738488e-18),
+    Dd(-0.2076393647782445, -1.2053243216686129e-17),
+    Dd(-0.18859116980755003, 7.432164219196925e-18),
+    Dd(-0.16989903679539747, 4.868008764439071e-19),
+    Dd(-0.15154989812720093, -5.1669593684615594e-18),
+    Dd(-0.13353139262452263, 3.664457663660085e-18),
+    Dd(-0.1158318155251217, -4.338484369808096e-18),
+    Dd(-0.09844007281325252, 4.439009633675136e-18),
+    Dd(-0.0813456394539524, -5.07707635593117e-18),
+    Dd(-0.06453852113757118, 6.470486661692933e-18),
+    Dd(-0.048009219186360606, -1.4390903347292205e-18),
+    Dd(-0.0317486983145803, -3.0382263084680858e-18),
+    Dd(-0.015748356968139168, -1.0021578630528974e-18),
+    Dd(0.0, 0.0),
+    Dd(0.015504186535965254, -3.278321022892429e-19),
+    Dd(0.030771658666753687, 1.0431732029005968e-18),
+    Dd(0.0458095360312942, 1.902959866474257e-18),
+    Dd(0.06062462181643484, 2.6424025938726934e-18),
+    Dd(0.07522342123758753, -5.930604196293241e-18),
+    Dd(0.08961215868968714, -5.4268129336647135e-18),
+    Dd(0.10379679368164356, 5.47772415726659e-18),
+    Dd(0.11778303565638346, -1.1971685747593677e-18),
+    Dd(0.13157635778871926, 1.1123000879729588e-17),
+    Dd(0.1451820098444979, 8.242418783022475e-18),
+    Dd(0.15860503017663857, 1.1257003872182592e-17),
+    Dd(0.17185025692665923, -6.0224538210113705e-18),
+    Dd(0.184922338494012, 3.0236614153574064e-18),
+    Dd(0.19782574332991987, 1.2821194372980142e-17),
+    Dd(0.21056476910734964, -4.249405314729895e-18),
+    Dd(0.22314355131420976, -9.091270597324799e-18),
+    Dd(0.2355660713127669, -2.3943371495187355e-18),
+    Dd(0.24783616390458127, -1.2432209578702523e-17),
+    Dd(0.25995752443692605, 2.069806938978935e-17),
+    Dd(0.27193371548364176, 7.83319637697442e-19),
+    Dd(0.2837681731306446, -2.032665581126656e-17),
+    Dd(0.2954642128938359, -2.16461086040599e-17),
+    Dd(0.3070250352949119, -1.2319916200101964e-17),
+    Dd(0.3184537311185346, 2.7114779367326236e-17),
+    Dd(0.329753286372468, 2.122020616196946e-18),
+    Dd(0.3409265869705932, 1.7467136443544747e-17),
+    Dd(0.3519764231571782, -1.2953893030191963e-17),
+];
+/// `1/n!` for n from 0 to 13.
+const INVERSE_FACTORIALS: [Dd; 14] = [
+    Dd(1.0, 0.0),
+    Dd(1.0, 0.0),
+    Dd(0.5, 0.0),
+    Dd(0.16666666666666666, 9.25185853854297e-18),
+    Dd(0.041666666666666664, 2.3129646346357427e-18),
+    Dd(0.008333333333333333, 1.1564823173178714e-19),
+    Dd(0.001388888888888889, -5.300543954373577e-20),
+    Dd(0.0001984126984126984, 1.7209558293420705e-22),
+    Dd(2.48015873015873e-05, 2.1511947866775882e-23),
+    Dd(2.7557319223985893e-06, -1.858393274046472e-22),
+    Dd(2.755731922398589e-07, 2.3767714622250297e-23),
+    Dd(2.505210838544172e-08, -1.448814070935912e-24),
+    Dd(2.08767569878681e-09, -1.20734505911326e-25),
+    Dd(1.6059043836821613e-10, 1.2585294588752098e-26),
+];
+/// `1/(2n+1)` for n from 0 to 7.
+const INVERSE_ODDS: [Dd; 8] = [
+    Dd(1.0, 0.0),
+    Dd(0.3333333333333333, 1.850371707708594e-17),
+    Dd(0.2, -1.1102230246251566e-17),
+    Dd(0.14285714285714285, 7.93016446160826e-18),
+    Dd(0.1111111111111111, 6.1679056923619804e-18),
+    Dd(0.09090909090909091, -2.523234146875356e-18),
+    Dd(0.07692307692307693, -4.270088556250602e-18),
+    Dd(0.06666666666666667, 9.251858538542971e-19),
+];
+const LN2: Dd = Dd(0.6931471805599453, 2.3190468138462996e-17);
+const LN10: Dd = Dd(2.302585092994046, -2.1707562233822494e-16);
+
+/// `2^k` times a Float whose result stays a normal Float (exact); `k` up to 1024.
+fn times_power_of_2(x: f64, k: i64) -> f64 {
+    if k > 1023 {
+        return times_power_of_2(x * 2.0, k - 1);
+    }
+    x * f64::from_bits(((k + 1023) as u64) << 52)
+}
+
+/// Where `e^x` is a normal Float: from about 2.2e-308 to 1.8e308.
+const EXP_RANGE: core::ops::Range<f64> = -708.39..709.78;
+
+/// `e^x` for a double-double `x` in `EXP_RANGE`: `x = k·ln 2 + j/32 + r` with `|r| ≤ 1/64`,
+/// `e^r` by 14 terms of its series; rounded, then moved by `2^k`, exact while the result is a
+/// normal Float.
+fn exp_dd(x: Dd) -> f64 {
+    let k = libm::round(x.0 / LN2.0);
+    let r = x.add(LN2.mul(Dd(k, 0.0)).neg());
+    let j = libm::round(r.0 * 32.0);
+    let r = r.add(Dd(-j / 32.0, 0.0));
+    let mut t = INVERSE_FACTORIALS[13];
+    for c in INVERSE_FACTORIALS[..13].iter().rev() {
+        t = t.mul(r).add(*c);
+    }
+    times_power_of_2(EXP_TABLE[(j + 12.0) as usize].mul(t).round(), k as i64)
+}
+
+/// `ln x` for a normal `x > 0`: `x = m·2^e` with `m` in [√½, √2), `m` near `c = 1 + j/64`,
+/// `ln m = ln c + 2·atanh((m-c)/(m+c))`, the last by 8 terms of its series.
+fn ln_dd(x: f64) -> Dd {
+    let bits = x.to_bits();
+    let mut e = ((bits >> 52) & 0x7FF) as i64 - 1023;
+    let mut m = f64::from_bits(bits & 0x000F_FFFF_FFFF_FFFF | 0x3FF0_0000_0000_0000);
+    if m > core::f64::consts::SQRT_2 {
+        m /= 2.0;
+        e += 1;
+    }
+    let j = libm::round((m - 1.0) * 64.0);
+    let c = 1.0 + j / 64.0;
+    let s = Dd(m - c, 0.0).div(two_sum(m, c));
+    let s2 = s.mul(s);
+    let mut t = INVERSE_ODDS[7];
+    for c in INVERSE_ODDS[..7].iter().rev() {
+        t = t.mul(s2).add(*c);
+    }
+    let atanh = Dd(2.0, 0.0).mul(s).mul(t);
+    LN2.mul(Dd(e as f64, 0.0)).add(LN_TABLE[(j + 19.0) as usize]).add(atanh)
+}
+
+fn is_normal(x: f64) -> bool {
+    x.is_finite() && x.abs() >= f64::MIN_POSITIVE
+}
+
+fn exp(x: f64) -> f64 {
+    if !EXP_RANGE.contains(&x) {
+        return libm::exp(x);
+    }
+    exp_dd(Dd(x, 0.0))
+}
+
+fn ln(x: f64) -> f64 {
+    if !(is_normal(x) && x > 0.0) {
+        return libm::log(x);
+    }
+    ln_dd(x).round()
+}
+
+fn log10(x: f64) -> f64 {
+    if !(is_normal(x) && x > 0.0) {
+        return libm::log10(x);
+    }
+    ln_dd(x).div(LN10).round()
+}
+
+/// `x^y = e^(y·ln x)`; a negative `x` with a whole `y` gives its sign.
+fn pow(x: f64, y: f64) -> f64 {
+    let whole = y == libm::trunc(y);
+    if !(is_normal(x) && y.is_finite() && x != 1.0 && y != 0.0) || (x < 0.0 && !whole) {
+        return libm::pow(x, y);
+    }
+    let t = ln_dd(x.abs()).mul(Dd(y, 0.0));
+    if !EXP_RANGE.contains(&t.0) {
+        return libm::pow(x, y);
+    }
+    let r = exp_dd(t);
+    // An odd whole `y`: `(-2)^3 = -8`; `|y| ≥ 2^53` is even.
+    if x < 0.0 && y.abs() < 9007199254740992.0 && libm::fmod(y, 2.0) != 0.0 { -r } else { r }
+}
+
 /// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
 /// (`kova run` and `kova build` alike).
 pub fn parse_int(s: &str) -> Option<i64> {

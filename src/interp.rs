@@ -348,6 +348,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*d] = compute_float(*op, float(locals[*a]), float(locals[*b])).map_err(|e| fault(e, loc))?;
                 }
                 Inst::FNeg(d, a) => locals[*d] = bits(-float(locals[*a])),
+                Inst::Math(d, m, x, y) => locals[*d] = bits(crate::shared::math(*m as i64, float(locals[*x]), float(locals[*y]))),
                 Inst::FUnary(d, op, a) => {
                     let x = float(locals[*a]);
                     locals[*d] = bits(match op {

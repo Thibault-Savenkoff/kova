@@ -784,6 +784,12 @@ pub extern "C" fn kova_args() -> i64 {
 
 // ---- Time and chance (src/interp.rs does the same) ----
 
+/// `x.sin`, `x.pow(y)`… (`kir::Math`): the same code as `kova run`'s.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_math(op: i64, x: f64, y: f64) -> f64 {
+    shared::math(op, x, y)
+}
+
 /// `now`: the seconds since 1970 (UTC), as a Float's bits.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_now() -> i64 {

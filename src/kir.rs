@@ -256,6 +256,8 @@ pub enum Inst {
     FNeg(Local, Local),
     /// `x.abs`, `x.sqrt`, `x.floor`, `x.ceil`, `x.round` on a Float, giving a Float.
     FUnary(Local, FloatOp, Local),
+    /// `dst := op(x, y)` (`y` only for `pow`): `shared::math`, the same in run and build.
+    Math(Local, Math, Local, Local),
     Convert(Local, Conversion, Local, Loc),
     /// `results := f(args)`.
     Call(Slots, usize, Slots),
@@ -447,6 +449,21 @@ pub enum FloatOp {
     Ceil,
     /// Half away from zero: `2.5` → `3.0`, `-2.5` → `-3.0` (like Rust's `round`, unlike Python's).
     Round,
+}
+
+/// The maths Rust's `core` doesn't have, numbered as `shared::math` reads them.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Math {
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Ln,
+    Log10,
+    Exp,
+    Pow,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -2495,6 +2512,26 @@ impl<'a> Translator<'a> {
             "ceil" => FloatOp::Ceil,
             _ => FloatOp::Round,
         };
+        let maths = [
+            ("sin", Math::Sin),
+            ("cos", Math::Cos),
+            ("tan", Math::Tan),
+            ("asin", Math::Asin),
+            ("acos", Math::Acos),
+            ("atan", Math::Atan),
+            ("ln", Math::Ln),
+            ("log10", Math::Log10),
+            ("exp", Math::Exp),
+        ];
+        if let Some(&(_, m)) = maths.iter().find(|(n, _)| *n == name) {
+            self.emit(Inst::Math(out, m, v, v));
+            return vec![out];
+        }
+        if name == "pow" && float && self.ty(&args[0]) == Type::Float {
+            let y = self.expr1(&args[0]);
+            self.emit(Inst::Math(out, Math::Pow, v, y));
+            return vec![out];
+        }
         match name {
             _ if float && matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round") => {
                 self.emit(Inst::FUnary(out, f(name), v));
