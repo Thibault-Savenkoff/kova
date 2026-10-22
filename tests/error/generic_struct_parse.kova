@@ -3,6 +3,11 @@ enum Tree<T> {
     Leaf
     Node(value: T)
 }
+enum Light {
+    Red
+}
 fn main {
+    print(Light<Int>.Red)
 }
 // error: an enum with type parameters comes later
+// error: `Light` has no type parameters

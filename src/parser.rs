@@ -1347,6 +1347,9 @@ impl Parser<'_> {
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
             }
+            if variant && !types.is_empty() {
+                self.diags.push(Diag::new(ty.span, t!("not_generic", name = ty.text)).help(t!("not_generic_help", name = ty.text)));
+            }
             let span = ty.span.to(end);
             let kind = if variant { ExprKind::Variant { ty, name, args } } else { ExprKind::Static { ty, types, name, args } };
             return Ok(self.expr(span, kind));

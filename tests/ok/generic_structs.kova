@@ -73,6 +73,10 @@ fn peek<T>(s: Stack<T>) -> T? {
     return s.items[s.size - 1].clone
 }
 
+fn least<T: Comparable>(s: Sorted<T>) -> T? {
+    return s.smallest
+}
+
 fn make<T>(x: move T) -> Stack<T> {
     return Stack<T>.of(move x)
 }
@@ -93,6 +97,7 @@ fn main {
     print(w.is_empty)
     let o := Sorted<String> { items := ["pear", "apple", "fig"] }
     print(o.smallest)
+    print(least(Sorted<Int> { items := [4, 2, 8] }))
     var nest := Stack<Stack<Int>> { items := [] }
     nest.push(s.clone)
     nest.push(Stack<Int>.of(9))
@@ -122,6 +127,7 @@ fn main {
 // expect: none
 // expect: true
 // expect: "apple"
+// expect: 2
 // expect: 9
 // expect: 1
 // expect: (1, "one")

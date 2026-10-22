@@ -33,11 +33,17 @@ fn h(d: Dog<Int>) {
 }
 fn k(s: Sorted<Dog>) {
 }
+fn bad<T>(s: Sorted<T>) {
+}
 fn main {
     let a := Stack { items := [1] }
     let c: Stack<Int> := Stack.empty
     let e := Stack<Int>()
     let q: Stack<String> := Stack<Int>.empty
+    let l: List<Int> := List<Int>.empty
+    let m := List<Int> { x := 1 }
+    let s := Stack<Int> { items := [] }
+    print("{s}")
 }
 // error: a generic struct following an interface comes later: remove `: Display` from `Box`
 // error: `Int` is already a type's name
@@ -50,3 +56,9 @@ fn main {
 // error: `Sorted` needs its `T` to follow `Comparable`, and `Dog` does not
 // error: `()` only makes an empty `List<T>`: `Stack<Int>` is made with its fields
 // error: different types: `Stack<String>` expected, `Stack<Int>` given
+// error: `Sorted` needs its `T` to follow `Comparable`, and `T` does not
+// error: write `<T: Comparable>` where `T` is declared
+// error: `List` has no function `List.empty`
+// error: a `List` has no fields
+// error: a `List` is made with `[1, 2]`, or `List<Int>()` when it starts empty
+// error: `Stack` is generic: a generic struct following `Display` comes later

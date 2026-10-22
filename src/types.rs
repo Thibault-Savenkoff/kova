@@ -703,7 +703,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         if !c.satisfies(&t, &bound) {
             c.diags.push(
                 Diag::new(span, t!("generic_bound", function = ty, name = name, type = t.text(), bound = bound))
-                    .help(t!("generic_bound_help", type = t.text(), bound = bound)),
+                    .help(bound_help(&t, &bound)),
             );
         }
     }
@@ -711,6 +711,22 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows, type_args }, c.diags)
+}
+
+/// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
+fn later(t: &Type, interface: &str) -> Option<String> {
+    match t {
+        Type::Struct(d) if !d.args.is_empty() => Some(t!("generic_interface_later_help", name = d.name, interface = interface)),
+        _ => None,
+    }
+}
+
+/// How `t` can follow `bound`: `struct Dog : Comparable`, or `<T: Comparable>` for a `T`.
+fn bound_help(t: &Type, bound: &str) -> String {
+    match t {
+        Type::Param(p) => t!("param_bound_help", type = p.name, bound = bound),
+        t => later(t, bound).unwrap_or_else(|| t!("generic_bound_help", type = t.text(), bound = bound)),
+    }
 }
 
 /// The type parameters of `struct Stack<T>`, as types and as definitions.
@@ -1302,6 +1318,7 @@ impl Checker<'_> {
                 t if !self.has(&t, "Display") => {
                     let code = &self.src[e.span.start..e.span.end];
                     let help = match &t {
+                        t if later(t, "Display").is_some() => later(t, "Display").unwrap(),
                         Type::Struct(d) => t!("interp_display_help", name = d.name, kind = "struct"),
                         Type::Enum(d) => t!("interp_display_help", name = d.name, kind = "enum"),
                         Type::Param(p) => t!("param_display_help", type = p.name),
@@ -1682,6 +1699,10 @@ impl Checker<'_> {
 
     /// `Dog.create("Rex")`: a struct's function without `self`.
     fn static_call(&mut self, id: usize, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
+        if ty.text == "List" {
+            self.diags.push(Diag::new(ty.span, t!("no_static", type = "List", name = name.text)).help(t!("list_made_help")));
+            return self.unchecked(args);
+        }
         // `Stack<Int>.empty`: the function of `Stack<T>` with `T` = `Int`.
         let mut given = vec![];
         if !types.is_empty() || self.structs.get(&ty.text).is_some_and(|t| is_template(t, &ty.text)) {
@@ -2171,10 +2192,8 @@ impl Checker<'_> {
                                     Type::Enum(d) => (d.name.clone(), "enum"),
                                     t => (t.text(), "struct"),
                                 };
-                                self.diags.push(
-                                    Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text()))
-                                        .help(t!("compare_needs_equal_help", name = name, kind = kind)),
-                                );
+                                let help = later(&culprit, "Equal").unwrap_or_else(|| t!("compare_needs_equal_help", name = name, kind = kind));
+                                self.diags.push(Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(help));
                             }
                         }
                         self.like(a, ta, b);
@@ -2184,6 +2203,7 @@ impl Checker<'_> {
                         let ta = self.expr(a);
                         if !self.has(&ta, "Comparable") {
                             let help = match &ta {
+                                t if later(t, "Comparable").is_some() => later(t, "Comparable").unwrap(),
                                 Type::Struct(d) => t!("order_needs_comparable_help", name = d.name, kind = "struct"),
                                 Type::Enum(d) => t!("order_needs_comparable_help", name = d.name, kind = "enum"),
                                 Type::Param(p) => t!("param_order_help", type = p.name),
@@ -2216,6 +2236,10 @@ impl Checker<'_> {
 
     /// `Dog { name := "Rex", age := 3 }`: every field exactly once, in any order.
     fn struct_literal(&mut self, ty: &Name, types: &[TypeAst], fields: &[(Name, Expr)]) -> Type {
+        if ty.text == "List" {
+            self.diags.push(Diag::new(ty.span, t!("list_literal")).help(t!("list_made_help")));
+            return self.unchecked_fields(fields);
+        }
         let d = match self.structs.get(&ty.text).cloned() {
             Some(t @ Type::Struct(_)) if !types.is_empty() || is_template(&t, &ty.text) => match self.with_types(ty, types) {
                 Type::Struct(d) => d,
@@ -2532,7 +2556,7 @@ impl Checker<'_> {
                     for b in broken {
                         self.diags.push(
                             Diag::new(name.span, t!("generic_bound", function = name.text, name = g.name, type = t.text(), bound = b))
-                                .help(t!("generic_bound_help", type = t.text(), bound = b)),
+                                .help(bound_help(t, b)),
                         );
                     }
                 }
