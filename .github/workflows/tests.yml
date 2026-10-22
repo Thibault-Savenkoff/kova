@@ -18,3 +18,14 @@ jobs:
       - run: cargo test --locked
         env:
           KOVA_LANG: en
+      # `DateTime.now` reads the last rule of the time zone file (src/shared.rs `local_offset`):
+      # the hour must be the one `date` gives, in run and in build.
+      - if: runner.os == 'macOS'
+        run: |
+          printf 'fn main {\n    print(DateTime.now.hour)\n}\n' > now.kova
+          cargo run -q --locked -- build now.kova -o now
+          for tz in "" Europe/Paris Australia/Sydney America/New_York Asia/Kathmandu; do
+            want=$(TZ=$tz date +%-H); run=$(TZ=$tz cargo run -q --locked -- run now.kova); built=$(TZ=$tz ./now)
+            echo "TZ=$tz: date $want, run $run, build $built"
+            [ "$want" = "$run" ] && [ "$want" = "$built" ]
+          done
