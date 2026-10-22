@@ -597,6 +597,16 @@ impl Scope {
 }
 
 impl<'a> Translator<'a> {
+    /// The type of `e`'s value.
+    fn ty(&self, e: &Expr) -> Type {
+        self.info.types[e.id].clone()
+    }
+
+    /// The type of the value `e` gives where it goes (`types::Info::given`).
+    fn given(&self, e: &Expr) -> Type {
+        self.info.given(e)
+    }
+
     fn function(self, name: String, nb_params: usize, returns: Vec<Scalar>) -> Function {
         Function {
             name,
@@ -1026,7 +1036,7 @@ impl<'a> Translator<'a> {
     /// Where the value of `e` lives (`rex.age`, `l[i].name`), and its type. A computed value
     /// (`make_dog.age`) lives in fresh slots.
     fn place(&mut self, e: &Expr) -> (Place, Type) {
-        let ty = self.info.types[e.id].clone();
+        let ty = self.ty(e);
         match &e.kind {
             ExprKind::Var(name) => (Place::Slots(self.slots_of(name)), ty),
             ExprKind::Mark(_, x) => self.place(x),
@@ -1034,7 +1044,7 @@ impl<'a> Translator<'a> {
                 let (p, t) = self.place(x);
                 (p.narrow(slice_of(&t, *i)), ty)
             }
-            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+            ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
                 let (p, t) = self.place(receiver);
                 (p.narrow(slice_of(&t, field_index(&t, &name.text))), ty)
             }
@@ -1092,7 +1102,7 @@ impl<'a> Translator<'a> {
         l
     }
     fn is_float(&self, e: &Expr) -> bool {
-        self.info.types[e.id] == Type::Float
+        self.ty(e) == Type::Float
     }
     /// `dst := a op b`, as integers or floats depending on the type of `a`.
     fn operation(&mut self, op: Op, a: Local, b: Local, float: bool, loc: Loc) -> Local {
@@ -1128,7 +1138,7 @@ impl<'a> Translator<'a> {
         match s {
             Stmt::Declare { pattern, value, .. } => {
                 let v = self.owned(value);
-                let ty = self.info.given(value);
+                let ty = self.given(value);
                 let slots = self.new_slots(&ty);
                 self.copy(&slots, &v);
                 self.bind(pattern, &slots, &ty);
@@ -1138,7 +1148,7 @@ impl<'a> Translator<'a> {
                 // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
                 None => {
                     let v = self.owned(value);
-                    let ty = self.info.given(value);
+                    let ty = self.given(value);
                     let new = self.new_slots(&ty);
                     self.copy(&new, &v);
                     let mut at = 0;
@@ -1256,7 +1266,7 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(head), exit);
             }
             Stmt::Each { name, list, body } => {
-                let Type::List(elem) = self.info.types[list.id].clone() else { unreachable!("List checked by the type checker") };
+                let Type::List(elem) = self.ty(list) else { unreachable!("List checked by the type checker") };
                 // The List cannot change during the loop (`ownership.rs`): its length is read once.
                 let l = self.expr1(list);
                 let n = self.int_local();
@@ -1421,7 +1431,7 @@ impl<'a> Translator<'a> {
     fn part_pieces(&mut self, p: &Part, m: &mut Vec<Piece>) {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
-            Part::Code(e) => match &self.info.types[e.id] {
+            Part::Code(e) => match &self.ty(e) {
                 ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
@@ -1522,7 +1532,7 @@ impl<'a> Translator<'a> {
 
     /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
     fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Mode)> {
-        let t = &self.info.types[receiver.id];
+        let t = &self.ty(receiver);
         if !matches!(t, Type::Struct(_) | Type::Enum(_)) {
             return None;
         }
@@ -1595,7 +1605,7 @@ impl<'a> Translator<'a> {
     /// that the arms may change the place. A computed value belongs to the `match`: each arm frees
     /// what it does not bind.
     fn match_(&mut self, m: &Match, dst: Option<(&[Local], &Type)>) {
-        let ty = self.info.types[m.subject.id].clone();
+        let ty = self.ty(&m.subject);
         let d = &enum_view(&ty).expect("enum checked by the type checker");
         let borrowed = place_root(&m.subject, &self.info.types).is_some();
         let v = if borrowed {
@@ -1665,7 +1675,7 @@ impl<'a> Translator<'a> {
 
     fn value(&mut self, e: &Expr) -> Slots {
         match &e.kind {
-            ExprKind::Int(v) if self.info.types[e.id] == Type::Float => vec![self.float_constant(*v as f64)],
+            ExprKind::Int(v) if self.ty(e) == Type::Float => vec![self.float_constant(*v as f64)],
             ExprKind::Int(v) => vec![self.constant(*v as i64)],
             ExprKind::Float(v) => vec![self.float_constant(*v)],
             ExprKind::Char(c) => vec![self.constant(*c as i64)],
@@ -1687,7 +1697,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::StructLit { fields, .. } => {
                 // Computed in the written order, placed in the declared order.
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 let mut parts: Vec<Slots> = vec![vec![]; members(&ty).len()];
                 for (name, value) in fields {
                     parts[field_index(&ty, &name.text)] = self.owned(value);
@@ -1700,7 +1710,7 @@ impl<'a> Translator<'a> {
             ExprKind::Var(name) => self.slots_of(name),
             ExprKind::Mark(_, x) => self.expr(x),
             ExprKind::List(_) | ExprKind::New(_) => {
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 let Type::List(elem) = &ty else { unreachable!("List checked by the type checker") };
                 let l = self.int_local();
                 self.emit(Inst::ListNew(l, scalars(elem).len()));
@@ -1720,7 +1730,7 @@ impl<'a> Translator<'a> {
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => {
                 let v: Slots = elems.iter().flat_map(|x| self.owned(x)).collect();
-                self.track(&v, &self.info.types[e.id].clone());
+                self.track(&v, &self.ty(e));
                 v
             }
             ExprKind::Field(..) => {
@@ -1759,25 +1769,25 @@ impl<'a> Translator<'a> {
                     let present = self.int_local();
                     self.emit(Inst::Binary(present, Op::Ne, line, zero, NOWHERE));
                     let v = vec![present, line];
-                    self.track(&v, &self.info.types[e.id].clone());
+                    self.track(&v, &self.ty(e));
                     return v;
                 }
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&name.text, args, &mut vals, &mut places);
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 self.call(&name.text, vals, places, name.span, &ty)
             }
             ExprKind::Static { ty, name, args } => {
                 let q = method_name(&ty.text, &name.text);
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&q, args, &mut vals, &mut places);
-                let result = self.info.types[e.id].clone();
+                let result = self.ty(e);
                 self.call(&q, vals, places, name.span, &result)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // A number written with `-` in front is a constant (handles `-9223372036854775808`).
                 match x.kind {
-                    ExprKind::Int(v) if self.info.types[e.id] == Type::Float => return vec![self.float_constant(-(v as f64))],
+                    ExprKind::Int(v) if self.ty(e) == Type::Float => return vec![self.float_constant(-(v as f64))],
                     ExprKind::Int(v) => return vec![self.constant((v as i64).wrapping_neg())],
                     ExprKind::Float(v) => return vec![self.float_constant(-v)],
                     _ => {}
@@ -1800,11 +1810,11 @@ impl<'a> Translator<'a> {
                 vec![dst]
             }
             ExprKind::If { cond, then, otherwise } => {
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 self.if_value(cond, then, otherwise, &ty)
             }
             ExprKind::None => {
-                let v = self.new_slots(&self.info.types[e.id].clone());
+                let v = self.new_slots(&self.ty(e));
                 v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
                 v
             }
@@ -1817,7 +1827,7 @@ impl<'a> Translator<'a> {
                 let nothing = self.new_slots(&self.ret.clone());
                 nothing.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
                 // The error's slots come right after the tag in both results.
-                let skip = match &self.info.types[x.id] {
+                let skip = match &self.ty(x) {
                     Type::Result(_, err) => {
                         let n = scalars(err).len();
                         for k in 1..=n {
@@ -1830,11 +1840,11 @@ impl<'a> Translator<'a> {
                 self.exit(nothing);
                 self.current = present;
                 let value = v[1 + skip..].to_vec();
-                self.track(&value, &self.info.types[e.id].clone());
+                self.track(&value, &self.ty(e));
                 value
             }
             ExprKind::Match(m) => {
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 let v = self.new_slots(&ty);
                 self.match_(m, Some((&v, &ty)));
                 self.track(&v, &ty);
@@ -1842,7 +1852,7 @@ impl<'a> Translator<'a> {
             }
             // `ok(v)`: tag 1, the error's slots 0, then v; `err(e)`: tag 0, e, then the value's slots 0.
             ExprKind::Outcome { ok, value } => {
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 let Type::Result(t, err) = &ty else { unreachable!("result checked by the type checker") };
                 let given = self.owned(value);
                 let zeros = |me: &mut Self, t: &Type| -> Slots {
@@ -1861,7 +1871,7 @@ impl<'a> Translator<'a> {
                 v
             }
             ExprKind::Variant { name, args, .. } => {
-                let ty = self.info.types[e.id].clone();
+                let ty = self.ty(e);
                 let Type::Enum(d) = &ty else { unreachable!("enum checked by the type checker") };
                 let i = d.variant(&name.text).unwrap().0;
                 let fields: Slots = args.iter().flat_map(|a| self.owned(a)).collect();
@@ -1881,8 +1891,8 @@ impl<'a> Translator<'a> {
             }
             // Slot by slot: only for enums made of copied values (checked by the type checker).
             // With `none` (all slots 0), this also tests whether an optional holding a String is empty.
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.info.types[a.id], Type::Enum(_) | Type::Optional(_) | Type::Result(..)) => {
-                let kinds = scalars(&self.info.types[a.id]);
+            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b) if matches!(self.ty(a), Type::Enum(_) | Type::Optional(_) | Type::Result(..)) => {
+                let kinds = scalars(&self.ty(a));
                 let (va, vb) = (self.expr(a), self.expr(b));
                 let same = self.constant(1);
                 for (k, kind) in kinds.iter().enumerate() {
@@ -1911,7 +1921,7 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(after), after);
                 vec![dst]
             }
-            ExprKind::Binary(op @ (BinOp::Plus | BinOp::Eq | BinOp::Ne), a, b) if self.info.types[a.id] == Type::String => {
+            ExprKind::Binary(op @ (BinOp::Plus | BinOp::Eq | BinOp::Ne), a, b) if self.ty(a) == Type::String => {
                 let (va, vb) = (self.expr1(a), self.expr1(b));
                 let dst = self.int_local();
                 if *op == BinOp::Plus {
@@ -1935,13 +1945,13 @@ impl<'a> Translator<'a> {
                 let loc = self.loc(Span::new(pos, pos));
                 vec![self.operation(kir_op(*op), va, vb, self.is_float(a), loc)]
             }
-            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+            ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
                 let (p, _) = self.place(e);
                 self.read(&p)
             }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
-                let ty = self.info.types[receiver.id].clone();
+                let ty = self.ty(receiver);
                 // `move self`: the method takes the value; otherwise it borrows it.
                 // `var self`: the method gives back the changed value, written into the caller's place.
                 let mut places = vec![];
@@ -1957,22 +1967,22 @@ impl<'a> Translator<'a> {
                 };
                 let mut vals = vals;
                 self.arguments(&q, args, &mut vals, &mut places);
-                let result = self.info.types[e.id].clone();
+                let result = self.ty(e);
                 self.call(&q, vals, places, name.span, &result)
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.info.types[receiver.id], Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) =>
+                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) =>
             {
-                let ty = self.info.types[receiver.id].clone();
+                let ty = self.ty(receiver);
                 let v = self.expr(receiver);
                 let copy = self.clone_value(&v, &ty);
                 self.track(&copy, &ty);
                 copy
             }
             // `add` and `remove` change the List, but its slot (the address of its block) stays the same.
-            ExprKind::Method { receiver, name, args } if matches!(self.info.types[receiver.id], Type::List(_)) => {
-                let Type::List(elem) = self.info.types[receiver.id].clone() else { unreachable!() };
+            ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::List(_)) => {
+                let Type::List(elem) = self.ty(receiver) else { unreachable!() };
                 let list = self.expr1(receiver);
                 match name.text.as_str() {
                     "length" => {
@@ -2004,14 +2014,14 @@ impl<'a> Translator<'a> {
                     "length" => StrOp::Length,
                     _ => StrOp::Clone,
                 };
-                if self.info.types[receiver.id] == Type::String && name.text == "to_int" {
+                if self.ty(receiver) == Type::String && name.text == "to_int" {
                     let (present, n) = (self.int_local(), self.int_local());
                     self.emit(Inst::Str(present, StrOp::IsInt, vec![v]));
                     self.emit(Inst::Str(n, StrOp::ToInt, vec![v]));
                     return vec![present, n];
                 }
                 // A Char is a Unicode code: 0 to 0x10FFFF, without the surrogates 0xD800 to 0xDFFF.
-                if self.info.types[receiver.id] == Type::Int && name.text == "to_char" {
+                if self.ty(receiver) == Type::Int && name.text == "to_char" {
                     let test = |t: &mut Self, op, bound| {
                         let (b, d) = (t.constant(bound), t.int_local());
                         t.emit(Inst::Binary(d, op, v, b, NOWHERE));
@@ -2026,7 +2036,7 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Binary(code, Op::Times, v, present, NOWHERE));
                     return vec![present, code];
                 }
-                if self.info.types[receiver.id] == Type::String {
+                if self.ty(receiver) == Type::String {
                     let (dst, op) = (self.int_local(), string(name.text.as_str()));
                     self.emit(Inst::Str(dst, op, vec![v]));
                     if op == StrOp::Clone {
@@ -2034,13 +2044,13 @@ impl<'a> Translator<'a> {
                     }
                     return vec![dst];
                 }
-                let conversion = match (&self.info.types[receiver.id], name.text.as_str()) {
+                let conversion = match (&self.ty(receiver), name.text.as_str()) {
                     (Type::Int, "to_float") => Conversion::IntToFloat,
                     (Type::Float, "to_int") => Conversion::FloatToInt,
                     (Type::Char, "to_int") => return vec![v], // a Char already is its code
                     other => unreachable!("method checked by the type checker: {other:?}"),
                 };
-                let dst = self.new_slots(&self.info.types[e.id].clone())[0];
+                let dst = self.new_slots(&self.ty(e))[0];
                 let loc = self.loc(name.span);
                 self.emit(Inst::Convert(dst, conversion, v, loc));
                 vec![dst]
