@@ -1,0 +1,18 @@
+# The tests on the systems this machine is not: started by hand (`gh workflow run tests.yml`),
+# since a Mac minute counts ten (PLAN Part 4 "Kova without a C compiler").
+name: tests
+on: workflow_dispatch
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+        env:
+          KOVA_LANG: en

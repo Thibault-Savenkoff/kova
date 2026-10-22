@@ -14,6 +14,8 @@ mod bigint;
 #[path = "../src/shared.rs"]
 mod shared;
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
+#[cfg_attr(windows, path = "windows.rs")]
+#[cfg_attr(target_os = "macos", path = "macos.rs")]
 mod sys;
 
 use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error};
@@ -809,18 +811,83 @@ pub extern "C" fn kova_random(from: i64, to: i64) -> i64 {
     shared::random(state, from, to)
 }
 
-// ---- What Rust's own code asks the C library for, which a Kova executable doesn't have
-// (`floor`, `ceil` and `trunc`, which Cranelift calls on x86-64, come with Rust's `compiler_builtins`). ----
+// ---- What the generated code and Rust's own code ask the C library for, which a Kova
+// executable doesn't have ----
+
+/// Without the decimals; `-0.5` → `-0.0`. Cranelift calls it, `floor` and `ceil` on x86-64.
+/// Exact, like `floor` and `ceil` (no rounding happens), so the same as `kova run`'s.
+#[cfg(not(target_os = "macos"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn trunc(x: f64) -> f64 {
+    // From 2^52 on, a Float has no decimals; NaN and infinities stay too.
+    if !(x.abs() < 4503599627370496.0) {
+        return x;
+    }
+    (x as i64 as f64).copysign(x)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn floor(x: f64) -> f64 {
+    let t = trunc(x);
+    if t > x { t - 1.0 } else { t }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn ceil(x: f64) -> f64 {
+    let t = trunc(x);
+    if t < x { t + 1.0 } else { t }
+}
 
 // Rust's `core` is made for programs that can unwind after a panic; this one stops at once
 // (`panic` above), so these are never called.
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_eh_personality() {}
 
+#[cfg(not(target_os = "macos"))] // libSystem has it
 #[unsafe(no_mangle)]
 pub extern "C" fn _Unwind_Resume() -> ! {
     exit(101)
 }
+
+/// The same with Microsoft's tools: asked by Windows when a crash goes up the calls; 1 = "not
+/// handled here".
+#[cfg(target_env = "msvc")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __CxxFrameHandler3() -> i32 {
+    1
+}
+
+/// Microsoft's compiler wants it as soon as a program uses Floats.
+#[cfg(target_env = "msvc")]
+#[unsafe(no_mangle)]
+pub static _fltused: i32 = 0;
+
+// Microsoft's: a function whose variables take more than a page (4 KB) first touches each page,
+// from the top, so that Windows grows the stack (`rax` = their size). The same as LLVM's own.
+#[cfg(target_env = "msvc")]
+core::arch::global_asm!(
+    ".globl __chkstk",
+    "__chkstk:",
+    "push rcx",
+    "push rax",
+    "cmp rax, 0x1000",
+    "lea rcx, [rsp + 24]",
+    "jb 3f",
+    "2:",
+    "sub rcx, 0x1000",
+    "test [rcx], rcx",
+    "sub rax, 0x1000",
+    "cmp rax, 0x1000",
+    "ja 2b",
+    "3:",
+    "sub rcx, rax",
+    "test [rcx], rcx",
+    "pop rax",
+    "pop rcx",
+    "ret",
+);
 
 // Copying memory, written with the processor's own instructions: written as Rust loops, the
 // compiler would turn them back into calls to themselves (same for `strlen`, so `c_text` reads
@@ -828,33 +895,35 @@ pub extern "C" fn _Unwind_Resume() -> ! {
 #[cfg(all(target_arch = "x86_64", not(target_os = "macos")))]
 mod memory {
     use core::arch::asm;
+    use core::ffi::c_void;
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn memcpy(to: *mut u8, from: *const u8, n: usize) -> *mut u8 {
+    pub unsafe extern "C" fn memcpy(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
         unsafe { asm!("rep movsb", inout("rcx") n => _, inout("rdi") to => _, inout("rsi") from => _, options(nostack, preserves_flags)) };
         to
     }
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn memmove(to: *mut u8, from: *const u8, n: usize) -> *mut u8 {
+    pub unsafe extern "C" fn memmove(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
         if (to as usize).wrapping_sub(from as usize) >= n {
             return unsafe { memcpy(to, from, n) };
         }
         // `to` overlaps the end of `from`: backwards, from the last byte.
         unsafe {
-            asm!("std", "rep movsb", "cld", inout("rcx") n => _, inout("rdi") to.add(n).wrapping_sub(1) => _, inout("rsi") from.add(n).wrapping_sub(1) => _, options(nostack))
+            asm!("std", "rep movsb", "cld", inout("rcx") n => _, inout("rdi") (to as *mut u8).wrapping_add(n).wrapping_sub(1) => _, inout("rsi") (from as *const u8).wrapping_add(n).wrapping_sub(1) => _, options(nostack))
         };
         to
     }
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn memset(to: *mut u8, c: i32, n: usize) -> *mut u8 {
+    pub unsafe extern "C" fn memset(to: *mut c_void, c: i32, n: usize) -> *mut c_void {
         unsafe { asm!("rep stosb", inout("rcx") n => _, inout("rdi") to => _, in("al") c as u8, options(nostack, preserves_flags)) };
         to
     }
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    pub unsafe extern "C" fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> i32 {
+        let (a, b) = (a as *const u8, b as *const u8);
         for i in 0..n {
             let (x, y) = unsafe { (a.add(i).read_volatile(), b.add(i).read_volatile()) };
             if x != y {
@@ -865,7 +934,7 @@ mod memory {
     }
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    pub unsafe extern "C" fn bcmp(a: *const c_void, b: *const c_void, n: usize) -> i32 {
         unsafe { memcmp(a, b, n) }
     }
 }

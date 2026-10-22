@@ -35,15 +35,17 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
     if !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none() {
-        let a = tmp.join("runtime.a");
+        let a = tmp.join(if cfg!(windows) { "runtime.lib" } else { "runtime.a" });
         std::fs::write(&a, RUNTIME).map_err(|e| e.to_string())?;
         // The runtime brings its own entry point and asks nothing of the C library.
-        let res = Command::new("cc")
-            .args(["-nostdlib", "-static", "-no-pie", "-Wl,--gc-sections", "-s", "-o"])
-            .arg(output)
-            .arg(&o)
-            .arg(&a)
-            .output();
+        let res = if cfg!(windows) {
+            windows_rust_link(output, &o, &a)
+        } else if cfg!(target_os = "macos") {
+            // Linked to libSystem, as Apple wants (runtime/macos.rs).
+            Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output()
+        } else {
+            Command::new("cc").args(["-nostdlib", "-static", "-no-pie", "-Wl,--gc-sections", "-s", "-o"]).arg(output).arg(&o).arg(&a).output()
+        };
         let _ = std::fs::remove_dir_all(&tmp);
         return linked(res);
     }
@@ -112,6 +114,22 @@ fn windows_link(output: &str, o: &Path, c: &Path, tmp: &Path) -> std::io::Result
     let _ = tmp;
     let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
     Command::new("gcc").args(["-static", "-O2"]).args(small).arg("-o").arg(output).arg(o).arg(c).arg("-lshell32").output()
+}
+
+/// Windows with the Rust runtime: Microsoft's linker, found where Visual Studio put it, else
+/// MinGW's `gcc`; the executable asks only `kernel32.dll` (runtime/windows.rs).
+fn windows_rust_link(output: &str, o: &Path, a: &Path) -> std::io::Result<std::process::Output> {
+    #[cfg(windows)]
+    if let Some(mut link) = find_msvc_tools::find(if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }, "link.exe") {
+        return link
+            .args(["/NOLOGO", "/NODEFAULTLIB", "/ENTRY:kova_start", "/SUBSYSTEM:CONSOLE", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"])
+            .arg(format!("/OUT:{output}"))
+            .arg(o)
+            .arg(a)
+            .arg("kernel32.lib")
+            .output();
+    }
+    Command::new("gcc").args(["-nostdlib", "-s", "-Wl,--gc-sections", "-Wl,-e,kova_start", "-o"]).arg(output).arg(o).arg(a).arg("-lkernel32").output()
 }
 
 /// The C runtime functions called by the generated code.

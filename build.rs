@@ -11,7 +11,8 @@ fn main() {
     for f in ["runtime", "src/shared.rs", "src/bigint.rs"] {
         println!("cargo:rerun-if-changed={f}");
     }
-    let known = var("CARGO_CFG_TARGET_OS") == "linux" && var("CARGO_CFG_TARGET_ARCH") == "x86_64";
+    let os = var("CARGO_CFG_TARGET_OS");
+    let known = os == "macos" || matches!(os.as_str(), "linux" | "windows") && var("CARGO_CFG_TARGET_ARCH") == "x86_64";
     if !known {
         std::fs::write(&lib, []).unwrap();
         return;
@@ -21,7 +22,7 @@ fn main() {
         .args(["--edition", "2024", "--crate-type", "staticlib", "--crate-name", "kova_runtime", "--target", &target])
         .args(["-C", "panic=abort", "-C", "opt-level=2", "-C", "lto=fat", "-C", "codegen-units=1"])
         // Linux executables are static, not "position independent".
-        .args(["-C", "relocation-model=static"])
+        .args(if os == "linux" { &["-C", "relocation-model=static"][..] } else { &[] })
         .arg("-o")
         .arg(&lib)
         .arg("runtime/kova.rs")
