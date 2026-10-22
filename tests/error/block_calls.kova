@@ -1,0 +1,23 @@
+// Calling a block parameter, and giving one along.
+fn twice(f: {Int -> Int}, x: Int) -> Int {
+    print(f)
+    return f(true)
+}
+
+fn keep(g: var {}) {
+    g
+}
+
+fn identity<T>(x: T) -> T {
+    return x
+}
+
+fn later(h: {}) {
+    identity({ x: Int => x })
+    twice(h, 1)
+}
+// error: `f` is a block: call it with its arguments, `f(…)`
+// error: different types: `Int` expected, `Bool` given
+// error: a block is only read: write `g: {…}`, without `var`
+// error: a block cannot be given for `T` in `identity`: it would outlive the call
+// error: different types: `{Int -> Int}` expected, `{}` given

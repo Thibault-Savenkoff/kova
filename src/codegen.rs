@@ -9,7 +9,7 @@ use std::process::Command;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, TrapCode, Value};
-use cranelift_codegen::isa::TargetFrontendConfig;
+use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
@@ -207,7 +207,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
             files: files.to_vec(),
         };
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
-        Generator { b, vars: vec![], types: f.locals.clone(), rt_fault, fail, strings, lists }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -230,6 +230,8 @@ struct Generator<'a> {
     b: FunctionBuilder<'a>,
     vars: Vec<Variable>,
     types: Vec<Scalar>,
+    /// For the signature of a block called through its address (`CallIndirect`).
+    call_conv: CallConv,
     rt_fault: FuncRef,
     fail: Fail,
     strings: Strings,
@@ -384,6 +386,24 @@ impl Generator<'_> {
             Inst::Call(d, f, args) => {
                 let vals: Vec<Value> = args.iter().map(|&l| self.read(l)).collect();
                 let call = self.b.ins().call(refs[*f], &vals);
+                let results = self.b.inst_results(call).to_vec();
+                for (&d, r) in d.iter().zip(results) {
+                    self.b.def_var(self.vars[d], r);
+                }
+            }
+            Inst::FuncRef(d, f) => {
+                let address = self.b.ins().func_addr(I64, refs[*f]);
+                self.b.def_var(self.vars[*d], address);
+            }
+            // The signature comes from the slots given and received.
+            Inst::CallIndirect(d, f, args) => {
+                let mut sig = Signature::new(self.call_conv);
+                sig.params.extend(args.iter().map(|&l| AbiParam::new(machine_type(self.types[l]))));
+                sig.returns.extend(d.iter().map(|&l| AbiParam::new(machine_type(self.types[l]))));
+                let sig = self.b.import_signature(sig);
+                let callee = self.read(*f);
+                let vals: Vec<Value> = args.iter().map(|&l| self.read(l)).collect();
+                let call = self.b.ins().call_indirect(sig, callee, &vals);
                 let results = self.b.inst_results(call).to_vec();
                 for (&d, r) in d.iter().zip(results) {
                     self.b.def_var(self.vars[d], r);

@@ -87,6 +87,12 @@ test "carré de 3" {
 //  ^^^^^ keyword.control.contract.kova
 //        ^^^^^ entity.name.function.call.kova
 }
+fn tous(l: List<Int>, garde: {Int -> Bool}) -> Bool {
+//                                ^^ keyword.operator.arrow.kova
+    return l.any { x: Int => garde(x) }
+//           ^^^ - storage.modifier.kova
+//                        ^^ keyword.operator.arrow.kova
+}
 header {
 // <------ keyword.other.header.kova
 }

@@ -178,6 +178,8 @@ enum Helper {
     Dispatch(String, String),
     /// For the debugger: returns the text of a value as a contract's `values:` line shows it.
     Look(Type),
+    /// The function of a block (`{ x: Int => … }`), number `k` in the blocks made (`Translator::made`).
+    Block(usize),
 }
 
 /// For the debugger (`kova debug`): a variable visible at a statement, its slots, and the
@@ -252,6 +254,10 @@ pub enum Inst {
     Convert(Local, Conversion, Local, Loc),
     /// `results := f(args)`.
     Call(Slots, usize, Slots),
+    /// `dst := function f`, to call it later with `CallIndirect` (a block).
+    FuncRef(Local, usize),
+    /// `results := (the function in this local)(args)`: calls a block.
+    CallIndirect(Slots, Local, Slots),
     /// `dst := "text"`: a new String.
     Text(Local, String),
     /// `dst := op(args)`, done by the runtime (`kova_str_*` in `runtime/runtime.c`).
@@ -601,6 +607,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let sites: Vec<bool> = all.iter().map(site).collect();
     let generic_sites: HashMap<&str, bool> = generic.iter().map(|(n, (g, _))| (n.as_str(), site(g))).collect();
     let helpers = RefCell::new(vec![]);
+    let made = RefCell::new(vec![]);
     let translator = |ret: Type, ensures: Vec<&'f Contract>, subst: Vec<(String, Type)>| Translator {
         src,
         info,
@@ -611,6 +618,8 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         sites: &sites,
         generic_sites: &generic_sites,
         helpers: &helpers,
+        made: &made,
+        owner: String::new(),
         first_helper: all.len(),
         contracts,
         built,
@@ -627,6 +636,8 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         current: 0,
         loops: vec![],
         temps: vec![],
+        envs: vec![],
+        env_marks: vec![],
     };
     let make = |(name, receiver, params, ret, written_contracts, body, subst): &Source<'f>, with_site: bool| {
             let mut structs = info.structs.clone();
@@ -635,6 +646,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
             let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect(), subst);
+            t.owner = name.clone();
             let mut returns = scalars(&ret);
             if let Some((r, ty)) = receiver {
                 let v = t.new_slots(ty);
@@ -674,6 +686,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
                 let shown = format!("{name}<{}>", types.iter().map(Type::text).collect::<Vec<_>>().join(", "));
                 make(&(shown, receiver, g.2, g.3, g.4, g.5, subst), generic_sites[name.as_str()])
             }
+            Helper::Block(k) => made.borrow_mut()[*k].take().expect("each block is made once"),
             h => translator(Type::Unit, vec![], vec![]).helper_function(h),
         });
         k += 1;
@@ -699,6 +712,10 @@ struct Translator<'a> {
     generic_sites: &'a HashMap<&'a str, bool>,
     /// The helpers asked for so far: helper `k` is function `first_helper + k`.
     helpers: &'a RefCell<Vec<Helper>>,
+    /// The functions of the blocks met so far (`Helper::Block`), taken when the helpers are made.
+    made: &'a RefCell<Vec<Option<Function>>>,
+    /// The function being translated (`main`), to name its blocks: `block in main`.
+    owner: String,
     first_helper: usize,
     /// Keep contracts (false with `--boost`).
     contracts: bool,
@@ -725,6 +742,11 @@ struct Translator<'a> {
     /// The Strings and Lists made by the current statement and not given to anyone yet
     /// (with what they are, see `heap`): freed at the end of the statement.
     temps: Vec<(Local, Type)>,
+    /// The boxes of the blocks given to the call being prepared, with the slots of what each one
+    /// holds: given back to those variables after the call (copy-in / copy-out, like `var`).
+    envs: Vec<(Local, Vec<Slots>)>,
+    /// Where the boxes of each call whose arguments are ready start in `envs` (see `call_to`).
+    env_marks: Vec<usize>,
 }
 
 /// The names of one open block.
@@ -862,7 +884,7 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) | Helper::Block(_) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
@@ -1922,6 +1944,7 @@ impl<'a> Translator<'a> {
                 self.temps.push((text, Type::String));
                 m.push(Piece::Value(text, Show::String));
             }
+            Type::Block(..) => m.push(Piece::Text(ty.text())),
             Type::Char | Type::String => {
                 let quote = if *ty == Type::Char { "'" } else { "\"" };
                 m.push(Piece::Text(quote.into()));
@@ -1999,6 +2022,12 @@ impl<'a> Translator<'a> {
     /// argument; a `var` one changes a place: (its slots, slots for what the call gives back)
     /// goes into `places`.
     fn arguments(&mut self, callee: &str, args: &[Expr], vals: &mut Slots, places: &mut Vec<(Place, Slots)>) {
+        let mark = self.envs.len();
+        self.arguments_from(callee, args, vals, places);
+        self.env_marks.push(mark);
+    }
+
+    fn arguments_from(&mut self, callee: &str, args: &[Expr], vals: &mut Slots, places: &mut Vec<(Place, Slots)>) {
         let modes = self.signatures[callee].1.clone();
         for (a, mode) in args.iter().zip(modes) {
             let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
@@ -2048,7 +2077,120 @@ impl<'a> Translator<'a> {
         for (place, out) in &places {
             self.write(place, out);
         }
+        if let Some(mark) = self.env_marks.pop() {
+            self.give_back(mark);
+        }
         self.track(&result, ty);
+        result
+    }
+
+    /// After a call: what its blocks changed goes back into the variables, and their boxes are freed.
+    fn give_back(&mut self, mark: usize) {
+        for (env, held) in self.envs.split_off(mark) {
+            if held.is_empty() {
+                continue;
+            }
+            let zero = self.constant(0);
+            for (k, &l) in held.iter().flatten().enumerate() {
+                self.emit(Inst::ListLoad(l, env, zero, k));
+            }
+            self.emit(Inst::ListFree(env));
+        }
+    }
+
+    /// A block given to a function: its function, and a box holding a copy of the variables it
+    /// uses around it (`Info::captures`). The block's function reads them from the box and writes
+    /// them back before returning; `give_back` copies them into the variables after the call.
+    fn block_value_of(&mut self, e: &Expr, params: &[ast::Param], body: &Block) -> Slots {
+        let Type::Block(ps, r) = self.ty(e) else { unreachable!("block checked by the type checker") };
+        let held: Vec<(String, Slots, Type)> = (self.info.captures.get(&e.id).into_iter().flatten())
+            .map(|n| {
+                let (v, t) = self.variable(n);
+                (n.clone(), v, t)
+            })
+            .collect();
+        let slots: Slots = held.iter().flat_map(|(_, v, _)| v.clone()).collect();
+        let env = if slots.is_empty() { self.constant(0) } else {
+            let env = self.int_local();
+            self.emit(Inst::ListNew(env, slots.len()));
+            self.push(env, &slots);
+            env
+        };
+        self.envs.push((env, held.iter().map(|(_, v, _)| v.clone()).collect()));
+        let mut t = Translator {
+            src: self.src,
+            info: self.info,
+            subst: self.subst.clone(),
+            debug: false,
+            numbers: self.numbers,
+            signatures: self.signatures,
+            sites: self.sites,
+            generic_sites: self.generic_sites,
+            helpers: self.helpers,
+            made: self.made,
+            owner: format!("block in {}", self.owner.trim_start_matches("block in ")),
+            first_helper: self.first_helper,
+            contracts: self.contracts,
+            built: self.built,
+            watching: self.watching,
+            ensures: vec![],
+            ret: (*r).clone(),
+            result: None,
+            site: None,
+            outs: vec![],
+            names: vec![Scope::borrowed(), Scope::default()],
+            locals: vec![],
+            blocks: vec![],
+            current: 0,
+            loops: vec![],
+            temps: vec![],
+            envs: vec![],
+            env_marks: vec![],
+        };
+        let inner_env = t.int_local();
+        for (p, ty) in params.iter().zip(&ps) {
+            let v = t.new_slots(ty);
+            t.names[0].vars.insert(p.name.text.clone(), (v, ty.clone()));
+        }
+        let nb_params = t.locals.len();
+        t.current = t.new_block();
+        let zero = t.constant(0);
+        let mut inside = vec![];
+        for (name, _, ty) in &held {
+            let v = t.new_slots(ty);
+            t.names[0].vars.insert(name.clone(), (v.clone(), ty.clone()));
+            inside.extend(v);
+        }
+        for (k, &l) in inside.iter().enumerate() {
+            t.emit(Inst::ListLoad(l, inner_env, zero, k));
+        }
+        let v = if *r == Type::Unit {
+            t.block(body);
+            vec![]
+        } else {
+            t.block_value(body, &r)
+        };
+        for (k, &l) in inside.iter().enumerate() {
+            t.emit(Inst::ListStore(inner_env, zero, k, l));
+        }
+        t.finish(End::Return(v));
+        let name = t.owner.clone();
+        let f = t.function(name, nb_params, scalars(&r));
+        let k = {
+            let mut made = self.made.borrow_mut();
+            made.push(Some(f));
+            made.len() - 1
+        };
+        let num = self.helper(Helper::Block(k));
+        let fun = self.int_local();
+        self.emit(Inst::FuncRef(fun, num));
+        vec![fun, env]
+    }
+
+    /// Calls the block `b` (its function and its box) with `vals`.
+    fn call_block(&mut self, b: &[Local], vals: Slots, ty: &Type) -> Slots {
+        let result = self.new_slots(ty);
+        self.emit(Inst::CallIndirect(result.clone(), b[0], [vec![b[1]], vals].concat()));
         result
     }
 
@@ -2056,15 +2198,15 @@ impl<'a> Translator<'a> {
     /// block's body copied inside (like Lisaac, which inlines its blocks). The List cannot change
     /// meanwhile (`ownership.rs`): its length is read once.
     fn block_method(&mut self, e: &Expr, list: Local, elem: &Type, name: &str, args: &[Expr]) -> Slots {
-        let ExprKind::Block { params, body } = &args.last().expect("block checked by the type checker").kind else {
-            unreachable!("block checked by the type checker")
-        };
+        let block = args.last().expect("block checked by the type checker");
+        // `l.each(f)`: a block parameter, called at each turn.
+        let given = (!matches!(block.kind, ExprKind::Block { .. })).then(|| self.expr(block));
         let ty = self.ty(e);
         let one = |v: Slots| vec![(v, elem.clone())];
         match name {
             "each" => {
                 self.each_element(list, elem, |t, _, v| {
-                    t.inline(params, body, one(v), None);
+                    t.run(block, &given, one(v), None);
                 });
                 vec![]
             }
@@ -2074,10 +2216,10 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::ListNew(out, scalars(out_elem).len()));
                 self.each_element(list, elem, |t, _, v| {
                     if name == "map" {
-                        let x = t.inline(params, body, one(v), Some(out_elem));
+                        let x = t.run(block, &given, one(v), Some(out_elem));
                         return t.push(out, &x);
                     }
-                    let keep = t.inline(params, body, one(v.clone()), Some(&Type::Bool))[0];
+                    let keep = t.run(block, &given, one(v.clone()), Some(&Type::Bool))[0];
                     let (yes, after) = (t.new_block(), t.new_block());
                     t.go(End::Branch(keep, yes, after), yes);
                     let copy = t.clone_value(&v, elem);
@@ -2095,7 +2237,7 @@ impl<'a> Translator<'a> {
                     let (test, after) = (t.new_block(), t.new_block());
                     let end = if all { End::Branch(answer, test, after) } else { End::Branch(answer, after, test) };
                     t.go(end, test);
-                    let c = t.inline(params, body, one(v), Some(&Type::Bool))[0];
+                    let c = t.run(block, &given, one(v), Some(&Type::Bool))[0];
                     t.emit(Inst::Copy(answer, c));
                     t.go(End::Jump(after), after);
                 });
@@ -2107,13 +2249,22 @@ impl<'a> Translator<'a> {
                 let acc = self.new_slots(&ty);
                 self.copy(&acc, &start);
                 self.each_element(list, elem, |t, _, v| {
-                    let next = t.inline(params, body, vec![(acc.clone(), ty.clone()), (v, elem.clone())], Some(&ty));
+                    let next = t.run(block, &given, vec![(acc.clone(), ty.clone()), (v, elem.clone())], Some(&ty));
                     t.free_value(&acc, &ty);
                     t.copy(&acc, &next);
                 });
                 self.track(&acc, &ty);
                 acc
             }
+        }
+    }
+
+    /// Runs `block` on `vals`: its body copied here, or a call of the block `given`.
+    fn run(&mut self, block: &Expr, given: &Option<Slots>, vals: Vec<(Slots, Type)>, result: Option<&Type>) -> Slots {
+        match (given, &block.kind) {
+            (Some(b), _) => self.call_block(b, vals.into_iter().flat_map(|(v, _)| v).collect(), result.unwrap_or(&Type::Unit)),
+            (None, ExprKind::Block { params, body }) => self.inline(params, body, vals, result),
+            (None, _) => unreachable!("block checked by the type checker"),
         }
     }
 
@@ -2319,7 +2470,23 @@ impl<'a> Translator<'a> {
                 v
             }
             ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
+            // `body` alone: calls the block without parameters.
+            ExprKind::Var(name) if self.info.invoked.contains(&e.id) => {
+                let (b, ty) = (self.slots_of(name), self.ty(e));
+                let r = self.call_block(&b, vec![], &ty);
+                self.track(&r, &ty);
+                r
+            }
             ExprKind::Var(name) => self.slots_of(name),
+            // `test(x)`: calls the block `test`.
+            ExprKind::Call { name, args } if self.info.invoked.contains(&e.id) => {
+                let b = self.slots_of(&name.text);
+                let vals = args.iter().flat_map(|a| self.expr(a)).collect();
+                let ty = self.ty(e);
+                let r = self.call_block(&b, vals, &ty);
+                self.track(&r, &ty);
+                r
+            }
             ExprKind::Mark(_, x) => self.expr(x),
             // `[]` or `Map<String, Int>()` where a Map is expected.
             ExprKind::List(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Map(..)) => {
@@ -2507,7 +2674,7 @@ impl<'a> Translator<'a> {
                 self.track(&value, &self.ty(e));
                 value
             }
-            ExprKind::Block { .. } => unreachable!("a block is translated by the call it is given to"),
+            ExprKind::Block { params, body } => self.block_value_of(e, params, body),
             ExprKind::Match(m) => {
                 let ty = self.ty(e);
                 let v = self.new_slots(&ty);

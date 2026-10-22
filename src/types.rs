@@ -7,7 +7,7 @@
 //
 // The result: the type of each expression (indexed by `Expr::id`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::*;
@@ -349,6 +349,11 @@ pub struct Info {
     /// For the editor: each `match` on an enum, an optional or a result (from its subject to its
     /// `}`), with the cases it doesn't handle as they are written: `Circle(radius)`, `none`.
     pub matches: Vec<(Span, Vec<String>)>,
+    /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
+    pub invoked: HashSet<usize>,
+    /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
+    /// `ownership.rs`); the KIR gives them to the block in its box.
+    pub captures: HashMap<usize, Vec<String>>,
 }
 
 /// A name met while checking: `rex` at `span`, declared at `decl`, shown as `rex: Dog`.
@@ -531,6 +536,7 @@ struct Checker<'a> {
     in_contract: bool,
     /// Number of open blocks (`{ x: Int => … }`): `return`, `break`, `continue` and `x?` cannot leave them.
     in_block: usize,
+    invoked: HashSet<usize>,
     types: Vec<Type>,
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
@@ -594,6 +600,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         loops: 0,
         in_contract: false,
         in_block: 0,
+        invoked: HashSet::new(),
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
@@ -909,9 +916,25 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
-    let (spans, seen, hints, matches) = (c.spans, c.seen, c.hints, c.matches);
-    let info =
-        Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods, spans, seen, hints, matches };
+    let (spans, seen, hints, matches, invoked) = (c.spans, c.seen, c.hints, c.matches, c.invoked);
+    let info = Info {
+        types: c.types,
+        moves,
+        wraps: c.wraps,
+        boxes,
+        structs: c.structs,
+        defaults,
+        follows,
+        type_args,
+        impls,
+        methods,
+        spans,
+        seen,
+        hints,
+        matches,
+        invoked,
+        captures: HashMap::new(),
+    };
     (info, c.diags)
 }
 
@@ -1255,6 +1278,9 @@ impl Checker<'_> {
             // `x: var T` changes like a `var`; `x: move T` cannot change, like `move self`.
             let kind = if p.mode == Mode::Var { VarKind::Var } else { VarKind::Param };
             let ty = type_of(&p.ty, &self.structs);
+            if matches!(ty, Type::Block(..)) && p.mode != Mode::Read {
+                self.error(p.name.span, t!("block_param_mode", name = p.name.text, mode = p.mode.word()));
+            }
             self.mention_variable(&p.name.text, &ty, p.name.span, p.name.span);
             params.insert(p.name.text.clone(), Variable { ty, kind, span: p.name.span });
         }
@@ -1680,6 +1706,16 @@ impl Checker<'_> {
             self.types[e.id] = self.block_literal(params, body, Some(ps), Some(r));
             return;
         }
+        // `repeat(n - 1, body)`: where a block is expected, its name gives it along without calling it.
+        if let (ExprKind::Var(n), Type::Block(..)) = (&e.kind, expected)
+            && matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))
+        {
+            let t = self.passed(e);
+            if t != *expected {
+                self.mismatch(e, t, expected);
+            }
+            return;
+        }
         // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
         if let (ExprKind::List(elems), Type::List(elem)) = (&e.kind, expected) {
             elems.iter().for_each(|x| self.expect(x, elem));
@@ -2035,11 +2071,10 @@ impl Checker<'_> {
     fn block_method(&mut self, elem: &Type, name: &Name, args: &[Expr]) -> Type {
         let fold = name.text == "fold";
         let expected = if fold { 2 } else { 1 };
-        let block = match args.last() {
-            Some(b @ Expr { kind: ExprKind::Block { params, body }, .. }) if args.len() == expected => Some((b, params, body)),
-            _ => None,
-        };
-        let Some((block, params, body)) = block else {
+        let block = args.last().filter(|b| {
+            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
+        });
+        let Some(block) = block else {
             let example = if fold { "l.fold(0) { sum: Int, x: Int => sum + x }".to_string() } else { format!("l.{} {{ x: Int => … }}", name.text) };
             self.error(name.span, t!("block_expected", name = name.text, example = example));
             args.iter().for_each(|a| {
@@ -2054,9 +2089,28 @@ impl Checker<'_> {
             "map" => (vec![elem.clone()], None),
             _ => (vec![acc.clone(), elem.clone()], Some(acc.clone())),
         };
-        self.spans[block.id] = block.span;
-        let t = self.block_literal(params, body, Some(&params_wanted), result.as_ref());
-        self.types[block.id] = t.clone();
+        let t = match &block.kind {
+            ExprKind::Block { params, body } => {
+                self.spans[block.id] = block.span;
+                let t = self.block_literal(params, body, Some(&params_wanted), result.as_ref());
+                self.types[block.id] = t.clone();
+                t
+            }
+            // `l.each(f)`: a block parameter given along.
+            _ => {
+                let t = self.passed(block);
+                let r = match (&result, &t) {
+                    (Some(r), _) => r.clone(),
+                    (None, Type::Block(_, r)) => (**r).clone(),
+                    _ => Type::Error,
+                };
+                let wanted = Type::Block(params_wanted, Box::new(r));
+                if t != wanted {
+                    self.mismatch(block, t.clone(), &wanted);
+                }
+                t
+            }
+        };
         match (name.text.as_str(), t) {
             ("each", _) => Type::Unit,
             ("filter", _) => Type::List(Box::new(elem.clone())),
@@ -2107,6 +2161,17 @@ impl Checker<'_> {
         self.in_block -= 1;
         self.scopes.pop();
         Type::Block(written, Box::new(r))
+    }
+
+    /// A block given along by its name (`repeat(n - 1, body)`, not called), or a block written there.
+    fn passed(&mut self, value: &Expr) -> Type {
+        let ExprKind::Var(n) = &value.kind else { return self.expr(value) };
+        let Some(Variable { ty: ty @ Type::Block(..), span, .. }) = self.lookup(n) else { return self.expr(value) };
+        let (ty, decl) = (ty.clone(), *span);
+        self.mention_variable(n, &ty, value.span, decl);
+        self.spans[value.id] = value.span;
+        self.types[value.id] = ty.clone();
+        ty
     }
 
     /// `return`, `break`, `continue` or `x?` inside a block.
@@ -2432,6 +2497,7 @@ impl Checker<'_> {
                 self.expr(e);
                 let call = match &e.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
+                    ExprKind::Var(_) => self.invoked.contains(&e.id),
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
@@ -2494,7 +2560,18 @@ impl Checker<'_> {
                 Some(v) => {
                     let (ty, decl) = (v.ty.clone(), v.span);
                     self.mention_variable(name, &ty, e.span, decl);
-                    ty
+                    match ty {
+                        // `body` alone calls the block, like a function without parameters (Eiffel).
+                        Type::Block(ps, r) if ps.is_empty() => {
+                            self.invoked.insert(e.id);
+                            *r
+                        }
+                        Type::Block(..) => {
+                            self.error(e.span, t!("block_needs_args", name = name));
+                            Type::Error
+                        }
+                        ty => ty,
+                    }
                 }
                 None if name == "self" => {
                     self.error(e.span, t!("self_outside_method"));
@@ -3140,6 +3217,15 @@ impl Checker<'_> {
     }
 
     fn call(&mut self, id: usize, name: &Name, args: &[Expr]) -> Type {
+        // `test(x)`: a block parameter, called.
+        if let Some(Variable { ty: Type::Block(ps, r), span, .. }) = self.lookup(&name.text) {
+            let (ps, r, decl) = (ps.clone(), (**r).clone(), *span);
+            self.mention_variable(&name.text, &Type::Block(ps.clone(), Box::new(r.clone())), name.span, decl);
+            self.invoked.insert(id);
+            let params: Vec<(Mode, Type)> = ps.into_iter().map(|t| (Mode::Read, t)).collect();
+            self.arguments(name, args, &params, &[]);
+            return r;
+        }
         self.hidden(&name.text, name.span);
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
@@ -3173,7 +3259,7 @@ impl Checker<'_> {
                     ExprKind::Mark(_, x) => &**x,
                     _ => a,
                 };
-                let t = self.expr(value);
+                let t = if matches!(p, Type::Block(..)) { self.passed(value) } else { self.expr(value) };
                 deduce(p, &t, &sig.generics, &mut found);
                 typed[i] = Some(t);
             }
@@ -3183,6 +3269,10 @@ impl Checker<'_> {
             match found.iter().find(|(n, _)| *n == g.name) {
                 None if !errors => self.error(name.span, t!("generic_not_deduced", name = g.name, function = name.text)),
                 None => {}
+                // `identity(f)` would give the block back, outliving its call.
+                Some((_, t)) if matches!(t, Type::Block(..)) => {
+                    self.error(name.span, t!("block_generic", name = g.name, function = name.text));
+                }
                 Some((_, t)) => {
                     let broken: Vec<&String> = g.bounds.iter().filter(|b| !self.satisfies(t, b)).collect();
                     for b in broken {

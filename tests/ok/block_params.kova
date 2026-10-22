@@ -1,0 +1,69 @@
+// Functions written in Kova that take a block (PLAN Part 4, "Blocks").
+fn repeat(n: Int, body: {}) {
+    if n > 0 {
+        body
+        repeat(n - 1, body)
+    }
+}
+
+fn twice(f: {Int -> Int}, x: Int) -> Int {
+    return f(f(x))
+}
+
+fn keep(l: List<Int>, wanted: {Int -> Bool}) -> List<Int> {
+    return l.filter(wanted)
+}
+
+fn count<T>(l: List<T>, wanted: {T -> Bool}) -> Int {
+    var n: Int := 0
+    l.each { x: T =>
+        if wanted(x) {
+            n += 1
+        }
+    }
+    return n
+}
+
+fn label(make: {-> String}) -> String {
+    return "<" + make + ">"
+}
+
+fn main {
+    repeat(2) { print("hi") }
+    var total: Int := 0
+    repeat(3) {
+        total += 10
+    }
+    print(total)
+    print(twice({ x: Int => x * 3 }, 2))
+    let step: Int := 5
+    print(twice({ x: Int => x + step }, 1))
+    print(keep([1, 8, 3, 9]) { x: Int => x > 5 })
+    print(count([1, 8, 3, 9]) { x: Int => x % 2 = 1 })
+    print(count(["a", "bb", "ccc"]) { s: String => s.length > 1 })
+    var name: String := "Rex"
+    repeat(2) {
+        name := name + "!"
+    }
+    print(name)
+    print(label { name.clone })
+    var seen: List<Int> := []
+    repeat(2) {
+        repeat(2) {
+            seen.add(total)
+            total += 1
+        }
+    }
+    print(seen)
+}
+// expect: hi
+// expect: hi
+// expect: 30
+// expect: 18
+// expect: 11
+// expect: [8, 9]
+// expect: 3
+// expect: 2
+// expect: Rex!!
+// expect: <Rex!!>
+// expect: [30, 31, 32, 33]

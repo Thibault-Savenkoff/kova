@@ -1,0 +1,35 @@
+// What a block uses around it is used by the call it is given to (rule 2.7.5).
+fn apply(n: var Int, body: {}) {
+    body
+}
+
+fn show(s: String, body: {}) {
+    body
+}
+
+fn both(a: {}, b: {}) {
+    a
+}
+
+fn main {
+    var total: Int := 0
+    apply(var total) {
+        total += 1
+    }
+    var s: String := "a"
+    show(s) {
+        s := "b"
+    }
+    both({ print(s) }) {
+        s := "c"
+    }
+    show(s) { print(s) }
+    let kept: String := "x"
+    show(s) {
+        let k: String := kept
+    }
+}
+// error: the block uses `total`, which `apply` also receives, and one of them changes it
+// error: the block uses `s`, which `show` also receives, and one of them changes it
+// error: the block uses `s`, which `both` also receives, and one of them changes it
+// error: `kept` is moved in a block

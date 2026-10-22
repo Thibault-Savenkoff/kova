@@ -11,6 +11,7 @@
 // This pass is the only one that decides: it marks each move in `Info::moves`, and the
 // KIR empties exactly those variables (so the end of their block frees nothing twice).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::*;
@@ -67,6 +68,11 @@ struct Owner<'a> {
     /// How each function receives its value (`None`: not a method) and its parameters,
     /// by name (`f`, `Dog.sound`).
     signatures: HashMap<String, (Option<Mode>, Vec<Mode>)>,
+    /// The blocks being walked, from outside to inside: their `Expr::id`, the number of scopes
+    /// around them, and the variables from there they use (true if they change it).
+    blocks: RefCell<Vec<(usize, usize, Vec<(String, bool)>)>>,
+    /// By the `Expr::id` of a block: what it uses around it (see `blocks`), for rule 2.7.5.
+    uses: HashMap<usize, Vec<(String, bool)>>,
     diags: Vec<Diag>,
 }
 
@@ -109,6 +115,8 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
         state: None,
         loops: vec![],
         signatures,
+        blocks: RefCell::new(vec![]),
+        uses: HashMap::new(),
         diags: vec![],
     };
     for func in functions {
@@ -147,7 +155,20 @@ impl Owner<'_> {
     }
 
     fn lookup(&self, name: &str) -> Var {
+        self.used(name, false);
         self.scopes.iter().rev().find_map(|s| s.get(name)).expect("variable checked by the type checker").clone()
+    }
+
+    /// `name` is used (`changed`: changed) by the code being walked: each open block declared
+    /// inside its scope uses it from around it.
+    fn used(&self, name: &str, changed: bool) {
+        let Some(at) = self.scopes.iter().rposition(|s| s.contains_key(name)) else { return };
+        for (_, _, names) in self.blocks.borrow_mut().iter_mut().filter(|b| at < b.1) {
+            match names.iter_mut().find(|(n, _)| n == name) {
+                Some((_, c)) => *c |= changed,
+                None => names.push((name.to_string(), changed)),
+            }
+        }
     }
 
     fn line(&self, s: Span) -> usize {
@@ -278,6 +299,7 @@ impl Owner<'_> {
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.target_free(t)),
             Target::Place { name, span, .. } => {
+                self.used(&name.text, true);
                 if self.pending.contains(&self.lookup(&name.text).id) {
                     let msg = self.busy(&name.text, t!("read_then_changed", name = name.text));
                     self.error_at(*span, msg);
@@ -449,14 +471,18 @@ impl Owner<'_> {
 
     /// A block `{ x: Int => … }`: its parameters are borrowed, its value is given. It may run
     /// several times, or never: it cannot give away a variable from around it.
-    fn block_literal(&mut self, params: &[Param], body: &Block, value: bool) {
+    fn block_literal(&mut self, id: usize, params: &[Param], body: &Block, value: bool) {
         let entry = self.state.clone();
+        self.blocks.borrow_mut().push((id, self.scopes.len(), vec![]));
         self.scopes.push(HashMap::new());
         for p in params {
             self.declare(&p.name.text, true);
         }
         if value { self.block_value(body) } else { self.block(body) }
         self.scopes.pop();
+        let (_, _, used) = self.blocks.borrow_mut().pop().unwrap();
+        self.info.captures.insert(id, used.iter().map(|(n, _)| n.clone()).collect());
+        self.uses.insert(id, used);
         let outer: HashMap<usize, &String> = self.scopes.iter().flat_map(|s| s.iter()).map(|(n, v)| (v.id, n)).collect();
         let before = entry.clone().unwrap_or_default();
         let mut moved: Vec<(Span, String)> = (self.state.iter().flatten())
@@ -559,15 +585,59 @@ impl Owner<'_> {
                 self.not_pending(e);
             }
         }
+        let mark = self.pending.len();
         for &(mode, e) in &uses {
-            if mode == Mode::Move { self.give(e) } else { self.borrow(e) }
+            match (mode, &e.kind) {
+                (Mode::Move, _) => self.give(e),
+                // What the call's other arguments read is checked against the block by
+                // `exclusive_blocks`, with a clearer message.
+                (_, ExprKind::Block { .. }) => {
+                    let own = self.pending.split_off(mark.min(self.pending.len()));
+                    self.borrow(e);
+                    self.pending.extend(own);
+                }
+                _ => self.borrow(e),
+            }
         }
         self.exclusive(shown, &uses);
+        self.exclusive_blocks(shown, &uses);
+    }
+
+    /// Rule 2.7.5 with blocks: what a block uses around it counts as used by the call.
+    /// `apply(var total) { total += 1 }` ❌, `apply(s) { s := "" }` ❌, `apply(n) { print(n) }` ✅.
+    fn exclusive_blocks(&mut self, callee: &str, uses: &[(Mode, &Expr)]) {
+        let types = &self.info.types;
+        // What each argument uses: its root (changed unless read), or a block's variables.
+        let roots = |o: &Self, (mode, e): (Mode, &Expr)| -> Vec<(String, bool, bool)> {
+            match &e.kind {
+                ExprKind::Block { .. } => o.uses.get(&e.id).into_iter().flatten().map(|(n, c)| (n.clone(), *c, true)).collect(),
+                _ => place_root(e, types).map(|(n, _)| (n.to_string(), mode != Mode::Read, is_copy(&types[e.id]))).into_iter().collect(),
+            }
+        };
+        for (j, &(mj, b)) in uses.iter().enumerate() {
+            if !matches!(b.kind, ExprKind::Block { .. }) {
+                continue;
+            }
+            for (k, &(mk, a)) in uses.iter().enumerate() {
+                let both_blocks = matches!(a.kind, ExprKind::Block { .. });
+                if k == j || (both_blocks && k > j) {
+                    continue;
+                }
+                for (name, changed, _) in roots(self, (mj, b)) {
+                    // A copied value read by the call is read before it: `apply(n) { n += 1 }` ✅.
+                    let clash = roots(self, (mk, a)).into_iter().any(|(m, c, copy)| m == name && (c || (changed && !(copy && !both_blocks))));
+                    if clash {
+                        self.diags.push(Diag::new(b.span, t!("block_exclusive", name = name, method = callee)));
+                    }
+                }
+            }
+        }
     }
 
     /// `e` (a place) is about to change: an error if an operation not finished yet still reads it.
     fn not_pending(&mut self, e: &Expr) {
         let Some((root, span)) = place_root(e, &self.info.types) else { return };
+        self.used(root, true);
         if self.pending.contains(&self.lookup(root).id) {
             let msg = self.busy(root, t!("read_then_changed", name = root));
             self.error_at(span, msg);
@@ -635,6 +705,11 @@ impl Owner<'_> {
                     let id = self.lookup(name).id;
                     self.pending.push(id);
                 }
+            }
+            // `test(x)`: the block `test` is used (from around a block, it is held in its box).
+            ExprKind::Call { name, args } if self.info.invoked.contains(&e.id) => {
+                self.use_var(&name.text, name.span);
+                args.iter().for_each(|a| self.borrow(a));
             }
             ExprKind::Call { name, args } => self.arguments(&name.text, &name.text, None, args),
             ExprKind::Static { ty, name, args, .. } => self.arguments(&method_name(&ty.text, &name.text), &name.text, None, args),
@@ -713,7 +788,7 @@ impl Owner<'_> {
             ExprKind::Interp(parts) => self.parts(parts.iter()),
             ExprKind::Block { params, body } => {
                 let value = matches!(&self.info.types[e.id], Type::Block(_, r) if **r != Type::Unit);
-                self.block_literal(params, body, value);
+                self.block_literal(e.id, params, body, value);
             }
             ExprKind::Int(_)
             | ExprKind::Float(_)

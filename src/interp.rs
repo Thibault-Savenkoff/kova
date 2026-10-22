@@ -282,12 +282,18 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*d] = locals[*a].checked_neg().ok_or_else(|| fault(Fault::Overflow, loc))?;
                 }
                 Inst::Not(d, a) => locals[*d] = 1 - locals[*a],
-                Inst::Call(d, g, a) => {
+                Inst::FuncRef(d, g) => locals[*d] = *g as i64,
+                Inst::Call(..) | Inst::CallIndirect(..) => {
+                    let (d, g, a) = match inst {
+                        Inst::Call(d, g, a) => (d, *g, a),
+                        Inst::CallIndirect(d, g, a) => (d, locals[*g] as usize, a),
+                        _ => unreachable!(),
+                    };
                     if let Some(dbg) = &mut heap.debugger {
                         snapshot(p, &locals, dbg);
                     }
                     let vals: Vec<i64> = a.iter().map(|&l| locals[l]).collect();
-                    let r = call(p, *g, &vals, out, files, heap)?;
+                    let r = call(p, g, &vals, out, files, heap)?;
                     for (&d, v) in d.iter().zip(r) {
                         locals[d] = v;
                     }

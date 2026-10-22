@@ -22,8 +22,10 @@ pub fn format(src: &str) -> Option<String> {
     }
     let text = |t: &Token| &src[t.span.start..t.span.end];
     let mut out = String::new();
-    // Each bracket still open, with the indentation of the line that opened it.
+    // Each bracket still open, with the indentation of the line that opened it, and whether it
+    // is the brace of a block type (`f: {Int -> Bool}`, written without spaces inside).
     let mut open: Vec<usize> = vec![];
+    let mut typed: Vec<bool> = vec![];
     // The `<` of `List<Int>` and `fn larger<T>` still open.
     let mut generics = 0;
     let mut line = 0;
@@ -66,18 +68,21 @@ pub fn format(src: &str) -> Option<String> {
             }
             heading = matches!(t.kind, Kind::Keyword("struct" | "enum"));
         } else if let Some((p, g)) = prev
+            && !(typed.last() == Some(&true) && (p.kind == Kind::Sym("{") || t.kind == Kind::Sym("}")))
             && space(p, g, t, generic, k.checked_sub(2).map(|j| &tokens[j]), generics > 0, heading)
         {
             out.push(' ');
         }
         out.push_str(text(t));
         match t.kind {
-            Kind::Sym("{" | "(" | "[") => {
+            Kind::Sym(s @ ("{" | "(" | "[")) => {
                 open.push(line);
+                typed.push(s == "{" && prev.is_some_and(|(p, _)| p.kind == Kind::Sym(":")));
                 heading = false;
             }
             Kind::Sym("}" | ")" | "]") => {
                 open.pop();
+                typed.pop();
             }
             Kind::Sym("<") if generic => generics += 1,
             Kind::Sym(">") if generic => generics -= 1,
