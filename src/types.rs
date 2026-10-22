@@ -2892,7 +2892,11 @@ impl Checker<'_> {
                             }
                             vec![]
                         }
-                        Some((Some((i, fields)), _)) => {
+                        Some((Some((i, fields)), d)) => {
+                            // `Circle(r) =>` is `Shape.Circle`, for the editor (F2 renames both).
+                            if !optional && !outcome {
+                                self.mention(&method_name(&d.name, name), span);
+                            }
                             if let Some(first) = seen.insert(i, span) {
                                 let (line, _) = line_col(self.src, first.start);
                                 self.error(span, t!("case_twice", name = shown, line = line));

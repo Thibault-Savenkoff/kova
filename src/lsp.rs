@@ -1120,6 +1120,19 @@ mod tests {
         let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
         assert_eq!(edit.new_text, "        C(radius) => {}\n        E => {}\n");
         assert_eq!(edit.range.start, Position::new(5, 0));
+        // What it writes reads, on an enum and on an optional.
+        let fixed = |src: &str, edit: &TextEdit| {
+            let at = offset(src, edit.range.start);
+            format!("{}{}{}", &src[..at], edit.new_text, &src[at..])
+        };
+        assert!(analyze("/none/main.kova", &fixed(SHAPES, edit)).2.is_empty());
+        let optional = "fn main {\n    let n: Int? := 3\n    match n {\n    }\n}\n";
+        let actions = add_cases(&uri, optional, Range::new(Position::new(2, 10), Position::new(2, 10)));
+        let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
+        let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
+        assert_eq!(edit.new_text, "        none => {}\n        value => {}\n");
+        let diags = analyze("/none/main.kova", &fixed(optional, edit)).2;
+        assert!(diags.is_empty(), "{:?}", diags.iter().map(|d| &d.message).collect::<Vec<_>>());
         // All handled: no light bulb.
         let all = SHAPES.replace("D => {}", "_ => {}");
         assert!(add_cases(&uri, &all, Range::new(Position::new(3, 10), Position::new(3, 10))).is_empty());
@@ -1148,6 +1161,8 @@ mod tests {
         assert_eq!(edits(DOGS, "rex :=", "max"), Ok(vec![(6, 6), (9, 14), (11, 8)]));
         assert_eq!(edits(DOGS, "age: Int", "years"), Ok(vec![(2, 2), (6, 34), (9, 18)]));
         assert_eq!(edits(DOGS, "Dog {\n", "Hound"), Ok(vec![(0, 7), (6, 13)]));
+        // A variant: in its enum, where it is made, and in the `match` cases.
+        assert_eq!(edits(SHAPES, "D, E", "Dot"), Ok(vec![(0, 27), (2, 15), (4, 8)]));
         assert!(edits(DOGS, "rex :=", "Max").is_err());
         assert!(edits(DOGS, "rex :=", "while").is_err());
         let uses_self = DOGS.replace("return \"woof\"", "return self.name");
