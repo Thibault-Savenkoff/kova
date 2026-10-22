@@ -1,0 +1,24 @@
+// A value put into an `any` is given away, like into a `let`.
+interface Animal {
+    fn sound(self) -> String
+}
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+}
+fn keep(a: move any Animal) {
+}
+fn main {
+    let rex := Dog { name := "Rex" }
+    let a: any Animal := rex
+    print(rex.name)
+    let fido := Dog { name := "Fido" }
+    keep(move fido)
+    print(fido.name)
+    let max := Dog { name := "Max" }
+    let l: List<any Animal> := [max]
+    print(max.name)
+}
+// error: `rex` was moved (line 13)
+// error: `fido` was moved (line 16)
+// error: `max` was moved (line 19)

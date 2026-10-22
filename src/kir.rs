@@ -94,7 +94,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) | Type::Any(_) => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -114,7 +114,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::List(_) => vec![Some(t.clone())],
+        Type::String | Type::List(_) | Type::Any(_) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
@@ -166,6 +166,9 @@ enum Helper {
     Equal(Type),
     /// A generic function translated for these types (one per type parameter): `larger<Int>`.
     Instance(String, Vec<Type>),
+    /// `a.sound` on an `any Animal` (interface, method): takes the box, the other arguments and
+    /// the call location; calls the method of the real type, found by its number in the box.
+    Dispatch(String, String),
 }
 
 pub struct Program {
@@ -507,6 +510,13 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> = (all.iter().chain(generic.values().map(|(g, _)| g)))
         .map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect())))
         .collect();
+    // The interfaces' methods, called on an `any` through their dispatch (`Helper::Dispatch`).
+    let mut signatures = signatures;
+    for it in &f.interfaces {
+        for (m, _) in &it.methods {
+            signatures.insert(method_name(&it.name.text, &m.name.text), (m.receiver, m.params.iter().map(|p| p.mode).collect()));
+        }
+    }
     let n = all.len();
     all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![])));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
@@ -691,9 +701,15 @@ impl<'a> Translator<'a> {
             self.finish(End::Return(vec![same]));
             return self.function(format!("equal {}", ty.text()), a.len() * 2, vec![Scalar::Int]);
         }
+        if let Helper::Dispatch(interface, method) = h {
+            return self.dispatch(interface, method);
+        }
         let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h else { unreachable!("made by `translate`") };
         let v = self.new_slots(ty);
         self.current = self.new_block();
+        if let Type::Any(interface) = ty {
+            return self.any_helper(h, interface, v[0]);
+        }
         if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
             let text = self.show_enum(&v, &d, ty);
             self.finish(End::Return(vec![text]));
@@ -742,11 +758,111 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) | Helper::Instance(..) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
         self.function(format!("{name} {}", ty.text()), 1, returns)
+    }
+
+    /// Runs `body` with the real type and the value inside the box of an `any` (borrowed from it);
+    /// nothing for 0 (a box given away).
+    fn on_boxed(&mut self, b: Local, interface: &str, mut body: impl FnMut(&mut Self, &Type, Slots)) {
+        let after = self.new_block();
+        let full = self.new_block();
+        self.go(End::Branch(b, full, after), full);
+        let (zero, tag) = (self.constant(0), self.int_local());
+        self.emit(Inst::ListLoad(tag, b, zero, 0));
+        let types = self.info.impls.get(interface).cloned().unwrap_or_default();
+        for (k, ty) in types.iter().enumerate() {
+            let (yes, no) = (self.new_block(), self.new_block());
+            let (number, test) = (self.constant(k as i64), self.int_local());
+            self.emit(Inst::Binary(test, Op::Eq, tag, number, NOWHERE));
+            self.go(End::Branch(test, yes, no), yes);
+            let v = self.new_slots(ty);
+            for (j, &d) in v.iter().enumerate() {
+                self.emit(Inst::ListLoad(d, b, zero, j + 1));
+            }
+            body(self, ty, v);
+            self.go(End::Jump(after), no);
+        }
+        self.go(End::Unreachable, after);
+    }
+
+    /// A new box for an `any interface`: the number of the real type `ty`, then the slots `v`.
+    fn new_box(&mut self, interface: &str, ty: &Type, v: &[Local]) -> Local {
+        let k = self.info.impls[interface].iter().position(|t| t == ty).expect("a type following the interface");
+        let b = self.int_local();
+        self.emit(Inst::ListNew(b, 1 + v.len()));
+        let tag = self.constant(k as i64);
+        self.push(b, &[[tag].as_slice(), v].concat());
+        b
+    }
+
+    /// Frees, copies or shows the value of an `any` through its real type.
+    fn any_helper(mut self, h: &Helper, interface: &str, b: Local) -> Function {
+        let ty = Type::Any(interface.to_string());
+        let (name, result) = match h {
+            Helper::Drop(_) => {
+                self.on_boxed(b, interface, |t, ty, v| t.free_value(&v, ty));
+                self.emit(Inst::ListFree(b));
+                ("drop", vec![])
+            }
+            Helper::Clone(_) => {
+                let copy = self.constant(0);
+                self.on_boxed(b, interface, |t, ty, v| {
+                    let c = t.clone_value(&v, ty);
+                    let nb = t.new_box(interface, ty, &c);
+                    t.emit(Inst::Copy(copy, nb));
+                });
+                ("clone", vec![copy])
+            }
+            Helper::Show(_) => {
+                let text = self.int_local();
+                self.on_boxed(b, interface, |t, ty, v| {
+                    let mark = t.temps.len();
+                    let mut pieces = vec![];
+                    t.value_pieces(&v, ty, &mut pieces);
+                    let piece = t.join(pieces);
+                    t.emit(Inst::Copy(text, piece));
+                    t.free_temps(mark);
+                });
+                ("show", vec![text])
+            }
+            _ => unreachable!("an `any` is freed, copied or shown"),
+        };
+        self.finish(End::Return(result.clone()));
+        let returns = result.iter().map(|_| Scalar::Int).collect();
+        self.function(format!("{name} {}", ty.text()), 1, returns)
+    }
+
+    /// `Animal.sound` for an `any Animal`: calls `Dog.sound` or `Cat.sound`, by the box's number.
+    /// A `var self` method changes the value inside the box, which stays where it is.
+    fn dispatch(mut self, interface: &str, method: &str) -> Function {
+        let q = method_name(interface, method);
+        let (params, ret) = self.info.methods[&q].clone();
+        let receiver = self.signatures[&q].0.expect("a method");
+        let b = self.int_local();
+        let args: Vec<Slots> = params.iter().map(|t| self.new_slots(t)).collect();
+        let (line, col) = (self.int_local(), self.int_local());
+        let nb_params = self.locals.len();
+        self.current = self.new_block();
+        let result = self.new_slots(&ret);
+        self.on_boxed(b, interface, |t, ty, v| {
+            let num = t.numbers[method_name(&ty.owner(), method).as_str()];
+            let mut vals: Slots = [v.clone(), args.concat()].concat();
+            if t.sites[num] {
+                vals.extend([line, col]);
+            }
+            let out = if receiver == Mode::Var { t.new_slots(ty) } else { vec![] };
+            t.emit(Inst::Call([result.clone(), out.clone()].concat(), num, vals));
+            let zero = t.constant(0);
+            for (j, &s) in out.iter().enumerate() {
+                t.emit(Inst::ListStore(b, zero, j + 1, s));
+            }
+        });
+        self.finish(End::Return(result.clone()));
+        self.function(format!("dispatch {q}"), nb_params, scalars(&ret))
     }
 
     /// The text of an enum value `v`: `Shape.Circle(radius: 2.0)`, `Light.Red`; of an
@@ -1085,9 +1201,10 @@ impl<'a> Translator<'a> {
     /// A moved variable (marked by `ownership.rs`) is emptied, so that its block frees nothing.
     fn owned(&mut self, e: &Expr) -> Slots {
         if !self.info.moves[e.id] {
-            let v = self.expr(e);
+            let v = self.value(e);
             self.untrack(&v);
-            return v;
+            let v = self.boxed(e, v, true);
+            return self.wrapped(e, v);
         }
         let ExprKind::Var(name) = &e.kind else { unreachable!("only a variable is moved") };
         let (src, ty) = self.variable(name);
@@ -1098,7 +1215,21 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Const(l, 0));
             }
         }
+        let v = self.boxed(e, v, true);
         self.wrapped(e, v)
+    }
+
+    /// A value going where an `any Animal` is expected (`types::Info::boxes`) is put in a box.
+    /// `owns`: the box takes the value; otherwise it only lends it (a borrowed argument), so only
+    /// the box itself is freed at the end of the statement.
+    fn boxed(&mut self, e: &Expr, v: Slots, owns: bool) -> Slots {
+        let Some(interface) = self.info.boxes[e.id].clone() else { return v };
+        let b = self.new_box(&interface, &self.ty(e), &v);
+        if !owns {
+            // ponytail: freed like a List of Ints, which frees the box and not what it lends.
+            self.temps.push((b, Type::List(Box::new(Type::Int))));
+        }
+        vec![b]
     }
 
     /// A `T` going where a `T?` is expected (`types::Info::wraps`) gets its slot "there is a value".
@@ -1555,7 +1686,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(")".into()));
             }
             // Its text is made by a helper, and freed at the end of the statement.
-            Type::List(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) => {
+            Type::List(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Any(_) => {
                 let f = self.helper(Helper::Show(ty.clone()));
                 let text = self.int_local();
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -1578,7 +1709,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.ty(e) {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -1690,6 +1821,12 @@ impl<'a> Translator<'a> {
         }
         self.track(&result, ty);
         result
+    }
+
+    /// `x.clone` on an `any`: the copy of its box, not a method of the interface.
+    fn is_clone(&self, receiver: &Expr, name: &ast::Name) -> bool {
+        let Type::Any(i) = self.ty(receiver) else { return false };
+        name.text == "clone" && !self.signatures.contains_key(&method_name(&i, "clone"))
     }
 
     /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
@@ -1832,6 +1969,7 @@ impl<'a> Translator<'a> {
 
     fn expr(&mut self, e: &Expr) -> Slots {
         let v = self.value(e);
+        let v = self.boxed(e, v, false);
         self.wrapped(e, v)
     }
 
@@ -1903,8 +2041,8 @@ impl<'a> Translator<'a> {
                 if let n @ ("print" | "write") = name.text.as_str() {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
-                    match &self.info.types[args[0].id] {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) => {
+                    match &self.given(&args[0]) {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -2127,6 +2265,18 @@ impl<'a> Translator<'a> {
                 }
                 vec![self.less(&va, &vb, &ty, e.span)]
             }
+            // `a.sound` on an `any Animal`: its dispatch picks the real type's method.
+            ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::Any(_)) && !self.is_clone(receiver, name) => {
+                let Type::Any(interface) = self.ty(receiver) else { unreachable!() };
+                let q = method_name(&interface, &name.text);
+                // The box stays where it is: a `var self` method changes what is inside.
+                let mut vals = self.expr(receiver);
+                let mut places = vec![];
+                self.arguments(&q, args, &mut vals, &mut places);
+                let num = self.helper(Helper::Dispatch(interface, name.text.clone()));
+                let result = self.ty(e);
+                self.call_to(num, true, vals, places, name.span, &result)
+            }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
                 let ty = self.ty(receiver);
@@ -2150,7 +2300,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_)) =>
+                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Any(_)) =>
             {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);

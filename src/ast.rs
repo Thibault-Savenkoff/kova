@@ -200,6 +200,8 @@ pub enum TypeAst {
     Optional(Box<TypeAst>),
     /// `String or IoError`: a success (`ok`) or a failure (`err`).
     Result(Box<TypeAst>, Box<TypeAst>),
+    /// `any Animal`: a value of any type following the interface.
+    Any(Name),
 }
 
 impl TypeAst {
@@ -211,6 +213,7 @@ impl TypeAst {
             TypeAst::Generic(n, ts) => format!("{}<{}>", n.text, ts.iter().map(TypeAst::text).collect::<Vec<_>>().join(", ")),
             TypeAst::Optional(t) => format!("{}?", t.text()),
             TypeAst::Result(t, e) => format!("{} or {}", t.text(), e.text()),
+            TypeAst::Any(n) => format!("any {}", n.text),
         }
     }
 }

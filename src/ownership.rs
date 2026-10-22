@@ -509,6 +509,7 @@ impl Owner<'_> {
         let q = match &self.info.types[receiver.id] {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),
+            Type::Any(i) => method_name(i, &name.text),
             Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,
         };

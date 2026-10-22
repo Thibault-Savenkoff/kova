@@ -1,0 +1,103 @@
+// `any Animal`: a value of any type following `Animal`, the method chosen at run time.
+interface Animal {
+    fn sound(self) -> String
+    fn rename(var self, name: String)
+    fn introduce(self) -> String {
+        return "I say {self.sound}"
+    }
+}
+
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+    fn rename(var self, name: String) { self.name := name.clone }
+}
+
+struct Cat : Animal, Display {
+    lives: Int
+    fn sound(self) -> String { return "meow" }
+    fn rename(var self, name: String) { self.lives := 9 }
+    fn to_string(self) -> String { return "a cat with {self.lives} lives" }
+}
+
+interface Shape {
+    fn area(self) -> Float
+}
+
+enum Form : Shape {
+    Square(side: Float),
+    Circle(radius: Float),
+    fn area(self) -> Float {
+        return match self {
+            Square(side) => side * side,
+            Circle(radius) => 3.0 * radius * radius,
+        }
+    }
+}
+
+struct Label : Shape, Display {
+    text: String
+    fn area(self) -> Float { return 0.0 }
+    fn to_string(self) -> String { return "label {self.text}" }
+}
+
+fn describe(a: any Animal) -> String {
+    return a.introduce
+}
+
+fn chorus<A: Animal>(a: A) -> String {
+    return a.sound + a.sound
+}
+
+fn total(shapes: List<any Shape>) -> Float {
+    var sum: Float := 0.0
+    for s in shapes {
+        sum += s.area
+    }
+    return sum
+}
+
+fn main {
+    let rex := Dog { name := "Rex" }
+    print(describe(rex))
+    print(rex.name)
+    var pets: List<any Animal> := [Dog { name := "Fido" }, Cat { lives := 7 }]
+    pets.add(move rex)
+    for p in pets {
+        print(p.sound)
+    }
+    var first: any Animal := Cat { lives := 3 }
+    print(first)
+    first.rename("x")
+    print(first)
+    let twin: any Animal := first.clone
+    print(twin.introduce)
+    print(pets)
+    print(chorus(twin))
+    let maybe: any Animal? := Dog { name := "Max" }
+    print(maybe)
+    let shapes: List<any Shape> := [Form.Square(2.0), Form.Circle(1.0), Label { text := "x" }]
+    print(total(shapes))
+    let things: List<any Display> := [Cat { lives := 2 }, Label { text := "z" }]
+    for t in things {
+        print("thing: {t}")
+    }
+    var one: any Display := Cat { lives := 1 }
+    one := Label { text := "w" }
+    print(one)
+}
+// expect: I say woof
+// expect: Rex
+// expect: woof
+// expect: meow
+// expect: woof
+// expect: a cat with 3 lives
+// expect: a cat with 9 lives
+// expect: I say meow
+// expect: [Dog { name: "Fido" }, a cat with 7 lives, Dog { name: "Rex" }]
+// expect: meowmeow
+// expect: Dog { name: "Max" }
+// expect: 7.0
+// expect: thing: a cat with 2 lives
+// expect: thing: label z
+// expect: label w

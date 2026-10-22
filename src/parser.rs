@@ -238,6 +238,11 @@ impl Parser<'_> {
     }
 
     fn base_type(&mut self) -> R<TypeAst> {
+        // `any Animal`: a value of any type following the interface `Animal`.
+        if self.is_keyword("any") {
+            self.advance();
+            return Ok(TypeAst::Any(self.type_name()?));
+        }
         if !self.is_sym("(") {
             let name = self.type_name()?;
             return if self.is_sym("<") { self.type_arguments(name) } else { Ok(TypeAst::Name(name)) };

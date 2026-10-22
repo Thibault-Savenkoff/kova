@@ -1,0 +1,49 @@
+// `any`: only interfaces, without `Self` in their methods, holding the types that follow them.
+interface Animal {
+    fn sound(self) -> String
+    fn leave(move self)
+}
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+    fn leave(move self) { }
+}
+struct Rock {
+    weight: Int
+}
+fn f(a: any Comparable) {
+}
+fn g(a: any Dog) {
+}
+fn h(a: any Nope) {
+}
+fn k(a: Animal) {
+}
+fn swap(a: var any Animal) {
+}
+fn main {
+    let a: any Animal := 5
+    let b: any Animal := Rock { weight := 3 }
+    var rex := Dog { name := "Rex" }
+    let c: any Animal := Dog { name := "Max" }
+    print(c = c)
+    print("{c}")
+    c.leave
+    swap(var rex)
+    c.fly
+}
+// error: `any Comparable` is not possible: its method `less` uses `Self`
+// error: use a generic instead: `fn f<T: Comparable>(x: T)`
+// error: `Dog` is a type, not an interface: `any` is followed by an interface
+// error: unknown interface `Nope`
+// error: for a value of any type following it, write `any Animal`
+// error: different types: `any Animal` expected, `Int` given
+// error: an `any Animal` holds a struct or an enum following `Animal`
+// error: `Rock` does not follow `Animal`: write `struct Rock : Animal` with its methods
+// error: `=` cannot compare `any Animal` values
+// error: two `any Animal` values may hold different types
+// error: `c` (`any Animal`) has no text for people
+// error: use a method of `Animal` that gives a String, or `any Display`
+// error: `leave` takes `move self`: calling it on an `any` value comes later
+// error: a `var any Animal` parameter needs a variable of type `any Animal`
+// error: `any Animal` has no method `fly`

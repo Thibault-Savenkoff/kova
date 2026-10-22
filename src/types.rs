@@ -34,6 +34,9 @@ pub enum Type {
     Result(Box<Type>, Box<Type>),
     /// `List<Int>`: one slot, the address of a block that can grow; owned like a `String`.
     List(Box<Type>),
+    /// `any Animal`: a value of any type following the interface, known at run time (PLAN 2.5).
+    /// One slot: a box holding the real type's number, then its slots.
+    Any(String),
     /// A type known only by what it promises: `Self` in an interface. Replaced by the real type
     /// (`Dog`) in the KIR, one copy of the function per real type (`substitute`).
     Param(Rc<ParamDef>),
@@ -73,6 +76,7 @@ impl Type {
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             Type::List(t) => format!("List<{}>", t.text()),
             Type::Param(p) => p.name.clone(),
+            Type::Any(i) => format!("any {i}"),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
@@ -262,6 +266,7 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Result(t, e) => is_copy(t) && is_copy(e),
         // Checked once for every real type: as if it were owned.
         Type::Param(_) => false,
+        Type::Any(_) => false,
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -282,6 +287,12 @@ pub struct Info {
     /// By the `Expr::id` of a call to a generic function: the type given for each of its
     /// type parameters, in order (`larger(3, 4)` → `[Int]`).
     pub type_args: HashMap<usize, Vec<Type>>,
+    /// By `Expr::id`: the interface `I` when this value goes where an `any I` is expected.
+    pub boxes: Vec<Option<String>>,
+    /// Interface → the types an `any` of it may hold; a value's number is its place here.
+    pub impls: HashMap<String, Vec<Type>>,
+    /// `Animal.sound` → the types of its parameters (without `self`) and of its result.
+    pub methods: HashMap<String, (Vec<Type>, Type)>,
 }
 
 impl Info {
@@ -294,7 +305,10 @@ impl Info {
 impl Info {
     /// The type of the value `e` gives where it goes: a `T?` if its `T` is wrapped.
     pub fn given(&self, e: &Expr) -> Type {
-        let t = self.types[e.id].clone();
+        let mut t = self.types[e.id].clone();
+        if let Some(i) = &self.boxes[e.id] {
+            t = Type::Any(i.clone());
+        }
         if self.wraps[e.id] { Type::Optional(Box::new(t)) } else { t }
     }
 }
@@ -431,6 +445,10 @@ struct Checker<'a> {
     defaults: Vec<(String, usize, usize)>,
     follows: HashMap<String, Vec<String>>,
     type_args: HashMap<usize, Vec<Type>>,
+    /// Each `any Animal` written, checked at the end (see `any_type`).
+    any_checks: Vec<Name>,
+    /// By `Expr::id`: the interface of the `any` this value becomes (`Info::boxes`).
+    boxes: Vec<Option<String>>,
     /// `Sorted<Dog>`: where, the struct, its parameter, the type given, the interface to follow.
     bounds: Vec<(Span, String, String, Type, String)>,
     /// One table per open block, from outside to inside.
@@ -456,6 +474,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         follows: HashMap::new(),
         type_args: HashMap::new(),
         bounds: vec![],
+        any_checks: vec![],
+        boxes: vec![None; nb_exprs],
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -708,9 +728,38 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
 
+    // `any Comparable` cannot be: `less` takes another `Self`, of a real type nobody knows.
+    for n in std::mem::take(&mut c.any_checks) {
+        let it = &f.interfaces[c.interfaces[&n.text]];
+        let uses_self = |m: &Function| {
+            let sig = &c.functions[&method_name(&it.name.text, &m.name.text)];
+            sig.params.iter().map(|(_, t)| t).chain([&sig.ret]).any(|t| mentions(t, "Self"))
+        };
+        if let Some((m, _)) = it.methods.iter().find(|(m, _)| c.functions.contains_key(&method_name(&it.name.text, &m.name.text)) && uses_self(m)) {
+            c.diags.push(Diag::new(n.span, t!("any_self", name = n.text, method = m.name.text)).help(t!("any_self_help", name = n.text)));
+        }
+    }
+    // The types an `any I` may hold, numbered in this order (the number is kept in its box).
+    let mut impls: HashMap<String, Vec<Type>> = HashMap::new();
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) != Some(&i) || !s.generics.is_empty() {
+            continue;
+        }
+        let t = &c.structs[&s.name.text];
+        for it in c.follows.get(&s.name.text).into_iter().flatten() {
+            impls.entry(it.clone()).or_default().push(t.clone());
+        }
+    }
+    // Each interface method, for the KIR's dispatch: its parameters' types and its result.
+    let methods = (f.interfaces.iter())
+        .flat_map(|it| it.methods.iter().map(move |(m, _)| method_name(&it.name.text, &m.name.text)))
+        .filter_map(|q| Some((q.clone(), c.functions.get(&q).map(|s| (s.params.iter().map(|(_, t)| t.clone()).collect(), s.ret.clone()))?)))
+        .collect();
+
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
-    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows, type_args }, c.diags)
+    let boxes = c.boxes;
+    (Info { types: c.types, moves, wraps: c.wraps, boxes, structs: c.structs, defaults, follows, type_args, impls, methods }, c.diags)
 }
 
 /// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
@@ -760,6 +809,7 @@ fn primitive(name: &str) -> Option<Type> {
 /// The written type; `Error` if it contains an unknown name.
 pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
+        TypeAst::Any(n) => Type::Any(n.text.clone()),
         // `Stack` alone is not a type: `Stack<Int>` is.
         TypeAst::Name(n) => primitive(&n.text)
             .or_else(|| structs.get(&n.text).filter(|t| !is_template(t, &n.text)).cloned())
@@ -904,6 +954,7 @@ impl Checker<'_> {
             Type::Struct(d) => self.follows(&d.name, interface),
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
+            Type::Any(i) => i == interface,
             Type::Error => true,
             t => primitive_follows(t, interface),
         }
@@ -1122,6 +1173,10 @@ impl Checker<'_> {
     /// The type of a field, building the structs it uses first (see `define`).
     fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
         match t {
+            TypeAst::Any(n) => {
+                self.any_type(n);
+                Type::Any(n.text.clone())
+            }
             // ponytail: `next: Node?` would need a pointer too; for now it contains itself like a field.
             TypeAst::Optional(t) => match self.field_type(f, decls, t, open) {
                 Type::Error => Type::Error,
@@ -1181,6 +1236,7 @@ impl Checker<'_> {
 
     fn report_unknown(&mut self, t: &TypeAst) {
         match t {
+            TypeAst::Any(n) => self.any_type(n),
             TypeAst::Name(n) if n.text == "Self" && !self.structs.contains_key("Self") => {
                 self.diags.push(Diag::new(n.span, t!("self_type_outside")).help(t!("self_type_outside_help")));
             }
@@ -1254,6 +1310,30 @@ impl Checker<'_> {
         Type::Error
     }
 
+    /// `any Animal`: `Animal` must be an interface; whether its methods allow it is checked
+    /// at the end, once they are all read (`any_checks`).
+    fn any_type(&mut self, n: &Name) {
+        if self.interfaces.contains_key(&n.text) {
+            self.any_checks.push(n.clone());
+            return;
+        }
+        let msg = if self.structs.contains_key(&n.text) || primitive(&n.text).is_some() {
+            t!("any_not_interface", name = n.text)
+        } else {
+            t!("interface_unknown", name = n.text)
+        };
+        self.error(n.span, msg);
+    }
+
+    /// A value going where an `any Animal` is expected: a struct or an enum following `Animal`.
+    fn boxable(&self, t: &Type, interface: &str) -> bool {
+        match t {
+            Type::Struct(d) => d.args.is_empty() && self.follows(&d.name, interface),
+            Type::Enum(d) => self.follows(&d.name, interface),
+            _ => false,
+        }
+    }
+
     /// `Stack` written without its types.
     fn generic_without_types(&mut self, n: &Name) {
         let Some(Type::Struct(d)) = self.structs.get(&n.text) else { return };
@@ -1322,6 +1402,7 @@ impl Checker<'_> {
                         Type::Struct(d) => t!("interp_display_help", name = d.name, kind = "struct"),
                         Type::Enum(d) => t!("interp_display_help", name = d.name, kind = "enum"),
                         Type::Param(p) => t!("param_display_help", type = p.name),
+                        Type::Any(i) => t!("any_display_help", code = code, interface = i),
                         _ => t!("interp_display_list_help", code = code),
                     };
                     self.diags.push(Diag::new(e.span, t!("interp_display", code = code, type = t.text())).help(help));
@@ -1437,8 +1518,29 @@ impl Checker<'_> {
             let t = self.expr(e);
             if t == **inner {
                 self.wraps[e.id] = true;
+            } else if let Type::Any(i) = &**inner
+                && self.boxable(&t, i)
+            {
+                self.boxes[e.id] = Some(i.clone());
+                self.wraps[e.id] = true;
             } else {
                 self.mismatch(e, t, expected);
+            }
+            return;
+        }
+        // `let a: any Animal := rex`: `rex` goes in a box that remembers it is a `Dog`.
+        if let Type::Any(i) = expected {
+            let t = self.expr(e);
+            if self.boxable(&t, i) {
+                self.boxes[e.id] = Some(i.clone());
+            } else if t != *expected && t != Type::Error {
+                let mut d = Diag::new(e.span, t!("types_differ", expected = expected.text(), given = t.text()));
+                if matches!(t, Type::Struct(_) | Type::Enum(_)) && !matches!(&t, Type::Struct(s) if !s.args.is_empty()) {
+                    d = d.help(t!("any_needs_follow", type = t.text(), interface = i));
+                } else if !matches!(t, Type::Any(_)) {
+                    d = d.help(t!("any_struct_only", interface = i));
+                }
+                self.diags.push(d);
             }
             return;
         }
@@ -1619,9 +1721,15 @@ impl Checker<'_> {
             }
             self.types[a.id] = self.types[value.id].clone();
             let arg = &self.src[value.span.start..value.span.end];
-            if *mode == Mode::Var && self.wraps[value.id] {
+            if *mode == Mode::Var && (self.wraps[value.id] || self.boxes[value.id].is_some()) {
                 // The changed value comes back into the caller's variable: it must be a `T?` too.
-                self.error(value.span, t!("var_arg_optional", arg = arg, type = self.types[value.id].text(), declared = t.text()));
+                let (given, declared) = (self.types[value.id].text(), t.text());
+                let msg = if self.wraps[value.id] {
+                    t!("var_arg_optional", arg = arg, type = given, declared = declared)
+                } else {
+                    t!("var_arg_any", arg = arg, type = given, declared = declared)
+                };
+                self.error(value.span, msg);
             }
             match (mode, mark) {
                 (Mode::Var, Mode::Var) => self.changes(value, t!("var_arg_temporary", name = name.text)),
@@ -1902,6 +2010,8 @@ impl Checker<'_> {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
+                        // An unknown method is already reported.
+                        Type::Any(_) => true,
                         _ => false,
                     },
                     _ => false,
@@ -2069,6 +2179,15 @@ impl Checker<'_> {
                     let sig = self.for_types(e.id, sig, given);
                     return self.method_call(receiver, &t.text(), name, args, sig);
                 }
+                // `a.sound` on an `any Animal`: the method of the real type, chosen at run time.
+                if let Type::Any(i) = &t
+                    && let Some(sig) = self.functions.get(&method_name(i, &name.text)).cloned()
+                {
+                    if sig.receiver == Some(Mode::Move) {
+                        self.error(name.span, t!("any_move_self_later", name = name.text));
+                    }
+                    return self.method_call(receiver, i, name, args, sig);
+                }
                 if let Type::List(elem) = &t
                     && let Some(r) = self.list_method(receiver, elem, name, args)
                 {
@@ -2091,7 +2210,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Param(_))
+                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Param(_) | Type::Any(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -2187,6 +2306,9 @@ impl Checker<'_> {
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
                             Some(Type::List(_)) => self.error(e.span, t!("list_compare", op = op.text())),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
+                            Some(culprit @ Type::Any(_)) => self.diags.push(
+                                Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(t!("any_compare_help", type = culprit.text())),
+                            ),
                             Some(culprit) => {
                                 let (name, kind) = match &culprit {
                                     Type::Enum(d) => (d.name.clone(), "enum"),
