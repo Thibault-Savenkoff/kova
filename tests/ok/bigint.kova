@@ -20,6 +20,11 @@ fn main {
     x *= -3
     print(x)
     print(x < 0)
+    print(0 < x)
+    print(x > huge)
+    print(huge > x)
+    print(x <= -45)
+    print(x >= -44)
     print(huge = huge.clone)
     print("big: {huge}")
     let l: List<BigInt> := [3, -1, 2]
@@ -37,6 +42,11 @@ fn main {
 // expect: 123456789012345678901234567890
 // expect: -45
 // expect: true
+// expect: false
+// expect: false
+// expect: true
+// expect: true
+// expect: false
 // expect: true
 // expect: big: 123456789012345678901234567890
 // expect: [-1, 2, 3]

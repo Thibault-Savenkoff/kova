@@ -3344,7 +3344,7 @@ impl<'a> Translator<'a> {
             }
             // `a > b` = `b < a`, `a <= b` = `!(b < a)`, `a >= b` = `!(a < b)`, as in Eiffel's `COMPARABLE`.
             ExprKind::Binary(op @ (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge), a, b)
-                if matches!(self.ty(a), Type::String | Type::Struct(_) | Type::Enum(_)) =>
+                if matches!(self.ty(a), Type::String | Type::BigInt | Type::Struct(_) | Type::Enum(_)) =>
             {
                 let ty = self.ty(a);
                 let (va, vb) = (self.expr(a), self.expr(b));
