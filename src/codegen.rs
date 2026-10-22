@@ -1,6 +1,6 @@
 // Native backend (`kova build`): KIR → machine code with Cranelift → `main.o`,
-// with the runtime's texts as data (`runtime_texts`), then `cc` glues `main.o` and the C runtime
-// into an executable.
+// with the runtime's texts as data (`runtime_texts`), then `cc` glues `main.o` and the runtime
+// (in Rust, `RUNTIME`, or in C on the systems it doesn't know yet) into an executable.
 //
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
@@ -21,6 +21,9 @@ use crate::kir::*;
 use crate::locale::{self, t};
 
 const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
+/// The runtime in Rust (runtime/kova.rs, compiled by build.rs) for the systems it knows; empty
+/// for the others, which still compile the C runtime (PLAN Part 4 "Kova without a C compiler").
+const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime.a"));
 
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
@@ -30,6 +33,20 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let (o, c) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
+    // `KOVA_C_RUNTIME`: the C runtime anyway, to compare (until the C runtime goes).
+    if !RUNTIME.is_empty() && std::env::var_os("KOVA_C_RUNTIME").is_none() {
+        let a = tmp.join("runtime.a");
+        std::fs::write(&a, RUNTIME).map_err(|e| e.to_string())?;
+        // The runtime brings its own entry point and asks nothing of the C library.
+        let res = Command::new("cc")
+            .args(["-nostdlib", "-static", "-no-pie", "-Wl,--gc-sections", "-s", "-o"])
+            .arg(output)
+            .arg(&o)
+            .arg(&a)
+            .output();
+        let _ = std::fs::remove_dir_all(&tmp);
+        return linked(res);
+    }
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
 
     let link = |cc: &str, flags: &[&str]| {
@@ -61,6 +78,11 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
             })
     };
     let _ = std::fs::remove_dir_all(&tmp);
+    linked(res)
+}
+
+/// What the linker said.
+fn linked(res: std::io::Result<std::process::Output>) -> Result<(), String> {
     match res {
         Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound => Err(t!("no_msvc")),
         Err(e) => Err(t!("cc_missing", error = e)),
