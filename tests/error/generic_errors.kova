@@ -1,0 +1,43 @@
+struct Dog { age: Int }
+
+fn make<T>(n: Int) -> Int { return n }
+
+fn f<Int>(x: Int) {}
+
+fn g<T, T>(a: T) {}
+
+fn h<T: Dog, U: Nope>(a: T, b: U) {}
+
+fn larger<T: Comparable>(a: T, b: T) -> T {
+    return a.clone
+}
+
+fn loose<T>(a: T, b: T) -> Bool {
+    print("{a}")
+    print(a.sound)
+    return a < b
+}
+
+struct Box {
+    fn put<T>(self, x: T) {}
+}
+
+fn main {
+    let rex := Dog { age := 3 }
+    print(larger(rex, rex).age)
+    print(larger(1, "a"))
+}
+// error: `T` must appear in a parameter's type
+// error: `Int` is already a type's name: choose another name for the type parameter
+// error: the type parameter `T` is already declared
+// error: `Dog` is a type, not an interface: a type parameter promises interfaces
+// error: unknown interface `Nope`
+// error: `a` (`T`) has no text for people
+// error: `T` must follow `Display`
+// error: `T` has no method `sound`
+// error: `<` cannot order `T` values
+// error: `T` must follow `Comparable`
+// error: type parameters on methods come later
+// error: `larger` needs its `T` to follow `Comparable`, and `Dog` does not
+// error: write `struct Dog : Comparable`
+// error: different types: `Int` expected, `String` given

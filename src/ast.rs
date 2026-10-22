@@ -128,12 +128,21 @@ impl Mode {
 
 pub struct Function {
     pub name: Name,
+    /// `<T: Comparable + Display, U>`: its type parameters, deduced at each call.
+    pub generics: Vec<Generic>,
     /// `Some` for a method with `self`; `None` for a function or a static function.
     pub receiver: Option<Mode>,
     pub params: Vec<Param>,
     pub ret: Option<TypeAst>,
     pub contracts: Vec<Contract>,
     pub body: Block,
+}
+
+/// `T: Comparable + Display` in `fn larger<T: Comparable + Display>`.
+pub struct Generic {
+    pub name: Name,
+    /// The interfaces the type given for it must follow.
+    pub bounds: Vec<Name>,
 }
 
 /// `test "carré de 3" { check carre(3) = 9 }`: only run by `kova test`.

@@ -138,7 +138,7 @@ fn tree(src: &str) -> File {
 
 /// `fn square(x: Int) -> Int`, and the position of each parameter in this text.
 fn heading(f: &Function) -> (String, Vec<[u32; 2]>) {
-    let mut text = format!("fn {}", f.name.text);
+    let mut text = format!("fn {}{}", f.name.text, crate::types::generics_text(f));
     let mut params = vec![];
     // `self` is not an argument at the call (`rex.rename(n)`): it gets no position.
     if let Some(r) = f.receiver {

@@ -1,0 +1,12 @@
+fn larger<T: Comparable>(a: T, b: T) -> T {
+    if a < b {
+        return b
+    }
+    return a.clone
+}
+
+fn main {
+    print(larger(1, 2))
+}
+// error: `b` is borrowed here: it cannot be moved
+// error: give a copy: `b.clone`

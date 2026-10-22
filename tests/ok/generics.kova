@@ -1,0 +1,84 @@
+// Generic functions: written once, `T` deduced at each call, one compiled copy per type.
+fn larger<T: Comparable>(a: T, b: T) -> T {
+    if a < b {
+        return b.clone
+    }
+    return a.clone
+}
+
+fn largest<T: Comparable>(items: List<T>) -> T?
+    require items.length > 0 else "an empty list has no largest element"
+{
+    var best: T := items[0].clone
+    for x in items {
+        best := larger(best, x)
+    }
+    return best
+}
+
+fn describe<T: Comparable + Display>(a: T, b: T) -> String {
+    return "{larger(a, b)} wins"
+}
+
+fn same<T: Equal>(a: T, b: T) -> Bool {
+    return a.equals(b) && a = b
+}
+
+fn first_of<K, V>(pair: (K, V)) -> K {
+    return pair.0.clone
+}
+
+interface Animal {
+    fn sound(self) -> String
+}
+
+fn chorus<A: Animal>(a: A, times: Int) -> String {
+    var text: String := ""
+    from i := 1 to times {
+        text += a.sound
+    }
+    return text
+}
+
+struct Dog : Animal, Comparable, Display, Equal {
+    name: String
+    age: Int
+    fn sound(self) -> String { return "woof" }
+    fn less(self, other: Self) -> Bool { return self.age < other.age }
+    fn to_string(self) -> String { return self.name.clone }
+}
+
+fn main {
+    print(larger(3, 4))
+    print(larger(2.5, 1.0))
+    print(larger("pear", "apple"))
+    print(larger('a', 'z'))
+    let rex := Dog { name := "Rex", age := 3 }
+    let fido := Dog { name := "Fido", age := 5 }
+    print(larger(rex, fido))
+    print(rex.name)
+    print(largest([3, 9, 2]))
+    print(largest(["b", "c", "a"]))
+    print(describe(rex, fido))
+    print(describe(10, 7))
+    print(same(1, 1))
+    print(same("a", "b"))
+    print(same(rex, rex.clone))
+    print(first_of(("key", 42)))
+    print(chorus(rex, 3))
+}
+// expect: 4
+// expect: 2.5
+// expect: pear
+// expect: z
+// expect: Fido
+// expect: Rex
+// expect: 9
+// expect: "c"
+// expect: Fido wins
+// expect: 10 wins
+// expect: true
+// expect: false
+// expect: true
+// expect: key
+// expect: woofwoofwoof

@@ -246,6 +246,9 @@ pub struct Info {
     pub defaults: Vec<(String, usize, usize)>,
     /// Type name → the interfaces it follows (`struct Dog : Equal, Display`).
     pub follows: HashMap<String, Vec<String>>,
+    /// By the `Expr::id` of a call to a generic function: the type given for each of its
+    /// type parameters, in order (`larger(3, 4)` → `[Int]`).
+    pub type_args: HashMap<usize, Vec<Type>>,
 }
 
 impl Info {
@@ -290,12 +293,49 @@ struct Signature {
     receiver: Option<Mode>,
     params: Vec<(Mode, Type)>,
     ret: Type,
+    /// `<T: Comparable>`: one `Type::Param` each, deduced at each call.
+    generics: Vec<Rc<ParamDef>>,
 }
 
 impl Signature {
+    fn new(receiver: Option<Mode>, params: Vec<(Mode, Type)>, ret: Type) -> Signature {
+        Signature { receiver, params, ret, generics: vec![] }
+    }
+
     fn substitute(&self, s: &[(String, Type)]) -> Signature {
         let params = self.params.iter().map(|(m, t)| (*m, substitute(t, s))).collect();
-        Signature { receiver: self.receiver, params, ret: substitute(&self.ret, s) }
+        Signature { receiver: self.receiver, params, ret: substitute(&self.ret, s), generics: self.generics.clone() }
+    }
+}
+
+/// Does `t` contain the type parameter `name`?
+fn mentions(t: &Type, name: &str) -> bool {
+    match t {
+        Type::Param(p) => p.name == name,
+        Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
+        Type::Optional(t) | Type::List(t) => mentions(t, name),
+        Type::Result(a, b) => mentions(a, name) || mentions(b, name),
+        _ => false,
+    }
+}
+
+/// Deduces the type parameters of `param` from the type `given` of an argument:
+/// `List<T>` and `List<Int>` → `T` = `Int`. The first argument giving a parameter decides it.
+fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec<(String, Type)>) {
+    match (param, given) {
+        (_, Type::Error) => {}
+        (Type::Param(p), t) if generics.iter().any(|g| g.name == p.name) => {
+            if !found.iter().any(|(n, _)| *n == p.name) {
+                found.push((p.name.clone(), t.clone()));
+            }
+        }
+        (Type::Tuple(ps), Type::Tuple(ts)) => ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found)),
+        (Type::Optional(p), Type::Optional(t)) | (Type::List(p), Type::List(t)) => deduce(p, t, generics, found),
+        (Type::Result(p, q), Type::Result(t, u)) => {
+            deduce(p, t, generics, found);
+            deduce(q, u, generics, found);
+        }
+        _ => {}
     }
 }
 
@@ -310,7 +350,19 @@ pub fn heading_text(f: &Function) -> String {
     params.extend(f.params.iter().map(|p| format!("{}: {}{}", p.name.text, mode(p.mode), p.ty.text())));
     let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
     let ret = f.ret.as_ref().map_or(String::new(), |t| format!(" -> {}", t.text()));
-    format!("fn {}{params}{ret}", f.name.text)
+    format!("fn {}{}{params}{ret}", f.name.text, generics_text(f))
+}
+
+/// `<T: Comparable + Display, K>`, or nothing when the function has no type parameters.
+pub fn generics_text(f: &Function) -> String {
+    if f.generics.is_empty() {
+        return String::new();
+    }
+    let one = |g: &Generic| {
+        let bounds: Vec<&str> = g.bounds.iter().map(|b| b.text.as_str()).collect();
+        if bounds.is_empty() { g.name.text.clone() } else { format!("{}: {}", g.name.text, bounds.join(" + ")) }
+    };
+    format!("<{}>", f.generics.iter().map(one).collect::<Vec<_>>().join(", "))
 }
 
 /// The name of a struct's method or static function among the functions: `Dog.sound`.
@@ -339,6 +391,7 @@ struct Checker<'a> {
     interfaces: HashMap<String, usize>,
     defaults: Vec<(String, usize, usize)>,
     follows: HashMap<String, Vec<String>>,
+    type_args: HashMap<usize, Vec<Type>>,
     /// One table per open block, from outside to inside.
     scopes: Vec<HashMap<String, Variable>>,
     ret: Type,
@@ -360,6 +413,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         interfaces: HashMap::new(),
         defaults: vec![],
         follows: HashMap::new(),
+        type_args: HashMap::new(),
         scopes: vec![],
         ret: Type::Unit,
         result: None,
@@ -395,9 +449,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     // 1. The structs, then the signatures: what is written further down can be used.
     c.structs.insert("IoError".into(), io_error());
     let string = || Type::String;
-    let read_file = Signature { receiver: None, params: vec![(Mode::Read, string())], ret: Type::Result(Box::new(string()), Box::new(io_error())) };
+    let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
-    c.functions.insert("read_line".into(), Signature { receiver: None, params: vec![], ret: Type::Optional(Box::new(string())) });
+    c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
@@ -429,18 +483,26 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
     for func in &f.functions {
+        let generics = c.open_generics(func, true);
         for t in func.params.iter().map(|p| &p.ty).chain(&func.ret) {
             c.report_unknown(t);
         }
-        let params = func.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
+        let params: Vec<(Mode, Type)> = func.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
         let ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
+        // Each type parameter is deduced from the arguments: it must appear in a parameter.
+        for (g, written) in generics.iter().zip(&func.generics) {
+            if !params.iter().any(|(_, t)| mentions(t, &g.name)) {
+                c.diags.push(Diag::new(written.name.span, t!("generic_unused", name = g.name)).help(t!("generic_unused_help", name = g.name)));
+            }
+        }
+        c.close_generics(func);
         let name = func.name.text.as_str();
         if BUILTINS.contains(&name) || LIBRARY.iter().any(|(n, _)| *n == name) {
             c.error(func.name.span, t!("builtin_function", name = name));
         } else if c.functions.contains_key(name) {
             c.error(func.name.span, t!("function_exists", name = name));
         } else {
-            c.functions.insert(name.to_string(), Signature { receiver: None, params, ret });
+            c.functions.insert(name.to_string(), Signature { receiver: None, params, ret, generics });
         }
     }
     for (i, s) in f.structs.iter().enumerate() {
@@ -451,6 +513,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let me = c.structs[&s.name.text].clone();
         c.structs.insert("Self".into(), me);
         for m in &s.methods {
+            c.open_generics(m, false);
             for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
                 c.report_unknown(t);
             }
@@ -467,7 +530,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
                 let (line, _) = line_col(src, first.start);
                 c.error(m.name.span, t!("method_exists", name = name, type = s.name.text, line = line));
             } else {
-                c.functions.insert(method_name(&s.name.text, name), Signature { receiver: m.receiver, params, ret });
+                c.functions.insert(method_name(&s.name.text, name), Signature::new(m.receiver, params, ret));
             }
         }
         c.structs.remove("Self");
@@ -480,6 +543,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         c.structs.insert("Self".into(), self_param(&it.name.text));
         let mut seen: HashMap<&str, Span> = HashMap::new();
         for (m, _) in &it.methods {
+            c.open_generics(m, false);
             for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
                 c.report_unknown(t);
             }
@@ -497,7 +561,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             }
             let params = m.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
             let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
-            c.functions.insert(method_name(&it.name.text, name), Signature { receiver: m.receiver, params, ret });
+            c.functions.insert(method_name(&it.name.text, name), Signature::new(m.receiver, params, ret));
         }
         c.structs.remove("Self");
     }
@@ -583,8 +647,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     let moves = vec![false; c.types.len()];
-    let (defaults, follows) = (c.defaults, c.follows);
-    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows }, c.diags)
+    let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
+    (Info { types: c.types, moves, wraps: c.wraps, structs: c.structs, defaults, follows, type_args }, c.diags)
 }
 
 /// `Equal`, `Comparable`, `Display` (`parser::PRELUDE`).
@@ -776,7 +840,74 @@ impl Checker<'_> {
         }
     }
 
+    /// Makes the type parameters of `func` known as types (`T` in `fn larger<T: Comparable>`)
+    /// until `close_generics`, after checking them; reported once, when `report` is set.
+    fn open_generics(&mut self, func: &Function, report: bool) -> Vec<Rc<ParamDef>> {
+        let mut made: Vec<Rc<ParamDef>> = vec![];
+        for g in &func.generics {
+            let name = g.name.text.as_str();
+            if !report {
+                if g.name.span == func.generics[0].name.span {
+                    self.error(g.name.span, t!("generic_method_later"));
+                }
+                continue;
+            }
+            if primitive(name).is_some() || self.structs.contains_key(name) || self.interfaces.contains_key(name) || name == "Self" {
+                self.error(g.name.span, t!("generic_name_taken", name = name));
+                continue;
+            }
+            if made.iter().any(|m| m.name == name) {
+                self.error(g.name.span, t!("generic_twice", name = name));
+                continue;
+            }
+            for b in &g.bounds {
+                if !self.interfaces.contains_key(&b.text) {
+                    let msg = if self.structs.contains_key(&b.text) || primitive(&b.text).is_some() {
+                        t!("bound_not_interface", name = b.text)
+                    } else {
+                        t!("interface_unknown", name = b.text)
+                    };
+                    self.error(b.span, msg);
+                }
+            }
+            let bounds = g.bounds.iter().map(|b| b.text.clone()).collect();
+            made.push(Rc::new(ParamDef { name: name.to_string(), bounds }));
+        }
+        for p in &made {
+            self.structs.insert(p.name.clone(), Type::Param(p.clone()));
+        }
+        made
+    }
+
+    fn close_generics(&mut self, func: &Function) {
+        for g in &func.generics {
+            if matches!(self.structs.get(&g.name.text), Some(Type::Param(_))) {
+                self.structs.remove(&g.name.text);
+            }
+        }
+    }
+
+    /// Does the type given for a type parameter keep the promise `bound`?
+    fn satisfies(&self, t: &Type, bound: &str) -> bool {
+        if bound == "Equal" { self.equatable(t) } else { self.has(t, bound) }
+    }
+
     fn body(&mut self, func: &Function, owner: Option<&Type>) {
+        // Checked once, with each `T` known only by what it promises.
+        let opened = !func.generics.is_empty() && owner.is_none();
+        if opened {
+            let generics = self.functions.get(&func.name.text).map(|s| s.generics.clone()).unwrap_or_default();
+            for p in generics {
+                self.structs.insert(p.name.clone(), Type::Param(p));
+            }
+        }
+        self.body_inner(func, owner);
+        if opened {
+            self.close_generics(func);
+        }
+    }
+
+    fn body_inner(&mut self, func: &Function, owner: Option<&Type>) {
         self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
         let mut params = HashMap::new();
         if let (Some(ty), Some(r)) = (owner, func.receiver) {
@@ -1290,7 +1421,8 @@ impl Checker<'_> {
 
     /// The arguments of a call, checked against the parameters: their types, and the markers
     /// of rule 2.7.4 (`var a` for `x: var T`, `move a` for `x: move T`).
-    fn arguments(&mut self, name: &Name, args: &[Expr], params: &[(Mode, Type)]) {
+    /// `typed`: the types of the arguments already computed (to deduce a generic's `T`).
+    fn arguments(&mut self, name: &Name, args: &[Expr], params: &[(Mode, Type)], typed: &[Option<Type>]) {
         if params.len() != args.len() {
             let msg = t!("argument_count", name = name.text, expected = params.len(), given = args.len());
             self.error(name.span, msg);
@@ -1304,7 +1436,10 @@ impl Checker<'_> {
                 ExprKind::Mark(m, x) => (*m, &**x),
                 _ => (Mode::Read, a),
             };
-            self.expect(value, t);
+            match typed.get(i).cloned().flatten() {
+                Some(given) => self.mismatch(value, given, t),
+                None => self.expect(value, t),
+            }
             self.types[a.id] = self.types[value.id].clone();
             let arg = &self.src[value.span.start..value.span.end];
             if *mode == Mode::Var && self.wraps[value.id] {
@@ -1341,7 +1476,7 @@ impl Checker<'_> {
             Some(Mode::Var) => self.changes(receiver, t!("var_method_temporary", name = name.text)),
             Some(_) => {}
         }
-        self.arguments(name, args, &sig.params);
+        self.arguments(name, args, &sig.params, &[]);
         sig.ret
     }
 
@@ -1370,7 +1505,7 @@ impl Checker<'_> {
         if params.is_empty() && !args.is_empty() {
             self.error(name.span, t!("no_arguments", name = name.text));
         } else if !params.is_empty() {
-            self.arguments(name, args, &params);
+            self.arguments(name, args, &params, &[]);
         }
         Some(result)
     }
@@ -1406,7 +1541,7 @@ impl Checker<'_> {
                     .help(t!("method_needs_value_help", name = name.text)),
             );
         }
-        self.arguments(name, args, &sig.params);
+        self.arguments(name, args, &sig.params, &[]);
         sig.ret
     }
 
@@ -1679,7 +1814,7 @@ impl Checker<'_> {
                 }
             }
             ExprKind::StructLit { ty, fields } => self.struct_literal(ty, fields),
-            ExprKind::Call { name, args } => self.call(name, args),
+            ExprKind::Call { name, args } => self.call(e.id, name, args),
             ExprKind::Static { ty, name, args } => self.static_call(ty, name, args),
             ExprKind::Variant { ty, name, args } => self.variant(ty, name, args),
             ExprKind::None => {
@@ -1739,6 +1874,8 @@ impl Checker<'_> {
                     && let Some((b, sig)) =
                         p.bounds.iter().find_map(|b| Some((b.clone(), self.functions.get(&method_name(b, &name.text))?.clone())))
                 {
+                    // `Self` in the interface is the receiver's type (`T` in `a.equals(b)`).
+                    let sig = sig.substitute(&[("Self".to_string(), t.clone())]);
                     return self.method_call(receiver, &b, name, args, sig);
                 }
                 for a in args {
@@ -1961,7 +2098,7 @@ impl Checker<'_> {
             None => return self.unchecked(args),
         };
         let params: Vec<(Mode, Type)> = fields.into_iter().map(|(_, t)| (Mode::Read, t)).collect();
-        self.arguments(name, args, &params);
+        self.arguments(name, args, &params, &[]);
         Type::Enum(d.unwrap())
     }
 
@@ -2141,7 +2278,7 @@ impl Checker<'_> {
         ty
     }
 
-    fn call(&mut self, name: &Name, args: &[Expr]) -> Type {
+    fn call(&mut self, id: usize, name: &Name, args: &[Expr]) -> Type {
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
                 self.error(name.span, t!("builtin_one_arg", name = name.text));
@@ -2160,8 +2297,44 @@ impl Checker<'_> {
             });
             return Type::Error;
         };
-        let (params, ret) = (sig.params.clone(), sig.ret.clone());
-        self.arguments(name, args, &params);
-        ret
+        let sig = sig.clone();
+        if sig.generics.is_empty() {
+            self.arguments(name, args, &sig.params, &[]);
+            return sig.ret;
+        }
+        // `larger(3, 4)`: `T` is deduced from the arguments, then must keep its promises.
+        let (mut found, mut typed) = (vec![], vec![None; args.len()]);
+        for (i, a) in args.iter().enumerate() {
+            let Some((_, p)) = sig.params.get(i) else { continue };
+            if sig.generics.iter().any(|g| mentions(p, &g.name)) {
+                let value = match &a.kind {
+                    ExprKind::Mark(_, x) => &**x,
+                    _ => a,
+                };
+                let t = self.expr(value);
+                deduce(p, &t, &sig.generics, &mut found);
+                typed[i] = Some(t);
+            }
+        }
+        let errors = typed.iter().flatten().any(|t| *t == Type::Error);
+        for g in &sig.generics {
+            match found.iter().find(|(n, _)| *n == g.name) {
+                None if !errors => self.error(name.span, t!("generic_not_deduced", name = g.name, function = name.text)),
+                None => {}
+                Some((_, t)) => {
+                    let broken: Vec<&String> = g.bounds.iter().filter(|b| !self.satisfies(t, b)).collect();
+                    for b in broken {
+                        self.diags.push(
+                            Diag::new(name.span, t!("generic_bound", function = name.text, name = g.name, type = t.text(), bound = b))
+                                .help(t!("generic_bound_help", type = t.text(), bound = b)),
+                        );
+                    }
+                }
+            }
+        }
+        let sig = sig.substitute(&found);
+        self.arguments(name, args, &sig.params, &typed);
+        self.type_args.insert(id, sig.generics.iter().map(|g| found.iter().find(|(n, _)| *n == g.name).map_or(Type::Error, |(_, t)| t.clone())).collect());
+        sig.ret
     }
 }

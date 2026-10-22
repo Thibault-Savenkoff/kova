@@ -85,7 +85,7 @@ pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
         .windows(4)
         .zip(&outside)
         .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
-        .filter(|(w, _)| w[2].kind != Kind::Sym("(") || w[3].kind == Kind::Sym(")"))
+        .filter(|(w, _)| !matches!(w[2].kind, Kind::Sym("(" | "<")) || w[3].kind == Kind::Sym(")"))
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
         .chain(["read_line".to_string()])
         .collect();
@@ -699,9 +699,10 @@ impl Parser<'_> {
     fn function(&mut self, in_struct: bool) -> R<Function> {
         self.advance(); // fn
         let name = self.value_name("what_function")?;
+        let generics = self.generics()?;
         let mut params = vec![];
         if !self.is_sym("(") {
-            return self.function_rest(name, None, params);
+            return self.function_rest(name, generics, None, params);
         }
         let open = self.advance().span;
         if self.is_sym(")") {
@@ -722,7 +723,35 @@ impl Parser<'_> {
             }
         }
         self.advance(); // )
-        self.function_rest(name, receiver, params)
+        self.function_rest(name, generics, receiver, params)
+    }
+
+    /// `<T: Comparable + Display, U>` after a function's name (nothing if there is no `<`).
+    fn generics(&mut self) -> R<Vec<Generic>> {
+        let mut generics = vec![];
+        if !self.is_sym("<") {
+            return Ok(generics);
+        }
+        self.advance();
+        loop {
+            let name = self.type_name()?;
+            let mut bounds = vec![];
+            if self.is_sym(":") {
+                self.advance();
+                bounds.push(self.type_name()?);
+                while self.is_sym("+") {
+                    self.advance();
+                    bounds.push(self.type_name()?);
+                }
+            }
+            generics.push(Generic { name, bounds });
+            if !self.is_sym(",") {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(">")?;
+        Ok(generics)
     }
 
     /// `self`, `var self` or `move self` at the start of the parameters.
@@ -754,7 +783,7 @@ impl Parser<'_> {
     }
 
     /// After the parameters: `-> Type`, the contracts, the body.
-    fn function_rest(&mut self, name: Name, receiver: Option<Mode>, params: Vec<Param>) -> R<Function> {
+    fn function_rest(&mut self, name: Name, generics: Vec<Generic>, receiver: Option<Mode>, params: Vec<Param>) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
             Some(self.type_()?)
@@ -776,10 +805,10 @@ impl Parser<'_> {
             self.bodiless = true;
             let at = self.token().span;
             let body = Block { open: at, stmts: vec![], close: at };
-            return Ok(Function { name, receiver, params, ret, contracts, body });
+            return Ok(Function { name, generics, receiver, params, ret, contracts, body });
         }
         let body = self.block()?;
-        Ok(Function { name, receiver, params, ret, contracts, body })
+        Ok(Function { name, generics, receiver, params, ret, contracts, body })
     }
 
     /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.

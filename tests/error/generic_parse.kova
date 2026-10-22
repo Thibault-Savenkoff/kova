@@ -1,0 +1,4 @@
+fn f<t>(x: t) {}
+
+fn main {}
+// error: a type name starts with a capital letter

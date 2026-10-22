@@ -164,6 +164,8 @@ enum Helper {
     Show(Type),
     /// Takes two values (an enum, an optional or a result) and returns 1 if they are equal.
     Equal(Type),
+    /// A generic function translated for these types (one per type parameter): `larger<Int>`.
+    Instance(String, Vec<Type>),
 }
 
 pub struct Program {
@@ -468,15 +470,24 @@ pub fn fault_text(f: Fault, file: &str, l: Loc) -> String {
 pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, tests: bool, built: bool) -> Program {
     // Every function: the free ones, then the structs' methods (`Dog.sound`), then the tests
     // (a test = a function without parameters, result or contracts).
-    // The last element: the type `Self` stands for (a struct's methods, the default methods it takes).
+    // The last element: what the `Type::Param`s stand for (`Self` in a struct's methods and in the
+    // default methods it takes; `T` in a copy of a generic function).
     type Source<'f> =
-        (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block, Option<Type>);
-    let mut all: Vec<Source> = (f.functions.iter())
-        .map(|g| (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, None))
+        (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block, Vec<(String, Type)>);
+    let free = |g: &'f ast::Function| -> Source<'f> {
+        (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, vec![])
+    };
+    let mut all: Vec<Source> = f.functions.iter().filter(|g| g.generics.is_empty()).map(free).collect();
+    // A generic function is translated once for each list of types it is called with
+    // (`Helper::Instance`): `larger<Int>`, `larger<Dog>`.
+    let generic: HashMap<String, (Source, Vec<String>)> = (f.functions.iter())
+        .filter(|g| !g.generics.is_empty())
+        .map(|g| (g.name.text.clone(), (free(g), g.generics.iter().map(|p| p.name.text.clone()).collect())))
         .collect();
     let method = |ty: &Type, owner: &str, m: &'f ast::Function| -> Source<'f> {
         let name = method_name(owner, &m.name.text);
-        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, Some(ty.clone()))
+        let me = vec![("Self".to_string(), ty.clone())];
+        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me)
     };
     for s in &f.structs {
         let ty = info.structs[&s.name.text].clone();
@@ -486,13 +497,16 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     for (owner, k, j) in &info.defaults {
         all.push(method(&info.structs[owner], owner, &f.interfaces[*k].methods[*j].0));
     }
-    let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> =
-        all.iter().map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect()))).collect();
+    let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> = (all.iter().chain(generic.values().map(|(g, _)| g)))
+        .map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect())))
+        .collect();
     let n = all.len();
-    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, None)));
+    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![])));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
     // The functions that receive the call location (`main` is called by the runtime).
-    let sites: Vec<bool> = all.iter().map(|g| contracts && !g.4.is_empty() && g.0 != "main").collect();
+    let site = |g: &Source| contracts && !g.4.is_empty() && g.0 != "main";
+    let sites: Vec<bool> = all.iter().map(site).collect();
+    let generic_sites: HashMap<&str, bool> = generic.iter().map(|(n, (g, _))| (n.as_str(), site(g))).collect();
     let helpers = RefCell::new(vec![]);
     let translator = |ret: Type, ensures: Vec<&'f Contract>, subst: Vec<(String, Type)>| Translator {
         src,
@@ -502,6 +516,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         numbers: &numbers,
         signatures: &signatures,
         sites: &sites,
+        generic_sites: &generic_sites,
         helpers: &helpers,
         first_helper: all.len(),
         contracts,
@@ -519,12 +534,9 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         loops: vec![],
         temps: vec![],
     };
-    let mut functions: Vec<Function> = all
-        .iter()
-        .enumerate()
-        .map(|(i, (name, receiver, params, ret, written_contracts, body, me))| {
+    let make = |(name, receiver, params, ret, written_contracts, body, subst): &Source<'f>, with_site: bool| {
             let mut structs = info.structs.clone();
-            let subst: Vec<(String, Type)> = me.iter().map(|t| ("Self".to_string(), t.clone())).collect();
+            let subst = subst.clone();
             structs.extend(subst.iter().cloned());
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &structs));
             let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
@@ -539,7 +551,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
                 let v = t.new_slots(&ty);
                 t.parameter(&p.name.text, p.mode, v, ty, &mut returns);
             }
-            t.site = sites[i].then(|| (t.int_local(), t.int_local()));
+            t.site = with_site.then(|| (t.int_local(), t.int_local()));
             let nb_params = t.locals.len();
             t.current = t.new_block();
             for c in kept(ContractKind::Require) {
@@ -552,13 +564,21 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
                 t.finish(End::Unreachable);
             }
             t.function(name.clone(), nb_params, returns)
-        })
-        .collect();
+    };
+    let mut functions: Vec<Function> = all.iter().enumerate().map(|(i, g)| make(g, sites[i])).collect();
     // The helpers, asked for while translating (and by one another: `List<List<String>>`).
     let mut k = 0;
     while k < helpers.borrow().len() {
         let h = helpers.borrow()[k].clone();
-        functions.push(translator(Type::Unit, vec![], vec![]).helper_function(&h));
+        functions.push(match &h {
+            Helper::Instance(name, types) => {
+                let (g, names) = &generic[name];
+                let subst: Vec<(String, Type)> = names.iter().cloned().zip(types.iter().cloned()).collect();
+                let shown = format!("{name}<{}>", types.iter().map(Type::text).collect::<Vec<_>>().join(", "));
+                make(&(shown, g.1.clone(), g.2, g.3, g.4, g.5, subst), generic_sites[name.as_str()])
+            }
+            h => translator(Type::Unit, vec![], vec![]).helper_function(h),
+        });
         k += 1;
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
@@ -578,6 +598,8 @@ struct Translator<'a> {
     signatures: &'a HashMap<String, (Option<Mode>, Vec<Mode>)>,
     /// By function number: does it receive the call location?
     sites: &'a [bool],
+    /// The same for the generic functions, by name.
+    generic_sites: &'a HashMap<&'a str, bool>,
     /// The helpers asked for so far: helper `k` is function `first_helper + k`.
     helpers: &'a RefCell<Vec<Helper>>,
     first_helper: usize,
@@ -659,7 +681,7 @@ impl<'a> Translator<'a> {
             self.finish(End::Return(vec![same]));
             return self.function(format!("equal {}", ty.text()), a.len() * 2, vec![Scalar::Int]);
         }
-        let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h else { unreachable!() };
+        let (Helper::Drop(ty) | Helper::Clone(ty) | Helper::Show(ty)) = h else { unreachable!("made by `translate`") };
         let v = self.new_slots(ty);
         self.current = self.new_block();
         if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
@@ -710,7 +732,7 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) => unreachable!("made above"),
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
@@ -863,6 +885,9 @@ impl<'a> Translator<'a> {
 
     /// `a < b` on a String or a type following `Comparable` (its `less`).
     fn less(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
+        if matches!(ty, Type::Int | Type::Char | Type::Float) {
+            return self.operation(Op::Lt, a[0], b[0], *ty == Type::Float, NOWHERE);
+        }
         if *ty == Type::String {
             let d = self.int_local();
             self.emit(Inst::Str(d, StrOp::Less, vec![a[0], b[0]]));
@@ -1624,9 +1649,14 @@ impl<'a> Translator<'a> {
     /// `results := f(vals)`, with the call location for a function that has contracts.
     /// `places`: what `var self` and the `var` parameters change, written back after the call
     /// (copy-in / copy-out, like Swift's `inout`).
-    fn call(&mut self, name: &str, mut vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
+    fn call(&mut self, name: &str, vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
         let num = self.numbers[name];
-        if self.sites[num] {
+        self.call_to(num, self.sites[num], vals, places, span, ty)
+    }
+
+    /// Calls function `num` (`site`: it receives the call location).
+    fn call_to(&mut self, num: usize, site: bool, mut vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
+        if site {
             let l = self.loc(span);
             let (line, col) = (self.constant(l.line as i64), self.constant(l.col as i64));
             vals.extend([line, col]);
@@ -1886,6 +1916,13 @@ impl<'a> Translator<'a> {
                 let (mut vals, mut places) = (vec![], vec![]);
                 self.arguments(&name.text, args, &mut vals, &mut places);
                 let ty = self.ty(e);
+                // A generic function: its copy for these types (`T` of the caller replaced too).
+                if let Some(types) = self.info.type_args.get(&e.id) {
+                    let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
+                    let num = self.helper(Helper::Instance(name.text.clone(), types));
+                    let site = self.generic_sites[name.text.as_str()];
+                    return self.call_to(num, site, vals, places, name.span, &ty);
+                }
                 self.call(&name.text, vals, places, name.span, &ty)
             }
             ExprKind::Static { ty, name, args } => {
@@ -2061,6 +2098,20 @@ impl<'a> Translator<'a> {
             ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
                 let (p, _) = self.place(e);
                 self.read(&p)
+            }
+            // `a.equals(b)` / `a.less(b)` on a `T: Equal` / `T: Comparable` whose real type writes
+            // no such method (`Int`, a struct compared field by field): as `a = b` / `a < b`.
+            ExprKind::Method { receiver, name, args }
+                if matches!(self.info.types[receiver.id], Type::Param(_))
+                    && matches!(name.text.as_str(), "equals" | "less")
+                    && self.method(receiver, name).is_none() =>
+            {
+                let ty = self.ty(receiver);
+                let (va, vb) = (self.expr(receiver), self.expr(&args[0]));
+                if name.text == "equals" {
+                    return vec![self.equal(&va, &vb, &ty, e.span)];
+                }
+                vec![self.less(&va, &vb, &ty, e.span)]
             }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
