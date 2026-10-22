@@ -1,5 +1,6 @@
 // Native backend (`kova build`): KIR → machine code with Cranelift → `main.o`,
-// then `cc` glues `main.o`, the C runtime and its texts (`locale::c_texts`) into an executable.
+// with the runtime's texts as data (`runtime_texts`), then `cc` glues `main.o` and the C runtime
+// into an executable.
 //
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
@@ -23,14 +24,13 @@ const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
 
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
-    let object = make_object(p, files).map_err(|e| t!("codegen_failed", error = e))?;
+    let object = make_object(p, files, lang).map_err(|e| t!("codegen_failed", error = e))?;
 
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let (o, c, texts) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"), tmp.join("texts.c"));
+    let (o, c) = (tmp.join(if cfg!(windows) { "main.obj" } else { "main.o" }), tmp.join("runtime.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
-    std::fs::write(&texts, locale::c_texts(lang, files)).map_err(|e| e.to_string())?;
 
     let link = |cc: &str, flags: &[&str]| {
         // Only what the program uses: each function in its own section, the unused ones dropped,
@@ -41,13 +41,13 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
         } else {
             &["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"]
         };
-        Command::new(cc).args(flags).args(small).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output()
+        Command::new(cc).args(flags).args(small).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg("-lm").output()
     };
     // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
     // else the system's static C library; else as usual, with a warning saying what to install.
     // macOS has no static C library: its `libSystem` is on every Mac, so `cc` as usual is fine.
     let res = if cfg!(windows) {
-        windows_link(output, &o, &c, &texts, &tmp)
+        windows_link(output, &o, &c, &tmp)
     } else if cfg!(target_os = "macos") {
         link("cc", &[])
     } else {
@@ -75,7 +75,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
 /// Windows (PLAN Part 4 "Windows"): Microsoft's C compiler, found where Visual Studio put it
 /// (the Rust installer installs it); else MinGW's `gcc` if it is on the PATH. `/MT` puts the C
 /// library inside the executable, so that it runs on any Windows, like a static one on Linux.
-fn windows_link(output: &str, o: &Path, c: &Path, texts: &Path, tmp: &Path) -> std::io::Result<std::process::Output> {
+fn windows_link(output: &str, o: &Path, c: &Path, tmp: &Path) -> std::io::Result<std::process::Output> {
     #[cfg(windows)]
     if let Some(mut cl) = find_msvc_tools::find(if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }, "cl.exe") {
         return cl
@@ -84,13 +84,12 @@ fn windows_link(output: &str, o: &Path, c: &Path, texts: &Path, tmp: &Path) -> s
             .arg(format!("/Fe{output}"))
             .arg(o)
             .arg(c)
-            .arg(texts)
             .args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"])
             .output();
     }
     let _ = tmp;
     let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
-    Command::new("gcc").args(["-static", "-O2"]).args(small).arg("-o").arg(output).arg(o).arg(c).arg(texts).arg("-lshell32").output()
+    Command::new("gcc").args(["-static", "-O2"]).args(small).arg("-o").arg(output).arg(o).arg(c).arg("-lshell32").output()
 }
 
 /// The C runtime functions called by the generated code.
@@ -187,7 +186,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     }
 }
 
-fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn make_object(p: &Program, files: &[String], lang: Option<usize>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
     flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables, macOS only those
@@ -306,7 +305,45 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
+    runtime_texts(&mut module, lang, files)?;
     Ok(module.finish().emit()?)
+}
+
+/// What the runtime reads to write its messages (runtime.c: `kova_texts`, `kova_langs`…):
+/// `kova_nb_texts` texts per language, in the order of `locale::RUNTIME`; the languages' codes;
+/// the source files' paths; the `header`'s language (`kova_forced_lang`), or -1. Each text ends
+/// with a 0 byte, as C wants it.
+fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut made = 0;
+    let mut table = |module: &mut ObjectModule, name: &str, items: Vec<String>| -> Result<(), Box<dyn std::error::Error>> {
+        let mut d = DataDescription::new();
+        // Not `define_zeroinit`: that would be a zeroed section, which keeps no addresses.
+        d.define(vec![0; items.len().max(1) * 8].into());
+        d.set_align(8);
+        for (i, item) in items.iter().enumerate() {
+            let id = module.declare_data(&format!("kova_runtime_text{made}"), Linkage::Local, false, false)?;
+            made += 1;
+            let mut text = DataDescription::new();
+            text.define([item.as_bytes(), &[0]].concat().into());
+            module.define_data(id, &text)?;
+            let address = module.declare_data_in_data(id, &mut d);
+            d.write_data_addr(i as u32 * 8, address, 0);
+        }
+        let id = module.declare_data(name, Linkage::Export, false, false)?;
+        Ok(module.define_data(id, &d)?)
+    };
+    let langs = locale::LANGUAGES.len();
+    let texts = (0..langs).flat_map(|l| locale::RUNTIME.iter().map(move |k| locale::text_in(l, k, &[]))).collect();
+    table(module, "kova_texts", texts)?;
+    table(module, "kova_langs", locale::LANGUAGES.iter().map(|(code, _)| code.to_string()).collect())?;
+    table(module, "kova_files", files.to_vec())?;
+    for (name, value) in [("kova_nb_langs", langs as i32), ("kova_nb_texts", locale::RUNTIME.len() as i32), ("kova_forced_lang", forced.map_or(-1, |l| l as i32))] {
+        let mut d = DataDescription::new();
+        d.define(value.to_le_bytes().into());
+        let id = module.declare_data(name, Linkage::Export, false, false)?;
+        module.define_data(id, &d)?;
+    }
+    Ok(())
 }
 
 /// The number of a text of the runtime (`kova_texts` in the generated C).
