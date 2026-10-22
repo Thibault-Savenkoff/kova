@@ -102,8 +102,14 @@ fn check_output(name: &str, mode: &str, out: &Output, e: &Expected, failures: &m
 fn ok_programs() {
     let tmp = std::env::temp_dir().join(format!("kova-tests-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    // One program per core at a time: most of the time goes to the C compiler of `kova build`.
-    let files = files("ok");
+    let failures = in_parallel(&files("ok"), |f, failures| check_program(f, &tmp, failures));
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
+/// `check` on every file, one per core at a time (most of the time goes to starting programs,
+/// slow on Windows, and to the C compiler of `kova build`); the failures in the files' order.
+fn in_parallel(files: &[PathBuf], check: impl Fn(&PathBuf, &mut Vec<String>) + Sync) -> Vec<String> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let found = std::sync::Mutex::new(vec![]);
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -112,7 +118,7 @@ fn ok_programs() {
             s.spawn(|| {
                 while let Some(f) = files.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
                     let mut failures = vec![];
-                    check_program(f, &tmp, &mut failures);
+                    check(f, &mut failures);
                     found.lock().unwrap().extend(failures.into_iter().map(|m| (f.clone(), m)));
                 }
             });
@@ -120,10 +126,7 @@ fn ok_programs() {
     });
     let mut failures = found.into_inner().unwrap();
     failures.sort();
-    let failures: Vec<String> = failures.into_iter().map(|(_, m)| m).collect();
-
-    let _ = std::fs::remove_dir_all(&tmp);
-    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+    failures.into_iter().map(|(_, m)| m).collect()
 }
 
 /// `f` under `kova run`, then built and run: the same output, as its `// expect:` lines say.
@@ -163,20 +166,19 @@ fn check_program(f: &PathBuf, tmp: &Path, failures: &mut Vec<String>) {
 
 #[test]
 fn rejected_programs() {
-    let mut failures = vec![];
-    for f in files("error") {
-        let name = test_name(&f);
-        let expected = expectations(&std::fs::read_to_string(&f).unwrap(), "error");
+    let failures = in_parallel(&files("error"), |f, failures| {
+        let name = test_name(f);
+        let expected = expectations(&std::fs::read_to_string(f).unwrap(), "error");
         assert!(!expected.is_empty(), "{name}: missing `// error: ...`");
 
-        let out = kova(LANG).arg("run").arg(&f).output().unwrap();
+        let out = kova(LANG).arg("run").arg(f).output().unwrap();
         let stderr = text(&out.stderr);
         if out.status.success() {
             failures.push(format!("{name}: accepted but should have been rejected"));
         } else if let Some(missing) = expected.iter().find(|e| !stderr.contains(e.as_str())) {
             failures.push(format!("{name}: expected message « {missing} »\n  got: {}", stderr.trim()));
         }
-    }
+    });
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
