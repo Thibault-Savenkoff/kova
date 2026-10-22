@@ -6,6 +6,16 @@ struct Census {
     }
 }
 
+enum Color {
+    Red,
+    Green,
+}
+
+struct Point : Equal {
+    x: Int
+    y: Int
+}
+
 fn size<K: Equal, V>(m: Map<K, V>) -> Int {
     return m.length
 }
@@ -31,7 +41,23 @@ fn main {
     print(c)
     print(size(c.ages))
     print(count("the cat and the hat and the bat".words))
+    // Keys compared by an enum's helper, and by a struct's fields.
+    var colors: Map<Color, Int> := [Color.Red := 1, Color.Green := 2, Color.Red := 3]
+    colors[Color.Green] := 4
+    print(colors)
+    print(colors.remove(Color.Red))
+    print(colors.contains(Color.Red))
+    var points: Map<Point, String> := [Point { x := 1, y := 2 } := "a"]
+    points[Point { x := 1, y := 2 }] := "b"
+    points[Point { x := 2, y := 1 }] := "c"
+    print(points.length)
+    print(points[Point { x := 1, y := 2 }])
 }
 // expect: Census { ages: ["Ada" := 37, "Bob" := 4] }
 // expect: 2
 // expect: ["the" := 3, "cat" := 1, "and" := 2, "hat" := 1, "bat" := 1]
+// expect: [Color.Red := 3, Color.Green := 4]
+// expect: 3
+// expect: false
+// expect: 2
+// expect: "b"
