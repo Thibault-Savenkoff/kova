@@ -43,6 +43,8 @@ pub enum Type {
     /// A type known only by what it promises: `Self` in an interface. Replaced by the real type
     /// (`Dog`) in the KIR, one copy of the function per real type (`substitute`).
     Param(Rc<ParamDef>),
+    /// `{Int -> Bool}`: a block, only as a parameter (it never outlives its call); `Unit` if it gives nothing.
+    Block(Vec<Type>, Box<Type>),
     /// What a function without `->` returns.
     Unit,
     /// Unknown type because of an error already reported: it is not repeated.
@@ -81,6 +83,10 @@ impl Type {
             Type::Map(k, v) => format!("Map<{}, {}>", k.text(), v.text()),
             Type::Param(p) => p.name.clone(),
             Type::Any(i) => format!("any {i}"),
+            Type::Block(ps, r) => {
+                let r = (**r != Type::Unit).then(|| r.text());
+                crate::ast::block_text(ps.iter().map(Type::text).collect(), r)
+            }
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
@@ -104,6 +110,7 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Result(t, e) => Type::Result(sub(t), sub(e)),
         Type::List(t) => Type::List(sub(t)),
         Type::Map(k, v) => Type::Map(sub(k), sub(v)),
+        Type::Block(ps, r) => Type::Block(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
         // `Stack<T>` → `Stack<Int>`: its fields change with it.
         Type::Struct(d) if !d.args.is_empty() => Type::Struct(Rc::new(StructDef {
             name: d.name.clone(),
@@ -256,7 +263,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
 ];
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "clone"];
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] = &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
 
@@ -303,6 +310,8 @@ pub fn is_copy(t: &Type) -> bool {
         // Checked once for every real type: as if it were owned.
         Type::Param(_) => false,
         Type::Any(_) => false,
+        // Borrowed for the call it is given to, never owned.
+        Type::Block(..) => true,
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error => true,
     }
 }
@@ -417,6 +426,7 @@ fn mentions(t: &Type, name: &str) -> bool {
         Type::Optional(t) | Type::List(t) => mentions(t, name),
         Type::Result(a, b) | Type::Map(a, b) => mentions(a, name) || mentions(b, name),
         Type::Struct(d) => d.args.iter().any(|t| mentions(t, name)),
+        Type::Block(ps, r) => ps.iter().any(|t| mentions(t, name)) || mentions(r, name),
         _ => false,
     }
 }
@@ -439,6 +449,10 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
         }
         (Type::Struct(p), Type::Struct(t)) if p.name == t.name => {
             p.args.iter().zip(&t.args).for_each(|(p, t)| deduce(p, t, generics, found));
+        }
+        (Type::Block(ps, p), Type::Block(ts, t)) => {
+            ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found));
+            deduce(p, t, generics, found);
         }
         // A plain value given for `T?` is wrapped, as everywhere: `or_else(5, 0)` gives `T = Int`.
         (Type::Optional(p), t) => deduce(p, t, generics, found),
@@ -515,6 +529,8 @@ struct Checker<'a> {
     loops: usize,
     /// In a contract: `x?` cannot leave the function from there.
     in_contract: bool,
+    /// Number of open blocks (`{ x: Int => … }`): `return`, `break`, `continue` and `x?` cannot leave them.
+    in_block: usize,
     types: Vec<Type>,
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
@@ -577,6 +593,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         result: None,
         loops: 0,
         in_contract: false,
+        in_block: 0,
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
@@ -977,6 +994,11 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             (Type::Error, _) | (_, Type::Error) => Type::Error,
             (t, e) => Type::Result(Box::new(t), Box::new(e)),
         },
+        TypeAst::Block(ps, r) => {
+            let ps: Vec<Type> = ps.iter().map(|t| type_of(t, structs)).collect();
+            let r = r.as_ref().map_or(Type::Unit, |r| type_of(r, structs));
+            if ps.contains(&Type::Error) || r == Type::Error { Type::Error } else { Type::Block(ps, Box::new(r)) }
+        }
     }
 }
 
@@ -1318,6 +1340,8 @@ impl Checker<'_> {
     /// The type of a field, building the structs it uses first (see `define`).
     fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
         match t {
+            // Refused by the parser: a block type is only a parameter's.
+            TypeAst::Block(..) => Type::Error,
             TypeAst::Any(n) => {
                 self.any_type(n);
                 Type::Any(n.text.clone())
@@ -1408,6 +1432,7 @@ impl Checker<'_> {
                 self.report_unknown(t);
                 self.report_unknown(e);
             }
+            TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.report_unknown(t)),
         }
     }
 
@@ -1649,6 +1674,10 @@ impl Checker<'_> {
         {
             elems.iter().zip(ts).for_each(|(x, t)| self.expect(x, t));
             self.types[e.id] = expected.clone();
+            return;
+        }
+        if let (ExprKind::Block { params, body }, Type::Block(ps, r)) = (&e.kind, expected) {
+            self.types[e.id] = self.block_literal(params, body, Some(ps), Some(r));
             return;
         }
         // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
@@ -1974,6 +2003,7 @@ impl Checker<'_> {
     /// `l.length`, `l.add(x)`, `l.remove(i)` (PLAN 2.10); `None` for `clone` (shared with the other types).
     fn list_method(&mut self, receiver: &Expr, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
+            "each" | "filter" | "map" | "any" | "all" | "fold" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
@@ -1999,6 +2029,89 @@ impl Checker<'_> {
             self.arguments(name, args, &params, &[]);
         }
         Some(result)
+    }
+
+    /// `l.each { x: Int => … }`, `l.filter`, `l.map`, `l.any`, `l.all`, `l.fold(start) { acc: A, x: T => … }`.
+    fn block_method(&mut self, elem: &Type, name: &Name, args: &[Expr]) -> Type {
+        let fold = name.text == "fold";
+        let expected = if fold { 2 } else { 1 };
+        let block = match args.last() {
+            Some(b @ Expr { kind: ExprKind::Block { params, body }, .. }) if args.len() == expected => Some((b, params, body)),
+            _ => None,
+        };
+        let Some((block, params, body)) = block else {
+            let example = if fold { "l.fold(0) { sum: Int, x: Int => sum + x }".to_string() } else { format!("l.{} {{ x: Int => … }}", name.text) };
+            self.error(name.span, t!("block_expected", name = name.text, example = example));
+            args.iter().for_each(|a| {
+                self.expr(a);
+            });
+            return Type::Error;
+        };
+        let acc = if fold { self.expr(&args[0]) } else { Type::Unit };
+        let (params_wanted, result) = match name.text.as_str() {
+            "each" => (vec![elem.clone()], Some(Type::Unit)),
+            "filter" | "any" | "all" => (vec![elem.clone()], Some(Type::Bool)),
+            "map" => (vec![elem.clone()], None),
+            _ => (vec![acc.clone(), elem.clone()], Some(acc.clone())),
+        };
+        self.spans[block.id] = block.span;
+        let t = self.block_literal(params, body, Some(&params_wanted), result.as_ref());
+        self.types[block.id] = t.clone();
+        match (name.text.as_str(), t) {
+            ("each", _) => Type::Unit,
+            ("filter", _) => Type::List(Box::new(elem.clone())),
+            ("any" | "all", _) => Type::Bool,
+            ("map", Type::Block(_, r)) if *r != Type::Error => Type::List(r),
+            ("map", _) => Type::Error,
+            _ => acc,
+        }
+    }
+
+    /// Checks a block `{ x: Int => … }` against the parameters and the result expected (if known):
+    /// its type, `{Int -> Bool}`. Its parameters are borrowed, like a function's.
+    fn block_literal(&mut self, params: &[Param], body: &Block, wanted: Option<&[Type]>, result: Option<&Type>) -> Type {
+        let written: Vec<Type> = params.iter().map(|p| self.written_type(&p.ty)).collect();
+        if let Some(ps) = wanted {
+            let expected = Type::Block(ps.to_vec(), Box::new(result.cloned().unwrap_or(Type::Unit))).text();
+            if ps.len() != written.len() {
+                let span = params.first().map_or(body.open, |p| p.name.span.to(params.last().unwrap().name.span));
+                self.diags.push(Diag::new(span, t!("block_params", type = expected)));
+            } else {
+                for ((p, w), t) in params.iter().zip(&written).zip(ps) {
+                    if w != t && *w != Type::Error && *t != Type::Error {
+                        let msg = t!("block_param_type", name = p.name.text, wanted = t.text(), type = expected);
+                        self.error(p.name.span, msg);
+                    }
+                }
+            }
+        }
+        self.scopes.push(HashMap::new());
+        for (p, t) in params.iter().zip(&written) {
+            self.declare(&p.name, t.clone(), VarKind::Param);
+        }
+        self.in_block += 1;
+        let r = match result {
+            Some(Type::Unit) => {
+                self.block(body, vec![]);
+                Type::Unit
+            }
+            r if matches!(body.stmts.last(), Some(Stmt::Expr(_) | Stmt::If { otherwise: Some(_), .. } | Stmt::Match(_))) => {
+                self.block_value(body, r)
+            }
+            _ => {
+                self.block(body, vec![]);
+                self.diags.push(Diag::new(body.close, t!("block_needs_value")).help(t!("block_needs_value_help")));
+                Type::Error
+            }
+        };
+        self.in_block -= 1;
+        self.scopes.pop();
+        Type::Block(written, Box::new(r))
+    }
+
+    /// `return`, `break`, `continue` or `x?` inside a block.
+    fn block_exit(&mut self, span: Span, word: &str) {
+        self.diags.push(Diag::new(span, t!("block_exit", word = word)).help(t!("block_exit_help")));
     }
 
     /// `ages.length`, `ages.contains("Rex")`, `ages.remove("Rex")` (an `Int?`: `none` if absent).
@@ -2121,6 +2234,7 @@ impl Checker<'_> {
                 self.exposes(owner, t);
                 self.exposes(owner, e);
             }
+            TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.exposes(owner, t)),
         }
     }
 
@@ -2234,6 +2348,9 @@ impl Checker<'_> {
                 }
                 self.expect(value, &ty);
             }
+            Stmt::Return { span, .. } if self.in_block > 0 => self.block_exit(*span, "return"),
+            Stmt::Break(span) if self.in_block > 0 => self.block_exit(*span, "break"),
+            Stmt::Continue(span) if self.in_block > 0 => self.block_exit(*span, "continue"),
             Stmt::Return { value, span } => match (value, self.ret.clone()) {
                 (None, Type::Unit | Type::Error) => {}
                 (None, t) => self.error(*span, t!("must_return", type = t.text())),
@@ -2317,7 +2434,7 @@ impl Checker<'_> {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
-                        Type::List(_) => matches!(name.text.as_str(), "add" | "remove"),
+                        Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
                         Type::Map(..) => name.text == "remove",
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         // An unknown method is already reported.
@@ -2472,6 +2589,11 @@ impl Checker<'_> {
                 self.diags.push(Diag::new(e.span, t!("outcome_needs_type", word = word)).help(t!("outcome_needs_type_help")));
                 Type::Error
             }
+            ExprKind::Try(x) if self.in_block > 0 => {
+                self.expr(x);
+                self.block_exit(e.span, "?");
+                Type::Error
+            }
             ExprKind::Try(x) => match self.expr(x) {
                 // The failure goes up as it is: the function's `or` side must be the same type.
                 Type::Result(t, er) => {
@@ -2502,6 +2624,7 @@ impl Checker<'_> {
                 }
             },
             ExprKind::Match(m) => self.match_(m, None, true),
+            ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
                 if matches!(t, Type::Struct(_) | Type::Enum(_))

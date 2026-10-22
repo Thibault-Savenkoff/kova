@@ -447,6 +447,29 @@ impl Owner<'_> {
         self.state = join(join(entry, end), l.breaks);
     }
 
+    /// A block `{ x: Int => … }`: its parameters are borrowed, its value is given. It may run
+    /// several times, or never: it cannot give away a variable from around it.
+    fn block_literal(&mut self, params: &[Param], body: &Block, value: bool) {
+        let entry = self.state.clone();
+        self.scopes.push(HashMap::new());
+        for p in params {
+            self.declare(&p.name.text, true);
+        }
+        if value { self.block_value(body) } else { self.block(body) }
+        self.scopes.pop();
+        let outer: HashMap<usize, &String> = self.scopes.iter().flat_map(|s| s.iter()).map(|(n, v)| (v.id, n)).collect();
+        let before = entry.clone().unwrap_or_default();
+        let mut moved: Vec<(Span, String)> = (self.state.iter().flatten())
+            .filter(|(id, _)| !before.contains_key(id))
+            .filter_map(|(id, span)| Some((*span, outer.get(id)?.to_string())))
+            .collect();
+        moved.sort_by_key(|(s, _)| s.start);
+        for (span, name) in moved {
+            self.diags.push(Diag::new(span, t!("block_move", name = name)).help(t!("block_move_help", name = name)));
+        }
+        self.state = entry;
+    }
+
     /// `e` is given (`let`, `:=`, `return`, tuple element, branch value): a variable is moved.
     fn give(&mut self, e: &Expr) {
         let ty = &self.info.types[e.id];
@@ -619,6 +642,20 @@ impl Owner<'_> {
                 let (q, r) = self.method(receiver, name).unwrap();
                 self.arguments(&q, &name.text, Some((r, receiver)), args);
             }
+            // `l.each { … }`: like a `for` loop, the List is frozen during the block;
+            // `l.fold(start) { … }` takes its start value.
+            ExprKind::Method { receiver, name, args } if matches!(args.last(), Some(Expr { kind: ExprKind::Block { .. }, .. })) => {
+                self.borrow(receiver);
+                if name.text == "fold" {
+                    self.give(&args[0]);
+                }
+                let frozen = place_root(receiver, &self.info.types).map(|(root, _)| self.lookup(root).id);
+                self.looped.extend(frozen.map(|id| (id, "block_frozen")));
+                self.borrow(args.last().unwrap());
+                if frozen.is_some() {
+                    self.looped.pop();
+                }
+            }
             ExprKind::Method { receiver, args, .. } => {
                 self.borrow(receiver);
                 args.iter().for_each(|a| self.borrow(a));
@@ -674,6 +711,10 @@ impl Owner<'_> {
             ExprKind::Match(m) => self.match_(m, true),
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
             ExprKind::Interp(parts) => self.parts(parts.iter()),
+            ExprKind::Block { params, body } => {
+                let value = matches!(&self.info.types[e.id], Type::Block(_, r) if **r != Type::Unit);
+                self.block_literal(params, body, value);
+            }
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Char(_)

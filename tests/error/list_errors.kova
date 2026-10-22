@@ -29,5 +29,5 @@ fn main {
 // error: `Map` takes two types, not 1
 // error: `List` takes one type, not 2: `List<Int>`
 // error: `List<Int>` has no method `size`
-// error: `length`, `add`, `remove`, `clone`
+// error: `length`, `add`, `remove`, `each`, `filter`, `map`, `any`, `all`, `fold`, `clone`
 // error: `add` takes this argument: write `move words[0]`

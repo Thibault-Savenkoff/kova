@@ -348,6 +348,11 @@ impl Parser<'_> {
     }
 
     fn base_type(&mut self) -> R<TypeAst> {
+        // A block type anywhere else than a parameter: the block would outlive its call.
+        if self.is_sym("{") {
+            let span = self.token().span;
+            return self.error(span, t!("block_type_place"));
+        }
         // `any Animal`: a value of any type following the interface `Animal`.
         if self.is_keyword("any") {
             self.advance();
@@ -368,6 +373,26 @@ impl Parser<'_> {
             return self.error(open.to(close), t!("tuple_too_small"));
         }
         Ok(TypeAst::Tuple(types))
+    }
+
+    /// `{Int -> Bool}`, `{Int}`, `{-> Bool}`, `{}`: a parameter's block type.
+    fn block_type(&mut self) -> R<TypeAst> {
+        self.advance(); // {
+        let mut params = vec![];
+        while !self.is_sym("}") && !self.is_sym("->") {
+            params.push(self.type_()?);
+            if !self.is_sym("}") && !self.is_sym("->") {
+                self.expect(",")?;
+            }
+        }
+        let result = if self.is_sym("->") {
+            self.advance();
+            Some(Box::new(self.type_()?))
+        } else {
+            None
+        };
+        self.expect("}")?;
+        Ok(TypeAst::Block(params, result))
     }
 
     /// `<Int>` after `List`: a capitalized name followed by `<` opens generics (PLAN 2.3).
@@ -883,7 +908,8 @@ impl Parser<'_> {
             let name = self.value_name("what_parameter")?;
             self.expect(":")?;
             let mode = self.mode();
-            params.push(Param { name, mode, ty: self.type_()? });
+            let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
+            params.push(Param { name, mode, ty });
             if !self.is_sym(")") {
                 self.expect(",")?;
             }
@@ -1005,6 +1031,11 @@ impl Parser<'_> {
 
     fn block(&mut self) -> R<Block> {
         let open = self.expect("{")?;
+        self.block_rest(open)
+    }
+
+    /// A block's statements, after its `{`.
+    fn block_rest(&mut self, open: Span) -> R<Block> {
         let mut stmts = vec![];
         loop {
             self.skip_newlines();
@@ -1349,6 +1380,7 @@ impl Parser<'_> {
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
             }
+            end = self.trailing_block(&mut args)?.unwrap_or(end);
             e = self.expr(e.span.to(end), ExprKind::Method { receiver: Box::new(e), name, args });
         }
         Ok(e)
@@ -1360,6 +1392,7 @@ impl Parser<'_> {
         while !self.is_sym(")") {
             let start = self.token().span;
             let arg = match self.mode() {
+                Mode::Read if self.is_sym("{") => self.block_literal()?,
                 Mode::Read => self.inner_expr()?,
                 mode => {
                     let value = self.inner_expr()?;
@@ -1399,14 +1432,50 @@ impl Parser<'_> {
 
     /// After a function's name: its arguments, if any (`seven` alone calls `fn seven`).
     fn call_rest(&mut self, name: Name) -> R<Expr> {
-        if !self.is_sym("(") {
-            return Ok(self.expr(name.span, ExprKind::Call { name, args: vec![] }));
+        let (mut args, mut end) = (vec![], name.span);
+        if self.is_sym("(") {
+            let open = self.advance().span;
+            args = self.arguments()?;
+            end = self.advance().span;
+            self.empty_parens(&args, open, end, &name.text);
         }
-        let open = self.advance().span;
-        let args = self.arguments()?;
-        let end = self.advance().span;
-        self.empty_parens(&args, open, end, &name.text);
+        end = self.trailing_block(&mut args)?.unwrap_or(end);
         Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
+    }
+
+    /// `l.each { x: Int => … }`: a block given last, after the `)` and on the same line
+    /// (a line break before it would have made a `Newline`). Not in a heading (PLAN 2.3).
+    fn trailing_block(&mut self, args: &mut Vec<Expr>) -> R<Option<Span>> {
+        if !self.is_sym("{") || self.no_literal {
+            return Ok(None);
+        }
+        let b = self.block_literal()?;
+        let end = b.span;
+        args.push(b);
+        Ok(Some(end))
+    }
+
+    /// `{ x: Int, y: Int => … }` or `{ … }` without parameters.
+    fn block_literal(&mut self) -> R<Expr> {
+        let open = self.advance().span; // {
+        let mut params = vec![];
+        if self.kind() == Kind::Ident && matches!(self.t[self.pos + 1].kind, Kind::Sym(":")) {
+            loop {
+                let name = self.value_name("what_parameter")?;
+                self.expect(":")?;
+                params.push(Param { name, mode: Mode::Read, ty: self.type_()? });
+                if !self.is_sym(",") {
+                    break;
+                }
+                self.advance();
+            }
+            self.expect("=>")?;
+        }
+        let saved = std::mem::replace(&mut self.no_literal, false);
+        let body = self.block_rest(open);
+        self.no_literal = saved;
+        let body = body?;
+        Ok(self.expr(open.to(body.close), ExprKind::Block { params, body }))
     }
 
     fn atom(&mut self) -> R<Expr> {
@@ -1446,7 +1515,8 @@ impl Parser<'_> {
             }
             Kind::Ident => {
                 let mut name = self.value_name("what_variable")?;
-                if !self.is_sym("(") && !self.no_params.contains(&name.text) {
+                let block = self.is_sym("{") && !self.no_literal;
+                if !self.is_sym("(") && !block && !self.no_params.contains(&name.text) {
                     return Ok(self.expr(name.span, ExprKind::Var(name.text.clone())));
                 }
                 name.text = self.qualified(name.text);
@@ -1501,6 +1571,8 @@ impl Parser<'_> {
                 let kind = if pairs.is_empty() { ExprKind::List(elems) } else { ExprKind::MapLit(pairs) };
                 return Ok(self.expr(t.span.to(end), kind));
             }
+            // A block is only given to a function: written anywhere else, it would outlive its call.
+            Kind::Sym("{") => return self.error(t.span, t!("block_not_argument")),
             _ => {
                 let msg = t!("expression_expected", found = self.describe());
                 return self.error(t.span, msg);

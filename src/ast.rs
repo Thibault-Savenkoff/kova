@@ -216,6 +216,8 @@ pub enum TypeAst {
     Result(Box<TypeAst>, Box<TypeAst>),
     /// `any Animal`: a value of any type following the interface.
     Any(Name),
+    /// `{Int -> Bool}`: a block taking an `Int` and giving a `Bool` (only a parameter's type).
+    Block(Vec<TypeAst>, Option<Box<TypeAst>>),
 }
 
 impl TypeAst {
@@ -228,7 +230,17 @@ impl TypeAst {
             TypeAst::Optional(t) => format!("{}?", t.text()),
             TypeAst::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             TypeAst::Any(n) => format!("any {}", n.text),
+            TypeAst::Block(ps, r) => block_text(ps.iter().map(TypeAst::text).collect(), r.as_ref().map(|r| r.text())),
         }
+    }
+}
+
+/// A block's type as in the code: `{Int -> Bool}`, `{Int}`, `{-> Bool}`, `{}`.
+pub fn block_text(params: Vec<String>, result: Option<String>) -> String {
+    match result {
+        Some(r) if params.is_empty() => format!("{{-> {r}}}"),
+        Some(r) => format!("{{{} -> {r}}}", params.join(", ")),
+        None => format!("{{{}}}", params.join(", ")),
     }
 }
 
@@ -381,6 +393,8 @@ pub enum ExprKind {
     Try(Box<Expr>),
     /// `ok(value)` or `err(error)`: a result; its type comes from where it goes.
     Outcome { ok: bool, value: Box<Expr> },
+    /// `{ x: Int => x > 2 }`: a block, only written as a call's argument; its value is its last line.
+    Block { params: Vec<Param>, body: Block },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

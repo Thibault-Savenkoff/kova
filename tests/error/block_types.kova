@@ -1,0 +1,40 @@
+// Blocks given to the List methods: their parameters, their value, how they end.
+fn first(l: List<Int?>) -> Int? {
+    l.each { x: Int? =>
+        let y: Int := x?
+    }
+    return none
+}
+
+fn main {
+    let l: List<Int> := [1, 2]
+    l.each { x: Int =>
+        return
+    }
+    for i in 0..3 {
+        l.each { x: Int =>
+            break
+        }
+    }
+    let a: List<Int> := l.filter { x: Int, y: Int => true }
+    let b: List<Int> := l.filter { x: Bool => x }
+    let c: List<Int> := l.filter { x: Int =>
+        print(x)
+    }
+    let d: List<Int> := l.map { x: Int =>
+        let y: Int := x
+    }
+    l.each(3)
+    l.each { x: Int =>
+        x := 2
+    }
+}
+// error: `?` cannot leave a block
+// error: `return` cannot leave a block
+// error: `break` cannot leave a block
+// error: the parameters of this block don't match its type here: `{Int -> Bool}`
+// error: `x` must be of type `Int`: the block's type here is `{Int -> Bool}`
+// error: `Bool` expected, `nothing` given
+// error: this block must end with a value
+// error: `each` takes a block: `l.each { x: Int => … }`
+// error: `x` is a parameter

@@ -1,0 +1,53 @@
+// Blocks given to the List methods (PLAN Part 4, "Blocks"): their body runs inside the loop.
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn main {
+    let scores: List<Int> := [12, 5, 18, 7]
+    let big: List<Int> := scores.filter { x: Int => x > 10 }
+    print(big)
+    var total: Int := 0
+    scores.each { x: Int =>
+        total += x
+    }
+    print(total)
+    let doubled: List<Int> := scores.map { x: Int => x * 2 }
+    print(doubled)
+    let texts: List<String> := scores.map { x: Int => "<{x}>" }
+    print(texts)
+    print(scores.any { x: Int => x > 15 })
+    print(scores.all { x: Int => x > 15 })
+    let sum: Int := scores.fold(0) { acc: Int, x: Int => acc + x }
+    print(sum)
+    let line: String := scores.fold("") { acc: String, x: Int => acc + "{x};" }
+    print(line)
+    let dogs: List<Dog> := [Dog { name := "Rex", age := 3 }, Dog { name := "Fido", age := 5 }]
+    let names: List<String> := dogs.map { d: Dog => d.name.clone }
+    print(names)
+    let old: List<Dog> := dogs.filter { d: Dog =>
+        let limit: Int := 4
+        d.age > limit
+    }
+    print(old)
+    let words: List<String> := ["a", "bb", "ccc"]
+    var long: String := ""
+    words.each { w: String =>
+        if w.length > 1 {
+            long := long + w
+        }
+    }
+    print(long)
+}
+// expect: [12, 18]
+// expect: 42
+// expect: [24, 10, 36, 14]
+// expect: ["<12>", "<5>", "<18>", "<7>"]
+// expect: true
+// expect: false
+// expect: 42
+// expect: 12;5;18;7;
+// expect: ["Rex", "Fido"]
+// expect: [Dog { name: "Fido", age: 5 }]
+// expect: bbccc

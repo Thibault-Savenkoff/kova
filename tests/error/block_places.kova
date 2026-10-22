@@ -1,0 +1,9 @@
+// A block lives only as a call's argument (PLAN Part 4, "Blocks").
+fn main {
+    let f: {Int} := 3
+}
+fn other {
+    let g: Int := { 3 }
+}
+// error: a block type (`{Int -> Bool}`) is only a parameter's type
+// error: a block `{ … }` is only written as a function's argument

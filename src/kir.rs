@@ -100,6 +100,8 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
         Type::Int | Type::Bool | Type::Char | Type::String | Type::List(_) | Type::Map(..) | Type::Any(_) => vec![Scalar::Int],
+        // The function's number, then the box of what the block uses around it.
+        Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -125,7 +127,7 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error | Type::Param(_) => {
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
             vec![None; scalars(t).len()]
         }
     }
@@ -2050,6 +2052,89 @@ impl<'a> Translator<'a> {
         result
     }
 
+    /// `l.each { x: Int => … }`, `filter`, `map`, `any`, `all`, `fold`: a loop over the List with the
+    /// block's body copied inside (like Lisaac, which inlines its blocks). The List cannot change
+    /// meanwhile (`ownership.rs`): its length is read once.
+    fn block_method(&mut self, e: &Expr, list: Local, elem: &Type, name: &str, args: &[Expr]) -> Slots {
+        let ExprKind::Block { params, body } = &args.last().expect("block checked by the type checker").kind else {
+            unreachable!("block checked by the type checker")
+        };
+        let ty = self.ty(e);
+        let one = |v: Slots| vec![(v, elem.clone())];
+        match name {
+            "each" => {
+                self.each_element(list, elem, |t, _, v| {
+                    t.inline(params, body, one(v), None);
+                });
+                vec![]
+            }
+            "filter" | "map" => {
+                let Type::List(out_elem) = &ty else { unreachable!("a List checked by the type checker") };
+                let out = self.int_local();
+                self.emit(Inst::ListNew(out, scalars(out_elem).len()));
+                self.each_element(list, elem, |t, _, v| {
+                    if name == "map" {
+                        let x = t.inline(params, body, one(v), Some(out_elem));
+                        return t.push(out, &x);
+                    }
+                    let keep = t.inline(params, body, one(v.clone()), Some(&Type::Bool))[0];
+                    let (yes, after) = (t.new_block(), t.new_block());
+                    t.go(End::Branch(keep, yes, after), yes);
+                    let copy = t.clone_value(&v, elem);
+                    t.push(out, &copy);
+                    t.go(End::Jump(after), after);
+                });
+                self.track(&[out], &ty);
+                vec![out]
+            }
+            // `any` stops testing at the first `true`, `all` at the first `false`.
+            "any" | "all" => {
+                let all = name == "all";
+                let answer = self.constant(all as i64);
+                self.each_element(list, elem, |t, _, v| {
+                    let (test, after) = (t.new_block(), t.new_block());
+                    let end = if all { End::Branch(answer, test, after) } else { End::Branch(answer, after, test) };
+                    t.go(end, test);
+                    let c = t.inline(params, body, one(v), Some(&Type::Bool))[0];
+                    t.emit(Inst::Copy(answer, c));
+                    t.go(End::Jump(after), after);
+                });
+                vec![answer]
+            }
+            // `fold(start)`: the block gets the value so far and an element, and gives the next value.
+            _ => {
+                let start = self.owned(&args[0]);
+                let acc = self.new_slots(&ty);
+                self.copy(&acc, &start);
+                self.each_element(list, elem, |t, _, v| {
+                    let next = t.inline(params, body, vec![(acc.clone(), ty.clone()), (v, elem.clone())], Some(&ty));
+                    t.free_value(&acc, &ty);
+                    t.copy(&acc, &next);
+                });
+                self.track(&acc, &ty);
+                acc
+            }
+        }
+    }
+
+    /// The body of a block, here, with its parameters borrowing `vals`; with `result`, its value
+    /// (owned). Its temporaries are freed at once: it runs at each turn of a loop.
+    fn inline(&mut self, params: &[ast::Param], body: &Block, vals: Vec<(Slots, Type)>, result: Option<&Type>) -> Slots {
+        let mark = self.temps.len();
+        let vars = params.iter().zip(vals).map(|(p, v)| (p.name.text.clone(), v)).collect();
+        self.names.push(Scope { borrowed: true, vars });
+        let v = match result {
+            Some(ty) => self.block_value(body, ty),
+            None => {
+                self.block(body);
+                vec![]
+            }
+        };
+        self.names.pop();
+        self.free_temps(mark);
+        v
+    }
+
     /// `x.clone` on an `any`: the copy of its box, not a method of the interface.
     fn is_clone(&self, receiver: &Expr, name: &ast::Name) -> bool {
         let Type::Any(i) = self.ty(receiver) else { return false };
@@ -2422,6 +2507,7 @@ impl<'a> Translator<'a> {
                 self.track(&value, &self.ty(e));
                 value
             }
+            ExprKind::Block { .. } => unreachable!("a block is translated by the call it is given to"),
             ExprKind::Match(m) => {
                 let ty = self.ty(e);
                 let v = self.new_slots(&ty);
@@ -2616,6 +2702,7 @@ impl<'a> Translator<'a> {
                 let Type::List(elem) = self.ty(receiver) else { unreachable!() };
                 let list = self.expr1(receiver);
                 match name.text.as_str() {
+                    "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, list, &elem, &name.text, args),
                     "length" => {
                         let n = self.int_local();
                         self.emit(Inst::ListLength(n, list));
@@ -2763,6 +2850,8 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(b, names);
         }
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } | ExprKind::None => {}
+        // ponytail: what a block uses is not shown in a contract's `values:` line.
+        ExprKind::Block { .. } => {}
     }
 }
 

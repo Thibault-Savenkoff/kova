@@ -112,7 +112,9 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
             let n = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
             let word = &rest[..n];
             i += n;
-            if let Some(k) = KEYWORDS.iter().find(|&&k| k == word) {
+            // `l.any { … }`: after a `.`, `any` is the List method, not `any Animal`.
+            let method = word == "any" && matches!(tokens.last(), Some((Token { kind: Kind::Sym("."), .. }, _)));
+            if let Some(k) = KEYWORDS.iter().find(|&&k| k == word && !method) {
                 Kind::Keyword(k)
             } else if c.is_uppercase() {
                 Kind::Type

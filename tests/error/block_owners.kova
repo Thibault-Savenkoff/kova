@@ -1,0 +1,11 @@
+// What a block may do with the variables around it.
+fn main {
+    var l: List<Int> := [1, 2]
+    l.each { x: Int =>
+        l.add(x)
+    }
+    let name: String := "Rex"
+    let names: List<String> := l.map { x: Int => name }
+}
+// error: `l` is walked by this method: its block cannot change or move it
+// error: `name` is moved in a block
