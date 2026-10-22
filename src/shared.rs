@@ -477,3 +477,183 @@ pub fn random(state: &mut u64, from: i64, to: i64) -> i64 {
 pub fn seed(value: Option<&str>) -> Option<u64> {
     value.filter(|s| s.starts_with(|c: char| c.is_ascii_digit())).and_then(|s| s.parse().ok())
 }
+
+/// The days since 1970-01-01 of a day (Howard Hinnant's `days_from_civil`, as src/kir.rs emits it).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+}
+
+/// The year of a number of days since 1970-01-01.
+fn year_of(days: i64) -> i64 {
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    yoe + era * 400 + if (5 * doy + 2) / 153 >= 10 { 1 } else { 0 }
+}
+
+/// The seconds to add to `utc` (seconds since 1970) to get the local time, on Linux and macOS:
+/// `tz` is `$TZ`, `read` reads a file. A time zone file (`/etc/localtime`) ends with the rule of
+/// its present and future years, `CET-1CEST,M3.5.0,M10.5.0/3`, which is all `Date.today` needs;
+/// `$TZ` may also be such a rule itself. UTC when nothing is found.
+pub fn local_offset(utc: i64, tz: Option<&str>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> i64 {
+    // The last line of a file of version 2 or later.
+    let rule_of = |f: Vec<u8>| -> Option<String> {
+        let ok = f.starts_with(b"TZif") && f.len() > 5 && f[4] >= b'2' && f.ends_with(b"\n");
+        let line = f[..f.len() - 1].rsplit(|&b| b == b'\n').next()?;
+        ok.then(|| String::from_utf8_lossy(line).into())
+    };
+    let rule = match tz.map(|t| t.strip_prefix(':').unwrap_or(t)).filter(|t| !t.is_empty()) {
+        None => read("/etc/localtime").and_then(rule_of),
+        Some(t) if t.starts_with('/') => read(t).and_then(rule_of),
+        Some(t) => read(&format!("/usr/share/zoneinfo/{t}")).and_then(rule_of).or_else(|| Some(t.into())),
+    };
+    rule.and_then(|r| offset_by_rule(r.as_bytes(), utc)).unwrap_or(0)
+}
+
+/// A POSIX time zone rule read from its start: `CET-1CEST,M3.5.0,M10.5.0/3` = "CET" one hour
+/// east of UTC (the sign is the other way round), "CEST" one more hour from March's last Sunday
+/// at 2:00 to October's last Sunday at 3:00.
+struct Rule<'a>(&'a [u8]);
+
+impl Rule<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.0.first().copied()
+    }
+
+    fn eat(&mut self, c: u8) -> bool {
+        let found = self.peek() == Some(c);
+        if found {
+            self.0 = &self.0[1..];
+        }
+        found
+    }
+
+    /// `CET`, or `<+0330>` for a name with signs and digits.
+    fn name(&mut self) -> Option<()> {
+        let n = if self.eat(b'<') { self.0.iter().position(|&c| c == b'>')? + 1 } else { self.0.iter().take_while(|c| c.is_ascii_alphabetic()).count() };
+        (n >= 3).then(|| self.0 = &self.0[n..])
+    }
+
+    fn number(&mut self) -> Option<i64> {
+        let n = self.0.iter().take_while(|c| c.is_ascii_digit()).count();
+        let v = core::str::from_utf8(&self.0[..n]).ok()?.parse().ok()?;
+        self.0 = &self.0[n..];
+        Some(v)
+    }
+
+    /// `-1`, `+5:30`, `2:00:00`: seconds.
+    fn time(&mut self) -> Option<i64> {
+        let sign = if self.eat(b'-') { -1 } else { self.eat(b'+'); 1 };
+        let mut t = self.number()? * 3600;
+        for k in [60, 1] {
+            if !self.eat(b':') {
+                break;
+            }
+            t += self.number()? * k;
+        }
+        Some(sign * t)
+    }
+
+    /// `,M3.5.0/3` (month, week 1 to 5 = the last, day 0 = Sunday), `,J60` (1 to 365, never
+    /// February 29), `,59` (0 to 365): that day of `year` at its time, in local seconds.
+    fn change(&mut self, year: i64) -> Option<i64> {
+        if !self.eat(b',') {
+            return None;
+        }
+        let jan1 = days_from_civil(year, 1, 1);
+        let leap = days_from_civil(year, 3, 1) - days_from_civil(year, 2, 1) == 29;
+        let day = if self.eat(b'M') {
+            let m = self.number()?;
+            self.eat(b'.').then_some(())?;
+            let w = self.number()?;
+            self.eat(b'.').then_some(())?;
+            let d = self.number()?;
+            let first = days_from_civil(year, m, 1);
+            let length = days_from_civil(year + m / 12, m % 12 + 1, 1) - first;
+            // 1970-01-01 was a Thursday (4).
+            let mut day = first + (d - (first + 4).rem_euclid(7)).rem_euclid(7) + 7 * (w - 1);
+            while day >= first + length {
+                day -= 7;
+            }
+            day
+        } else if self.eat(b'J') {
+            let n = self.number()?;
+            jan1 + n - 1 + if leap && n >= 60 { 1 } else { 0 }
+        } else {
+            jan1 + self.number()?
+        };
+        let time = if self.eat(b'/') { self.time()? } else { 2 * 3600 };
+        Some(day * 86400 + time)
+    }
+}
+
+/// The offset `rule` gives at `utc` (see `Rule`); `None` if it cannot be read.
+fn offset_by_rule(rule: &[u8], utc: i64) -> Option<i64> {
+    let mut r = Rule(rule);
+    r.name()?;
+    let standard = -r.time()?;
+    if r.peek().is_none() {
+        return Some(standard);
+    }
+    r.name()?;
+    let summer = if matches!(r.peek(), Some(b'+' | b'-' | b'0'..=b'9')) { -r.time()? } else { standard + 3600 };
+    // Without dates: the United States' (second Sunday of March, first of November).
+    let dates = if r.peek().is_none() { ",M3.2.0,M11.1.0".as_bytes() } else { r.0 };
+    let year = year_of((utc + standard).div_euclid(86400));
+    let mut d = Rule(dates);
+    // The start is written in standard time, the end in summer time.
+    let start = d.change(year)? - standard;
+    let end = d.change(year)? - summer;
+    let inside = if start < end { start <= utc && utc < end } else { !(end <= utc && utc < start) };
+    Some(if inside { summer } else { standard })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_zone_rules() {
+        let at = |rule: &str, y: i64, m: i64, d: i64, h: i64, min: i64| offset_by_rule(rule.as_bytes(), days_from_civil(y, m, d) * 86400 + h * 3600 + min * 60);
+        let paris = "CET-1CEST,M3.5.0,M10.5.0/3";
+        // 2026: summer time from March 29 at 1:00 UTC to October 25 at 1:00 UTC.
+        assert_eq!(at(paris, 2026, 3, 29, 0, 59), Some(3600));
+        assert_eq!(at(paris, 2026, 3, 29, 1, 0), Some(7200));
+        assert_eq!(at(paris, 2026, 10, 25, 0, 59), Some(7200));
+        assert_eq!(at(paris, 2026, 10, 25, 1, 0), Some(3600));
+        assert_eq!(at(paris, 2026, 1, 1, 12, 0), Some(3600));
+        // Southern: summer time from October 4 2026 at 2:00 to April 5 2026 at 3:00 (local).
+        let sydney = "AEST-10AEDT,M10.1.0,M4.1.0/3";
+        assert_eq!(at(sydney, 2026, 4, 4, 15, 59), Some(39600));
+        assert_eq!(at(sydney, 2026, 4, 4, 16, 0), Some(36000));
+        assert_eq!(at(sydney, 2026, 10, 3, 15, 59), Some(36000));
+        assert_eq!(at(sydney, 2026, 10, 3, 16, 0), Some(39600));
+        assert_eq!(at(sydney, 2026, 12, 31, 13, 0), Some(39600));
+        // New York without dates: March 8 2026 at 7:00 UTC, November 1 at 6:00 UTC.
+        assert_eq!(at("EST5EDT", 2026, 3, 8, 6, 59), Some(-18000));
+        assert_eq!(at("EST5EDT", 2026, 3, 8, 7, 0), Some(-14400));
+        assert_eq!(at("EST5EDT", 2026, 11, 1, 5, 59), Some(-14400));
+        assert_eq!(at("EST5EDT", 2026, 11, 1, 6, 0), Some(-18000));
+        assert_eq!(at("<+0330>-3:30", 2026, 6, 1, 0, 0), Some(12600));
+        assert_eq!(at("UTC0", 2026, 6, 1, 0, 0), Some(0));
+        assert_eq!(at("<-03>3", 2026, 6, 1, 0, 0), Some(-10800));
+        // Day numbers: `J60` is March 1st even in a leap year.
+        assert_eq!(at("XST0XDT,J60/0,J300/0", 2024, 2, 29, 23, 59), Some(0));
+        assert_eq!(at("XST0XDT,J60/0,J300/0", 2024, 3, 1, 0, 0), Some(3600));
+        assert_eq!(at("Europe/Paris", 2026, 6, 1, 0, 0), None);
+        // A file: its last line.
+        let file = b"TZif2...\n<+0545>-5:45\n".to_vec();
+        assert_eq!(local_offset(0, Some("Asia/Kathmandu"), &|p| (p == "/usr/share/zoneinfo/Asia/Kathmandu").then(|| file.clone())), 20700);
+        assert_eq!(local_offset(0, Some("Nowhere/Else"), &|_| None), 0);
+        assert_eq!(local_offset(0, Some("<+01>-1"), &|_| None), 3600);
+        for days in [-719162, -1, 0, 59, 365, 20384, 2932896] {
+            assert_eq!(year_of(days), (1..=9999).rev().find(|&y| days_from_civil(y, 1, 1) <= days).unwrap());
+        }
+    }
+}

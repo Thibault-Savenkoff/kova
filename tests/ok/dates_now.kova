@@ -1,0 +1,13 @@
+// `Date.today` and `DateTime.now`: the local time, by `$TZ` or the system's time zone.
+// expect: true
+// expect: true
+// expect: 10
+// expect: 19
+fn main {
+    let d := Date.today
+    let t := DateTime.now
+    print(d.year >= 2026)
+    print(t.year >= 2026 && t.hour < 24)
+    print(d.to_string.length)
+    print("{t}".length)
+}

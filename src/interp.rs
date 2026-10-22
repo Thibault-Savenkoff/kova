@@ -527,6 +527,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = parts.join(heap.get(locals[a[1]]));
                             heap.make(t)
                         }
+                        StrOp::LocalNow => local_now(),
                         StrOp::Now => {
                             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
                             (t.as_secs() as f64 + t.subsec_nanos() as f64 / 1e9).to_bits() as i64
@@ -677,4 +678,28 @@ fn compute(op: Op, a: i64, b: i64) -> Result<i64, Fault> {
         Op::Gt => (a > b) as i64,
         Op::Ge => (a >= b) as i64,
     })
+}
+
+/// `DateTime.now`: the local time in seconds since 1970-01-01 00:00, as the runtime's
+/// `kova_local_now` gives it.
+#[cfg(not(windows))]
+fn local_now() -> i64 {
+    let utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_secs() as i64);
+    utc + crate::shared::local_offset(utc, std::env::var("TZ").ok().as_deref(), &|p| std::fs::read(p).ok())
+}
+
+/// By the time zone of Windows' settings.
+#[cfg(windows)]
+fn local_now() -> i64 {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetSystemTimePreciseAsFileTime(t: *mut u64);
+        fn FileTimeToLocalFileTime(utc: *const u64, local: *mut u64) -> i32;
+    }
+    let (mut utc, mut local) = (0u64, 0u64);
+    unsafe {
+        GetSystemTimePreciseAsFileTime(&mut utc);
+        FileTimeToLocalFileTime(&utc, &mut local);
+    }
+    (local / 10_000_000) as i64 - 11_644_473_600
 }

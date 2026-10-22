@@ -312,8 +312,8 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
 /// How a `Date` or a `DateTime` is made: the name of each static function, its number of `Int`s.
 pub fn date_forms(t: &Type) -> &'static [(&'static str, usize)] {
     match t {
-        Type::Date => &[("year(…) month(…) day(…)", 3)],
-        _ => &[("year(…) month(…) day(…) hour(…) minute(…)", 5), ("year(…) month(…) day(…) hour(…) minute(…) second(…)", 6)],
+        Type::Date => &[("year(…) month(…) day(…)", 3), ("today", 0)],
+        _ => &[("year(…) month(…) day(…) hour(…) minute(…)", 5), ("year(…) month(…) day(…) hour(…) minute(…) second(…)", 6), ("now", 0)],
     }
 }
 
@@ -2504,6 +2504,12 @@ impl Checker<'_> {
             self.diags.push(Diag::new(name.span, t!("no_static", type = ty.text, name = name.text)).help(help));
             return self.unchecked(args);
         };
+        if n == 0 {
+            if !args.is_empty() {
+                self.error(name.span, t!("no_arguments", name = name.text));
+            }
+            return t;
+        }
         self.arguments(name, args, &vec![(Mode::Read, Type::Int); n], &[]);
         let numbers: Option<Vec<i64>> = args.iter().map(int_written).collect();
         if let Some(v) = numbers

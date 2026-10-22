@@ -355,6 +355,8 @@ pub enum StrOp {
     Sleep,
     /// `random(from..to)`, `to` excluded (`from < to`, checked before).
     Random,
+    /// `DateTime.now`: the local time, in seconds since 1970-01-01 00:00 (`shared::local_offset`).
+    LocalNow,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
     /// `args`: a new `List<String>`, the words given after the program's name.
@@ -3263,6 +3265,17 @@ impl<'a> Translator<'a> {
                 let x = self.new_slots(&Type::Float)[0];
                 self.emit(Inst::Const(x, std::f64::consts::PI.to_bits() as i64));
                 vec![x]
+            }
+            ExprKind::Static { ty, args, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") && args.is_empty() => {
+                let now = self.int_local();
+                self.emit(Inst::Str(now, StrOp::LocalNow, vec![]));
+                if ty.text == "DateTime" {
+                    return vec![now];
+                }
+                // `Date.today`: the days, counted from 0000-03-01 so that the division rounds down.
+                let s = self.with(Op::Plus, now, 719468 * 86400);
+                let z = self.with(Op::Div, s, 86400);
+                vec![self.with(Op::Minus, z, 719468)]
             }
             ExprKind::Static { ty, name, args, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") => {
                 let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();

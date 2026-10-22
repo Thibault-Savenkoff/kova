@@ -40,6 +40,7 @@ unsafe extern "system" {
     fn FindNextFileW(h: Handle, found: *mut u32) -> i32;
     fn FindClose(h: Handle) -> i32;
     fn GetSystemTimePreciseAsFileTime(t: *mut u64);
+    fn FileTimeToLocalFileTime(utc: *const u64, local: *mut u64) -> i32;
     fn Sleep(ms: u32);
     fn GetCurrentProcessId() -> u32;
 }
@@ -195,6 +196,16 @@ pub fn now() -> u64 {
     let mut t = 0; // in 100 ns since 1601
     unsafe { GetSystemTimePreciseAsFileTime(&mut t) };
     t * 100 - 11_644_473_600_000_000_000
+}
+
+/// The local time in seconds since 1970, by the time zone of Windows' settings.
+pub fn local_now() -> i64 {
+    let (mut utc, mut local) = (0u64, 0u64);
+    unsafe {
+        GetSystemTimePreciseAsFileTime(&mut utc);
+        FileTimeToLocalFileTime(&utc, &mut local);
+    }
+    (local / 10_000_000) as i64 - 11_644_473_600
 }
 
 pub fn sleep(s: f64) {

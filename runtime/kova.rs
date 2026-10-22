@@ -790,6 +790,18 @@ pub extern "C" fn kova_math(op: i64, x: f64, y: f64) -> f64 {
     shared::math(op, x, y)
 }
 
+/// `DateTime.now`: the local time, in seconds since 1970-01-01 00:00 (src/interp.rs does the same).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_local_now() -> i64 {
+    #[cfg(not(windows))]
+    {
+        let utc = (sys::now() / 1_000_000_000) as i64;
+        utc + shared::local_offset(utc, sys::var("TZ").as_deref(), &|p| sys::read_file(p).ok())
+    }
+    #[cfg(windows)]
+    sys::local_now()
+}
+
 /// `now`: the seconds since 1970 (UTC), as a Float's bits.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_now() -> i64 {

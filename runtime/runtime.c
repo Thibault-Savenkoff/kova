@@ -1116,6 +1116,14 @@ double kova_math(int64_t op, double x, double y) {
     }
 }
 
+/* `DateTime.now`: the local time, in seconds since 1970-01-01 00:00. */
+int64_t kova_local_now(void) {
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    return (int64_t)t + tm.tm_gmtoff;
+}
+
 int64_t kova_now(void) {
     uint64_t t = clock_now();
     double s = (double)(t / 1000000000u) + (double)(t % 1000000000u) / 1e9;
