@@ -28,6 +28,7 @@ lang fr {
     reserved_for := "ce programme est réservé à `kova {mode}` (header ligne {line})"
     output_overwrites := "l'exécutable écraserait `{file}` ; choisis un autre nom avec `-o`"
     codegen_failed := "génération du code : {error}"
+    not_static := "remarque : cet exécutable a besoin de la bibliothèque C d'un Linux comme le tien. Pour qu'il marche sur n'importe quel Linux, installe musl (Fedora : `sudo dnf install musl-gcc musl-libc-static`)"
     cc_missing := "impossible de lancer `cc` (il sert à assembler l'exécutable) : {error}"
     cc_failed := "`cc` a échoué :\n{output}"
     tests_none := "aucun bloc `test` dans {file}"

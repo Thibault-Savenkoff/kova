@@ -31,7 +31,19 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
     std::fs::write(&texts, locale::c_texts(lang, files)).map_err(|e| e.to_string())?;
 
-    let res = Command::new("cc").args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output();
+    // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
+    // else the system's static C library; else as usual, with a warning saying what to install.
+    let link = |cc: &str, flags: &[&str]| {
+        Command::new(cc).args(flags).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output()
+    };
+    let res = [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
+        .iter()
+        .map(|(cc, flags)| link(cc, flags))
+        .find(|r| r.as_ref().is_ok_and(|out| out.status.success()))
+        .unwrap_or_else(|| {
+            eprintln!("{}", t!("not_static"));
+            link("cc", &[])
+        });
     let _ = std::fs::remove_dir_all(&tmp);
     match res {
         Err(e) => Err(t!("cc_missing", error = e)),
