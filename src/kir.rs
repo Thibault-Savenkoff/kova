@@ -1521,7 +1521,7 @@ impl<'a> Translator<'a> {
                 let (p, t) = self.place(receiver);
                 (p.narrow(slice_of(&t, field_index(&t, &name.text))), ty)
             }
-            ExprKind::Index(x, i) if !matches!(self.ty(x), Type::Map(..)) => {
+            ExprKind::Index(x, i) if !matches!(self.ty(x), Type::Map(..)) && i.range().is_none() => {
                 let (p, t) = self.place(x);
                 self.element_place(p, &t, i)
             }
@@ -2309,6 +2309,40 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// `l[a..b]`: a new List of copies of the elements `a` to `b` (without `b`; with it after `..=`).
+    /// Ends outside the List, or `b` before `a`, stop the program like `l[i]`.
+    fn slice(&mut self, e: &Expr, x: &Expr, i: &Expr) -> Slots {
+        let (inclusive, a, b) = i.range().unwrap();
+        let ty = self.ty(e);
+        let Type::List(elem) = &ty else { unreachable!("a List checked by the type checker") };
+        let list = self.expr1(x);
+        let (i, end, zero, one) = (self.int_local(), self.int_local(), self.constant(0), self.constant(1));
+        let first = self.expr1(a);
+        self.emit(Inst::Copy(i, first));
+        let last = self.expr1(b);
+        self.emit(Inst::Binary(end, if inclusive { Op::Plus } else { Op::Minus }, last, if inclusive { one } else { zero }, NOWHERE));
+        let (n, bad, loc) = (self.int_local(), self.int_local(), self.loc(e.span));
+        self.emit(Inst::ListLength(n, list));
+        for (op, l, r) in [(Op::Lt, i, zero), (Op::Lt, end, i), (Op::Gt, end, n)] {
+            self.emit(Inst::Binary(bad, op, l, r, NOWHERE));
+            self.emit(Inst::FaultIf(bad, Fault::Index, loc));
+        }
+        let out = self.int_local();
+        self.emit(Inst::ListNew(out, scalars(elem).len()));
+        let (test, body, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(test), test);
+        let more = self.int_local();
+        self.emit(Inst::Binary(more, Op::Lt, i, end, NOWHERE));
+        self.go(End::Branch(more, body, done), body);
+        let v = self.load(list, i, elem);
+        let copy = self.clone_value(&v, elem);
+        self.push(out, &copy);
+        self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+        self.go(End::Jump(test), done);
+        self.track(&[out], &ty);
+        vec![out]
+    }
+
     /// `l.sorted` or `l.sorted { a: T, b: T => … }`: a sorted copy. An element moves back while it
     /// comes before the previous one, so equal elements keep their order.
     /// ponytail: insertion sort, O(n²); a merge sort when Lists of thousands are sorted.
@@ -2629,6 +2663,7 @@ impl<'a> Translator<'a> {
                 let key = self.expr(i);
                 self.lookup(map, &key, &k, &v, false)
             }
+            ExprKind::Index(x, i) if i.range().is_some() => self.slice(e, x, i),
             ExprKind::Index(..) => {
                 let (p, _) = self.place(e);
                 self.read(&p)

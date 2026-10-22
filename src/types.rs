@@ -519,7 +519,7 @@ pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     match &e.kind {
         ExprKind::Var(n) => Some((n, e.span)),
         // `ages["Rex"]` is not a place: reading it gives a copy (a Map has no slot per key).
-        ExprKind::Index(x, _) if matches!(types[x.id], Type::Map(..)) => None,
+        ExprKind::Index(x, i) if matches!(types[x.id], Type::Map(..)) || i.range().is_some() => None,
         ExprKind::Field(x, _) | ExprKind::Index(x, _) => place_root(x, types),
         ExprKind::Method { receiver, name, .. } if types[receiver.id].is_field(&name.text) => place_root(receiver, types),
         _ => None,
@@ -1955,6 +1955,11 @@ impl Checker<'_> {
                             self.map_entries.push(*span);
                             *value
                         }
+                        // `l[0..2] := …`: a slice is a new List, not a part of `l`.
+                        Step::At(i) if i.range().is_some() => {
+                            self.diags.push(Diag::new(i.span, t!("slice_target")).help(t!("slice_target_help")));
+                            return Type::Error;
+                        }
                         Step::At(i) => {
                             self.expect(i, &Type::Int);
                             match ty {
@@ -2712,6 +2717,18 @@ impl Checker<'_> {
                 if let Type::Map(k, v) = t {
                     self.expect(i, &k);
                     return Type::Optional(v);
+                }
+                // `scores[1..3]`: a new List.
+                if let Some((_, a, b)) = i.range() {
+                    self.expect(a, &Type::Int);
+                    self.expect(b, &Type::Int);
+                    return match t {
+                        Type::List(_) | Type::Error => t,
+                        t => {
+                            self.error(e.span, t!("index_not_list", type = t.text()));
+                            Type::Error
+                        }
+                    };
                 }
                 self.expect(i, &Type::Int);
                 match t {

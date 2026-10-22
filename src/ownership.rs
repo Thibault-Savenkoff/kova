@@ -532,7 +532,7 @@ impl Owner<'_> {
                 );
             }
             // PLAN 2.7.8: an element is borrowed, never moved out (a Map gives a copy).
-            ExprKind::Index(list, i) if !matches!(self.info.types[list.id], Type::Map(..)) => {
+            ExprKind::Index(list, i) if !matches!(self.info.types[list.id], Type::Map(..)) && i.range().is_none() => {
                 self.borrow(e);
                 let place = &self.src[e.span.start..e.span.end];
                 let (list, i) = (&self.src[list.span.start..list.span.end], &self.src[i.span.start..i.span.end]);
@@ -746,7 +746,13 @@ impl Owner<'_> {
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => self.borrow(x),
             ExprKind::Index(x, i) => {
                 self.borrow(x);
-                self.borrow(i);
+                match i.range() {
+                    Some((_, a, b)) => {
+                        self.borrow(a);
+                        self.borrow(b);
+                    }
+                    None => self.borrow(i),
+                }
             }
             // A new List owns its elements; a new Map, its keys and values.
             ExprKind::List(elems) => elems.iter().for_each(|x| self.give(x)),

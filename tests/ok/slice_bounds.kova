@@ -1,0 +1,11 @@
+// A slice outside the List, or ending before it starts, stops the program like `l[i]`.
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l[1..=2])
+    let a: Int := 2
+    print(l[a..1])
+}
+// expect: [2, 3]
+// code: 101
+// stderr: error: index out of bounds
+// stderr: slice_bounds.kova:6:11

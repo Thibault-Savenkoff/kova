@@ -1,0 +1,12 @@
+fn main {
+    var l: List<Int> := [1, 2, 3]
+    let n: Int := 5
+    print(n[0..1])
+    print(l[true..2])
+    l[0..1] := [5]
+    let r: Int := 1..2
+}
+// error: `[ ]` applies to a List, not to `Int`
+// error: different types: `Int` expected, `Bool` given
+// error: a slice is a new List: it cannot be changed
+// error: `..` is only used in `for` and in a slice: `l[1..3]`

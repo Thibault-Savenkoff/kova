@@ -357,6 +357,16 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
+impl Expr {
+    /// `1..3` (`false`) or `1..=3` (`true`), with its two ends: in `l[1..3]`, a slice.
+    pub fn range(&self) -> Option<(bool, &Expr, &Expr)> {
+        match &self.kind {
+            ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), a, b) => Some((*op == BinOp::RangeInclusive, a, b)),
+            _ => None,
+        }
+    }
+}
+
 pub enum ExprKind {
     Int(u64),
     /// `123456789012345678901234567890`: too big for an `Int`, a `BigInt` (its digits).
@@ -391,7 +401,8 @@ pub enum ExprKind {
     MapLit(Vec<(Expr, Expr)>),
     /// `List<Int>()`: a new empty List of this type.
     New(TypeAst),
-    /// `scores[i]`: an element of a List (a place, like a field).
+    /// `scores[i]`: an element of a List (a place, like a field); `scores[1..3]`: a new List of
+    /// copies of some elements (not a place).
     Index(Box<Expr>, Box<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
