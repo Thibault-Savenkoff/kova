@@ -1,0 +1,6 @@
+import ranges
+
+fn main {
+    print(ranges.inside(1) below(2))
+}
+// error: `ranges.inside(…) below(…)` is private in ranges.kova

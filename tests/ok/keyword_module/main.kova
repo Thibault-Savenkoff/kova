@@ -1,0 +1,9 @@
+import ranges as r
+
+fn main {
+    print(r.between(3, 1) upto(5))
+    let b: r.Box := r.Box.make(2) twice(1)
+    print(b.grown(2) times(3))
+}
+// expect: true
+// expect: 11

@@ -52,19 +52,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
                         let path = file_path(&doc.text_document.uri);
-                        let items = docs.get(&doc.text_document.uri).map(|src| {
-                            let cursor = offset(src, doc.position);
-                            (import_files(&path, src, cursor))
-                                .or_else(|| members(&path, src, cursor))
-                                .or_else(|| literal_fields(&path, src, cursor))
-                                .or_else(|| match_cases(&path, src, cursor))
-                                .or_else(|| promised(&path, src, cursor))
-                                .unwrap_or_else(|| complete(src, cursor))
-                        });
-                        let items = items.map(|mut items| {
-                            parts_snippets(&mut items);
-                            items
-                        });
+                        let items = docs.get(&doc.text_document.uri).map(|src| completion(&path, src, offset(src, doc.position)));
                         Response::new_ok(req.id, items)
                     }
                     "textDocument/hover" => {
@@ -389,6 +377,17 @@ fn is_word(c: char) -> bool {
 }
 
 /// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
+fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
+    let mut items = (import_files(path, src, cursor))
+        .or_else(|| members(path, src, cursor))
+        .or_else(|| literal_fields(path, src, cursor))
+        .or_else(|| match_cases(path, src, cursor))
+        .or_else(|| promised(path, src, cursor))
+        .unwrap_or_else(|| complete(src, cursor));
+    parts_snippets(&mut items);
+    items
+}
+
 /// A keyword message `put(…) at(…)` is offered as `put($1) at($2)`: the cursor goes to each argument.
 fn parts_snippets(items: &mut [CompletionItem]) {
     for item in items.iter_mut().filter(|i| i.insert_text.is_none() && i.label.contains("(…)")) {
@@ -1379,8 +1378,12 @@ mod tests {
         // While the first part is typed, the bubble already shows the whole message.
         let help = signature(src, src.find("put(1").unwrap() + 4).unwrap();
         assert_eq!(help.active_parameter, Some(0));
-        let mut items = vec![CompletionItem { label: "put(…) at(…)".into(), ..Default::default() }];
-        parts_snippets(&mut items);
-        assert_eq!(items[0].insert_text.as_deref(), Some("put($1) at($2)"));
+        // Offered after `g.` and as a function, the cursor going to each argument.
+        let src = "struct Grid {\n  n: Int\n  fn put(var self, value: Int) at(index: Int) {}\n}\nfn between(x: Int) upto(y: Int) {}\nfn main {\n  var g: Grid := Grid { n := 1 }\n  g.\n  \n}";
+        let insert = |items: Vec<CompletionItem>, label: &str| items.into_iter().find(|i| i.label == label).and_then(|i| i.insert_text);
+        let after_dot = completion("/none/main.kova", src, src.find("g.\n").unwrap() + 2);
+        assert_eq!(insert(after_dot, "put(…) at(…)").as_deref(), Some("put($1) at($2)"));
+        let blank = completion("/none/main.kova", src, src.rfind("  \n").unwrap() + 2);
+        assert_eq!(insert(blank, "between(…) upto(…)").as_deref(), Some("between($1) upto($2)"));
     }
 }

@@ -1,0 +1,25 @@
+// A module whose functions are keyword messages.
+public:
+
+fn between(x: Int, low: Int) upto(high: Int) -> Bool {
+    return low <= x && inside(x) below(high + 1)
+}
+
+struct Box {
+public:
+    size: Int
+
+    fn grown(self, by: Int) times(n: Int) -> Int {
+        return self.size + by * n
+    }
+
+    fn make(size: Int) twice(extra: Int) -> Box {
+        return Box { size := size * 2 + extra }
+    }
+}
+
+private:
+
+fn inside(x: Int) below(high: Int) -> Bool {
+    return x < high
+}
