@@ -1,0 +1,12 @@
+fn main {
+    let s: String := "a b"
+    print(s.split(1))
+    print(s.trim("x"))
+    print(s.upper)
+    let n: Int := s.contains("a")
+}
+// error: different types: `String` expected, `Int` given
+// error: `trim`
+// error: `upper`
+// error: `split`, `words`, `chars`
+// error: `Int` expected, `Bool` given

@@ -1,0 +1,52 @@
+// String methods: look for a text, cut it, clean it (PLAN 2.10).
+fn main {
+    let line: String := "  12, 7 ,,30  "
+    print("[{line.trim}]")
+    let parts: List<String> := line.trim.split(",")
+    print(parts)
+    var total: Int := 0
+    for p in parts {
+        let n: Int? := p.trim.to_int
+        if n != none {
+            total += n
+        }
+    }
+    print(total)
+    print("  the quick\tbrown \n fox ".words)
+    print("".words.length)
+    print("".split(",").length)
+    print("été".chars)
+    print("été".chars.length)
+    let name: String := "kova.kova"
+    print(name.contains("va.k"))
+    print(name.contains("x"))
+    print(name.contains(""))
+    print(name.starts_with("kova"))
+    print(name.ends_with(".kova"))
+    print(name.ends_with("kova.kova.kova"))
+    print(name.replace("kova", "lisaac"))
+    print("aaa".replace("aa", "b"))
+    print("a-b-c".replace("-", ""))
+    for c in "ok".chars {
+        print(c.to_int)
+    }
+}
+// expect: [12, 7 ,,30]
+// expect: ["12", " 7 ", "", "30"]
+// expect: 49
+// expect: ["the", "quick", "brown", "fox"]
+// expect: 0
+// expect: 1
+// expect: ['é', 't', 'é']
+// expect: 3
+// expect: true
+// expect: false
+// expect: true
+// expect: true
+// expect: true
+// expect: false
+// expect: lisaac.lisaac
+// expect: ba
+// expect: abc
+// expect: 111
+// expect: 107

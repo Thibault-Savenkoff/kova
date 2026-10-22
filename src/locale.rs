@@ -46,6 +46,7 @@ pub const RUNTIME: &[&str] = &[
     // runtime.c: `FAULT_INDEX`.
     "fault_index",
     "fault_not_text",
+    "fault_empty_text",
 ];
 
 /// A piece of a translated text.

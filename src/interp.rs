@@ -218,6 +218,30 @@ fn call(p: &Program, num: usize, args: &[i64], out: &mut BufWriter<Stdout>, file
                             let t = text(locals[a[0]], *show, heap);
                             heap.make(t)
                         }
+                        // Spaces = the same 5 characters as `is_space` in runtime/runtime.c.
+                        StrOp::Trim => {
+                            let t = s(0).trim_matches(|c: char| c.is_ascii_whitespace()).to_string();
+                            heap.make(t)
+                        }
+                        StrOp::Contains => s(0).contains(s(1)) as i64,
+                        StrOp::StartsWith => s(0).starts_with(s(1)) as i64,
+                        StrOp::EndsWith => s(0).ends_with(s(1)) as i64,
+                        StrOp::Replace => {
+                            let t = s(0).replace(s(1), s(2));
+                            heap.make(t)
+                        }
+                        StrOp::Split | StrOp::Words => {
+                            let parts: Vec<String> = match op {
+                                StrOp::Split => s(0).split(s(1)).map(String::from).collect(),
+                                _ => s(0).split_ascii_whitespace().map(String::from).collect(),
+                            };
+                            let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
+                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                        }
+                        StrOp::Chars => {
+                            let slots: Vec<i64> = s(0).chars().map(|c| c as i64).collect();
+                            heap.add(Object::List { width: 1, length: slots.len(), slots })
+                        }
                     }
                 }
                 Inst::Free(l) | Inst::ListFree(l) => {

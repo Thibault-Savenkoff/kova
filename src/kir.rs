@@ -286,6 +286,35 @@ pub enum StrOp {
     ReadFile,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
+    /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
+    Trim,
+    /// `s.contains(part)`, `s.starts_with(part)`, `s.ends_with(part)`: 1 or 0.
+    Contains,
+    StartsWith,
+    EndsWith,
+    /// `s.replace(old, new)`: a new String (`old` is never empty, see `Fault::EmptyText`).
+    Replace,
+    /// `s.split(separator)`: a new `List<String>` (the separator is never empty).
+    Split,
+    /// `s.words`: a new `List<String>`, the pieces between spaces, tabs and line ends.
+    Words,
+    /// `s.chars`: a new `List<Char>`.
+    Chars,
+}
+
+/// A String method with arguments or a new List (`types::string_method`): its operation.
+pub fn string_op(name: &str) -> Option<StrOp> {
+    Some(match name {
+        "trim" => StrOp::Trim,
+        "contains" => StrOp::Contains,
+        "starts_with" => StrOp::StartsWith,
+        "ends_with" => StrOp::EndsWith,
+        "replace" => StrOp::Replace,
+        "split" => StrOp::Split,
+        "words" => StrOp::Words,
+        "chars" => StrOp::Chars,
+        _ => return None,
+    })
 }
 
 /// `s.to_int`: an optional `-` then digits only, within the range of an `Int`
@@ -374,6 +403,8 @@ pub enum Fault {
     BadConversion,
     Index,
     NotText,
+    /// `split("")` or `replace("", …)`: an empty text cannot be looked for.
+    EmptyText,
 }
 
 impl Fault {
@@ -385,6 +416,7 @@ impl Fault {
             Fault::BadConversion => "fault_bad_conversion",
             Fault::Index => "fault_index",
             Fault::NotText => "fault_not_text",
+            Fault::EmptyText => "fault_empty_text",
         }
     }
 }
@@ -2350,12 +2382,32 @@ impl<'a> Translator<'a> {
                     other => unreachable!("List method `{other}` checked by the type checker"),
                 }
             }
-            ExprKind::Method { receiver, name, .. } => {
+            ExprKind::Method { receiver, name, args } => {
                 let v = self.expr1(receiver);
                 let string = |op| match op {
                     "length" => StrOp::Length,
                     _ => StrOp::Clone,
                 };
+                if self.ty(receiver) == Type::String
+                    && let Some(op) = string_op(&name.text)
+                {
+                    let mut vals = vec![v];
+                    vals.extend(args.iter().map(|a| self.expr1(a)));
+                    if matches!(op, StrOp::Split | StrOp::Replace) {
+                        let (n, zero, empty) = (self.int_local(), self.constant(0), self.int_local());
+                        self.emit(Inst::Str(n, StrOp::Length, vec![vals[1]]));
+                        self.emit(Inst::Binary(empty, Op::Eq, n, zero, NOWHERE));
+                        let loc = self.loc(args[0].span);
+                        self.emit(Inst::FaultIf(empty, Fault::EmptyText, loc));
+                    }
+                    let dst = self.int_local();
+                    self.emit(Inst::Str(dst, op, vals));
+                    match self.ty(e) {
+                        Type::Bool => {}
+                        ty => self.temps.push((dst, ty)),
+                    }
+                    return vec![dst];
+                }
                 if self.ty(receiver) == Type::String && name.text == "to_int" {
                     let (present, n) = (self.int_local(), self.int_local());
                     self.emit(Inst::Str(present, StrOp::IsInt, vec![v]));

@@ -399,6 +399,99 @@ void kova_list_free(int64_t l) {
     live--;
 }
 
+// ---- String methods that look for a text or make a List (src/interp.rs does the same) ----
+
+// The spaces of `trim` and `words`: Rust's `is_ascii_whitespace`.
+static int is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+}
+
+int64_t kova_str_trim(int64_t a) {
+    String *x = (String *)a;
+    int64_t i = 0, j = x->length;
+    while (i < j && is_space(x->bytes[i])) i++;
+    while (j > i && is_space(x->bytes[j - 1])) j--;
+    return kova_str_new(x->bytes + i, j - i);
+}
+
+// Where `y` starts in `x`, from byte `from` on; -1 if nowhere.
+static int64_t find(String *x, String *y, int64_t from) {
+    for (int64_t i = from; i + y->length <= x->length; i++)
+        if (memcmp(x->bytes + i, y->bytes, y->length) == 0) return i;
+    return -1;
+}
+
+int64_t kova_str_contains(int64_t a, int64_t b) {
+    return find((String *)a, (String *)b, 0) >= 0;
+}
+
+int64_t kova_str_starts_with(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    return y->length <= x->length && memcmp(x->bytes, y->bytes, y->length) == 0;
+}
+
+int64_t kova_str_ends_with(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    return y->length <= x->length && memcmp(x->bytes + x->length - y->length, y->bytes, y->length) == 0;
+}
+
+// `old` is never empty (src/kir.rs checks it before).
+int64_t kova_str_replace(int64_t a, int64_t b, int64_t c) {
+    String *x = (String *)a, *old = (String *)b, *new = (String *)c;
+    int64_t count = 0, i = 0, j;
+    while ((j = find(x, old, i)) >= 0) count++, i = j + old->length;
+    String *s = new_string(x->length + count * (new->length - old->length));
+    char *out = s->bytes;
+    for (i = 0; (j = find(x, old, i)) >= 0; i = j + old->length) {
+        memcpy(out, x->bytes + i, j - i);
+        out += j - i;
+        memcpy(out, new->bytes, new->length);
+        out += new->length;
+    }
+    memcpy(out, x->bytes + i, x->length - i);
+    return (int64_t)s;
+}
+
+static void push(int64_t l, int64_t v) {
+    kova_list_store(l, kova_list_grow(l), 0, v);
+}
+
+// `separator` is never empty (src/kir.rs checks it before).
+int64_t kova_str_split(int64_t a, int64_t b) {
+    String *x = (String *)a, *y = (String *)b;
+    int64_t l = kova_list_new(1), i = 0, j;
+    for (; (j = find(x, y, i)) >= 0; i = j + y->length) push(l, kova_str_new(x->bytes + i, j - i));
+    push(l, kova_str_new(x->bytes + i, x->length - i));
+    return l;
+}
+
+int64_t kova_str_words(int64_t a) {
+    String *x = (String *)a;
+    int64_t l = kova_list_new(1), i = 0;
+    while (i < x->length) {
+        while (i < x->length && is_space(x->bytes[i])) i++;
+        int64_t start = i;
+        while (i < x->length && !is_space(x->bytes[i])) i++;
+        if (i > start) push(l, kova_str_new(x->bytes + start, i - start));
+    }
+    return l;
+}
+
+// The Unicode code of each character (the String is valid UTF-8).
+int64_t kova_str_chars(int64_t a) {
+    String *x = (String *)a;
+    int64_t l = kova_list_new(1);
+    for (int64_t i = 0; i < x->length;) {
+        unsigned char c = x->bytes[i];
+        int n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        int64_t code = n == 1 ? c : c & (0x7F >> n);
+        for (int k = 1; k < n; k++) code = (code << 6) | (x->bytes[i + k] & 0x3F);
+        push(l, code);
+        i += n;
+    }
+    return l;
+}
+
 // Same order as `Show` in src/kir.rs.
 enum { INT, BOOL, FLOAT, CHAR, STRING, SITE };
 

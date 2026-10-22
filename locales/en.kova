@@ -43,6 +43,7 @@ lang en {
 
     fault_index := "index out of bounds"
     fault_not_text := "the line typed is not text (invalid UTF-8)"
+    fault_empty_text := "an empty text cannot be looked for (`split` or `replace` with `\"\"`)"
 
     // ---- Lexer ----
     comment_unclosed := "`/*` comment never closed"

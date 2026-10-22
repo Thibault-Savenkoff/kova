@@ -245,6 +245,22 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "to_string", Type::String, false),
 ];
 
+/// The String methods with arguments or a List result (PLAN 2.10): their parameters, their result.
+/// Each one is a `kir::StrOp` (`kir::string_op`).
+pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
+    let s = || Type::String;
+    let list = |t| Type::List(Box::new(t));
+    Some(match name {
+        "trim" => (vec![], s()),
+        "contains" | "starts_with" | "ends_with" => (vec![s()], Type::Bool),
+        "replace" => (vec![s(), s()], s()),
+        "split" => (vec![s()], list(s())),
+        "words" => (vec![], list(s())),
+        "chars" => (vec![], list(Type::Char)),
+        _ => return None,
+    })
+}
+
 /// The built-in interfaces each primitive follows (for `<T: Comparable>`, PLAN Part 4, "J5").
 fn primitive_follows(t: &Type, interface: &str) -> bool {
     match interface {
@@ -2321,9 +2337,20 @@ impl Checker<'_> {
                     }
                     return ft.clone();
                 }
+                if t == Type::String
+                    && let Some((params, result)) = string_method(&name.text)
+                {
+                    let params: Vec<(Mode, Type)> = params.into_iter().map(|p| (Mode::Read, p)).collect();
+                    self.arguments(name, args, &params, &[]);
+                    return result;
+                }
                 let Some((_, _, result, maybe)) = METHODS.iter().find(|(r, n, ..)| *r == t && *n == name.text) else {
-                    let known: Vec<String> =
+                    let mut known: Vec<String> =
                         METHODS.iter().filter(|(r, ..)| *r == t).map(|(_, n, ..)| format!("`{n}`")).collect();
+                    if t == Type::String {
+                        let more = ["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars"];
+                        known.extend(more.iter().map(|n| format!("`{n}`")));
+                    }
                     let mut d = Diag::new(name.span, t!("no_method", type = t.text(), name = name.text));
                     if !known.is_empty() {
                         d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));

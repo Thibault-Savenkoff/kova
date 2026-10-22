@@ -1,0 +1,9 @@
+fn main {
+    let sep: String := ""
+    print("a,b".split(","))
+    print("a,b".split(sep))
+}
+// expect: ["a", "b"]
+// code: 101
+// stderr: error: an empty text cannot be looked for
+// stderr: fault_split_empty.kova:4:23
