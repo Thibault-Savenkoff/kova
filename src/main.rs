@@ -26,7 +26,7 @@ use locale::t;
 
 enum Command {
     Run,
-    Build { output: Option<String>, boost: bool },
+    Build { output: Option<String>, boost: bool, target: Option<codegen::Target> },
     /// `kova test file.kova "name"`: only that test.
     Test { only: Option<String> },
 }
@@ -54,7 +54,7 @@ fn main() {
         ["test", f] => (Some(Command::Test { only: None }), *f),
         ["test", f, name] => (Some(Command::Test { only: Some(name.to_string()) }), *f),
         ["build", f, options @ ..] => match build_options(options) {
-            Some((output, boost)) => (Some(Command::Build { output, boost }), *f),
+            Some((output, boost, target)) => (Some(Command::Build { output, boost, target }), *f),
             None => usage_error(),
         },
         // Without a command: the file's `header` decides (run by default).
@@ -87,7 +87,7 @@ fn main() {
     // The header: `mode` picks the default command, `lock := true` refuses the other one.
     let mode = types::setting(&tree, &source, "mode").map_or("run", |(v, _)| v);
     let command = command.unwrap_or(if mode == "build" {
-        Command::Build { output: None, boost: false }
+        Command::Build { output: None, boost: false, target: None }
     } else {
         Command::Run
     });
@@ -111,13 +111,14 @@ fn main() {
             let given: Vec<String> = args[skip..].iter().map(|a| a.to_string()).collect();
             exit(interp::run(&program, &files, &given))
         }
-        Command::Build { output, .. } => {
-            let output = output.unwrap_or_else(|| format!("{}{}", file.trim_end_matches(".kova"), std::env::consts::EXE_SUFFIX));
+        Command::Build { output, target, .. } => {
+            let suffix = target.or(codegen::Target::host()).map_or(std::env::consts::EXE_SUFFIX, |t| t.suffix());
+            let output = output.unwrap_or_else(|| format!("{}{suffix}", file.trim_end_matches(".kova")));
             if output == file {
                 fail(t!("output_overwrites", file = file));
             }
             let lang = types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
-            if let Err(e) = codegen::build(&program, &files, &output, lang) {
+            if let Err(e) = codegen::build(&program, &files, &output, lang, target) {
                 fail(e);
             }
         }
@@ -258,9 +259,9 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
     (root, ids, diags, sources)
 }
 
-/// Reads `-o output` and `--boost`, in any order.
-fn build_options(options: &[&str]) -> Option<(Option<String>, bool)> {
-    let (mut output, mut boost) = (None, false);
+/// Reads `-o output`, `--boost` and `--target system`, in any order.
+fn build_options(options: &[&str]) -> Option<(Option<String>, bool, Option<codegen::Target>)> {
+    let (mut output, mut boost, mut target) = (None, false, None);
     let mut i = 0;
     while i < options.len() {
         match options[i] {
@@ -269,11 +270,17 @@ fn build_options(options: &[&str]) -> Option<(Option<String>, bool)> {
                 output = Some(options.get(i + 1)?.to_string());
                 i += 1;
             }
+            "--target" => {
+                let name = options.get(i + 1)?;
+                let names: Vec<&str> = codegen::Target::NAMES.iter().map(|(n, _)| *n).collect();
+                target = Some(codegen::Target::named(name).unwrap_or_else(|| fail(t!("unknown_target", name = name, names = names.join(", ")))));
+                i += 1;
+            }
             _ => return None,
         }
         i += 1;
     }
-    Some((output, boost))
+    Some((output, boost, target))
 }
 
 fn usage_error() -> ! {

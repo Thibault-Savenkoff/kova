@@ -20,7 +20,7 @@ lang en {
     what_field := "field"
 
     // ---- Command line ----
-    usage := "usage:\n  kova <file.kova>                     runs according to the file's header (run by default)\n  kova run <file.kova>                 runs right away\n  kova build <file.kova> [-o output] [--boost]\n                                       creates a standalone executable\n  kova test <file.kova> [\"name\"]     runs the `test` blocks (or only this one)\n  kova fmt <file.kova>...              lays the files out (spaces, indentation)\n  kova lsp                             language server (for the editor)\n  kova debug                           debugger (for the editor)\n  kova --version"
+    usage := "usage:\n  kova <file.kova>                     runs according to the file's header (run by default)\n  kova run <file.kova>                 runs right away\n  kova build <file.kova> [-o output] [--boost] [--target linux|windows|mac]\n                                       creates a standalone executable (for this machine, or the one named)\n  kova test <file.kova> [\"name\"]     runs the `test` blocks (or only this one)\n  kova fmt <file.kova>...              lays the files out (spaces, indentation)\n  kova lsp                             language server (for the editor)\n  kova debug                           debugger (for the editor)\n  kova --version"
     cannot_read := "cannot read `{file}`: {error}"
     cannot_write := "cannot write `{file}`: {error}"
     fmt_unreadable := "`{file}` is not laid out: it doesn't read (a text or a comment never closed, an unknown character); `kova run` says where"
@@ -29,6 +29,8 @@ lang en {
     output_overwrites := "the executable would overwrite `{file}`; choose another name with `-o`"
     codegen_failed := "code generation: {error}"
     not_static := "note: this executable needs the C library of a Linux like yours. For one that runs on any Linux, install musl (Fedora: `sudo dnf install musl-gcc musl-libc-static`)"
+    no_runtime := "this `kova` cannot make executables for {target}: Rust's library for it was not installed when kova was built. Install it with `rustup target add {triple}`, then build kova again (`cargo install --path . --locked`)"
+    unknown_target := "unknown system `{name}` after `--target`: Kova knows {names}"
     cc_missing := "cannot launch `cc` (it assembles the executable): {error}"
     cc_failed := "`cc` failed:\n{output}"
     tests_none := "no `test` block in {file}"

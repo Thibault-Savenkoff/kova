@@ -262,6 +262,7 @@ fn command_line() {
     leak_counter();
     seeded();
     static_executable();
+    cross_build();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
 }
@@ -280,6 +281,26 @@ fn static_executable() {
     let number = |at: usize, n: usize| elf[at..at + n].iter().rev().fold(0usize, |v, &b| v << 8 | b as usize);
     let (start, size, count) = (number(0x20, 8), number(0x36, 2), number(0x38, 2));
     assert!((0..count).all(|i| number(start + i * size, 4) != 3), "the executable needs the system's loader");
+}
+
+/// `kova build --target`: an executable for each system, from any machine (PLAN Part 4
+/// "Cross-compilation"), told by the start of its file; `.exe` added for Windows.
+fn cross_build() {
+    let dir = std::env::temp_dir().join(format!("kova-cross-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("hello.kova");
+    std::fs::copy("tests/ok/strings.kova", &source).unwrap();
+    for (target, file, start) in [("linux", "hello", &b"\x7fELF"[..]), ("windows", "hello.exe", b"MZ"), ("mac", "hello", b"\xcf\xfa\xed\xfe")] {
+        let out = kova(LANG).arg("build").arg(&source).args(["--target", target]).output().unwrap();
+        // A `kova` built without Rust's library for that system says what to install (build.rs).
+        if text(&out.stderr).contains("rustup target add") {
+            continue;
+        }
+        assert!(out.status.success() && out.stderr.is_empty(), "{target}: {}", text(&out.stderr));
+        assert!(std::fs::read(dir.join(file)).unwrap().starts_with(start), "{target}");
+        std::fs::remove_file(dir.join(file)).unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// The leak check really counts: the same number of Strings is made in run and in build.

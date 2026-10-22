@@ -22,34 +22,101 @@ use crate::kir::*;
 use crate::locale::{self, t};
 
 const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
-/// The runtime in Rust (runtime/kova.rs, compiled by build.rs) for the systems it knows; empty
-/// for the others, which still compile the C runtime (PLAN Part 4 "Kova without a C compiler").
-const RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime.a"));
+/// The runtime in Rust (runtime/kova.rs, compiled by build.rs) for a system that is none of the
+/// `Target`s but that it knows (an Intel Mac), linked by `cc`; empty for the others, which still
+/// compile the C runtime (PLAN Part 4 "Kova without a C compiler").
+const HOST_RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime-host.a"));
+
+/// A system `kova build` makes executables for with its own linker, from any machine (PLAN Part 4
+/// "Cross-compilation"): `--target linux`, `windows`, `mac`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Target {
+    /// Linux on x86-64.
+    Linux,
+    /// Windows on x86-64.
+    Windows,
+    /// macOS on arm64 (Apple's own processors).
+    Mac,
+}
+
+impl Target {
+    pub const NAMES: [(&str, Target); 3] = [("linux", Target::Linux), ("windows", Target::Windows), ("mac", Target::Mac)];
+
+    pub fn named(name: &str) -> Option<Target> {
+        Target::NAMES.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
+    }
+
+    pub fn name(self) -> &'static str {
+        Target::NAMES.iter().find(|(_, t)| *t == self).unwrap().0
+    }
+
+    /// The machine `kova` runs on, if it is one of them.
+    pub fn host() -> Option<Target> {
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Some(Target::Linux)
+        } else if cfg!(all(windows, target_arch = "x86_64")) {
+            Some(Target::Windows)
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            Some(Target::Mac)
+        } else {
+            None
+        }
+    }
+
+    /// The end of its executables' names.
+    pub fn suffix(self) -> &'static str {
+        if self == Target::Windows { ".exe" } else { "" }
+    }
+
+    /// What Cranelift and Rust call it (the first one: the one to install, see build.rs).
+    fn triple(self) -> &'static str {
+        match self {
+            Target::Linux => "x86_64-unknown-linux-gnu",
+            Target::Windows => "x86_64-pc-windows-msvc",
+            Target::Mac => "aarch64-apple-darwin",
+        }
+    }
+
+    /// Its runtime, built by build.rs (empty if Rust's library for it was not installed).
+    fn runtime(self) -> &'static [u8] {
+        match self {
+            Target::Linux => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux.a")),
+            Target::Windows => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows.a")),
+            Target::Mac => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac.a")),
+        }
+    }
+}
 
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
-pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -> Result<(), String> {
-    let object = make_object(p, files, lang).map_err(|e| t!("codegen_failed", error = e))?;
-    let rust = !RUNTIME.is_empty();
-    if rust && cfg!(any(all(any(target_os = "linux", windows), target_arch = "x86_64"), all(target_os = "macos", target_arch = "aarch64"))) {
-        // Kova's own linker: no `cc`, nor Microsoft's linker (src/link.rs).
-        let exe = if cfg!(windows) {
-            crate::link::pe(&object, RUNTIME)
-        } else if cfg!(target_os = "macos") {
-            let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy());
-            crate::link::macho(&object, RUNTIME, &name)
-        } else {
-            crate::link::elf(&object, RUNTIME)
+/// `target`: the system to make it for (the machine's own if none is given).
+pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, target: Option<Target>) -> Result<(), String> {
+    if let Some(target) = target.or(Target::host()) {
+        let runtime = target.runtime();
+        if runtime.is_empty() {
+            return Err(t!("no_runtime", target = target.name(), triple = target.triple()));
+        }
+        let object = make_object(p, files, lang, target.triple().parse().unwrap()).map_err(|e| t!("codegen_failed", error = e))?;
+        // Kova's own linker: no `cc`, nor Microsoft's or Apple's linker (src/link.rs).
+        let exe = match target {
+            Target::Linux => crate::link::elf(&object, runtime),
+            Target::Windows => crate::link::pe(&object, runtime),
+            Target::Mac => {
+                let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy());
+                crate::link::macho(&object, runtime, &name)
+            }
         };
         return write_executable(output, &exe.map_err(|e| t!("codegen_failed", error = e))?);
     }
 
+    let object = make_object(p, files, lang, target_lexicon::Triple::host()).map_err(|e| t!("codegen_failed", error = e))?;
+    let rust = !HOST_RUNTIME.is_empty();
     let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let (o, c) = (tmp.join("main.o"), tmp.join("runtime.c"));
     std::fs::write(&o, object).map_err(|e| e.to_string())?;
     if rust {
         let a = tmp.join("runtime.a");
-        std::fs::write(&a, RUNTIME).map_err(|e| e.to_string())?;
+        std::fs::write(&a, HOST_RUNTIME).map_err(|e| e.to_string())?;
         // An Intel Mac: linked to libSystem, as Apple wants (runtime/macos.rs).
         let res = Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output();
         let _ = std::fs::remove_dir_all(&tmp);
@@ -204,13 +271,13 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     }
 }
 
-fn make_object(p: &Program, files: &[String], lang: Option<usize>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: target_lexicon::Triple) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
     flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables, macOS only those
     // A function returning many values (big tuple): Cranelift stores them in memory.
     flags.set("enable_multi_ret_implicit_sret", "true")?;
-    let isa = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())?.finish(settings::Flags::new(flags))?;
+    let isa = cranelift_codegen::isa::lookup(triple)?.finish(settings::Flags::new(flags))?;
     // One section per function, so that the linker drops the unused ones (`--gc-sections`).
     let mut builder = ObjectBuilder::new(isa, "kova", default_libcall_names())?;
     builder.per_function_section(true);
