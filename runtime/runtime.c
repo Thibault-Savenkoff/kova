@@ -639,10 +639,20 @@ int64_t kova_str_chars(int64_t a) {
     return l;
 }
 
-// Same order as `Show` in src/kir.rs.
-enum { INT, BOOL, FLOAT, CHAR, STRING, SITE };
+// How a value is written, one function per `Show` of src/kir.rs: the generated code gives the
+// address of the one it needs, so a program that never shows a Float doesn't carry their formatting.
+typedef void (*Writer)(FILE *f, int64_t value);
 
-static void write_value(FILE *f, int64_t value, int64_t show);
+void kova_show_int(FILE *f, int64_t value) { fprintf(f, "%lld", (long long)value); }
+void kova_show_bool(FILE *f, int64_t value) { fputs(value ? "true" : "false", f); }
+void kova_show_float(FILE *f, int64_t value) {
+    double x;
+    memcpy(&x, &value, sizeof x);
+    write_float(f, x);
+}
+void kova_show_char(FILE *f, int64_t value) { write_char(f, (uint32_t)value); }
+void kova_show_string(FILE *f, int64_t value) { fwrite(((String *)value)->bytes, 1, ((String *)value)->length, f); }
+void kova_show_site(FILE *f, int64_t value) { fprintf(f, "%s:%lld", kova_files[value >> 32], (long long)(value & 0xffffffff)); }
 
 // The text of a value, as `print` writes it (`"{x}"`).
 int64_t kova_str_format(int64_t value, int64_t show) {
@@ -650,27 +660,15 @@ int64_t kova_str_format(int64_t value, int64_t show) {
     size_t n = 0;
     FILE *f = open_memstream(&bytes, &n);
     if (!f) abort();
-    write_value(f, value, show);
+    ((Writer)show)(f, value);
     fclose(f);
     int64_t s = kova_str_new(bytes, n);
     free(bytes);
     return s;
 }
 
-static void write_value(FILE *f, int64_t value, int64_t show) {
-    double x;
-    switch (show) {
-    case INT: fprintf(f, "%lld", (long long)value); break;
-    case BOOL: fputs(value ? "true" : "false", f); break;
-    case FLOAT: memcpy(&x, &value, sizeof x); write_float(f, x); break;
-    case CHAR: write_char(f, (uint32_t)value); break;
-    case STRING: fwrite(((String *)value)->bytes, 1, ((String *)value)->length, f); break;
-    case SITE: fprintf(f, "%s:%lld", kova_files[value >> 32], (long long)(value & 0xffffffff)); break;
-    }
-}
-
 void kova_print(int64_t value, int64_t show, int64_t newline) {
-    write_value(stdout, value, show);
+    ((Writer)show)(stdout, value);
     if (newline) putchar('\n');
 }
 
@@ -695,7 +693,7 @@ void kova_write_label(int64_t i) {
 }
 
 void kova_write_value(int64_t value, int64_t show) {
-    write_value(stderr, value, show);
+    ((Writer)show)(stderr, value);
 }
 
 void kova_fail(void) {

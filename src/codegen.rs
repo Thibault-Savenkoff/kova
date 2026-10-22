@@ -34,7 +34,10 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>) -
     // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
     // else the system's static C library; else as usual, with a warning saying what to install.
     let link = |cc: &str, flags: &[&str]| {
-        Command::new(cc).args(flags).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output()
+        // Only what the program uses: each function in its own section, the unused ones dropped,
+        // no symbols nor debug information (Kova's errors give `file:line` themselves).
+        let small = ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"];
+        Command::new(cc).args(flags).args(small).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg(&texts).arg("-lm").output()
     };
     let res = [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
         .iter()
@@ -64,6 +67,9 @@ struct Runtime {
     /// `kova_str_new`, `kova_str_free`, then one per `StrOp` (in `str_op` order).
     str_new: FuncId,
     str_free: FuncId,
+    /// `kova_show_int`… (in `Show` order): given by address to `kova_print` and the others, so
+    /// that only the ones a program uses are linked (no Float formatting to print a String).
+    shows: [FuncId; 6],
     str_ops: [FuncId; 25],
     lists: [FuncId; 8],
 }
@@ -128,7 +134,10 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
     // A function returning many values (big tuple): Cranelift stores them in memory.
     flags.set("enable_multi_ret_implicit_sret", "true")?;
     let isa = cranelift_codegen::isa::lookup(target_lexicon::Triple::host())?.finish(settings::Flags::new(flags))?;
-    let mut module = ObjectModule::new(ObjectBuilder::new(isa, "kova", default_libcall_names())?);
+    // One section per function, so that the linker drops the unused ones (`--gc-sections`).
+    let mut builder = ObjectBuilder::new(isa, "kova", default_libcall_names())?;
+    builder.per_function_section(true);
+    let mut module = ObjectModule::new(builder);
 
     let call_conv = module.isa().default_call_conv();
     let config = module.isa().frontend_config();
@@ -149,6 +158,13 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
         exit: module.declare_function("kova_exit", Linkage::Import, &signature(&ints[..1], &[]))?,
         str_new: module.declare_function("kova_str_new", Linkage::Import, &signature(&ints[..2], &ints[..1]))?,
         str_free: module.declare_function("kova_str_free", Linkage::Import, &signature(&ints[..1], &[]))?,
+        shows: {
+            let mut ids = vec![];
+            for name in ["int", "bool", "float", "char", "string", "site"] {
+                ids.push(module.declare_function(&format!("kova_show_{name}"), Linkage::Import, &signature(&ints[..2], &[]))?);
+            }
+            ids.try_into().unwrap()
+        },
         str_ops: {
             let mut ids = vec![];
             for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess] {
@@ -214,6 +230,7 @@ fn make_object(p: &Program, files: &[String]) -> Result<Vec<u8>, Box<dyn std::er
             new: module.declare_func_in_func(rt.str_new, b.func),
             free: module.declare_func_in_func(rt.str_free, b.func),
             ops: rt.str_ops.map(|id| module.declare_func_in_func(id, b.func)),
+            shows: rt.shows.map(|id| module.declare_func_in_func(id, b.func)),
         };
         let fail = Fail {
             write_text: module.declare_func_in_func(rt.write_text, b.func),
@@ -262,6 +279,7 @@ struct Strings {
     new: FuncRef,
     free: FuncRef,
     ops: [FuncRef; 25],
+    shows: [FuncRef; 6],
 }
 
 /// What is needed to write the message of a broken contract.
@@ -553,7 +571,7 @@ impl Generator<'_> {
             // The runtime receives the 64 bits of the Float in an integer.
             v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
         }
-        (v, self.b.ins().iconst(I64, show as i64))
+        (v, self.b.ins().func_addr(I64, self.strings.shows[show as usize]))
     }
 
     /// Same rules as `interp::compute_float`.
