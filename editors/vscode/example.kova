@@ -31,7 +31,7 @@ enum Forme {
 fn aire(f: Forme) -> Float {
     return match f {
         Cercle(r) => 3.14 * r * r,
-        Carre(c)  => c * c,
+        Carre(c) => c * c,
     }
 }
 

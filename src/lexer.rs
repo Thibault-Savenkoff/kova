@@ -63,6 +63,13 @@ pub fn lex(source: &str) -> (Vec<Token>, Vec<Diag>) {
     (add_newlines(raw), diags)
 }
 
+/// The tokens as written, without `Newline` nor `Eof` (for `kova fmt`).
+pub fn raw(source: &str) -> (Vec<Token>, Vec<Diag>) {
+    let (mut raw, diags) = raw_tokens(source);
+    raw.pop();
+    (raw.into_iter().map(|(t, _)| t).collect(), diags)
+}
+
 /// The tokens without `Newline`, each with "is there a line break just before?".
 fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
     let mut tokens = vec![];
@@ -159,7 +166,7 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
 }
 
 /// Length of a (nestable) `/* ... */` comment at the start of `s`.
-fn comment_end(s: &str) -> Option<usize> {
+pub fn comment_end(s: &str) -> Option<usize> {
     let mut depth = 0;
     let mut i = 0;
     while i < s.len() {

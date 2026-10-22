@@ -30,6 +30,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
         inlay_hint_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         rename_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             ..Default::default()
@@ -89,6 +90,11 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                             Some(Err(why)) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
                             edit => Response::new_ok(req.id, edit.and_then(Result::ok).flatten()),
                         }
+                    }
+                    // On save (the extension turns `editor.formatOnSave` on): `kova fmt`.
+                    "textDocument/formatting" => {
+                        let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
+                        Response::new_ok(req.id, docs.get(&p.text_document.uri).map(|src| layout(src)))
                     }
                     // Not in the LSP protocol: the extension asks it to put a ▶ before each `test`.
                     "kova/tests" => {
@@ -336,6 +342,14 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
         is_preferred: Some(true),
         ..Default::default()
     })]
+}
+
+/// The whole text laid out by `kova fmt`, as one change; none if it is already, or doesn't read.
+fn layout(src: &str) -> Vec<TextEdit> {
+    match crate::format::format(src) {
+        Some(tidy) if tidy != src => vec![TextEdit::new(Range::new(Position::new(0, 0), position(src, src.len())), tidy)],
+        _ => vec![],
+    }
 }
 
 /// Each `test`: its name and where it is written. The extension puts a ▶ in the margin there,
@@ -1168,6 +1182,14 @@ mod tests {
         let call = &changes[&main][0];
         assert_eq!(call.range.start, position(&src, src.find("distance(a").unwrap()));
         assert_eq!(call.range.end, position(&src, src.find("(a, o)").unwrap()));
+    }
+
+    #[test]
+    fn formatting() {
+        let edits = layout("fn main {\nprint( 1 )\n}");
+        assert_eq!(edits[0].new_text, "fn main {\n    print(1)\n}\n");
+        assert_eq!(edits[0].range.end, Position::new(2, 1));
+        assert!(layout("fn main {\n    print(1)\n}\n").is_empty());
     }
 
     #[test]

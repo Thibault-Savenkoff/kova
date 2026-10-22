@@ -20,8 +20,10 @@ lang fr {
     what_field := "champ"
 
     // ---- Command line ----
-    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost]\n                                       crée un exécutable autonome\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova --version"
+    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost]\n                                       crée un exécutable autonome\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova --version"
     cannot_read := "impossible de lire `{file}` : {error}"
+    cannot_write := "impossible d'écrire `{file}` : {error}"
+    fmt_unreadable := "`{file}` n'est pas mis en forme : il ne se lit pas (un texte ou un commentaire jamais fermé, un caractère inconnu) ; `kova run` dit où"
     lsp_failed := "kova lsp : {error}"
     reserved_for := "ce programme est réservé à `kova {mode}` (header ligne {line})"
     output_overwrites := "l'exécutable écraserait `{file}` ; choisis un autre nom avec `-o`"

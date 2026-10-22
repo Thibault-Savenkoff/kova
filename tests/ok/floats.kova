@@ -46,5 +46,5 @@ fn main {
 // expect: 😀
 // expect: true
 // expect: 65
-// expect: 
+// expect:
 // expect: 1000500.0

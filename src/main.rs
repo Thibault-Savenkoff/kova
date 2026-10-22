@@ -4,6 +4,7 @@
 mod ast;
 mod codegen;
 mod diag;
+mod format;
 mod interp;
 mod kir;
 mod lexer;
@@ -33,6 +34,7 @@ fn main() {
             println!("kova {}", env!("CARGO_PKG_VERSION"));
             return;
         }
+        ["fmt", files @ ..] if !files.is_empty() => exit(fmt(files)),
         ["lsp"] => {
             if let Err(e) = lsp::serve() {
                 fail(t!("lsp_failed", error = e));
@@ -113,6 +115,30 @@ fn main() {
         }
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
     }
+}
+
+/// `kova fmt a.kova b.kova`: lays each file out in place (`format.rs`). Code 1 if one doesn't read.
+fn fmt(files: &[&str]) -> i32 {
+    let mut code = 0;
+    for file in files {
+        let source = match std::fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => fail(t!("cannot_read", file = file, error = e)),
+        };
+        match format::format(&source) {
+            Some(tidy) if tidy != source => {
+                if let Err(e) = std::fs::write(file, tidy) {
+                    fail(t!("cannot_write", file = file, error = e));
+                }
+            }
+            Some(_) => {}
+            None => {
+                eprintln!("{}", t!("fmt_unreadable", file = file));
+                code = 1;
+            }
+        }
+    }
+    code
 }
 
 /// Lexer + parser + type checker. Reads in-memory text for the file `path`: `kova lsp` calls

@@ -2,7 +2,8 @@
 // Kova extension:
 // - E2: ▶ Run / 🔨 Build / 🧪 Test buttons. Each button saves the file,
 //   then runs `kova` in the "Kova" terminal.
-// - E3 to E5: starts `kova lsp` (errors while typing, completion, hover, renaming…).
+// - E3 to E6: starts `kova lsp` (errors while typing, completion, hover, renaming, layout
+//   on save…).
 // - E5: a ▶ in the margin before each `test` (and in the Testing panel), which becomes ✅/❌.
 
 const fs = require('fs');

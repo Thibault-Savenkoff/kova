@@ -222,6 +222,16 @@ fn command_line() {
     let out = kova(LANG).arg("build").arg(&source).output().unwrap();
     assert_eq!(text(&out.stderr), "error: this program is reserved for `kova run` (header line 2)\n");
     assert_eq!(text(&kova(LANG).arg(&source).output().unwrap().stdout), "8\n");
+
+    // `kova fmt`: lays the file out in place; a file that doesn't read stays as it is (code 1).
+    std::fs::write(&source, "fn main {\nprint( 8 )\n}").unwrap();
+    assert!(kova(LANG).arg("fmt").arg(&source).status().unwrap().success());
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "fn main {\n    print(8)\n}\n");
+    std::fs::write(&source, "fn main {\nprint( \"8 )\n}").unwrap();
+    let out = kova(LANG).arg("fmt").arg(&source).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("is not laid out"), "{}", text(&out.stderr));
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "fn main {\nprint( \"8 )\n}");
     let _ = std::fs::remove_dir_all(&dir);
 
     languages();
