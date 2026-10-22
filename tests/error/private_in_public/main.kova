@@ -1,0 +1,7 @@
+import shop
+
+fn main {
+}
+// error: `shop.price` is public but uses `shop.Price`, which is private
+// error: `shop.Item.cost` is public but uses `shop.Price`, which is private
+// error: help: put `shop.Price` under `public:` too, or `shop.price` under `private:`

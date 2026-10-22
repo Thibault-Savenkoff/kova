@@ -13,5 +13,6 @@ fn area(s: Shape) -> Float {
 }
 
 struct Point {
+public:
     name: String
 }

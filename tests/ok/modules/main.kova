@@ -31,6 +31,9 @@ fn main {
     var box: geo.Box<Int> := geo.Box<Int>.empty
     box.add(5)
     print(box.items.length)
+    let account: geo.Account := geo.open("Ada")
+    print(account.owner)
+    print(account)
     print(geo.halve(8))
     print(geo.halve(3))
 }
@@ -43,8 +46,10 @@ fn main {
 // expect: home
 // expect: woofwoof
 // expect: 1
+// expect: Ada
+// expect: Ada: 42
 // expect: 4
 // code: 101
 // stderr: error: 3 is odd
-// stderr: geometry.kova:43:13
-// stderr: main.kova:35:11
+// stderr: geometry.kova:45:13
+// stderr: main.kova:38:11

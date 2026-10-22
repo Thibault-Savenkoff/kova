@@ -1,0 +1,12 @@
+struct Price {
+    cents: Int
+}
+
+public:
+
+fn price -> Price { return Price { cents := 100 } }
+
+struct Item {
+public:
+    cost: Price?
+}

@@ -1,0 +1,23 @@
+// Nothing under `public:` before `Account`: private by default.
+fn fee -> Int { return 1 }
+
+interface Secret {
+    fn code(self) -> Int
+}
+
+enum Level {
+    Low,
+    High,
+}
+
+public:
+
+struct Account {
+public:
+    owner: String
+    fn open(owner: String) -> Account { return Account { owner := owner.clone, balance := 0 } }
+private:
+    balance: Int
+    fn audit(self) -> Int { return self.balance }
+    fn blank -> Account { return Account { owner := "", balance := 0 } }
+}

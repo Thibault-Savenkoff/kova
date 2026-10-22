@@ -59,6 +59,8 @@ fn prelude() -> Vec<Interface> {
         no_literal: false,
         in_interface: false,
         bodiless: false,
+        public: false,
+        private: vec![],
         module: None,
         own: HashSet::new(),
         imports: HashMap::new(),
@@ -130,6 +132,8 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         no_literal: false,
         in_interface: false,
         bodiless: false,
+        public: false,
+        private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
         module,
         imports,
@@ -159,6 +163,9 @@ struct Parser<'a> {
     /// In an `interface`: a method may have no body (`function_rest` then sets `bodiless`).
     in_interface: bool,
     bodiless: bool,
+    /// Under `public:` at file level (otherwise private, the default); see `File::private`.
+    public: bool,
+    private: Vec<(String, Span)>,
 }
 
 impl Parser<'_> {
@@ -213,6 +220,13 @@ impl Parser<'_> {
     fn expr(&mut self, span: Span, kind: ExprKind) -> Expr {
         self.ids += 1;
         Expr { id: self.ids - 1, span, kind }
+    }
+
+    /// Outside `public:`, a name of an imported file is hidden from the other files.
+    fn hide(&mut self, public: bool, name: &Name) {
+        if !public && self.module.is_some() {
+            self.private.push((name.text.clone(), name.span));
+        }
     }
 
     fn alias_taken(&mut self, name: &Name, what: &str) {
@@ -451,15 +465,24 @@ impl Parser<'_> {
                     })
                 }
                 Kind::Keyword("import") => self.import().map(|i| imports.push(i)),
-                // `public:` / `private:` are read but change nothing yet (J6, step 2).
-                Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                Kind::Keyword(word @ ("public" | "private")) if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                    self.public = word == "public";
                     self.advance();
                     self.advance();
                     Ok(())
                 }
-                Kind::Keyword("fn") => self.function(false).map(|f| functions.push(f)),
-                Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| structs.push(s)),
-                Kind::Keyword("interface") => self.interface().map(|i| interfaces.push(i)),
+                Kind::Keyword("fn") => self.function(false).map(|f| {
+                    self.hide(self.public, &f.name);
+                    functions.push(f)
+                }),
+                Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| {
+                    self.hide(self.public, &s.name);
+                    structs.push(s)
+                }),
+                Kind::Keyword("interface") => self.interface().map(|i| {
+                    self.hide(self.public, &i.name);
+                    interfaces.push(i)
+                }),
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
@@ -472,7 +495,8 @@ impl Parser<'_> {
                 self.skip_to_next_fn();
             }
         }
-        File { header, imports, functions, structs, interfaces, tests, langs }
+        let private = std::mem::take(&mut self.private);
+        File { header, imports, functions, structs, interfaces, tests, langs, private }
     }
 
     /// `import geometry` or `import geometry as geo`.
@@ -690,6 +714,9 @@ impl Parser<'_> {
         self.skip_newlines();
         self.expect("{")?;
         let (mut fields, mut methods) = (vec![], vec![]);
+        // Fields and methods are private by default too; an enum's variants go with the enum.
+        let mut public = false;
+        let member = |name: &Name, m: &Name| Name { text: format!("{}.{}", name.text, m.text), span: m.span };
         loop {
             self.skip_newlines();
             match self.kind() {
@@ -699,13 +726,16 @@ impl Parser<'_> {
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
                     return Ok(Struct { copy, name, generics, interfaces, fields, variants, methods });
                 }
-                // `public:` / `private:` are read but change nothing yet: a program is a single file (J6).
-                Kind::Keyword("public" | "private") if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                Kind::Keyword(word @ ("public" | "private")) if self.t[self.pos + 1].kind == Kind::Sym(":") => {
+                    public = word == "public";
                     self.advance();
                     self.advance();
                 }
                 Kind::Keyword("fn") => match self.function(true) {
-                    Ok(f) => methods.push(f),
+                    Ok(f) => {
+                        self.hide(public, &member(&name, &f.name));
+                        methods.push(f)
+                    }
                     Err(()) => self.skip_statement(),
                 },
                 _ if variants.is_some() => match self.variant() {
@@ -713,7 +743,10 @@ impl Parser<'_> {
                     Err(()) => self.skip_statement(),
                 },
                 _ => match self.field() {
-                    Ok(f) => fields.push(f),
+                    Ok(f) => {
+                        self.hide(public, &member(&name, &f.name));
+                        fields.push(f)
+                    }
                     Err(()) => self.skip_statement(),
                 },
             }

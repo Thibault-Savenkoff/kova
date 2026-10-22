@@ -4,6 +4,7 @@ import shapes
 public:
 
 struct Point : Display {
+public:
     x: Float
     y: Float
     fn to_string(self) -> String { return "({self.x}, {self.y})" }
@@ -16,6 +17,7 @@ interface Animal {
 }
 
 struct Box<T> {
+public:
     items: List<T>
     fn empty -> Box<T> { return Box<T> { items := [] } }
     fn add(var self, x: move T) { self.items.add(move x) }
@@ -45,8 +47,30 @@ fn halve(n: Int) -> Int
     return n / 2
 }
 
-fn overflow(n: Int) -> Int {
-    return n * n * n * n * n
+// `balance`: only this file sees it.
+struct Account : Display {
+public:
+    owner: String
+private:
+    balance: Int
+    // Promised by `Display`: visible everywhere, even under `private:`.
+    fn to_string(self) -> String { return "{self.owner}: {self.balance}" }
+}
+
+// Private: only this file sees them.
+private:
+
+fn secret -> Int { return 42 }
+
+struct Hidden {
+    n: Int
+}
+
+public:
+
+// Builds an `Account`, whose `balance` only this file can see.
+fn open(owner: String) -> Account {
+    return Account { owner := owner.clone, balance := secret }
 }
 
 // The `main` of a module is not run.

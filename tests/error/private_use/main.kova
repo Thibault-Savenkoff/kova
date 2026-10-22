@@ -1,0 +1,24 @@
+import bank
+
+struct Spy : bank.Secret {
+    fn code(self) -> Int { return 7 }
+}
+
+fn main {
+    print(bank.fee)
+    var a: bank.Account := bank.Account.open("Ada")
+    print(a.balance)
+    a.balance := 10
+    print(a.audit)
+    let b: bank.Account := bank.Account.blank
+    let c := bank.Account { owner := "Bob", balance := 5 }
+    let l: bank.Level := bank.Level.Low
+}
+// error: `bank.fee` is private in bank.kova
+// error: `bank.Account.balance` is private in bank.kova
+// error: `bank.Account.audit` is private in bank.kova
+// error: `bank.Account.blank` is private in bank.kova
+// error: `bank.Account` cannot be built here: its field `balance` is private in bank.kova
+// error: `bank.Level` is private in bank.kova
+// error: `bank.Secret` is private in bank.kova
+// error: help: to use it from another file, write it under `public:` in bank.kova

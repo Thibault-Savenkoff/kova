@@ -360,6 +360,12 @@ lang fr {
     import_twice := "`{name}` est déjà importé à la ligne {line}"
     module_name_taken := "`{name}` est le nom d'un import : il ne peut pas servir de nom de {what}"
     import_lang_later := "un fichier importé ne peut pas encore contenir de traductions : mets ses blocs `lang` dans le fichier du programme"
+    private_name := "`{name}` est privé dans {file}"
+    private_name_help := "pour l'utiliser depuis un autre fichier, écris-le sous `public:` dans {file}"
+    private_literal := "`{type}` ne peut pas être construit ici : son champ `{field}` est privé dans {file}"
+    private_literal_help := "construis-le avec une fonction statique publique de `{type}`, écrite dans son fichier"
+    private_in_public := "`{name}` est public mais utilise `{type}`, qui est privé : un autre fichier ne pourrait pas écrire son type"
+    private_in_public_help := "mets aussi `{type}` sous `public:`, ou `{name}` sous `private:`"
     error_in_import := "erreur dans {file}:{line}:{col} : {message}"
 
     // ---- Editor (`kova lsp`) ----

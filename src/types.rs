@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::*;
-use crate::diag::{Diag, Span, line_col};
+use crate::diag::{Diag, Span, file_number, line_col};
 use crate::locale::{self, t};
 
 #[derive(Clone, PartialEq, Debug)]
@@ -461,6 +461,8 @@ struct Checker<'a> {
     in_contract: bool,
     types: Vec<Type>,
     wraps: Vec<bool>,
+    /// `File::private`, without the methods a type writes for an interface (always visible).
+    private: HashMap<String, Span>,
     diags: Vec<Diag>,
 }
 
@@ -483,8 +485,16 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         in_contract: false,
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
+        private: f.private.iter().cloned().collect(),
         diags: vec![],
     };
+    // A method that an interface promises is reached through the interface: it stays visible.
+    for s in &f.structs {
+        let promised = s.interfaces.iter().filter_map(|n| f.interfaces.iter().find(|i| i.name.text == n.text));
+        for (m, _) in promised.flat_map(|i| &i.methods) {
+            c.private.remove(&method_name(&s.name.text, &m.name.text));
+        }
+    }
 
     // 0. The header.
     let mut seen: HashMap<&str, Span> = HashMap::new();
@@ -646,6 +656,25 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) == Some(&i) {
             c.auto_equal(s);
+        }
+    }
+
+    // What a file shows must not mention what it hides: since types are written, another file
+    // could not hold the value (`let a: geometry.Hidden := …` is refused).
+    let public = |n: &str| !f.private.iter().any(|(p, _)| p == n);
+    for func in f.functions.iter().filter(|g| public(&g.name.text)) {
+        for t in func.params.iter().map(|p| &p.ty).chain(&func.ret) {
+            c.exposes(&func.name.text, t);
+        }
+    }
+    for s in f.structs.iter().filter(|s| public(&s.name.text)) {
+        for p in s.fields.iter().filter(|p| public(&method_name(&s.name.text, &p.name.text))) {
+            c.exposes(&method_name(&s.name.text, &p.name.text), &p.ty);
+        }
+        for m in s.methods.iter().filter(|m| public(&method_name(&s.name.text, &m.name.text))) {
+            for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
+                c.exposes(&method_name(&s.name.text, &m.name.text), t);
+            }
         }
     }
 
@@ -865,6 +894,7 @@ impl Checker<'_> {
         // Default method name → the interface that gives it.
         let mut given: HashMap<&str, &str> = HashMap::new();
         for n in &s.interfaces {
+            self.hidden(&n.text, n.span);
             let Some(&k) = self.interfaces.get(n.text.as_str()) else {
                 let msg = if self.structs.contains_key(&n.text) || primitive(&n.text).is_some() {
                     t!("not_interface", name = n.text)
@@ -1235,6 +1265,9 @@ impl Checker<'_> {
     }
 
     fn report_unknown(&mut self, t: &TypeAst) {
+        if let TypeAst::Name(n) | TypeAst::Generic(n, _) | TypeAst::Any(n) = t {
+            self.hidden(&n.text, n.span);
+        }
         match t {
             TypeAst::Any(n) => self.any_type(n),
             TypeAst::Name(n) if n.text == "Self" && !self.structs.contains_key("Self") => {
@@ -1838,7 +1871,12 @@ impl Checker<'_> {
                     self.no_field(&t, name);
                     None
                 }
-                Some(sig) => Some(sig),
+                Some(sig) => {
+                    if !self.hidden(&ty.text, ty.span) {
+                        self.hidden(&method_name(&ty.text, &name.text), name.span);
+                    }
+                    Some(sig)
+                }
             },
         };
         let Some(sig) = found else {
@@ -1875,11 +1913,44 @@ impl Checker<'_> {
         }
     }
 
+    /// `t` is written in what `owner` shows to the other files: it must not name a private type.
+    fn exposes(&mut self, owner: &str, t: &TypeAst) {
+        match t {
+            TypeAst::Name(n) | TypeAst::Any(n) | TypeAst::Generic(n, _) if self.private.contains_key(&n.text) => {
+                self.diags.push(
+                    Diag::new(n.span, t!("private_in_public", name = owner, type = n.text))
+                        .help(t!("private_in_public_help", name = owner, type = n.text)),
+                );
+            }
+            TypeAst::Name(_) | TypeAst::Any(_) => {}
+            TypeAst::Generic(_, ts) | TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.exposes(owner, t)),
+            TypeAst::Optional(t) => self.exposes(owner, t),
+            TypeAst::Result(t, e) => {
+                self.exposes(owner, t);
+                self.exposes(owner, e);
+            }
+        }
+    }
+
+    /// `name` (`geometry.helper`, `geometry.Point.x`) is private in another file than `span`'s.
+    fn hidden(&mut self, name: &str, span: Span) -> bool {
+        let Some(decl) = self.private.get(name) else { return false };
+        if file_number(self.src, decl.start) == file_number(self.src, span.start) {
+            return false;
+        }
+        let file = format!("{}.kova", name.split('.').next().unwrap_or(name));
+        self.diags.push(Diag::new(span, t!("private_name", name = name, file = file)).help(t!("private_name_help", file = file)));
+        true
+    }
+
     /// The type of `x.name` when `x` has type `ty` and `name` is not a method.
     fn named_field(&mut self, ty: Type, name: &Name) -> Type {
         match &ty {
             Type::Struct(d) => match d.field(&name.text) {
-                Some((_, t)) => t.clone(),
+                Some((_, t)) => {
+                    self.hidden(&method_name(&ty.owner(), &name.text), name.span);
+                    t.clone()
+                }
                 None => {
                     self.no_field(&ty, name);
                     Type::Error
@@ -2179,6 +2250,7 @@ impl Checker<'_> {
                 {
                     let given = if let Type::Struct(d) = &t { d.args.clone() } else { vec![] };
                     let sig = self.for_types(e.id, sig, given);
+                    self.hidden(&method_name(&t.owner(), &name.text), name.span);
                     return self.method_call(receiver, &t.text(), name, args, sig);
                 }
                 // `a.sound` on an `any Animal`: the method of the real type, chosen at run time.
@@ -2243,6 +2315,7 @@ impl Checker<'_> {
                         self.no_field(&t, name);
                         return Type::Error;
                     };
+                    self.hidden(&method_name(&t.owner(), &name.text), name.span);
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
@@ -2383,6 +2456,20 @@ impl Checker<'_> {
                 return Type::Error;
             }
         };
+        let owner = Type::Struct(d.clone()).owner();
+        if !self.hidden(&owner, ty.span) {
+            // Only its own file builds a value whose fields it hides (PLAN 2.5).
+            let hides = d.fields.iter().find(|(n, _)| {
+                self.private.get(&method_name(&owner, n)).is_some_and(|s| file_number(self.src, s.start) != file_number(self.src, ty.span.start))
+            });
+            if let Some((field, _)) = hides {
+                let file = format!("{}.kova", owner.split('.').next().unwrap_or(&owner));
+                self.diags.push(
+                    Diag::new(ty.span, t!("private_literal", type = ty.text, field = field, file = file))
+                        .help(t!("private_literal_help", type = ty.text)),
+                );
+            }
+        }
         let mut given: Vec<&str> = vec![];
         for (name, value) in fields {
             let Some((_, t)) = d.field(&name.text) else {
@@ -2424,6 +2511,7 @@ impl Checker<'_> {
 
     /// `Shape.Circle(2.0)`: the fields in their declared order.
     fn variant(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+        self.hidden(&ty.text, ty.span);
         let d = match self.structs.get(&ty.text).cloned() {
             Some(Type::Enum(d)) => Some(d),
             Some(_) => {
@@ -2633,6 +2721,7 @@ impl Checker<'_> {
     }
 
     fn call(&mut self, id: usize, name: &Name, args: &[Expr]) -> Type {
+        self.hidden(&name.text, name.span);
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
                 self.error(name.span, t!("builtin_one_arg", name = name.text));

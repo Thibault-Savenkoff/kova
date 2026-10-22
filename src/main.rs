@@ -210,6 +210,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
         root.functions.extend(m.functions);
         root.structs.extend(m.structs);
         root.interfaces.extend(m.interfaces);
+        root.private.extend(m.private);
     }
     (root, ids, diags, sources)
 }
