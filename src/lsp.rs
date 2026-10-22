@@ -391,8 +391,8 @@ fn struct_fields(path: &str, src: &str, before: &[&crate::lexer::Token], written
         name = format!("{}.{name}", text(k - 2));
         first = k - 2;
     }
-    // `struct Dog {`: a declaration, not a value.
-    if first > 0 && matches!(before[first - 1].kind, Kind::Keyword("struct" | "enum")) {
+    // `struct Dog {` and `fn make -> Dog {` (or `-> Dog or Fault {`): not a value.
+    if first > 0 && matches!(before[first - 1].kind, Kind::Keyword("struct" | "enum" | "or") | Kind::Sym("->")) {
         return None;
     }
     let (file, _, _, _) = analyze(path, src);
@@ -829,6 +829,8 @@ mod tests {
         // While typing a value, or a declaration: not fields.
         assert!(literal_fields("/none/main.kova", src, src.find("Rex").unwrap()).is_none());
         assert!(literal_fields("/none/main.kova", "struct Dog {\n  ", 15).is_none());
+        let src = "struct Dog {\n  a: Int\n}\nfn make -> Dog {\n  ";
+        assert!(literal_fields("/none/main.kova", src, src.len()).is_none());
         // A struct from another file, through its alias.
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/modules/main.kova");
         let src = "import geometry as geo\nfn main {\n  let p := geo.Point { ";
