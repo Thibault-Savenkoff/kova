@@ -33,7 +33,7 @@ fn main {
     print(w)
     print(Date.year(9999) month(12) day(31).plus_days(1))
 }
-// expect: Weekday.Friday
+// expect: Friday
 // expect: travail
 // expect: week-end
 // expect: true
@@ -41,17 +41,17 @@ fn main {
 // expect: -63
 // expect: 2025-10-23
 // expect: 2024-02-29
-// expect: Weekday.Monday
-// expect: Weekday.Wednesday
+// expect: Monday
+// expect: Wednesday
 // expect: 2026-10-24 01:00:00
 // expect: 2026-10-22 23:30:00
 // expect: 2026-10-23 23:30:01
 // expect: 2026-11-02 23:30:00
 // expect: 2026-10-23
-// expect: Weekday.Friday
+// expect: Friday
 // expect: 1800
 // expect: 1969-12-31
-// expect: Weekday.Monday
+// expect: Monday
 // code: 101
 // stderr: error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
 // stderr: dates_more.kova:34:45

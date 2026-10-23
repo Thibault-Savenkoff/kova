@@ -1,0 +1,29 @@
+// `plus_months` (PLAN Part 4, "Dates, the rest"): the last day of the month when it is shorter.
+fn main {
+    let d := Date.year(2026) month(1) day(31)
+    for n in [0, 1, 2, 3, 11, 12, 13, -1, -2, 25] {
+        print("{n}: {d.plus_months(n)}")
+    }
+    let leap := Date.year(2024) month(2) day(29)
+    print(leap.plus_months(12))
+    print(leap.plus_months(48))
+    let t := DateTime.year(2026) month(3) day(31) hour(14) minute(5) second(9)
+    print(t.plus_months(-1))
+    print(Date.year(1) month(1) day(1).plus_months(-1))
+}
+// expect: 0: 2026-01-31
+// expect: 1: 2026-02-28
+// expect: 2: 2026-03-31
+// expect: 3: 2026-04-30
+// expect: 11: 2026-12-31
+// expect: 12: 2027-01-31
+// expect: 13: 2027-02-28
+// expect: -1: 2025-12-31
+// expect: -2: 2025-11-30
+// expect: 25: 2028-02-29
+// expect: 2025-02-28
+// expect: 2028-02-29
+// expect: 2026-02-28 14:05:09
+// code: 101
+// stderr: error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// stderr: dates_months.kova:12:40

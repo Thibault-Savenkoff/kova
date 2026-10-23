@@ -513,7 +513,7 @@ fn quoted(names: &[&str]) -> String {
 /// The methods of `number_method`, numbers' and dates'.
 pub const NUMBER_METHODS: &[&str] = &[
     "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
-    "plus_days", "plus_hours", "plus_minutes", "plus_seconds", "days_until", "seconds_until", "date", "weekday",
+    "plus_days", "plus_months", "plus_hours", "plus_minutes", "plus_seconds", "days_until", "seconds_until", "date", "weekday",
 ];
 
 /// `n.abs`, `a.max(b)`, `x.sqrt`, `x.round` on an `Int` or a `Float` (Part 4, "Standard library
@@ -529,7 +529,7 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         (Type::Float, "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "ln" | "log10" | "exp") => (vec![], float()),
         (Type::Float, "floor" | "ceil" | "round") => (vec![], int()),
         // Dates (PLAN Part 4, "Dates, the rest"): what a day or a time becomes.
-        (Type::Date | Type::DateTime, "plus_days") | (Type::DateTime, "plus_hours" | "plus_minutes" | "plus_seconds") => (vec![int()], t.clone()),
+        (Type::Date | Type::DateTime, "plus_days" | "plus_months") | (Type::DateTime, "plus_hours" | "plus_minutes" | "plus_seconds") => (vec![int()], t.clone()),
         (Type::Date, "days_until") | (Type::DateTime, "seconds_until") => (vec![t.clone()], int()),
         (Type::DateTime, "date") => (vec![], Type::Date),
         (Type::Date | Type::DateTime, "weekday") => (vec![], weekday()),
@@ -1497,6 +1497,8 @@ impl Checker<'_> {
     fn has(&self, t: &Type, interface: &str) -> bool {
         match t {
             Type::Struct(d) => self.follows(&d.name, interface),
+            // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
+            Type::Enum(_) if *t == weekday() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,

@@ -1042,6 +1042,9 @@ impl<'a> Translator<'a> {
             } else if let Type::Result(..) = ty {
                 // `ok` of a `Nothing or E`.
                 pieces.push(Piece::Text(name.clone()));
+            } else if *ty == crate::types::weekday() {
+                // Built in, for people: `Friday`.
+                pieces.push(Piece::Text(name.clone()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", ty.text())));
                 for (j, (field, t)) in fields.iter().enumerate() {
@@ -2412,6 +2415,9 @@ impl<'a> Translator<'a> {
             self.unless(ok, Fault::BadDate, loc);
             return r;
         }
+        if name == "plus_months" {
+            return self.plus_months(v, ty, arg.unwrap(), loc);
+        }
         match name {
             "days_until" | "seconds_until" => return self.op(Op::Minus, arg.unwrap(), v),
             // The days counted from 0000-03-01, so that the division rounds down.
@@ -2438,6 +2444,57 @@ impl<'a> Translator<'a> {
         let copy = self.int_local();
         self.emit(Inst::Copy(copy, v));
         copy
+    }
+
+    /// `d.plus_months(n)`: the same day `n` months later, or the last day of that month if it is
+    /// shorter (January 31 + 1 month = February 28 or 29); a `DateTime` keeps its time.
+    fn plus_months(&mut self, v: Local, ty: &Type, n: Local, loc: Loc) -> Local {
+        let parts = self.civil(v, ty);
+        let (y, m, d) = (parts[0], parts[1], parts[2]);
+        // The months since year 0, from 12 (0001-01) to 12 * 10000 - 1 (9999-12).
+        let t = self.with(Op::Times, y, 12);
+        let t = self.op(Op::Plus, t, m);
+        let t = self.with(Op::Minus, t, 1);
+        let total = self.operation(Op::Plus, t, n, false, loc);
+        let ok = self.within(total, 12, 12 * 10000 - 1);
+        self.unless(ok, Fault::BadDate, loc);
+        let ny = self.with(Op::Div, total, 12);
+        let t = self.with(Op::Rem, total, 12);
+        let nm = self.with(Op::Plus, t, 1);
+        // Its length: 30 + (m + m / 8) % 2, but February: 28, 29 in a leap year.
+        let t = self.with(Op::Div, nm, 8);
+        let t = self.op(Op::Plus, nm, t);
+        let t = self.with(Op::Rem, t, 2);
+        let long = self.with(Op::Plus, t, 30);
+        let r4 = self.with(Op::Rem, ny, 4);
+        let by4 = self.with(Op::Eq, r4, 0);
+        let r100 = self.with(Op::Rem, ny, 100);
+        let not100 = self.with(Op::Ne, r100, 0);
+        let r400 = self.with(Op::Rem, ny, 400);
+        let by400 = self.with(Op::Eq, r400, 0);
+        let t = self.op(Op::Times, by4, not100);
+        let t = self.op(Op::Plus, t, by400);
+        let leap = self.with(Op::Gt, t, 0);
+        let feb = self.with(Op::Plus, leap, 28);
+        let is_feb = self.with(Op::Eq, nm, 2);
+        let t = self.op(Op::Minus, feb, long);
+        let t = self.op(Op::Times, is_feb, t);
+        let length = self.op(Op::Plus, long, t);
+        // min(d, length).
+        let fits = self.op(Op::Le, d, length);
+        let t = self.op(Op::Minus, d, length);
+        let t = self.op(Op::Times, fits, t);
+        let nd = self.op(Op::Plus, length, t);
+        let days = self.days_from_civil(ny, nm, nd);
+        if *ty == Type::Date {
+            return days;
+        }
+        // The time of day, kept.
+        let date = self.date_method(v, ty, "date", None, loc);
+        let start = self.with(Op::Times, date, 86400);
+        let time = self.op(Op::Minus, v, start);
+        let t = self.with(Op::Times, days, 86400);
+        self.op(Op::Plus, t, time)
     }
 
     /// `2026-10-23`, `2026-10-23 14:05:30`: as ISO 8601 writes them, every number with its zeros.

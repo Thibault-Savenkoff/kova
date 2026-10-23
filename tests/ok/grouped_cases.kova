@@ -30,22 +30,24 @@ fn main {
     match r {
         ok, err => print("either")
     }
+    print("{d} is a {d.weekday}")
 }
-// expect: Weekday.Friday
+// expect: Friday
 // expect: travail
-// expect: Weekday.Saturday
+// expect: Saturday
 // expect: week-end
-// expect: Weekday.Sunday
+// expect: Sunday
 // expect: week-end
-// expect: Weekday.Monday
+// expect: Monday
 // expect: travail
-// expect: Weekday.Tuesday
+// expect: Tuesday
 // expect: travail
-// expect: Weekday.Wednesday
+// expect: Wednesday
 // expect: travail
-// expect: Weekday.Thursday
+// expect: Thursday
 // expect: travail
 // expect: false
 // expect: true
 // expect: false
 // expect: either
+// expect: 2026-10-23 is a Friday
