@@ -83,6 +83,55 @@ global_asm!(".globl _start", "_start:", "xor ebp, ebp", "mov rdi, rsp", "and rsp
 #[cfg(target_arch = "aarch64")]
 global_asm!(".globl _start", "_start:", "mov x29, xzr", "mov x30, xzr", "mov x0, sp", "bl {start}", "brk #0", start = sym start);
 
+// A program using the web is linked with the C library (OpenSSL needs it): it starts here
+// instead, so that the C library starts first, then calls `libc_main` (src/link.rs `elf`).
+#[cfg(target_arch = "x86_64")]
+global_asm!(
+    // A section of its own: kept only when it is the entry (`.text` holds `_start`).
+    ".pushsection .text.kova_libc_start, \"ax\"",
+    ".globl kova_libc_start",
+    "kova_libc_start:",
+    "xor ebp, ebp",
+    "mov r9, rdx", // what to call at the end, from the dynamic linker
+    "pop rsi",     // argc
+    "mov rdx, rsp", // argv
+    "and rsp, -16",
+    "push rax",
+    "push rsp", // the top of the stack
+    "xor r8d, r8d",
+    "xor ecx, ecx",
+    "lea rdi, [rip + {main}]",
+    "call __libc_start_main",
+    "ud2",
+    ".popsection",
+    main = sym libc_main,
+);
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    ".pushsection .text.kova_libc_start, \"ax\"",
+    ".globl kova_libc_start",
+    "kova_libc_start:",
+    "mov x29, xzr",
+    "mov x30, xzr",
+    "mov x5, x0", // what to call at the end, from the dynamic linker
+    "ldr x1, [sp]", // argc
+    "add x2, sp, #8", // argv
+    "mov x6, sp", // the top of the stack
+    "adrp x0, {main}",
+    "add x0, x0, :lo12:{main}",
+    "mov x3, xzr",
+    "mov x4, xzr",
+    "bl __libc_start_main",
+    "brk #0",
+    ".popsection",
+    main = sym libc_main,
+);
+
+/// Called by the C library, with the words the system put on the stack: `argc` just before them.
+unsafe extern "C" fn libc_main(_argc: i32, argv: *const usize) -> ! {
+    unsafe { start(argv.sub(1)) }
+}
+
 /// The environment's `NAME=value` texts.
 static ENVIRONMENT: Global<&[*const u8]> = Global::new(&[]);
 

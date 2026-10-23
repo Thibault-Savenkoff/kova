@@ -127,13 +127,13 @@ impl<'a> Inputs<'a> {
                 let name = s.name().map_err(error)?;
                 match self.defined.get(name) {
                     Some(&(k2, i, _)) => (k2, self.objects[k2].symbol_by_index(i).map_err(error)?),
+                    None if s.is_weak() => return Ok(Target::Nothing),
                     None if self.imports => {
                         return Ok(match name.strip_prefix("__imp_") {
                             Some(f) => Target::Import(f.to_string(), true),
                             None => Target::Import(name.to_string(), false),
                         });
                     }
-                    None if s.is_weak() => return Ok(Target::Nothing),
                     None => return Err(format!("`{name}` is defined nowhere")),
                 }
             }
@@ -342,7 +342,6 @@ const PAGE: u64 = 0x1000;
 // ---- Linux: ELF ----
 
 const ELF_BASE: u64 = 0x40_0000;
-const PROGRAM_HEADERS: u64 = 3;
 
 fn is_got(flags: RelocationFlags) -> bool {
     use object::elf::*;
@@ -359,19 +358,62 @@ fn is_got(flags: RelocationFlags) -> bool {
 pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     // An arm64 Linux may have pages of 4, 16 or 64 KB: aligned for the largest.
     let page_size = if arm { 0x10000 } else { PAGE };
-    let inputs = Inputs::read(main, runtime, false)?;
+    let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("_start", is_got)?;
+    // A program calling the C library's functions (the web's) is linked with it, by the system's
+    // dynamic linker (`ld.so`) at launch, and starts through it: `kova_libc_start`.
+    let dynamic = !r.imports.is_empty();
+    if dynamic {
+        r = inputs.reach("kova_libc_start", is_got)?;
+        for f in r.imports.clone() {
+            let t = Target::Import(f, false);
+            if !r.got.contains(&t) {
+                r.got.push(t); // its address, written by `ld.so`, read by its jump
+            }
+        }
+    }
     let parts = inputs.sorted(&mut r)?;
     let split = r.kept.iter().position(|p| parts[p] >= Part::Data).unwrap_or(r.kept.len());
     let (first, second) = r.kept.split_at(split);
+    let headers: u64 = if dynamic { 6 } else { 3 };
+    let interp: &[u8] = if arm { b"/lib/ld-linux-aarch64.so.1\0" } else { b"/lib64/ld-linux-x86-64.so.2\0" };
+    let interp_at = ELF_BASE + 64 + 56 * headers;
 
+    // The first segment (read and run): the headers, the dynamic linker's name, code and
+    // constants, the jumps to the C library's functions, then what `ld.so` reads: their names
+    // (`dynsym`, `dynstr`), an empty hash table and where to write their addresses (`rela`).
     let mut address = HashMap::new();
-    let at = inputs.place(first, ELF_BASE + 64 + 56 * PROGRAM_HEADERS, |_, _| {}, &mut address)?;
-    let got_at = align(at, 8);
-    let first_end = got_at + 8 * r.got.len() as u64;
-    // An address of the second segment is `shift` further than its place in the file.
+    let at = inputs.place(first, if dynamic { interp_at + interp.len() as u64 } else { interp_at }, |_, _| {}, &mut address)?;
+    let n = r.imports.len() as u64;
+    let stub_size = if arm { 12 } else { 6 };
+    let stubs = align(at, 4);
+    let stub = |f: &str| stubs + stub_size * r.imports.iter().position(|g| g == f).unwrap() as u64;
+    let mut strings = b"\0libc.so.6\0".to_vec();
+    let names: Vec<u64> = r.imports.iter().map(|f| {
+        let at = strings.len() as u64;
+        strings.extend(f.as_bytes());
+        strings.push(0);
+        at
+    }).collect();
+    let dynsym = align(stubs + stub_size * n, 8);
+    let dynstr = dynsym + 24 * (n + 1);
+    let hash = align(dynstr + strings.len() as u64, 8);
+    let rela = align(hash + 4 * (3 + n + 1), 8);
+    let first_end = align(if dynamic { rela + 24 * n } else { stubs }, 8);
+
+    // The second one (read and write): the GOT, the `dynamic` table, data then zeros. Its
+    // addresses are `shift` further than its place in the file.
     let shift = align(first_end, page_size) + first_end % page_size - first_end;
-    let data_at = first_end + shift;
+    let got_at = first_end + shift;
+    let dynamic_at = got_at + 8 * r.got.len() as u64;
+    let table: Vec<(u64, u64)> = if dynamic {
+        // NEEDED, HASH, STRTAB, SYMTAB, RELA, RELASZ, RELAENT, STRSZ, SYMENT; every address at once
+        // (BIND_NOW, FLAGS = BIND_NOW, FLAGS_1 = NOW); the end.
+        vec![(1, 1), (4, hash), (5, dynstr), (6, dynsym), (7, rela), (8, 24 * n), (9, 24), (10, strings.len() as u64), (11, 24), (24, 0), (30, 8), (0x6fff_fffb, 1), (0, 0)]
+    } else {
+        vec![]
+    };
+    let data_at = dynamic_at + 16 * table.len() as u64;
     let mut zeros = None;
     let end = inputs.place(
         second,
@@ -385,21 +427,24 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     )?;
     let zeros = zeros.unwrap_or(end);
 
-    let offset = |a: u64| (if a < data_at { a - ELF_BASE } else { a - shift - ELF_BASE }) as usize;
+    let offset = |a: u64| (if a < got_at { a - ELF_BASE } else { a - shift - ELF_BASE }) as usize;
     let mut out = vec![0u8; offset(zeros)];
     let address_of = |t: &Target| match t {
         Target::At(p, off) => Ok(address[p] + off),
         Target::Nothing => Ok(0),
-        Target::Import(name, _) => Err(format!("`{name}` is defined nowhere")),
+        Target::Import(name, _) => Ok(stub(name)),
     };
     for (slot, t) in r.got.iter().enumerate() {
-        let o = offset(got_at) + 8 * slot;
-        out[o..o + 8].copy_from_slice(&address_of(t)?.to_le_bytes());
+        if !matches!(t, Target::Import(..)) {
+            let o = offset(got_at) + 8 * slot;
+            out[o..o + 8].copy_from_slice(&address_of(t)?.to_le_bytes());
+        }
     }
+    let slot_of = |t: &Target| got_at + 8 * r.got.iter().position(|g| g == t).unwrap() as u64;
     let apply = |out: &mut [u8], rel: &object::Relocation, t: &Target, place: u64, value: i64| {
         use object::elf::*;
         let RelocationFlags::Elf { r_type } = rel.flags() else { return Err("not an ELF relocation".to_string()) };
-        let slot = || got_at as i64 + 8 * r.got.iter().position(|g| g == t).unwrap() as i64;
+        let slot = || slot_of(t) as i64;
         let place = place as i64;
         match r_type {
             _ if arm => match r_type {
@@ -421,7 +466,7 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
             },
             R_X86_64_64 => put(out, value, 64),
             R_X86_64_PC64 => put(out, value - place, 64),
-            // Static: a call through the PLT goes straight to the function.
+            // A call through the PLT goes straight to the function (or to its jump).
             R_X86_64_PC32 | R_X86_64_PLT32 => put(out, value - place, 32),
             R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => put(out, slot() + rel.addend() - place, 32),
             R_X86_64_32 if (0..=u32::MAX as i64).contains(&value) => put(out, value, 32),
@@ -430,6 +475,45 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         }
     };
     inputs.write(&r.kept, &address, offset, &mut out, address_of, apply)?;
+
+    if dynamic {
+        let o = offset(interp_at);
+        out[o..o + interp.len()].copy_from_slice(interp);
+        for (k, f) in r.imports.iter().enumerate() {
+            let (s, g) = (stub(f), slot_of(&Target::Import(f.clone(), false)));
+            let o = offset(s);
+            if arm {
+                // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
+                for (i, insn) in [0x9000_0010u32, 0xF940_0210, 0xD61F_0200].into_iter().enumerate() {
+                    out[o + 4 * i..o + 4 * i + 4].copy_from_slice(&insn.to_le_bytes());
+                }
+                page(&mut out[o..], g as i64, s)?;
+                in_page(&mut out[o + 4..], g as i64)?;
+            } else {
+                out[o..o + 2].copy_from_slice(&[0xFF, 0x25]); // jmp [rip + slot]
+                put(&mut out[o + 2..], g as i64 - (s as i64 + 6), 32)?;
+            }
+            // Its name: global, a function, defined elsewhere.
+            let o = offset(dynsym) + 24 * (k + 1);
+            out[o..o + 4].copy_from_slice(&(names[k] as u32).to_le_bytes());
+            out[o + 4] = 0x12;
+            // Its address, written by `ld.so` into its slot (GLOB_DAT).
+            let o = offset(rela) + 24 * k;
+            out[o..o + 8].copy_from_slice(&g.to_le_bytes());
+            out[o + 8..o + 16].copy_from_slice(&((k as u64 + 1) << 32 | if arm { 1025 } else { 6 }).to_le_bytes());
+        }
+        let o = offset(dynstr);
+        out[o..o + strings.len()].copy_from_slice(&strings);
+        // One bucket, empty: the program gives no names to the libraries.
+        let o = offset(hash);
+        out[o..o + 4].copy_from_slice(&1u32.to_le_bytes());
+        out[o + 4..o + 8].copy_from_slice(&(n as u32 + 1).to_le_bytes());
+        for (k, (tag, value)) in table.iter().enumerate() {
+            let o = offset(dynamic_at) + 16 * k;
+            out[o..o + 8].copy_from_slice(&tag.to_le_bytes());
+            out[o + 8..o + 16].copy_from_slice(&value.to_le_bytes());
+        }
+    }
 
     // The headers: the ELF header, then the segments (no sections' headers, like `strip`).
     let mut h = Vec::new();
@@ -441,7 +525,7 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     h.extend_from_slice(&64u64.to_le_bytes()); // the segments' headers follow
     h.extend_from_slice(&0u64.to_le_bytes());
     h.extend_from_slice(&0u32.to_le_bytes());
-    for v in [64u16, 56, PROGRAM_HEADERS as u16, 64, 0, 0] {
+    for v in [64u16, 56, headers as u16, 64, 0, 0] {
         h.extend_from_slice(&v.to_le_bytes());
     }
     let mut segment = |kind: u32, flags: u32, offset: u64, address: u64, file: u64, memory: u64| {
@@ -452,8 +536,15 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
             h.extend_from_slice(&v.to_le_bytes());
         }
     };
+    if dynamic {
+        segment(6, 4, 64, ELF_BASE + 64, 56 * headers, 56 * headers); // PT_PHDR: these headers
+        segment(3, 4, interp_at - ELF_BASE, interp_at, interp.len() as u64, interp.len() as u64); // PT_INTERP
+    }
     segment(1, 5, 0, ELF_BASE, first_end - ELF_BASE, first_end - ELF_BASE); // PT_LOAD, read + run
-    segment(1, 6, offset(data_at) as u64, data_at, zeros - data_at, end - data_at); // PT_LOAD, read + write
+    segment(1, 6, offset(got_at) as u64, got_at, zeros - got_at, end - got_at); // PT_LOAD, read + write
+    if dynamic {
+        segment(2, 6, offset(dynamic_at) as u64, dynamic_at, 16 * table.len() as u64, 16 * table.len() as u64); // PT_DYNAMIC
+    }
     segment(0x6474e551, 6, 0, 0, 0, 0); // PT_GNU_STACK: the stack does not run
     out[..h.len()].copy_from_slice(&h);
     Ok(out)
