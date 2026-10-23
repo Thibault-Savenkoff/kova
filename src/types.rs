@@ -423,7 +423,7 @@ pub const LIBRARY: &[(&str, &str)] =
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
-/// `kova_read_file` (runtime/runtime.c) and of the interpreter: number = variant + 1.
+/// `kova_read_file` (runtime/kova.rs) and of the interpreter: number = variant + 1.
 pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
     let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];

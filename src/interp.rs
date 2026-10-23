@@ -11,7 +11,7 @@ use crate::locale::{self, t};
 enum Object {
     Str(String),
     /// `length` elements, their slots one after the other (`width` slots each). A Map or a Set
-    /// also has an `index` (a List, made by `kir.rs` `find`; 0 = none), like in runtime.c.
+    /// also has an `index` (a List, made by `kir.rs` `find`; 0 = none), like in runtime/kova.rs.
     List { width: usize, length: usize, slots: Vec<i64>, index: i64 },
 }
 
@@ -25,7 +25,7 @@ struct Heap {
     live: usize,
     /// The program's command-line arguments, for `args`.
     args: Vec<String>,
-    /// The state of `random` (splitmix64, like runtime.c), once started.
+    /// The state of `random` (splitmix64, like runtime/kova.rs), once started.
     chance: Option<u64>,
     /// Under `kova debug`: what stops the program and shows its variables.
     debugger: Option<Box<Debugger>>,
@@ -107,7 +107,7 @@ fn random(heap: &mut Heap, from: i64, to: i64) -> i64 {
     crate::shared::random(state, from, to)
 }
 
-/// A failure of the system as an `IoError` variant + 1, like `failure` in runtime.c.
+/// A failure of the system as an `IoError` variant + 1, like `failure` in the runtime.
 fn failure(e: &std::io::Error) -> i64 {
     use std::io::ErrorKind::*;
     match e.kind() {
@@ -143,7 +143,7 @@ pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
             eprint!("{message}");
             101
         }
-        // What is still alive is not counted as a leak (`kova_exit` in runtime/runtime.c).
+        // What is still alive is not counted as a leak (`kova_exit` in runtime/kova.rs).
         Err(Stop::Exit(code)) => code,
     }
 }
@@ -264,7 +264,7 @@ fn evaluate(
     }
 }
 
-/// Same check as `kova_leaks` in `runtime/runtime.c`.
+/// Same check as `leaks` in `runtime/kova.rs`.
 fn leaks(allocated: usize, live: usize) -> i32 {
     let Ok(mode) = std::env::var("KOVA_LEAKS") else { return 0 };
     let text = |k| locale::text(k, &[]);
@@ -489,7 +489,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             Ok(()) => 0,
                             Err(e) => -failure(&e),
                         },
-                        // Windows answers "denied" for a directory: asked first, like `kind_of` in runtime.c.
+                        // Windows answers "denied" for a directory: asked first, like `kova_read_file` in runtime/kova.rs.
                         StrOp::ReadFile if std::path::Path::new(s(0)).is_dir() => -3,
                         StrOp::ReadFile => match std::fs::read(s(0)).map(String::from_utf8) {
                             Ok(Ok(text)) => heap.make(text),
@@ -522,7 +522,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = text(locals[a[0]], *show, heap);
                             heap.make(t)
                         }
-                        // Spaces = the same 5 characters as `is_space` in runtime/runtime.c.
+                        // Spaces = the same 5 characters as `kova_str_trim` in runtime/kova.rs.
                         StrOp::Trim => {
                             let t = s(0).trim_matches(|c: char| c.is_ascii_whitespace()).to_string();
                             heap.make(t)

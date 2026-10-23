@@ -1,7 +1,6 @@
 // What the runtime asks of Linux: system calls made directly (no C library), its own entry point
 // `_start`, and its own memory allocator. The executable is then static: it runs on any Linux.
-// ponytail: x86-64 only; arm64 Linux keeps the C runtime (`runtime/runtime.c`) until it gets
-// its system call numbers here and a machine to test them.
+// On x86-64 and on arm64: only the system calls' numbers, how they are made and `_start` differ.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -12,6 +11,7 @@ use crate::{Global, c_text};
 
 pub const SLASH: char = '/';
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn call(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
     let r;
     unsafe {
@@ -20,22 +20,57 @@ unsafe fn call(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: us
     r
 }
 
-const READ: usize = 0;
-const WRITE: usize = 1;
-const CLOSE: usize = 3;
-const MMAP: usize = 9;
-const MUNMAP: usize = 11;
-const IOCTL: usize = 16;
-const MREMAP: usize = 25;
-const NANOSLEEP: usize = 35;
-const GETPID: usize = 39;
-const GETDENTS64: usize = 217;
-const CLOCK_GETTIME: usize = 228;
-const EXIT_GROUP: usize = 231;
-const OPENAT: usize = 257;
-const MKDIRAT: usize = 258;
-const UNLINKAT: usize = 263;
-const STATX: usize = 332;
+#[cfg(target_arch = "aarch64")]
+unsafe fn call(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
+    let r;
+    unsafe { asm!("svc 0", in("x8") n, inlateout("x0") a as isize => r, in("x1") b, in("x2") c, in("x3") d, in("x4") e, in("x5") f, options(nostack)) };
+    r
+}
+
+#[cfg(target_arch = "x86_64")]
+mod numbers {
+    pub const READ: usize = 0;
+    pub const WRITE: usize = 1;
+    pub const CLOSE: usize = 3;
+    pub const MMAP: usize = 9;
+    pub const MUNMAP: usize = 11;
+    pub const IOCTL: usize = 16;
+    pub const MREMAP: usize = 25;
+    pub const NANOSLEEP: usize = 35;
+    pub const GETPID: usize = 39;
+    pub const GETDENTS64: usize = 217;
+    pub const CLOCK_GETTIME: usize = 228;
+    pub const EXIT_GROUP: usize = 231;
+    pub const OPENAT: usize = 257;
+    pub const MKDIRAT: usize = 258;
+    pub const UNLINKAT: usize = 263;
+    pub const STATX: usize = 332;
+    pub const O_DIRECTORY: usize = 0o200000;
+}
+
+// Linux's own numbering for the newer systems (`asm-generic/unistd.h`).
+#[cfg(target_arch = "aarch64")]
+mod numbers {
+    pub const READ: usize = 63;
+    pub const WRITE: usize = 64;
+    pub const CLOSE: usize = 57;
+    pub const MMAP: usize = 222;
+    pub const MUNMAP: usize = 215;
+    pub const IOCTL: usize = 29;
+    pub const MREMAP: usize = 216;
+    pub const NANOSLEEP: usize = 101;
+    pub const GETPID: usize = 172;
+    pub const GETDENTS64: usize = 61;
+    pub const CLOCK_GETTIME: usize = 113;
+    pub const EXIT_GROUP: usize = 94;
+    pub const OPENAT: usize = 56;
+    pub const MKDIRAT: usize = 34;
+    pub const UNLINKAT: usize = 35;
+    pub const STATX: usize = 291;
+    pub const O_DIRECTORY: usize = 0o40000;
+}
+
+use numbers::*;
 
 const AT_FDCWD: usize = -100isize as usize;
 const EINTR: isize = 4;
@@ -43,7 +78,10 @@ const EEXIST: isize = 17;
 
 // The program starts here: the system put the number of words, then the words (`argv`), then
 // the environment (`envp`) on the stack.
+#[cfg(target_arch = "x86_64")]
 global_asm!(".globl _start", "_start:", "xor ebp, ebp", "mov rdi, rsp", "and rsp, -16", "call {start}", "ud2", start = sym start);
+#[cfg(target_arch = "aarch64")]
+global_asm!(".globl _start", "_start:", "mov x29, xzr", "mov x30, xzr", "mov x0, sp", "bl {start}", "brk #0", start = sym start);
 
 /// The environment's `NAME=value` texts.
 static ENVIRONMENT: Global<&[*const u8]> = Global::new(&[]);
@@ -219,7 +257,7 @@ pub fn remove_file(path: &str) -> Result<(), i64> {
 
 /// The names in a directory, without `.` and `..`; Err(4) if one is not UTF-8.
 pub fn list_dir(path: &str) -> Result<Vec<String>, i64> {
-    let fd = open(path, 0o200000)?; // O_DIRECTORY
+    let fd = open(path, O_DIRECTORY)?;
     let mut names = Vec::new();
     let mut buffer = [0u8; 1 << 14];
     let r = loop {

@@ -315,7 +315,7 @@ fn command_line() {
 /// On Linux x86-64, `kova build` makes a 100% static executable (Kova's own linker, src/link.rs):
 /// no ELF program header `PT_INTERP` (3), the loader of the system's C library.
 fn static_executable() {
-    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    if !cfg!(target_os = "linux") {
         return;
     }
     let exe = std::env::temp_dir().join(format!("kova-static-{}{EXE}", std::process::id()));
@@ -335,7 +335,15 @@ fn cross_build() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("hello.kova");
     std::fs::copy("tests/ok/strings.kova", &source).unwrap();
-    for (target, file, start) in [("linux", "hello", &b"\x7fELF"[..]), ("windows", "hello.exe", b"MZ"), ("mac", "hello", b"\xcf\xfa\xed\xfe")] {
+    // The start of the file, then the processor's number at `at` (none for Windows).
+    let systems: [(&str, &str, &[u8], usize, u8); 5] = [
+        ("linux", "hello", b"\x7fELF", 0x12, 62),
+        ("linux-arm", "hello", b"\x7fELF", 0x12, 183),
+        ("windows", "hello.exe", b"MZ", 0, b'M'),
+        ("mac", "hello", b"\xcf\xfa\xed\xfe", 4, 0x0C),
+        ("mac-intel", "hello", b"\xcf\xfa\xed\xfe", 4, 0x07),
+    ];
+    for (target, file, start, at, cpu) in systems {
         let out = kova(LANG).arg("build").arg(&source).args(["--target", target]).output().unwrap();
         // A `kova` built without Rust's library for that system says what to install (build.rs).
         if text(&out.stderr).contains("rustup target add") {
@@ -343,10 +351,11 @@ fn cross_build() {
         }
         // The report: the file, the system, its size and the time taken.
         let report = text(&out.stderr);
-        let title = [("linux", "Linux"), ("windows", "Windows"), ("mac", "Mac")].iter().find(|(n, _)| *n == target).unwrap().1;
+        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("mac", "Mac"), ("mac-intel", "Mac Intel")].iter().find(|(n, _)| *n == target).unwrap().1;
         assert!(out.status.success() && report.starts_with(&format!("✓ {}", dir.join(file).display())), "{target}: {report}");
         assert!(report.contains(&format!(" ({title}, ")) && report.contains(" KB) in ") && report.lines().count() == 1, "{report}");
-        assert!(std::fs::read(dir.join(file)).unwrap().starts_with(start), "{target}");
+        let exe = std::fs::read(dir.join(file)).unwrap();
+        assert!(exe.starts_with(start) && exe[at] == cpu, "{target}");
         std::fs::remove_file(dir.join(file)).unwrap();
     }
     std::fs::remove_dir_all(&dir).unwrap();

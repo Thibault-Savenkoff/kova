@@ -1,13 +1,11 @@
 // Native backend (`kova build`): KIR → machine code with Cranelift → `main.o`,
 // with the runtime's texts as data (`runtime_texts`), then Kova's own linker (src/link.rs) glues
-// it and the runtime (in Rust, `RUNTIME`) into an executable. On an Intel Mac, `cc` links them;
-// on the systems the Rust runtime doesn't know yet, `cc` compiles the C runtime.
+// it and the runtime (in Rust, `Target::runtime`) into an executable: no C compiler anywhere.
 //
 // Each KIR local becomes a Cranelift `Variable`; each KIR block, a Cranelift block.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
@@ -21,14 +19,8 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use crate::kir::*;
 use crate::locale::{self, t};
 
-const RUNTIME_C: &str = include_str!("../runtime/runtime.c");
-/// The runtime in Rust (runtime/kova.rs, compiled by build.rs) for a system that is none of the
-/// `Target`s but that it knows (an Intel Mac), linked by `cc`; empty for the others, which still
-/// compile the C runtime (PLAN Part 4 "Kova without a C compiler").
-const HOST_RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime-host.a"));
-
 /// A system `kova build` makes executables for with its own linker, from any machine (PLAN Part 4
-/// "Cross-compilation"): `--target linux`, `windows`, `mac`.
+/// "Cross-compilation"): `--target linux`, `windows`, `mac`, `linux-arm`, `mac-intel`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Target {
     /// Linux on x86-64.
@@ -37,10 +29,20 @@ pub enum Target {
     Windows,
     /// macOS on arm64 (Apple's own processors).
     Mac,
+    /// Linux on arm64 (a Raspberry Pi, servers).
+    LinuxArm,
+    /// macOS on x86-64 (the Macs before 2020).
+    MacIntel,
 }
 
 impl Target {
-    pub const NAMES: [(&str, Target); 3] = [("linux", Target::Linux), ("windows", Target::Windows), ("mac", Target::Mac)];
+    pub const NAMES: [(&str, Target); 5] = [
+        ("linux", Target::Linux),
+        ("windows", Target::Windows),
+        ("mac", Target::Mac),
+        ("linux-arm", Target::LinuxArm),
+        ("mac-intel", Target::MacIntel),
+    ];
 
     pub fn named(name: &str) -> Option<Target> {
         Target::NAMES.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
@@ -58,6 +60,10 @@ impl Target {
             Some(Target::Windows)
         } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             Some(Target::Mac)
+        } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            Some(Target::LinuxArm)
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            Some(Target::MacIntel)
         } else {
             None
         }
@@ -69,6 +75,8 @@ impl Target {
             Target::Linux => "Linux",
             Target::Windows => "Windows",
             Target::Mac => "Mac",
+            Target::LinuxArm => "Linux arm",
+            Target::MacIntel => "Mac Intel",
         }
     }
 
@@ -83,6 +91,8 @@ impl Target {
             Target::Linux => "x86_64-unknown-linux-gnu",
             Target::Windows => "x86_64-pc-windows-msvc",
             Target::Mac => "aarch64-apple-darwin",
+            Target::LinuxArm => "aarch64-unknown-linux-gnu",
+            Target::MacIntel => "x86_64-apple-darwin",
         }
     }
 
@@ -92,6 +102,8 @@ impl Target {
             Target::Linux => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux.a")),
             Target::Windows => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows.a")),
             Target::Mac => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac.a")),
+            Target::LinuxArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux-arm.a")),
+            Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),
         }
     }
 }
@@ -99,68 +111,22 @@ impl Target {
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 /// `target`: the system to make it for (the machine's own if none is given).
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, target: Option<Target>) -> Result<(), String> {
-    if let Some(target) = target.or(Target::host()) {
-        let runtime = target.runtime();
-        if runtime.is_empty() {
-            return Err(t!("no_runtime", target = target.name(), triple = target.triple()));
-        }
-        let object = make_object(p, files, lang, target.triple().parse().unwrap()).map_err(|e| t!("codegen_failed", error = e))?;
-        // Kova's own linker: no `cc`, nor Microsoft's or Apple's linker (src/link.rs).
-        let exe = match target {
-            Target::Linux => crate::link::elf(&object, runtime),
-            Target::Windows => crate::link::pe(&object, runtime),
-            Target::Mac => {
-                let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy());
-                crate::link::macho(&object, runtime, &name)
-            }
-        };
-        return write_executable(output, &exe.map_err(|e| t!("codegen_failed", error = e))?);
+    let Some(target) = target.or(Target::host()) else { return Err(t!("unknown_system")) };
+    let runtime = target.runtime();
+    if runtime.is_empty() {
+        return Err(t!("no_runtime", target = target.name(), triple = target.triple()));
     }
-
-    let object = make_object(p, files, lang, target_lexicon::Triple::host()).map_err(|e| t!("codegen_failed", error = e))?;
-    let rust = !HOST_RUNTIME.is_empty();
-    let tmp = std::env::temp_dir().join(format!("kova-build-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let (o, c) = (tmp.join("main.o"), tmp.join("runtime.c"));
-    std::fs::write(&o, object).map_err(|e| e.to_string())?;
-    if rust {
-        let a = tmp.join("runtime.a");
-        std::fs::write(&a, HOST_RUNTIME).map_err(|e| e.to_string())?;
-        // An Intel Mac: linked to libSystem, as Apple wants (runtime/macos.rs).
-        let res = Command::new("cc").args(["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x", "-o"]).arg(output).arg(&o).arg(&a).output();
-        let _ = std::fs::remove_dir_all(&tmp);
-        return linked(res);
-    }
-    std::fs::write(&c, RUNTIME_C).map_err(|e| e.to_string())?;
-
-    let link = |cc: &str, flags: &[&str]| {
-        // Only what the program uses: each function in its own section, the unused ones dropped,
-        // no symbols nor debug information (Kova's errors give `file:line` themselves).
-        // macOS's linker says it differently: `-dead_strip`, `-S -x`.
-        let small: &[&str] = if cfg!(target_os = "macos") {
-            &["-Wl,-dead_strip", "-Wl,-S", "-Wl,-x"]
-        } else {
-            &["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", "-s"]
-        };
-        Command::new(cc).args(flags).args(small).args(["-O2", "-o"]).arg(output).arg(&o).arg(&c).arg("-lm").output()
+    let object = make_object(p, files, lang, target.triple().parse().unwrap()).map_err(|e| t!("codegen_failed", error = e))?;
+    // Kova's own linker: no `cc`, nor Microsoft's or Apple's linker (src/link.rs).
+    let name = || Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy().into_owned());
+    let exe = match target {
+        Target::Linux => crate::link::elf(&object, runtime, false),
+        Target::LinuxArm => crate::link::elf(&object, runtime, true),
+        Target::Windows => crate::link::pe(&object, runtime),
+        Target::Mac => crate::link::macho(&object, runtime, &name(), true),
+        Target::MacIntel => crate::link::macho(&object, runtime, &name(), false),
     };
-    // 100% static, so that it runs on any Linux (PLAN Part 4 "Static executables"): with musl,
-    // else the system's static C library; else as usual, with a warning saying what to install.
-    // macOS has no static C library: its `libSystem` is on every Mac, so `cc` as usual is fine.
-    let res = if cfg!(target_os = "macos") {
-        link("cc", &[])
-    } else {
-        [("musl-gcc", &["-static"][..]), ("cc", &["-static"][..])]
-            .iter()
-            .map(|(cc, flags)| link(cc, flags))
-            .find(|r| r.as_ref().is_ok_and(|out| out.status.success()))
-            .unwrap_or_else(|| {
-                eprintln!("{}", t!("not_static"));
-                link("cc", &[])
-            })
-    };
-    let _ = std::fs::remove_dir_all(&tmp);
-    linked(res)
+    write_executable(output, &exe.map_err(|e| t!("codegen_failed", error = e))?)
 }
 
 /// The executable, which may be run.
@@ -173,17 +139,6 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
         std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-/// What the linker said.
-fn linked(res: std::io::Result<std::process::Output>) -> Result<(), String> {
-    match res {
-        Err(e) => Err(t!("cc_missing", error = e)),
-        Ok(out) if !out.status.success() => {
-            Err(t!("cc_failed", output = String::from_utf8_lossy(&[out.stdout, out.stderr].concat())))
-        }
-        Ok(_) => Ok(()),
-    }
 }
 
 /// The C runtime functions called by the generated code.
@@ -206,7 +161,7 @@ struct Runtime {
     math: FuncId,
 }
 
-/// The runtime functions for Lists (`kova_list_*` in `runtime/runtime.c`):
+/// The runtime functions for Lists (`kova_list_*` in `runtime/kova.rs`):
 /// (name, number of arguments, number of results), in the order of the `L_*` numbers.
 const LIST_FUNCTIONS: [(&str, usize, usize); 10] = [
     ("kova_list_new", 1, 1),
@@ -409,7 +364,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
     Ok(module.finish().emit()?)
 }
 
-/// What the runtime reads to write its messages (runtime.c: `kova_texts`, `kova_langs`…):
+/// What the runtime reads to write its messages (runtime/kova.rs: `kova_texts`, `kova_langs`…):
 /// `kova_nb_texts` texts per language, in the order of `locale::RUNTIME`; the languages' codes;
 /// the source files' paths; the `header`'s language (`kova_forced_lang`), or -1. Each text ends
 /// with a 0 byte, as C wants it.
@@ -440,6 +395,7 @@ fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[Stri
     for (name, value) in [("kova_nb_langs", langs as i32), ("kova_nb_texts", locale::RUNTIME.len() as i32), ("kova_forced_lang", forced.map_or(-1, |l| l as i32))] {
         let mut d = DataDescription::new();
         d.define(value.to_le_bytes().into());
+        d.set_align(4); // arm64 reads it with an instruction that needs it
         let id = module.declare_data(name, Linkage::Export, false, false)?;
         module.define_data(id, &d)?;
     }
@@ -473,7 +429,7 @@ struct Generator<'a> {
     math: FuncRef,
 }
 
-/// The runtime functions for Strings (`kova_str_*` in `runtime/runtime.c`).
+/// The runtime functions for Strings (`kova_str_*` in `runtime/kova.rs`).
 struct Strings {
     new: FuncRef,
     free: FuncRef,

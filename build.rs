@@ -1,9 +1,7 @@
 // Builds the runtime glued to every Kova executable (runtime/kova.rs), with the Rust compiler that
 // builds `kova`, once for each system `kova build --target` knows: `kova` carries them inside
 // (src/codegen.rs, `Target::runtime`). A system whose Rust library is not installed gets an empty
-// file (`kova build --target` then says what to install). `runtime-host.a`: the system `kova`
-// runs on when it is none of these (an Intel Mac), linked by `cc`; empty on the others (Linux on
-// arm64), where `kova build` compiles the C runtime.
+// file (`kova build --target` then says what to install).
 //
 // Each archive keeps only the objects the runtime reaches: Rust's `compiler_builtins` brings
 // hundreds (division on 128 bits, conversions…) with their debug information, ~3 MB per system.
@@ -29,10 +27,12 @@ fn main() {
     };
     // The same names as `Target::triples` in src/codegen.rs; Windows: Microsoft's or GNU's
     // Rust library, whichever is installed (the runtime asks nothing of either).
-    let targets: [(&str, &[&str]); 3] = [
+    let targets: [(&str, &[&str]); 5] = [
         ("linux", &["x86_64-unknown-linux-gnu"]),
         ("windows", &["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"]),
         ("mac", &["aarch64-apple-darwin"]),
+        ("linux-arm", &["aarch64-unknown-linux-gnu"]),
+        ("mac-intel", &["x86_64-apple-darwin"]),
     ];
     for (name, triples) in targets {
         let lib = out.join(format!("runtime-{name}.a"));
@@ -43,13 +43,6 @@ fn main() {
                 std::fs::write(&lib, []).unwrap();
             }
         }
-    }
-    let host = var("TARGET");
-    let lib = out.join("runtime-host.a");
-    if host == "x86_64-apple-darwin" {
-        compile(&rustc, &host, &lib, &libm, &out);
-    } else {
-        std::fs::write(&lib, []).unwrap();
     }
 }
 

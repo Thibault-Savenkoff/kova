@@ -19,7 +19,8 @@ Save it as `hello.kova`, then:
 
 - `kova run hello.kova` runs it at once (in Kova's interpreter);
 - `kova build hello.kova` makes a native executable, `hello` (`hello.exe` on Windows), that runs anywhere
-  without Kova. Add `--target linux`, `--target windows` or `--target mac` to make one for another system.
+  without Kova. Add `--target linux`, `windows`, `mac`, `linux-arm` or `mac-intel` to make one for another
+  system.
 
 ## 2. Values and variables
 

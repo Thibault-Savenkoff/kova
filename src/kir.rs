@@ -275,11 +275,11 @@ pub enum Inst {
     CallIndirect(Slots, Local, Slots),
     /// `dst := "text"`: a new String.
     Text(Local, String),
-    /// `dst := op(args)`, done by the runtime (`kova_str_*` in `runtime/runtime.c`).
+    /// `dst := op(args)`, done by the runtime (`kova_str_*` in `runtime/kova.rs`).
     Str(Local, StrOp, Slots),
     /// Frees a String, then sets its slot to 0 (freeing 0 does nothing).
     Free(Local),
-    /// `dst := a new empty List` whose elements take `width` slots (`kova_list_*` in `runtime/runtime.c`).
+    /// `dst := a new empty List` whose elements take `width` slots (`kova_list_*` in `runtime/kova.rs`).
     ListNew(Local, usize),
     /// `dst := list.length`.
     ListLength(Local, Local),
@@ -427,7 +427,7 @@ pub enum Piece {
     File(usize),
 }
 
-/// How to show a slot. Same order as in `runtime/runtime.c`.
+/// How to show a slot. Same order as in `runtime/kova.rs`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Show {
     Int = 0,
@@ -1665,7 +1665,7 @@ impl<'a> Translator<'a> {
     /// when empty or (mixed hash, position + 1) of a key, at `1 + hash % cap` or after, at the
     /// first empty place. Made again when it would be half full (it then has 4 places per
     /// element), added to for the elements added since. `ListRemove` takes the element out of
-    /// it (`unindex` in runtime.c and interp.rs).
+    /// it (`unindex` in runtime/kova.rs and interp.rs).
     fn find_in_index(&mut self, map: Local, key: &[Local], k: &Type) -> Local {
         let (zero, one, two) = (self.constant(0), self.constant(1), self.constant(2));
         let (n, index, cap, test) = (self.int_local(), self.int_local(), self.int_local(), self.int_local());

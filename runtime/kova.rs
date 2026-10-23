@@ -967,3 +967,58 @@ mod memory {
         unsafe { memcmp(a, b, n) }
     }
 }
+
+// On arm64 Linux: byte by byte, each byte "volatile" so that the loops stay loops.
+// ponytail: one byte at a time; by words of 8 bytes if copying ever shows in a profile.
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+mod memory {
+    use core::ffi::c_void;
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn memcpy(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
+        let (t, f) = (to as *mut u8, from as *const u8);
+        for i in 0..n {
+            unsafe { t.add(i).write_volatile(f.add(i).read_volatile()) };
+        }
+        to
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn memmove(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
+        if (to as usize).wrapping_sub(from as usize) >= n {
+            return unsafe { memcpy(to, from, n) };
+        }
+        // `to` overlaps the end of `from`: backwards, from the last byte.
+        let (t, f) = (to as *mut u8, from as *const u8);
+        for i in (0..n).rev() {
+            unsafe { t.add(i).write_volatile(f.add(i).read_volatile()) };
+        }
+        to
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn memset(to: *mut c_void, c: i32, n: usize) -> *mut c_void {
+        let t = to as *mut u8;
+        for i in 0..n {
+            unsafe { t.add(i).write_volatile(c as u8) };
+        }
+        to
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> i32 {
+        let (a, b) = (a as *const u8, b as *const u8);
+        for i in 0..n {
+            let (x, y) = unsafe { (a.add(i).read_volatile(), b.add(i).read_volatile()) };
+            if x != y {
+                return x as i32 - y as i32;
+            }
+        }
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn bcmp(a: *const c_void, b: *const c_void, n: usize) -> i32 {
+        unsafe { memcmp(a, b, n) }
+    }
+}

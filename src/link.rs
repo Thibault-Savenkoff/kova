@@ -9,9 +9,9 @@
 // 3. The kept sections get their addresses: code, constants, then data, then zeros.
 // 4. Each relocation is written: the address (or the distance to it) the code needs.
 //
-// `elf`: Linux x86-64, a static executable (no dynamic linker). `pe`: Windows x86-64, whose
-// functions come from `kernel32.dll` through its import table. `macho`: macOS arm64, whose
-// functions come from `libSystem` through `dyld`, signed as the Mac requires.
+// `elf`: Linux x86-64 or arm64, a static executable (no dynamic linker). `pe`: Windows x86-64,
+// whose functions come from `kernel32.dll` through its import table. `macho`: macOS arm64 or
+// x86-64, whose functions come from `libSystem` through `dyld`, signed as the Mac requires.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -215,17 +215,29 @@ impl<'a> Inputs<'a> {
             for (r_offset, r) in section.relocations() {
                 let t = self.target(p.0, r.target())?;
                 let at = o + r_offset as usize;
-                // COFF keeps a part of the value in the code itself; Mach-O only in a pointer
-                // (arm64 instructions get theirs from a relocation of their own).
+                // COFF and x86-64 Mach-O keep a part of the value in the code itself; arm64 Mach-O
+                // only in a pointer (its instructions get theirs from a relocation of their own).
                 let mut a = r.addend();
-                if r.has_implicit_addend() && !matches!(r.flags(), RelocationFlags::MachO { r_type, .. } if r_type != object::macho::ARM64_RELOC_UNSIGNED) {
+                let arm_macho = self.objects[p.0].architecture() == object::Architecture::Aarch64;
+                if r.has_implicit_addend() && !(arm_macho && matches!(r.flags(), RelocationFlags::MachO { r_type, .. } if r_type != object::macho::ARM64_RELOC_UNSIGNED)) {
                     a += match r.size() {
                         32 => i32::from_le_bytes(out[at..at + 4].try_into().unwrap()) as i64,
                         64 => i64::from_le_bytes(out[at..at + 8].try_into().unwrap()),
                         n => return Err(format!("relocation of {n} bits")),
                     };
+                    // x86-64 Mach-O: a distance to a section was measured from the place in the object.
+                    if let (RelocationFlags::MachO { r_pcrel: true, .. }, RelocationTarget::Section(_)) = (r.flags(), r.target()) {
+                        a += (section.address() + r_offset) as i64 - r.addend();
+                    }
                 }
-                let value = (address_of(&t)? as i64).wrapping_add(a);
+                let mut value = (address_of(&t)? as i64).wrapping_add(a);
+                // Mach-O: a distance between two names (a jump table).
+                if let Some(s) = r.subtractor() {
+                    if matches!(r.target(), RelocationTarget::Section(_)) {
+                        return Err("a distance from a section".into());
+                    }
+                    value -= address_of(&self.target(p.0, RelocationTarget::Symbol(s))?)? as i64;
+                }
                 apply(&mut out[at..], &r, &t, address[&p] + r_offset, value).map_err(|e| format!("{e} in `{}`", section.name().unwrap_or("?")))?;
             }
         }
@@ -272,14 +284,19 @@ const PROGRAM_HEADERS: u64 = 3;
 
 fn is_got(flags: RelocationFlags) -> bool {
     use object::elf::*;
-    matches!(flags, RelocationFlags::Elf { r_type: R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX })
+    matches!(
+        flags,
+        RelocationFlags::Elf { r_type: R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX | R_AARCH64_ADR_GOT_PAGE | R_AARCH64_LD64_GOT_LO12_NC }
+    )
 }
 
-/// The executable of `main` (the program's object) and `runtime` (an archive), for Linux x86-64.
-/// Headers, code, constants and the GOT (the addresses Cranelift's code reads) in a first segment
-/// (read and run); data then zeros in a second one (read and write), which starts on a new page at
-/// the same place in the page as in the file (the system maps whole pages).
-pub fn elf(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
+/// The executable of `main` (the program's object) and `runtime` (an archive), for Linux x86-64
+/// (`arm`: arm64). Headers, code, constants and the GOT (the addresses Cranelift's code reads) in a
+/// first segment (read and run); data then zeros in a second one (read and write), which starts on
+/// a new page at the same place in the page as in the file (the system maps whole pages).
+pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
+    // An arm64 Linux may have pages of 4, 16 or 64 KB: aligned for the largest.
+    let page_size = if arm { 0x10000 } else { PAGE };
     let inputs = Inputs::read(main, runtime, false)?;
     let mut r = inputs.reach("_start", is_got)?;
     let parts = inputs.sorted(&mut r)?;
@@ -291,7 +308,7 @@ pub fn elf(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let got_at = align(at, 8);
     let first_end = got_at + 8 * r.got.len() as u64;
     // An address of the second segment is `shift` further than its place in the file.
-    let shift = align(first_end, PAGE) + first_end % PAGE - first_end;
+    let shift = align(first_end, page_size) + first_end % page_size - first_end;
     let data_at = first_end + shift;
     let mut zeros = None;
     let end = inputs.place(
@@ -320,16 +337,31 @@ pub fn elf(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let apply = |out: &mut [u8], rel: &object::Relocation, t: &Target, place: u64, value: i64| {
         use object::elf::*;
         let RelocationFlags::Elf { r_type } = rel.flags() else { return Err("not an ELF relocation".to_string()) };
+        let slot = || got_at as i64 + 8 * r.got.iter().position(|g| g == t).unwrap() as i64;
         let place = place as i64;
         match r_type {
+            _ if arm => match r_type {
+                R_AARCH64_ABS64 => put(out, value, 64),
+                R_AARCH64_ABS32 => put(out, value, 32),
+                R_AARCH64_PREL64 => put(out, value - place, 64),
+                R_AARCH64_PREL32 => put(out, value - place, 32),
+                R_AARCH64_CALL26 | R_AARCH64_JUMP26 => branch(out, value - place),
+                R_AARCH64_ADR_PREL_PG_HI21 | R_AARCH64_ADR_PREL_PG_HI21_NC => page(out, value, place as u64),
+                R_AARCH64_ADD_ABS_LO12_NC
+                | R_AARCH64_LDST8_ABS_LO12_NC
+                | R_AARCH64_LDST16_ABS_LO12_NC
+                | R_AARCH64_LDST32_ABS_LO12_NC
+                | R_AARCH64_LDST64_ABS_LO12_NC
+                | R_AARCH64_LDST128_ABS_LO12_NC => in_page(out, value),
+                R_AARCH64_ADR_GOT_PAGE => page(out, slot(), place as u64),
+                R_AARCH64_LD64_GOT_LO12_NC => in_page(out, slot()),
+                _ => Err(format!("relocation of type {r_type}")),
+            },
             R_X86_64_64 => put(out, value, 64),
             R_X86_64_PC64 => put(out, value - place, 64),
             // Static: a call through the PLT goes straight to the function.
             R_X86_64_PC32 | R_X86_64_PLT32 => put(out, value - place, 32),
-            R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => {
-                let slot = r.got.iter().position(|g| g == t).unwrap() as i64;
-                put(out, got_at as i64 + 8 * slot + rel.addend() - place, 32)
-            }
+            R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => put(out, slot() + rel.addend() - place, 32),
             R_X86_64_32 if (0..=u32::MAX as i64).contains(&value) => put(out, value, 32),
             R_X86_64_32S => put(out, value, 32),
             _ => Err(format!("relocation of type {r_type}")),
@@ -341,7 +373,7 @@ pub fn elf(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let mut h = Vec::new();
     h.extend_from_slice(b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0"); // 64 bits, little-endian, version 1
     h.extend_from_slice(&2u16.to_le_bytes()); // an executable
-    h.extend_from_slice(&62u16.to_le_bytes()); // x86-64
+    h.extend_from_slice(&(if arm { 183u16 } else { 62 }).to_le_bytes()); // arm64 or x86-64
     h.extend_from_slice(&1u32.to_le_bytes());
     h.extend_from_slice(&(address[&r.entry.0] + r.entry.1).to_le_bytes());
     h.extend_from_slice(&64u64.to_le_bytes()); // the segments' headers follow
@@ -354,7 +386,7 @@ pub fn elf(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
         for v in [kind, flags] {
             h.extend_from_slice(&v.to_le_bytes());
         }
-        for v in [offset, address, address, file, memory, PAGE] {
+        for v in [offset, address, address, file, memory, page_size] {
             h.extend_from_slice(&v.to_le_bytes());
         }
     };
@@ -541,7 +573,7 @@ fn tables_size(imports: &[String]) -> u64 {
 
 /// Under it, 4 GB that no address may be in (`__PAGEZERO`): a pointer cut to 32 bits faults.
 const MACHO_BASE: u64 = 0x1_0000_0000;
-/// The Mac's pages on arm64.
+/// The Mac's pages on arm64 (4 times those of x86-64).
 const MACHO_PAGE: u64 = 0x4000;
 /// The header's commands (see `macho`).
 const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16;
@@ -551,15 +583,22 @@ fn macho_got(flags: RelocationFlags) -> bool {
     matches!(flags, RelocationFlags::MachO { r_type: ARM64_RELOC_GOT_LOAD_PAGE21 | ARM64_RELOC_GOT_LOAD_PAGEOFF12 | ARM64_RELOC_POINTER_TO_GOT, .. })
 }
 
-/// The executable of `main` and `runtime` for macOS arm64, named `name`. Four segments: none at
+fn macho_got_intel(flags: RelocationFlags) -> bool {
+    use object::macho::*;
+    matches!(flags, RelocationFlags::MachO { r_type: X86_64_RELOC_GOT_LOAD | X86_64_RELOC_GOT, .. })
+}
+
+/// The executable of `main` and `runtime` for macOS arm64 (`arm`; else x86-64), named `name`. Four segments: none at
 /// the bottom, `__TEXT` (headers, code, then the stubs that jump to `libSystem`'s functions,
 /// constants), `__DATA` (the GOT, data, zeros), `__LINKEDIT` (what `dyld` writes at launch, then
 /// the signature). An arm64 Mac starts a program anywhere in memory: each address the program
 /// holds is listed ("rebase") for `dyld` to move it, and each function of `libSystem` it reads
 /// ("bind") for `dyld` to write it.
-pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String> {
+pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
-    let mut r = inputs.reach("_main", macho_got)?;
+    let mut r = inputs.reach("_main", if arm { macho_got } else { macho_got_intel })?;
+    // A stub jumps to a function of `libSystem`, reading its address in the GOT.
+    let stub_size = if arm { 12 } else { 6 };
     let parts = inputs.sorted(&mut r)?;
     // ponytail: the runtime's code is one section, kept whole (76 KB); split it by symbol
     // (`subsections_via_symbols`) if the executables' size matters.
@@ -576,7 +615,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
     let mut address = HashMap::new();
     let code_at = MACHO_BASE + 32 + COMMANDS;
     let stubs = align(inputs.place(&r.kept[..constants], code_at, |_, _| {}, &mut address)?, 4);
-    let text_end = inputs.place(&r.kept[constants..data], stubs + 12 * n, |_, _| {}, &mut address)?;
+    let text_end = inputs.place(&r.kept[constants..data], stubs + stub_size * n, |_, _| {}, &mut address)?;
     let data_at = align(text_end, MACHO_PAGE);
     let got_at = data_at;
     let mut zeros = None;
@@ -599,7 +638,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
     let offset = |a: u64| (a - MACHO_BASE) as usize;
     let mut out = vec![0u8; linkedit as usize];
     let slot = |t: &Target| got_at + 8 * r.got.iter().position(|g| g == t).unwrap() as u64;
-    let stub = |f: &str| stubs + 12 * r.imports.iter().position(|g| g == f).unwrap() as u64;
+    let stub = |f: &str| stubs + stub_size * r.imports.iter().position(|g| g == f).unwrap() as u64;
     let address_of = |t: &Target| match t {
         Target::At(p, off) => Ok(address[p].wrapping_add(*off)),
         Target::Nothing => Ok(0),
@@ -611,10 +650,13 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
         use object::macho::*;
         let RelocationFlags::MachO { r_type, .. } = rel.flags() else { return Err("not a Mach-O relocation".to_string()) };
         if rel.subtractor().is_some() {
-            return Err("relocation with a subtractor".into());
+            return put(out, value, rel.size());
         }
+        let place = place as i64;
         match r_type {
+            // `X86_64_RELOC_UNSIGNED` = `ARM64_RELOC_UNSIGNED` = 0.
             ARM64_RELOC_UNSIGNED if rel.size() == 64 => {
+                let place = place as u64;
                 if place < data_at {
                     return Err("an address outside the data".into());
                 }
@@ -628,12 +670,22 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
                     }
                 }
             }
-            ARM64_RELOC_BRANCH26 => branch(out, value - place as i64),
-            ARM64_RELOC_PAGE21 => page(out, value, place),
+            // x86-64: a distance from the end of the instruction (`object` put it in the addend).
+            _ if !arm
+                && matches!(r_type, X86_64_RELOC_SIGNED | X86_64_RELOC_SIGNED_1 | X86_64_RELOC_SIGNED_2 | X86_64_RELOC_SIGNED_4 | X86_64_RELOC_BRANCH) =>
+            {
+                put(out, value - place, 32)
+            }
+            _ if !arm && matches!(r_type, X86_64_RELOC_GOT_LOAD | X86_64_RELOC_GOT) => {
+                put(out, value - address_of(t)? as i64 + slot(t) as i64 - place, 32)
+            }
+            _ if !arm => Err(format!("relocation of type {r_type}")),
+            ARM64_RELOC_BRANCH26 => branch(out, value - place),
+            ARM64_RELOC_PAGE21 => page(out, value, place as u64),
             ARM64_RELOC_PAGEOFF12 => in_page(out, value),
-            ARM64_RELOC_GOT_LOAD_PAGE21 => page(out, slot(t) as i64 + rel.addend(), place),
+            ARM64_RELOC_GOT_LOAD_PAGE21 => page(out, slot(t) as i64 + rel.addend(), place as u64),
             ARM64_RELOC_GOT_LOAD_PAGEOFF12 => in_page(out, slot(t) as i64 + rel.addend()),
-            ARM64_RELOC_POINTER_TO_GOT => put(out, slot(t) as i64 - place as i64, 32),
+            ARM64_RELOC_POINTER_TO_GOT => put(out, slot(t) as i64 - place, 32),
             _ => Err(format!("relocation of type {r_type}")),
         }
     };
@@ -652,9 +704,15 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
         }
     }
     for f in &r.imports {
-        // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
         let (s, g) = (stub(f), slot(&Target::Import(f.clone(), false)) as i64);
         let o = offset(s);
+        if !arm {
+            // jmp [rip + slot]
+            out[o..o + 2].copy_from_slice(&[0xFF, 0x25]);
+            put(&mut out[o + 2..], g - (s as i64 + 6), 32)?;
+            continue;
+        }
+        // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
         for (k, insn) in [0x9000_0010u32, 0xF940_0210, 0xD61F_0200].into_iter().enumerate() {
             out[o + 4 * k..o + 4 * k + 4].copy_from_slice(&insn.to_le_bytes());
         }
@@ -703,8 +761,10 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
         h.extend_from_slice(name.as_bytes());
         h.resize(h.len() + size - name.len(), 0);
     };
-    // 64 bits, arm64, an executable; no undefined names, linked by dyld, two-level names, PIE.
-    for v in [0xFEED_FACF, 0x0100_000C, 0, 2, 12, COMMANDS, 0x20_0085, 0] {
+    // 64 bits, arm64 (or x86-64), an executable; no undefined names, linked by dyld, two-level
+    // names, PIE.
+    let (cpu, subtype) = if arm { (0x0100_000C, 0) } else { (0x0100_0007, 3) };
+    for v in [0xFEED_FACF, cpu, subtype, 2, 12, COMMANDS, 0x20_0085, 0] {
         le32(&mut h, v);
     }
     let segment = |h: &mut Vec<u8>, name: &str, at: u64, size: u64, file: u64, file_size: u64, rights: u64, sections: u64| {
@@ -723,7 +783,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
     named(&mut h, "__text", 16);
     named(&mut h, "__TEXT", 16);
     le64(&mut h, code_at);
-    le64(&mut h, stubs + 12 * n - code_at);
+    le64(&mut h, stubs + stub_size * n - code_at);
     for v in [code_at - MACHO_BASE, 2, 0, 0, 0x8000_0400, 0, 0, 0] {
         le32(&mut h, v); // aligned on 4, only instructions
     }
@@ -751,8 +811,8 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str) -> Result<Vec<u8>, String>
         le32(&mut h, v); // LC_LOAD_DYLIB, version 1.0
     }
     named(&mut h, "/usr/lib/libSystem.B.dylib", 32);
-    for v in [0x32, 24, 1, 0xB_0000, 0xE_0000, 0] {
-        le32(&mut h, v); // LC_BUILD_VERSION: macOS 11 and later
+    for v in [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] {
+        le32(&mut h, v); // LC_BUILD_VERSION: macOS 11 and later (10.15 on an Intel Mac)
     }
     for v in [0x1D, 16, signed, signature_size] {
         le32(&mut h, v); // LC_CODE_SIGNATURE

@@ -31,7 +31,7 @@ pub(crate) use t;
 pub const LANGUAGES: &[(&str, &str)] =
     &[("en", include_str!("../locales/en.kova")), ("fr", include_str!("../locales/fr.kova"))];
 
-/// The texts the C runtime needs (`runtime/runtime.c`), in this order. No `{name}` in them.
+/// The texts the runtime needs (`runtime/kova.rs`), in this order. No `{name}` in them.
 pub const RUNTIME: &[&str] = &[
     "error_prefix",
     "fault_overflow",
@@ -40,10 +40,10 @@ pub const RUNTIME: &[&str] = &[
     "contract_violated",
     "contract_values",
     "contract_called_from",
-    // `KOVA_LEAKS` (runtime.c reads them at indexes 7 and 8).
+    // `KOVA_LEAKS` (the runtime reads them at indexes 7 and 8).
     "leak_allocated",
     "leak_live",
-    // runtime.c: `FAULT_INDEX`.
+    // runtime/kova.rs: `FAULT_INDEX`.
     "fault_index",
     "fault_not_text",
     "fault_empty_text",
@@ -72,7 +72,7 @@ pub fn recognize(value: &str) -> Option<usize> {
 }
 
 /// The language asked by the environment: the first non-empty variable decides,
-/// even if it is unknown (`LANG=C` → English). Same rule in `runtime/runtime.c`.
+/// even if it is unknown (`LANG=C` → English). Same rule in `runtime/kova.rs`.
 fn system() -> usize {
     ["KOVA_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
@@ -256,8 +256,8 @@ mod tests {
         for key in RUNTIME {
             assert!(holes(&cats[0][*key]).is_empty(), "`{key}` is used by the C runtime: no holes");
         }
-        assert_eq!(RUNTIME[0], "error_prefix", "runtime.c reads the prefix at index 0");
-        assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "runtime.c reads them at 7 and 8");
+        assert_eq!(RUNTIME[0], "error_prefix", "the runtime reads the prefix at index 0");
+        assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "the runtime reads them at 7 and 8");
         let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
         let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
         assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");

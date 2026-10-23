@@ -8,8 +8,7 @@ use alloc::format;
 
 /// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
 /// any other character stays. Rust's own `to_uppercase` knows all of Unicode, but its tables
-/// are in `std`, which the runtime does not have; and the C runtime (`runtime/runtime.c`, still
-/// used on some systems) has the same table.
+/// are in `std`, which the runtime does not have.
 pub fn case_of(c: char, upper: bool) -> char {
     let c = c as u32;
     let pairs = |c: u32, even_upper: bool| {
