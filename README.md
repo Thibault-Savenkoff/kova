@@ -88,6 +88,13 @@ completion, types on hover, renaming, run / build / test buttons and a debugger.
 Kova is young (version 0.1): the language works and is tested on the three systems, but it still changes.
 Not yet there: threads, networking.
 
+## How Kova is made
+
+Kova is a vibe-coded language, but a tested one: its author decides what Kova is (its syntax, its keywords,
+what a programmer sees, what comes next), and an AI writes the compiler and chooses the technical details.
+Every change must pass the tests: 107 programs that `kova run` and `kova build` must run with the same
+output on Linux, Windows and macOS, and 132 programs whose errors must be the expected ones.
+
 ## License
 
 Kova is under either of the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your
