@@ -45,7 +45,7 @@ fn main {
     let s := Stack<Int> { items := [] }
     print("{s}")
 }
-// error: a generic struct following an interface comes later: remove `: Display` from `Box`
+// error: a generic struct following `Display` comes later (only `Equal` for now): remove `: Display` from `Box`
 // error: `Int` is already a type's name
 // error: the type parameter `T` is already declared
 // error: `Node` contains itself

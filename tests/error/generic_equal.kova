@@ -1,0 +1,25 @@
+struct Answer<T> : Equal {
+    value: T
+}
+
+struct Box<T> {
+    value: T
+}
+
+struct Stack<T> : Display {
+    items: List<T>
+}
+
+struct Dog {
+    name: String
+}
+
+fn main {
+    let a := Answer<Dog> { value := Dog { name := "rex" } }
+    print(a = a)
+    let b := Box<Int> { value := 1 }
+    print(b = b)
+}
+// error: a generic struct following `Display` comes later (only `Equal` for now): remove `: Display` from `Stack`
+// error: `=` cannot compare `Answer<Dog>` values
+// error: `=` cannot compare `Box<Int>` values

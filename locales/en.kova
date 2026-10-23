@@ -370,7 +370,7 @@ lang en {
     date_made_help := "a `Date` is made by `Date.year(2026) month(10) day(23)`"
     datetime_made_help := "a `DateTime` is made by `DateTime.year(2026) month(10) day(23) hour(14) minute(5)`, with `second(30)` at the end if needed"
     list_made_help := "a `List` is made with `[1, 2]`, or `List<Int>()` when it starts empty"
-    generic_struct_interface_later := "a generic struct following an interface comes later: remove `: {interface}` from `{name}`"
+    generic_struct_interface_later := "a generic struct following `{interface}` comes later (only `Equal` for now): remove `: {interface}` from `{name}`"
     equal_field := "`{type}` follows `Equal`, but its field `{field}` (`{field_type}`) cannot be compared with `=`"
     equal_field_help := "write `fn equals(self, other: Self) -> Bool` in `{type}` to say how two of them are equal"
     param_compare := "`{op}` on a `{type}` needs `{type}` to follow `Equal`"

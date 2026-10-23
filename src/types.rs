@@ -643,7 +643,7 @@ pub struct Seen {
 impl Info {
     /// Does the struct or enum `t` follow `interface`?
     pub fn follows(&self, t: &Type, interface: &str) -> bool {
-        self.follows.get(&t.text()).is_some_and(|is| is.iter().any(|i| i == interface))
+        self.follows.get(&t.owner()).is_some_and(|is| is.iter().any(|i| i == interface))
     }
 }
 
@@ -1081,8 +1081,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         if decls.get(s.name.text.as_str()) != Some(&i) {
             continue;
         }
-        match (s.generics.first(), s.interfaces.first()) {
-            (Some(_), Some(it)) => c.error(it.span, t!("generic_struct_interface_later", name = s.name.text, interface = it.text)),
+        // ponytail: a generic type follows only `Equal` for now; the others need a copy of
+        // their default methods per instance, and a number per instance for `any`.
+        match s.interfaces.iter().find(|n| n.text != "Equal") {
+            Some(it) if !s.generics.is_empty() => c.error(it.span, t!("generic_struct_interface_later", name = s.name.text, interface = it.text)),
             _ => c.conforms(f, s),
         }
     }
@@ -1248,7 +1250,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 /// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
 fn later(t: &Type, interface: &str) -> Option<String> {
     match t {
-        Type::Struct(_) | Type::Enum(_) if !t.args().is_empty() => Some(t!("generic_interface_later_help", name = t.owner(), interface = interface)),
+        Type::Struct(_) | Type::Enum(_) if !t.args().is_empty() && interface != "Equal" => Some(t!("generic_interface_later_help", name = t.owner(), interface = interface)),
         _ => None,
     }
 }
@@ -1440,7 +1442,8 @@ impl Checker<'_> {
                 let mine = method_name(&s.name.text, &m.name.text);
                 let heading = heading_text(m);
                 if let Some(w) = s.methods.iter().find(|w| w.name.text == m.name.text) {
-                    if self.functions.get(&mine).is_some_and(|g| *g != want) {
+                    // A generic struct's methods carry its type parameters: not the interface's.
+                    if self.functions.get(&mine).is_some_and(|g| (&g.receiver, &g.params, &g.ret) != (&want.receiver, &want.params, &want.ret)) {
                         self.diags.push(
                             Diag::new(w.name.span, t!("interface_signature", name = m.name.text, interface = it.name.text))
                                 .help(t!("interface_signature_help", interface = it.name.text, heading = heading)),
@@ -1498,6 +1501,11 @@ impl Checker<'_> {
     /// enum, given for the primitives, promised for a `Self`.
     fn has(&self, t: &Type, interface: &str) -> bool {
         match t {
+            // `Answer<Dog>` compared field by field needs `=` on `Dog` (its own `equals` does not).
+            Type::Struct(_) | Type::Enum(_) if interface == "Equal" && !t.args().is_empty() => {
+                self.follows(&t.owner(), interface)
+                    && (self.functions.contains_key(&method_name(&t.owner(), "equals")) || t.args().iter().all(|a| self.equatable(a)))
+            }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
             Type::Enum(_) if *t == weekday() => interface == "Display",
@@ -1516,7 +1524,7 @@ impl Checker<'_> {
             Type::Optional(t) => self.equatable(t),
             Type::Result(a, b) => self.equatable(a) && self.equatable(b),
             // `light = Light.Red`: an enum of copied values is compared like an `Int` (J4).
-            Type::Enum(d) => is_copy(t) || self.follows(&d.name, "Equal"),
+            Type::Enum(_) => is_copy(t) || self.has(t, "Equal"),
             t => self.has(t, "Equal"),
         }
     }
@@ -1528,6 +1536,8 @@ impl Checker<'_> {
             Type::Optional(t) => self.missing_equal(t),
             Type::Result(a, b) => self.missing_equal(a).or_else(|| self.missing_equal(b)),
             t if self.equatable(t) => None,
+            // `Answer<Dog>`: `Dog`.
+            Type::Struct(_) | Type::Enum(_) if self.follows(&t.owner(), "Equal") => t.args().iter().find_map(|a| self.missing_equal(a)),
             t => Some(t.clone()),
         }
     }
@@ -3570,8 +3580,8 @@ impl Checker<'_> {
                             ),
                             Some(culprit) => {
                                 let (name, kind) = match &culprit {
-                                    Type::Enum(d) => (d.name.clone(), "enum"),
-                                    t => (t.text(), "struct"),
+                                    Type::Enum(_) => (culprit.owner(), "enum"),
+                                    t => (t.owner(), "struct"),
                                 };
                                 let help = later(&culprit, "Equal").unwrap_or_else(|| t!("compare_needs_equal_help", name = name, kind = kind));
                                 self.diags.push(Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(help));

@@ -1125,11 +1125,15 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Str(d, StrOp::Eq, vec![a[0], b[0]]));
                 d
             }
-            // Only for a type following `Equal`: an `equals` alone changes nothing (nothing implicit).
-            Type::Struct(_) | Type::Enum(_)
-                if self.info.follows(ty, "Equal") && self.numbers.contains_key(method_name(&ty.text(), "equals").as_str()) =>
-            {
-                self.call(&method_name(&ty.text(), "equals"), [a, b].concat(), vec![], span, &Type::Bool)[0]
+            Type::Struct(_) | Type::Enum(_) if self.writes_equals(ty) => {
+                let name = method_name(&ty.owner(), "equals");
+                if ty.args().is_empty() {
+                    return self.call(&name, [a, b].concat(), vec![], span, &Type::Bool)[0];
+                }
+                // `Answer<Int>`: its own copy of `Answer.equals`.
+                let types = ty.args().iter().map(|t| substitute(t, &self.subst)).collect();
+                let num = self.helper(Helper::Instance(name.clone(), types));
+                self.call_to(num, self.generic_sites[name.as_str()], [a, b].concat(), vec![], span, &Type::Bool)[0]
             }
             Type::Struct(_) | Type::Tuple(_) => {
                 let same = self.constant(1);
@@ -1150,6 +1154,13 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Does `ty` follow `Equal` with its own `equals`? Only then: an `equals` alone changes
+    /// nothing (nothing implicit).
+    fn writes_equals(&self, ty: &Type) -> bool {
+        let name = method_name(&ty.owner(), "equals");
+        self.info.follows(ty, "Equal") && (self.numbers.contains_key(name.as_str()) || self.generic_sites.contains_key(name.as_str()))
+    }
+
     /// A number for `v`, the same for two values `equal` finds equal (same cases, same order):
     /// where a key is put in the index of a Map or a Set (`find_in_index`).
     fn hash(&mut self, v: &[Local], ty: &Type) -> Local {
@@ -1164,11 +1175,7 @@ impl<'a> Translator<'a> {
                 d
             }
             // Its own `equals` may look at some fields only: all its values get the same number.
-            Type::Struct(_) | Type::Enum(_)
-                if self.info.follows(ty, "Equal") && self.numbers.contains_key(method_name(&ty.text(), "equals").as_str()) =>
-            {
-                self.constant(0)
-            }
+            Type::Struct(_) | Type::Enum(_) if self.writes_equals(ty) => self.constant(0),
             Type::Struct(_) | Type::Tuple(_) => {
                 let h = self.constant(0);
                 for (i, t) in members(ty).iter().enumerate() {
