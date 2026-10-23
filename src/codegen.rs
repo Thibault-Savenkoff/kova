@@ -201,7 +201,7 @@ struct Runtime {
     /// `kova_show_int`… (in `Show` order): given by address to `kova_print` and the others, so
     /// that only the ones a program uses are linked (no Float formatting to print a String).
     shows: [FuncId; 6],
-    str_ops: [FuncId; 44],
+    str_ops: [FuncId; 46],
     lists: [FuncId; 10],
     math: FuncId,
 }
@@ -279,6 +279,8 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Sleep => (41, "kova_sleep", 1),
         StrOp::Random => (42, "kova_random", 2),
         StrOp::LocalNow => (43, "kova_local_now", 0),
+        StrOp::ToDate => (44, "kova_str_to_date", 1),
+        StrOp::ToDateTime => (45, "kova_str_to_datetime", 1),
     }
 }
 
@@ -323,7 +325,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -475,7 +477,7 @@ struct Generator<'a> {
 struct Strings {
     new: FuncRef,
     free: FuncRef,
-    ops: [FuncRef; 44],
+    ops: [FuncRef; 46],
     shows: [FuncRef; 6],
 }
 

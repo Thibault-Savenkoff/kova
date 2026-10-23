@@ -288,8 +288,8 @@ lang fr {
     lent_to_match := "`{name}` est prêté au cas de la ligne {line} de son `match var` : là, on l'utilise seulement par les noms du cas"
     lent_to_match_help := "change-le par `{element}`, ou dans un cas qui ne nomme rien"
     match_var_temporary := "`match var` change la valeur examinée : ce doit être une variable (ou un de ses champs)"
-    for_move_later := "`for x in move` arrive plus tard"
-    for_move_later_help := "parcours-la avec `for x in`, ou sors les éléments avec `remove`"
+    for_move_range := "`move` ne sert à rien ici : les nombres d'un intervalle sont des copies"
+    for_move_range_help := "écris `for i in a..b`"
     element_immutable := "`{name}` emprunte un élément de la List : il ne peut pas changer"
     for_needs_list := "`for` parcourt un intervalle ou une List, pas `{type}`"
 

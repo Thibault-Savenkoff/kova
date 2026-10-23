@@ -1,0 +1,13 @@
+fn main {
+    let l: List<String> := ["a"]
+    for x in move l {
+        print(x)
+    }
+    print(l)
+    let m: List<String> := ["b"]
+    for x in move m {
+        print(m.length)
+    }
+}
+// error: `l` was moved (line 3)
+// error: `m` was moved (line 8)

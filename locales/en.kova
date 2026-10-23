@@ -288,8 +288,8 @@ lang en {
     lent_to_match := "`{name}` is lent to the case of line {line} of its `match var`: there it is used through the names of the case only"
     lent_to_match_help := "change it through `{element}`, or in a case that names nothing"
     match_var_temporary := "`match var` changes the value matched: it must be a variable (or one of its fields)"
-    for_move_later := "`for x in move` comes later"
-    for_move_later_help := "walk it with `for x in`, or take the elements out with `remove`"
+    for_move_range := "`move` gives nothing here: the numbers of a range are copies"
+    for_move_range_help := "write `for i in a..b`"
     element_immutable := "`{name}` borrows an element of the List: it cannot change"
     for_needs_list := "`for` walks over a range or a List, not over `{type}`"
 

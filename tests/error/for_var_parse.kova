@@ -1,11 +1,10 @@
 fn main {
-    var l: List<Int> := [1]
-    for x in move l {
-        print(x)
+    for i in move 0..3 {
+        print(i)
     }
     for i in var 0..3 {
         print(i)
     }
 }
-// error: `for x in move` comes later
+// error: `move` gives nothing here: the numbers of a range are copies
 // error: `for x in var` changes the elements of a List, not of a range

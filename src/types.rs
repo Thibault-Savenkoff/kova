@@ -446,6 +446,8 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "clone", Type::String, false),
     (Type::String, "to_int", Type::Int, true),
     (Type::String, "to_float", Type::Float, true),
+    (Type::String, "to_date", Type::Date, true),
+    (Type::String, "to_datetime", Type::DateTime, true),
     (Type::Int, "to_big", Type::BigInt, false),
     // `none` if it is too big for an `Int`.
     (Type::BigInt, "to_int", Type::Int, true),
@@ -3083,6 +3085,8 @@ impl Checker<'_> {
                 self.loops -= 1;
             }
             Stmt::Each { name, value: Some(value), mode, list, body } => {
+                // `for x in move l`: each element belongs to `x`.
+                let kind = if *mode == Mode::Move { VarKind::Let } else { VarKind::Element };
                 if *mode == Mode::Var {
                     self.error(list.span, t!("for_var_list", type = "Map"));
                 }
@@ -3095,7 +3099,7 @@ impl Checker<'_> {
                     }
                 };
                 self.loops += 1;
-                self.block(body, vec![(name, k, VarKind::Element), (value, v, VarKind::Element)]);
+                self.block(body, vec![(name, k, kind), (value, v, kind)]);
                 self.loops -= 1;
             }
             Stmt::Each { name, value: None, mode: Mode::Var, list, body } => {
@@ -3121,7 +3125,8 @@ impl Checker<'_> {
                 self.loops -= 1;
                 self.scopes.pop();
             }
-            Stmt::Each { name, value: None, list, body, .. } => {
+            Stmt::Each { name, value: None, mode, list, body } => {
+                let kind = if *mode == Mode::Move { VarKind::Let } else { VarKind::Element };
                 let elem = match self.expr(list) {
                     Type::List(elem) | Type::Set(elem) => *elem,
                     Type::Map(..) => {
@@ -3137,7 +3142,7 @@ impl Checker<'_> {
                     }
                 };
                 self.loops += 1;
-                self.block(body, vec![(name, elem, VarKind::Element)]);
+                self.block(body, vec![(name, elem, kind)]);
                 self.loops -= 1;
             }
             Stmt::Match(m) => {

@@ -528,6 +528,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             heap.make(t)
                         }
                         StrOp::LocalNow => local_now(),
+                        StrOp::ToDate => crate::shared::parse_date(s(0), false).unwrap_or(i64::MIN),
+                        StrOp::ToDateTime => crate::shared::parse_date(s(0), true).unwrap_or(i64::MIN),
                         StrOp::Now => {
                             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
                             (t.as_secs() as f64 + t.subsec_nanos() as f64 / 1e9).to_bits() as i64

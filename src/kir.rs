@@ -365,6 +365,9 @@ pub enum StrOp {
     Random,
     /// `DateTime.now`: the local time, in seconds since 1970-01-01 00:00 (`shared::local_offset`).
     LocalNow,
+    /// `s.to_date` / `s.to_datetime` (`shared::parse_date`): the days / seconds, `i64::MIN` if not a date.
+    ToDate,
+    ToDateTime,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
     /// `args`: a new `List<String>`, the words given after the program's name.
@@ -2059,7 +2062,16 @@ impl<'a> Translator<'a> {
                     _ => unreachable!("List or Map checked by the type checker"),
                 };
                 // The List cannot change during the loop (`ownership.rs`): its length is read once.
-                let l = self.expr1(list);
+                // `for x in move l`: the loop owns `l`, freed at the end of the statement (or at a
+                // `return`); each element taken is emptied in it, so only the others are freed.
+                let moving = *mode == ast::Mode::Move;
+                let l = if moving {
+                    let l = self.owned(list)[0];
+                    self.temps.push((l, self.ty(list)));
+                    l
+                } else {
+                    self.expr1(list)
+                };
                 let n = self.int_local();
                 self.emit(Inst::ListLength(n, l));
                 let i = self.constant(0);
@@ -2069,24 +2081,34 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
                 self.go(End::Branch(more, b_body, exit), b_body);
                 let v = self.load(l, i, &elem);
-                self.loops.push((next, exit, self.names.len()));
+                if moving {
+                    let zero = self.constant(0);
+                    for (k, kind) in heap(&elem).into_iter().enumerate() {
+                        if kind.is_some() {
+                            self.emit(Inst::ListStore(l, i, k, zero));
+                        }
+                    }
+                }
+                let base = self.names.len();
+                self.loops.push((next, exit, base));
                 if *mode == ast::Mode::Var {
                     let place = Place::Element { list: l, index: i, start: 0, kinds: scalars(&elem) };
                     self.writes.push((self.loops.len(), place, v.clone()));
                 }
-                // Borrowed from the List: nobody frees it.
-                match value {
-                    None => self.borrowing(&name.text, v, elem, body),
+                // Borrowed from the List: nobody frees it (unless `move`: freed at the end of each turn).
+                let vars = match value {
+                    None => HashMap::from([(name.text.clone(), (v, elem))]),
                     // `for name, age in ages`: the key's slots, then the value's.
                     Some(value) => {
                         let (k, t) = (element(&elem, 0), element(&elem, 1));
                         let n = scalars(&k).len();
-                        let vars = HashMap::from([(name.text.clone(), (v[..n].to_vec(), k)), (value.text.clone(), (v[n..].to_vec(), t))]);
-                        self.names.push(Scope { borrowed: true, vars });
-                        self.block(body);
-                        self.names.pop();
+                        HashMap::from([(name.text.clone(), (v[..n].to_vec(), k)), (value.text.clone(), (v[n..].to_vec(), t))])
                     }
-                }
+                };
+                self.names.push(Scope { borrowed: !moving, vars });
+                self.block(body);
+                self.free_scopes(base);
+                self.names.truncate(base);
                 self.go(End::Jump(next), next);
                 self.write_back(self.loops.len());
                 if *mode == ast::Mode::Var {
@@ -3918,6 +3940,13 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Binary(present, Op::Ge, at, zero, NOWHERE));
                     self.emit(Inst::Binary(value, Op::Times, at, present, NOWHERE));
                     return vec![present, value];
+                }
+                if self.ty(receiver) == Type::String && matches!(name.text.as_str(), "to_date" | "to_datetime") {
+                    let op = if name.text == "to_date" { StrOp::ToDate } else { StrOp::ToDateTime };
+                    let (at, wrong, present) = (self.int_local(), self.constant(i64::MIN), self.int_local());
+                    self.emit(Inst::Str(at, op, vec![v]));
+                    self.emit(Inst::Binary(present, Op::Ne, at, wrong, NOWHERE));
+                    return vec![present, at];
                 }
                 if self.ty(receiver) == Type::String && name.text == "to_float" {
                     let (present, bits) = (self.int_local(), self.int_local());

@@ -1200,11 +1200,10 @@ impl Parser<'_> {
                 let mode = if self.is_keyword("var") {
                     self.advance();
                     Mode::Var
+                } else if self.is_keyword("move") {
+                    self.advance();
+                    Mode::Move
                 } else {
-                    if self.is_keyword("move") {
-                        self.diags.push(Diag::new(self.token().span, t!("for_move_later")).help(t!("for_move_later_help")));
-                        self.advance();
-                    }
                     Mode::Read
                 };
                 let e = self.heading_expr()?;
@@ -1217,6 +1216,9 @@ impl Parser<'_> {
                         }
                         if mode == Mode::Var {
                             self.diags.push(Diag::new(start.span.to(end.span), t!("for_var_list", type = "range")));
+                        }
+                        if mode == Mode::Move {
+                            self.diags.push(Diag::new(start.span.to(end.span), t!("for_move_range")).help(t!("for_move_range_help")));
                         }
                         Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
                     }

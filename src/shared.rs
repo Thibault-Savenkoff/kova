@@ -478,6 +478,29 @@ pub fn seed(value: Option<&str>) -> Option<u64> {
     value.filter(|s| s.starts_with(|c: char| c.is_ascii_digit())).and_then(|s| s.parse().ok())
 }
 
+/// `s.to_date` (`time` false: `2026-10-23`) and `s.to_datetime` (`2026-10-23 14:05:30`): exactly
+/// what Kova shows, giving the days (or seconds) since 1970-01-01; `None` if the day does not exist.
+pub fn parse_date(s: &str, time: bool) -> Option<i64> {
+    let b = s.as_bytes();
+    let shape: &[u8] = if time { b"dddd-dd-dd dd:dd:dd" } else { b"dddd-dd-dd" };
+    if b.len() != shape.len() || !b.iter().zip(shape).all(|(c, k)| if *k == b'd' { c.is_ascii_digit() } else { c == k }) {
+        return None;
+    }
+    let n = |at: usize, len: usize| b[at..at + len].iter().fold(0, |n, c| n * 10 + (c - b'0') as i64);
+    let (y, m, d) = (n(0, 4), n(5, 2), n(8, 2));
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let length = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if y < 1 || !(1..=12).contains(&m) || d < 1 || d > length[m as usize - 1] {
+        return None;
+    }
+    let days = days_from_civil(y, m, d);
+    if !time {
+        return Some(days);
+    }
+    let (h, min, sec) = (n(11, 2), n(14, 2), n(17, 2));
+    (h <= 23 && min <= 59 && sec <= 59).then(|| days * 86400 + h * 3600 + min * 60 + sec)
+}
+
 /// The days since 1970-01-01 of a day (Howard Hinnant's `days_from_civil`, as src/kir.rs emits it).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };

@@ -1,0 +1,80 @@
+// `for x in move l` (PLAN Part 4 "Small finishes"): the loop takes the List, each `x` owns its element.
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Dog : Animal {
+    name: String
+
+    fn sound(self) -> String {
+        return "{self.name}: wouf"
+    }
+}
+
+fn keep(s: move String) -> Int {
+    return s.length
+}
+
+fn first_long(words: move List<String>) -> String? {
+    for w in move words {
+        if w.length > 3 {
+            return w
+        }
+    }
+    return none
+}
+
+fn main {
+    let names: List<String> := ["rex", "médor", "pif"]
+    var kept: List<String> := []
+    for n in move names {
+        if n = "médor" {
+            continue
+        }
+        kept.add(move n)
+    }
+    print(kept)
+    var total: Int := 0
+    for w in move ["un", "deux", "trois"] {
+        total := total + keep(move w)
+    }
+    print(total)
+    let more: List<String> := ["a", "bb", "ccc", "dddd"]
+    for w in move more {
+        if w = "bb" {
+            break
+        }
+        print(w)
+    }
+    print(first_long(["ab", "abcd", "abcde"]))
+    print(first_long(["ab"]))
+    let ages: Map<String, Int> := ["Ana" := 3, "Bo" := 5]
+    var people: List<String> := []
+    for name, age in move ages {
+        people.add("{name} {age}")
+    }
+    print(people)
+    let dogs: List<any Animal> := [Dog { name := "rex" }, Dog { name := "pif" }]
+    var pack: List<any Animal> := []
+    for d in move dogs {
+        if d.sound = "pif: wouf" {
+            break
+        }
+        pack.add(move d)
+    }
+    print(pack.length)
+    let seen: Set<String> := ["x", "y"]
+    var all: List<String> := []
+    for s in move seen {
+        all.add(move s)
+    }
+    print(all)
+}
+// expect: ["rex", "pif"]
+// expect: 11
+// expect: a
+// expect: "abcd"
+// expect: none
+// expect: ["Ana 3", "Bo 5"]
+// expect: 1
+// expect: ["x", "y"]

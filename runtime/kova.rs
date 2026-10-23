@@ -409,6 +409,16 @@ pub extern "C" fn kova_str_to_float(a: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn kova_str_to_date(a: i64) -> i64 {
+    shared::parse_date(text_of(a), false).unwrap_or(i64::MIN)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_to_datetime(a: i64) -> i64 {
+    shared::parse_date(text_of(a), true).unwrap_or(i64::MIN)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kova_str_trim(a: i64) -> i64 {
     new_text(text_of(a).trim_matches(|c: char| c.is_ascii_whitespace()).as_bytes())
 }

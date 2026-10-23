@@ -1,0 +1,35 @@
+// Reading a date from a text (PLAN Part 4 "Small finishes"): exactly the way Kova shows it.
+fn main {
+    let d: Date? := "2026-10-23".to_date
+    if d != none {
+        print(d.plus_days(10))
+        print(d.weekday)
+    }
+    print("2024-02-29".to_date)
+    print("2023-02-29".to_date)
+    print("2026-1-5".to_date)
+    print("0000-01-01".to_date)
+    print("9999-12-31".to_date)
+    print(" 2026-10-23".to_date)
+    print("2026-10-23 14:05:30".to_datetime)
+    print("2026-10-23 24:00:00".to_datetime)
+    print("2026-10-23 14:05".to_datetime)
+    print("1969-12-31 23:59:59".to_datetime)
+    print("2026-10-23".to_datetime)
+    let back: Date? := "{Date.year(1) month(1) day(1)}".to_date
+    print(back)
+}
+// expect: 2026-11-02
+// expect: Friday
+// expect: 2024-02-29
+// expect: none
+// expect: none
+// expect: none
+// expect: 9999-12-31
+// expect: none
+// expect: 2026-10-23 14:05:30
+// expect: none
+// expect: none
+// expect: 1969-12-31 23:59:59
+// expect: none
+// expect: 0001-01-01
