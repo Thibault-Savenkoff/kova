@@ -191,6 +191,11 @@ enum Helper {
     Block(usize),
     /// Takes a Map or a Set and a key (of this type): returns its position, or -1 (see `find`).
     Find(Type),
+    /// Takes a value: returns its JSON text (`json_writer`).
+    ToJson(Type),
+    /// Takes a JSON text's nodes and the number of one: returns a status, a path and the value
+    /// read from it (`json_reader`).
+    FromJson(Type),
 }
 
 /// For the debugger (`kova debug`): a variable visible at a statement, its slots, and the
@@ -373,6 +378,11 @@ pub enum StrOp {
     /// `get` / `post`: (address, method, body, follow the redirections: 1 or 0) → a List of one
     /// `Response` (status, url, body, headers), or minus the `WebError` variant + 1.
     Web,
+    /// `T.from_json(text)` (src/json.rs): a List of nodes, 4 slots each (`json::slots`), or minus
+    /// the line where the text stops being JSON.
+    JsonParse,
+    /// A String as JSON writes it, between quotes: a new String.
+    JsonQuote,
     /// `args`: a new `List<String>`, the words given after the program's name.
     Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
@@ -844,6 +854,12 @@ impl<'a> Translator<'a> {
             self.finish(End::Return(vec![found]));
             return self.function(format!("find {}", k.text()), 1 + key.len(), vec![Scalar::Int]);
         }
+        if let Helper::ToJson(ty) = h {
+            return self.json_writer(ty);
+        }
+        if let Helper::FromJson(ty) = h {
+            return self.json_reader(ty);
+        }
         if let Helper::Look(ty) = h {
             let v = self.new_slots(ty);
             self.current = self.new_block();
@@ -923,11 +939,375 @@ impl<'a> Translator<'a> {
                 self.append(text, close);
                 ("show", vec![text])
             }
-            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) | Helper::Block(_) | Helper::Find(_) => unreachable!("made above"),
+            Helper::Equal(_) | Helper::Instance(..) | Helper::Dispatch(..) | Helper::Look(_) | Helper::Block(_) | Helper::Find(_) | Helper::ToJson(_) | Helper::FromJson(_) => {
+                unreachable!("made above")
+            }
         };
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
         self.function(format!("{name} {}", ty.text()), 1, returns)
+    }
+
+    /// The JSON text of a value (PLAN Part 4 "JSON"): a new String, not tracked.
+    fn json_text(&mut self, v: &[Local], ty: &Type) -> Local {
+        let text = self.int_local();
+        match ty {
+            Type::Int => self.emit(Inst::Str(text, StrOp::Format(Show::Int), vec![v[0]])),
+            Type::Bool => self.emit(Inst::Str(text, StrOp::Format(Show::Bool), vec![v[0]])),
+            Type::String => self.emit(Inst::Str(text, StrOp::JsonQuote, vec![v[0]])),
+            _ => {
+                let f = self.helper(Helper::ToJson(ty.clone()));
+                self.emit(Inst::Call(vec![text], f, v.to_vec()));
+            }
+        }
+        text
+    }
+
+    /// `to_json` of a Float, an optional, a List, a Map or a struct: compact, fields in their
+    /// declared order. A NaN or an infinity has no JSON form: written `null`.
+    fn json_writer(mut self, ty: &Type) -> Function {
+        let v = self.new_slots(ty);
+        self.current = self.new_block();
+        let text = match ty {
+            Type::Box(t) => {
+                let inner = self.unbox(v[0], t);
+                self.json_text(&inner, t)
+            }
+            Type::Float | Type::Optional(_) => {
+                let (text, yes, no, done) = (self.int_local(), self.new_block(), self.new_block(), self.new_block());
+                let present = if let Type::Float = ty {
+                    // Finite: `x - x` is 0 (NaN for NaN and the infinities).
+                    let (zero, d, finite) = (self.float_constant(0.0), self.new_local(Scalar::Float), self.int_local());
+                    self.emit(Inst::FBinary(d, Op::Minus, v[0], v[0], NOWHERE));
+                    self.emit(Inst::FBinary(finite, Op::Eq, d, zero, NOWHERE));
+                    finite
+                } else {
+                    v[0]
+                };
+                self.go(End::Branch(present, yes, no), yes);
+                match ty {
+                    Type::Optional(t) => {
+                        let inner = self.json_text(&v[1..], t);
+                        self.emit(Inst::Copy(text, inner));
+                    }
+                    _ => self.emit(Inst::Str(text, StrOp::Format(Show::Float), vec![v[0]])),
+                }
+                self.go(End::Jump(done), no);
+                self.emit(Inst::Text(text, "null".into()));
+                self.go(End::Jump(done), done);
+                text
+            }
+            Type::List(elem) | Type::Map(_, elem) => {
+                let map = matches!(ty, Type::Map(..));
+                let text = self.text(if map { "{" } else { "[" });
+                let each = if map { pair(&Type::String, elem) } else { (**elem).clone() };
+                self.each_element(v[0], &each, |t, i, x| {
+                    let (zero, comma, next) = (t.constant(0), t.new_block(), t.new_block());
+                    let first = t.int_local();
+                    t.emit(Inst::Binary(first, Op::Eq, i, zero, NOWHERE));
+                    t.go(End::Branch(first, next, comma), comma);
+                    let sep = t.text(",");
+                    t.append(text, sep);
+                    t.go(End::Jump(next), next);
+                    let value = if map {
+                        let key = t.json_text(&x[..1], &Type::String);
+                        t.append(text, key);
+                        let colon = t.text(":");
+                        t.append(text, colon);
+                        &x[1..]
+                    } else {
+                        &x[..]
+                    };
+                    let piece = t.json_text(value, elem);
+                    t.append(text, piece);
+                });
+                let close = self.text(if map { "}" } else { "]" });
+                self.append(text, close);
+                text
+            }
+            Type::Struct(d) => {
+                let text = self.text("{");
+                for (i, ((name, _), t)) in d.fields().iter().zip(members(ty)).enumerate() {
+                    let label = self.text(&format!("{}{}:", if i == 0 { "" } else { "," }, crate::json::quote(name)));
+                    self.append(text, label);
+                    let (start, n) = slice_of(ty, i);
+                    let piece = self.json_text(&v[start..start + n], &t);
+                    self.append(text, piece);
+                }
+                let close = self.text("}");
+                self.append(text, close);
+                text
+            }
+            _ => unreachable!("a JSON form checked by the type checker (`no_json`)"),
+        };
+        self.finish(End::Return(vec![text]));
+        self.function(format!("to_json {}", ty.text()), v.len(), vec![Scalar::Int])
+    }
+
+    /// Slot `k` of node `i` of a JSON text's nodes (`json::slots`).
+    fn node(&mut self, nodes: Local, i: Local, k: usize) -> Local {
+        let d = self.int_local();
+        self.emit(Inst::ListLoad(d, nodes, i, k));
+        d
+    }
+
+    /// Goes on if `ok` is true; otherwise runs `fail`, then jumps to `done`.
+    fn or_else(&mut self, ok: Local, done: BlockId, fail: impl FnOnce(&mut Self)) {
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.go(End::Branch(ok, yes, no), no);
+        fail(self);
+        self.go(End::Jump(done), yes);
+    }
+
+    /// `T.from_json(text)` on node `i` of a JSON text's nodes, for a `ty`: returns a status
+    /// (0 = read, 1 = missing, 2 = wrong kind: `JsonError`'s numbers), the path where it failed
+    /// seen from this value (`.author.name`, `[2]`; no String when read) and the value read
+    /// (0s when it failed: what was read before is freed).
+    fn json_reader(mut self, ty: &Type) -> Function {
+        use crate::json::{ARRAY, EXACT_INT, FINITE, NUMBER, OBJECT, TEXT};
+        let (nodes, i) = (self.int_local(), self.int_local());
+        self.current = self.new_block();
+        let (status, path) = (self.constant(0), self.constant(0));
+        let v = self.new_slots(ty);
+        v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+        let done = self.new_block();
+        let kind = self.node(nodes, i, 0);
+        let wrong = |t: &mut Self| {
+            t.emit(Inst::Const(status, 2));
+            t.emit(Inst::Text(path, String::new()));
+        };
+        let is = |t: &mut Self, k: i64| {
+            let (want, test) = (t.constant(k), t.int_local());
+            t.emit(Inst::Binary(test, Op::Eq, kind, want, NOWHERE));
+            test
+        };
+        // A child's failure: its status, and its path after `before` (`[2]`, `.name`).
+        let failed = |t: &mut Self, st: Local, before: Vec<Piece>, p: Local| {
+            t.emit(Inst::Copy(status, st));
+            let mut pieces = before;
+            pieces.push(Piece::Value(p, Show::String));
+            let whole = t.join(pieces);
+            t.emit(Inst::Free(p));
+            t.emit(Inst::Copy(path, whole));
+        };
+        match ty {
+            Type::Int | Type::Float => {
+                let number = is(&mut self, NUMBER);
+                self.or_else(number, done, wrong);
+                // An Int is written without a fraction and fits; a Float is finite.
+                let (flags, want, ok) = (self.node(nodes, i, 3), self.constant(if *ty == Type::Int { EXACT_INT | FINITE } else { FINITE }), self.int_local());
+                self.emit(Inst::Binary(ok, if *ty == Type::Int { Op::Eq } else { Op::Ge }, flags, want, NOWHERE));
+                self.or_else(ok, done, wrong);
+                self.emit(Inst::ListLoad(v[0], nodes, i, if *ty == Type::Int { 2 } else { 1 }));
+            }
+            Type::Bool => {
+                // `false` and `true` are kinds 1 and 2.
+                let (no, yes, either) = (is(&mut self, crate::json::FALSE), is(&mut self, crate::json::TRUE), self.int_local());
+                self.emit(Inst::Binary(either, Op::Plus, no, yes, NOWHERE));
+                self.or_else(either, done, wrong);
+                self.emit(Inst::Copy(v[0], yes));
+            }
+            Type::String => {
+                let text = is(&mut self, TEXT);
+                self.or_else(text, done, wrong);
+                let s = self.node(nodes, i, 1);
+                self.emit(Inst::Str(v[0], StrOp::Clone, vec![s]));
+            }
+            Type::Optional(t) | Type::Box(t) => {
+                // `null` is `none` (a missing field reads the last node, a `null`).
+                if let Type::Optional(_) = ty {
+                    let (null, read) = (is(&mut self, crate::json::NULL), self.new_block());
+                    self.go(End::Branch(null, done, read), read);
+                }
+                let f = self.helper(Helper::FromJson((**t).clone()));
+                let (st, p, x) = (self.int_local(), self.int_local(), self.new_slots(t));
+                self.emit(Inst::Call([vec![st, p], x.clone()].concat(), f, vec![nodes, i]));
+                self.emit(Inst::Copy(status, st));
+                self.emit(Inst::Copy(path, p));
+                let (zero, ok) = (self.constant(0), self.int_local());
+                self.emit(Inst::Binary(ok, Op::Eq, st, zero, NOWHERE));
+                self.or_else(ok, done, |_| {});
+                if let Type::Optional(_) = ty {
+                    self.emit(Inst::Const(v[0], 1));
+                    self.copy(&v[1..], &x);
+                } else {
+                    let b = self.boxing(x, ty);
+                    self.copy(&v, &b);
+                }
+            }
+            Type::List(_) | Type::Map(..) | Type::Struct(_) => {
+                let list = matches!(ty, Type::List(_));
+                let want = is(&mut self, if list { ARRAY } else { OBJECT });
+                self.or_else(want, done, wrong);
+                let (first, count) = (self.node(nodes, i, 1), self.node(nodes, i, 2));
+                // Node of element `j`, of the name of member `j`, of its value.
+                let at = |t: &mut Self, j: Local, by: i64, plus: i64| {
+                    let (k, b, d) = (t.constant(by), t.constant(plus), t.int_local());
+                    t.emit(Inst::Binary(d, Op::Times, j, k, NOWHERE));
+                    t.emit(Inst::Binary(d, Op::Plus, d, b, NOWHERE));
+                    t.emit(Inst::Binary(d, Op::Plus, d, first, NOWHERE));
+                    d
+                };
+                let read = |t: &mut Self, elem: &Type, node: Local| {
+                    let f = t.helper(Helper::FromJson(elem.clone()));
+                    let (st, p, x) = (t.int_local(), t.int_local(), t.new_slots(elem));
+                    t.emit(Inst::Call([vec![st, p], x.clone()].concat(), f, vec![nodes, node]));
+                    let (zero, ok) = (t.constant(0), t.int_local());
+                    t.emit(Inst::Binary(ok, Op::Eq, st, zero, NOWHERE));
+                    (ok, st, p, x)
+                };
+                match ty {
+                    Type::List(elem) => {
+                        self.emit(Inst::ListNew(v[0], scalars(elem).len()));
+                        self.times(count, |t, j| {
+                            let node = at(t, j, 1, 0);
+                            let (ok, st, p, x) = read(t, elem, node);
+                            t.or_else(ok, done, |t| {
+                                t.free_value(&v, ty);
+                                failed(t, st, vec![Piece::Text("[".into()), Piece::Value(j, Show::Int), Piece::Text("]".into())], p);
+                            });
+                            t.push(v[0], &x);
+                        });
+                    }
+                    Type::Map(_, value) => {
+                        self.emit(Inst::ListNew(v[0], 1 + scalars(value).len()));
+                        self.times(count, |t, j| {
+                            let (name, node) = (at(t, j, 2, 0), at(t, j, 2, 1));
+                            let key = t.node(nodes, name, 1);
+                            let (ok, st, p, x) = read(t, value, node);
+                            t.or_else(ok, done, |t| {
+                                t.free_value(&v, ty);
+                                failed(t, st, vec![Piece::Text(".".into()), Piece::Value(key, Show::String)], p);
+                            });
+                            // The same name twice: the last one is kept.
+                            let place = t.entry(v[0], &[key], &Type::String, value);
+                            let old = t.read(&place);
+                            t.free_value(&old, value);
+                            t.write(&place, &x);
+                        });
+                    }
+                    _ => {
+                        let Type::Struct(d) = ty else { unreachable!() };
+                        let fields = members(ty);
+                        for (f, (name, _)) in d.fields().iter().enumerate() {
+                            // The node of its value: the last member with its name, or the last node (a `null`).
+                            let (found, label) = (self.constant(-1), self.text(name));
+                            self.times(count, |t, j| {
+                                let (key, node) = (at(t, j, 2, 0), at(t, j, 2, 1));
+                                let (k, same) = (t.node(nodes, key, 1), t.int_local());
+                                t.emit(Inst::Str(same, StrOp::Eq, vec![k, label]));
+                                let (yes, next) = (t.new_block(), t.new_block());
+                                t.go(End::Branch(same, yes, next), yes);
+                                t.emit(Inst::Copy(found, node));
+                                t.go(End::Jump(next), next);
+                            });
+                            self.emit(Inst::Free(label));
+                            let earlier = |t: &mut Self| {
+                                for (k, ft) in fields[..f].iter().enumerate() {
+                                    let (start, n) = slice_of(ty, k);
+                                    t.free_value(&v[start..start + n], ft);
+                                }
+                            };
+                            let (zero, there) = (self.constant(0), self.int_local());
+                            self.emit(Inst::Binary(there, Op::Ge, found, zero, NOWHERE));
+                            let optional = match &fields[f] {
+                                Type::Box(t) => matches!(**t, Type::Optional(_)),
+                                t => matches!(t, Type::Optional(_)),
+                            };
+                            if optional {
+                                let (absent, after) = (self.new_block(), self.new_block());
+                                self.go(End::Branch(there, after, absent), absent);
+                                let (n, one) = (self.int_local(), self.constant(1));
+                                self.emit(Inst::ListLength(n, nodes));
+                                self.emit(Inst::Binary(found, Op::Minus, n, one, NOWHERE));
+                                self.go(End::Jump(after), after);
+                            } else {
+                                self.or_else(there, done, |t| {
+                                    earlier(t);
+                                    t.emit(Inst::Const(status, 1));
+                                    t.emit(Inst::Text(path, format!(".{name}")));
+                                });
+                            }
+                            let (ok, st, p, x) = read(&mut self, &fields[f], found);
+                            self.or_else(ok, done, |t| {
+                                earlier(t);
+                                failed(t, st, vec![Piece::Text(format!(".{name}"))], p);
+                            });
+                            let (start, n) = slice_of(ty, f);
+                            self.copy(&v[start..start + n], &x);
+                        }
+                    }
+                }
+            }
+            _ => unreachable!("a JSON form checked by the type checker (`no_json`)"),
+        }
+        self.go(End::Jump(done), done);
+        self.finish(End::Return([vec![status, path], v.clone()].concat()));
+        let returns = [vec![Scalar::Int, Scalar::Int], scalars(ty)].concat();
+        self.function(format!("from_json {}", ty.text()), 2, returns)
+    }
+
+    /// `T.from_json(text)`: `ok(value)`, or `err(JsonError.X(…))` (see `json_reader`).
+    fn from_json(&mut self, text: Local, ty: &Type) -> Slots {
+        let Type::Result(value, error) = ty else { unreachable!("a result checked by the type checker") };
+        let Type::Enum(d) = &**error else { unreachable!("JsonError is an enum") };
+        let d = d.clone();
+        let v = self.new_slots(ty);
+        v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+        let (nodes, zero, good) = (self.int_local(), self.constant(0), self.int_local());
+        self.emit(Inst::Str(nodes, StrOp::JsonParse, vec![text]));
+        self.emit(Inst::Binary(good, Op::Gt, nodes, zero, NOWHERE));
+        let done = self.new_block();
+        // `NotJson(line)`: variant 0.
+        self.or_else(good, done, |t| {
+            let line = 1 + variant_slice(&d, 0).0;
+            t.emit(Inst::Binary(v[line], Op::Minus, zero, nodes, NOWHERE));
+        });
+        let f = self.helper(Helper::FromJson((**value).clone()));
+        let (st, p, x) = (self.int_local(), self.int_local(), self.new_slots(value));
+        self.emit(Inst::Call([vec![st, p], x.clone()].concat(), f, vec![nodes, zero]));
+        // The texts of the nodes, then the nodes.
+        let n = self.int_local();
+        self.emit(Inst::ListLength(n, nodes));
+        self.times(n, |t, j| {
+            let (kind, text, s) = (t.node(nodes, j, 0), t.constant(crate::json::TEXT), t.node(nodes, j, 1));
+            let (is_text, yes, next) = (t.int_local(), t.new_block(), t.new_block());
+            t.emit(Inst::Binary(is_text, Op::Eq, kind, text, NOWHERE));
+            t.go(End::Branch(is_text, yes, next), yes);
+            t.emit(Inst::Free(s));
+            t.go(End::Jump(next), next);
+        });
+        self.emit(Inst::ListFree(nodes));
+        let ok = self.int_local();
+        self.emit(Inst::Binary(ok, Op::Eq, st, zero, NOWHERE));
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.go(End::Branch(ok, yes, no), yes);
+        self.emit(Inst::Const(v[0], 1));
+        let k = x.len();
+        self.copy(&v[v.len() - k..], &x);
+        self.go(End::Jump(done), no);
+        // `Missing(field)` or `WrongKind(field)`: the path without its first `.`, `.` for the whole.
+        self.emit(Inst::Copy(v[1], st));
+        let (length, field) = (self.int_local(), self.int_local());
+        self.emit(Inst::Str(length, StrOp::Length, vec![p]));
+        let (whole, part, named) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Branch(length, part, whole), whole);
+        self.emit(Inst::Text(field, ".".into()));
+        self.go(End::Jump(named), part);
+        let one = self.constant(1);
+        self.emit(Inst::Str(field, StrOp::Slice, vec![p, one, length]));
+        self.go(End::Jump(named), named);
+        self.emit(Inst::Free(p));
+        let (missing, wrong, after) = (self.new_block(), self.new_block(), self.new_block());
+        let is_missing = self.with(Op::Eq, st, 1);
+        self.go(End::Branch(is_missing, missing, wrong), missing);
+        self.emit(Inst::Copy(v[1 + variant_slice(&d, 1).0], field));
+        self.go(End::Jump(after), wrong);
+        self.emit(Inst::Copy(v[1 + variant_slice(&d, 2).0], field));
+        self.go(End::Jump(after), after);
+        self.go(End::Jump(done), done);
+        self.track(&v, ty);
+        v
     }
 
     /// Runs `body` with the real type and the value inside the box of an `any` (borrowed from it);
@@ -1065,7 +1445,7 @@ impl<'a> Translator<'a> {
             } else if *ty == crate::types::weekday() {
                 // Built in, for people: `Friday`.
                 pieces.push(Piece::Text(name.clone()));
-            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error(), &fields[..]) {
+            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error() || *ty == crate::types::json_error(), &fields[..]) {
                 // Built in, for people: `NotFound("notes.txt")`.
                 pieces.push(Piece::Text(format!("{name}(")));
                 self.value_pieces(&v[at..at + 1], t, &mut pieces);
@@ -1274,14 +1654,21 @@ impl<'a> Translator<'a> {
     fn each_element(&mut self, list: Local, elem: &Type, mut body: impl FnMut(&mut Self, Local, Slots)) {
         let n = self.int_local();
         self.emit(Inst::ListLength(n, list));
+        self.times(n, |t, i| {
+            let v = t.load(list, i, elem);
+            body(t, i, v);
+        });
+    }
+
+    /// Runs `body` with `i` = 0, 1… up to `n` excluded.
+    fn times(&mut self, n: Local, mut body: impl FnMut(&mut Self, Local)) {
         let i = self.constant(0);
         let (head, b_body, exit) = (self.new_block(), self.new_block(), self.new_block());
         self.go(End::Jump(head), head);
         let more = self.int_local();
         self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
         self.go(End::Branch(more, b_body, exit), b_body);
-        let v = self.load(list, i, elem);
-        body(self, i, v);
+        body(self, i);
         let one = self.constant(1);
         self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
         self.go(End::Jump(head), exit);
@@ -3629,6 +4016,11 @@ impl<'a> Translator<'a> {
                 self.track(&v, &crate::types::request());
                 v
             }
+            ExprKind::Static { name, args, .. } if name.text == "from_json" && matches!(self.ty(e), Type::Result(..)) => {
+                let text = self.expr1(&args[0]);
+                let ty = self.ty(e);
+                self.from_json(text, &ty)
+            }
             ExprKind::Static { ty, name, args, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") => {
                 let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                 let loc = self.loc(name.span);
@@ -3876,6 +4268,14 @@ impl<'a> Translator<'a> {
                 }
                 self.track(&v, &ty);
                 v
+            }
+            // `book.to_json` (PLAN Part 4 "JSON").
+            ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_)) => {
+                let ty = self.ty(receiver);
+                let v = self.expr(receiver);
+                let text = self.json_text(&v, &ty);
+                self.track(&[text], &Type::String);
+                vec![text]
             }
             // `r.header("Content-Type")`: looked up in small letters in `r.headers`.
             ExprKind::Method { receiver, name, args } if name.text == "header" && self.ty(receiver) == crate::types::response() => {

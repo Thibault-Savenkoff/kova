@@ -441,6 +441,14 @@ pub fn web_error() -> Type {
     Type::Enum(EnumDef::with_variants("WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
 }
 
+/// `JsonError`, why `T.from_json(text)` gives no `T` (PLAN Part 4 "JSON"): `field` is the path
+/// of the field (`author.name`, `tags[2]`). Numbered like the statuses of kir.rs `json_reader`.
+pub fn json_error() -> Type {
+    let field = || vec![("field".to_string(), Type::String)];
+    let variants = vec![("NotJson".into(), vec![("line".into(), Type::Int)]), ("Missing".into(), field()), ("WrongKind".into(), field())];
+    Type::Enum(EnumDef::with_variants("JsonError".into(), variants))
+}
+
 /// `Response`, a site's answer: its code, where it came from (after the redirections), its body
 /// and its headers (names in small letters; `r.header(name)` whatever the capitals).
 pub fn response() -> Type {
@@ -466,6 +474,9 @@ pub fn request() -> Type {
     ]);
     Type::Struct(d)
 }
+
+/// The methods Kova makes for every struct (PLAN Part 4 "JSON"): no struct or enum may write them.
+pub const JSON_METHODS: [&str; 2] = ["from_json", "to_json"];
 
 /// `Request.get(url)`…: the methods of HTTP a request can start with.
 pub const REQUEST_STARTS: [&str; 6] = ["get", "post", "put", "patch", "delete", "head"];
@@ -988,6 +999,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.structs.insert("IoError".into(), io_error());
     c.structs.insert("Weekday".into(), weekday());
     c.structs.insert("WebError".into(), web_error());
+    c.structs.insert("JsonError".into(), json_error());
     c.structs.insert("Response".into(), response());
     c.structs.insert("Request".into(), request());
     for start in REQUEST_STARTS {
@@ -1093,7 +1105,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
             let name = m.name.text.as_str();
             // Uniform access: `rex.name` must mean a single thing.
-            if s.fields.iter().any(|p| p.name.text == name) {
+            if JSON_METHODS.contains(&name) {
+                c.diags.push(Diag::new(m.name.span, t!("json_made", name = name)).help(t!("json_made_help")));
+            } else if s.fields.iter().any(|p| p.name.text == name) {
                 c.diags.push(
                     Diag::new(m.name.span, t!("field_and_method", name = name, type = s.name.text))
                         .help(t!("field_and_method_help", name = name)),
@@ -1105,6 +1119,15 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
                 let generics = generics.clone();
                 c.functions.insert(method_name(&s.name.text, name), Signature { receiver: m.receiver, params, ret, generics });
             }
+        }
+        // `Book.from_json(text)`, `book.to_json` (PLAN Part 4 "JSON"): made for every struct,
+        // their fields checked at each call (`json_form`).
+        if s.variants.is_none() {
+            let read = Type::Result(Box::new(c.structs["Self"].clone()), Box::new(json_error()));
+            let from = Signature { receiver: None, params: vec![(Mode::Read, Type::String)], ret: read, generics: generics.clone() };
+            c.functions.insert(method_name(&s.name.text, "from_json"), from);
+            let to = Signature { receiver: Some(Mode::Read), params: vec![], ret: Type::String, generics };
+            c.functions.insert(method_name(&s.name.text, "to_json"), to);
         }
         c.structs.remove("Self");
         c.close_struct(saved);
@@ -1569,7 +1592,7 @@ impl Checker<'_> {
             }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
-            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() => interface == "Display",
+            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() || *t == json_error() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,
@@ -2946,8 +2969,45 @@ impl Checker<'_> {
             );
         }
         let sig = self.for_types(id, sig, given);
+        if let ("from_json", Type::Result(t, _)) = (name.text.as_str(), &sig.ret) {
+            self.json_form(t, &format!("{}.from_json", t.text()), name.span);
+        }
         self.arguments(name, args, &sig.params, &[]);
         sig.ret
+    }
+
+    /// `T.from_json` / `t.to_json` (named `call`): every field of `T` has a JSON form (PLAN Part 4
+    /// "JSON"), and none is private in another file.
+    fn json_form(&mut self, t: &Type, call: &str, span: Span) {
+        let Some((field, why)) = self.no_json(t, "", span, &mut vec![]) else { return };
+        self.diags.push(match why {
+            Ok(ty) => Diag::new(span, t!("json_no_form", call = call, field = field, type = ty.text())).help(t!("json_no_form_help")),
+            Err(file) => Diag::new(span, t!("json_private", call = call, field = field, file = file)).help(t!("json_private_help", file = file)),
+        });
+    }
+
+    /// The first field of `t` without a JSON form: its path (`author.born`) and its type, or the
+    /// file where it is private.
+    fn no_json(&self, t: &Type, path: &str, span: Span, seen: &mut Vec<String>) -> Option<(String, Result<Type, String>)> {
+        match t {
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Error => None,
+            Type::Optional(t) | Type::List(t) => self.no_json(t, path, span, seen),
+            Type::Map(k, v) if **k == Type::String => self.no_json(v, path, span, seen),
+            Type::Struct(d) if !seen.contains(&t.text()) => {
+                seen.push(t.text());
+                d.fields().iter().find_map(|(name, f)| {
+                    let path = if path.is_empty() { name.clone() } else { format!("{path}.{name}") };
+                    match self.private.get(&method_name(&t.owner(), name)) {
+                        Some(decl) if file_number(self.src, decl.start) != file_number(self.src, span.start) => {
+                            Some((path, Err(format!("{}.kova", t.owner().split('.').next().unwrap_or_default()))))
+                        }
+                        _ => self.no_json(f, &path, span, seen),
+                    }
+                })
+            }
+            Type::Struct(_) => None,
+            t => Some((path.to_string(), Ok(t.clone()))),
+        }
     }
 
     /// The type of `t.i` when `t` has type `ty`.
@@ -3046,7 +3106,8 @@ impl Checker<'_> {
     fn no_field(&mut self, t: &Type, name: &Name) {
         let owner = t.text();
         let prefix = method_name(&t.owner(), "");
-        let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).collect();
+        // Not the methods every struct has (`JSON_METHODS`): they would be in every list.
+        let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).filter(|m| !JSON_METHODS.contains(m)).collect();
         methods.sort();
         let own: Vec<&str> = match t {
             Type::Struct(d) => d.fields().iter().map(|(n, _)| n.as_str()).collect(),
@@ -3461,6 +3522,9 @@ impl Checker<'_> {
                 {
                     let given = t.args().to_vec();
                     let sig = self.for_types(e.id, sig, given);
+                    if name.text == "to_json" {
+                        self.json_form(&t, &format!("{}.to_json", t.text()), name.span);
+                    }
                     self.hidden(&method_name(&t.owner(), &name.text), name.span);
                     return self.method_call(receiver, &t.text(), name, args, sig);
                 }

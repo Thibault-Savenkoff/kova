@@ -1,0 +1,13 @@
+public:
+
+struct Account {
+public:
+    owner: String
+private:
+    balance: Int
+}
+
+// Here the private field is seen: no error.
+fn audit -> String {
+    return Account { owner := "", balance := 0 }.to_json
+}

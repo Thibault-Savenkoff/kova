@@ -478,6 +478,17 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 }
                             }
                         },
+                        StrOp::JsonParse => match crate::json::parse(s(0)) {
+                            Err(line) => -line,
+                            Ok(nodes) => {
+                                let slots = crate::json::slots(nodes, |t| heap.make(t));
+                                heap.add(Object::List { width: 4, length: slots.len() / 4, slots, index: 0 })
+                            }
+                        },
+                        StrOp::JsonQuote => {
+                            let t = crate::json::quote(s(0));
+                            heap.make(t)
+                        }
                         StrOp::Web => {
                             let (url, method, body) = (s(0).to_string(), s(1).to_string(), s(2).to_string());
                             let mut headers = vec![];

@@ -13,6 +13,8 @@ extern crate alloc;
 mod bigint;
 #[path = "../src/http.rs"]
 mod http;
+#[path = "../src/json.rs"]
+mod json;
 #[cfg(target_os = "macos")]
 #[path = "../src/network_framework.rs"]
 mod network_framework;
@@ -801,6 +803,24 @@ static ARGS: Global<Vec<String>> = Global::new(Vec::new());
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_args() -> i64 {
     texts(ARGS.get().iter().skip(1).map(String::as_str))
+}
+
+// ---- JSON (src/json.rs reads and quotes; src/kir.rs fills the fields) ----
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_json_parse(s: i64) -> i64 {
+    match json::parse(text_of(s)) {
+        Err(line) => -line,
+        Ok(nodes) => {
+            let slots = json::slots(nodes, |t| new_text(t.as_bytes()));
+            new_list(List { length: slots.len() / 4, width: 4, slots, index: 0 })
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_json_quote(s: i64) -> i64 {
+    new_text(json::quote(text_of(s)).as_bytes())
 }
 
 // ---- The web (src/http.rs speaks HTTP; `sys::Net` connects) ----

@@ -1,0 +1,7 @@
+import bank
+
+fn main {
+    print(bank.Account.from_json("\{\}"))
+}
+// error: `bank.Account.from_json` cannot hold `balance`: it is private in bank.kova
+// error: help: only bank.kova sees its private fields

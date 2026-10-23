@@ -1,0 +1,135 @@
+// JSON (PLAN Part 4 "JSON"): `T.from_json(text)` and `value.to_json`, fields checked; `KOVA_LEAKS`
+// checks that a failure deep inside frees what was read before.
+struct Author {
+    name: String
+    born: Int?
+}
+
+struct Book {
+    title: String
+    price: Float
+    pages: Int
+    read: Bool
+    author: Author
+    tags: List<String>
+    notes: Map<String, Int>
+}
+
+fn books {
+    let b := Book { title := "Le \"Petit\" Prince", price := 9.5, pages := 96, read := true, author := Author { name := "Saint-Ex", born := none }, tags := ["conte", "été"], notes := ["a" := 1, "b" := 2] }
+    let text: String := b.to_json
+    print(text)
+    match Book.from_json(text) {
+        ok(c) => {
+            print(c)
+            print(c.to_json = text)
+        }
+        err(e) => print("error {e}")
+    }
+    match Book.from_json("\{\"title\": \"x\"\}") {
+        ok(c) => print(c.title)
+        err(e) => match e {
+            Missing(field) => print("missing: {field}")
+            _ => print("error: {e}")
+        }
+    }
+    match Book.from_json("nul") {
+        ok(c) => print(c.title)
+        err(e) => print("error: {e}")
+    }
+    print(Book.from_json("[1]"))
+    print(Book.from_json("\{\"title\": 3\}"))
+    print(Book.from_json("\{\"title\": \"x\"\}"))
+    print(Book.from_json("\{\n\"title\": \"x\",\n\}"))
+    print(Book.from_json("\{\"title\": \"x\", \"price\": 1, \"pages\": 2, \"read\": false, \"author\": \{\"name\": \"A\", \"born\": 1900\}, \"tags\": [\"a\", 2], \"notes\": \{\}\}"))
+    print(Book.from_json("\{\"title\": \"x\", \"price\": 1, \"pages\": 2.5, \"read\": false, \"author\": \{\"name\": \"A\"\}, \"tags\": [], \"notes\": \{\}\}"))
+    print(Book.from_json("\{\"title\": \"x\", \"price\": 1, \"pages\": 2, \"read\": false, \"author\": \{\"name\": 7\}, \"tags\": [], \"notes\": \{\}\}"))
+    print(Book.from_json("\{\"title\": \"x\", \"price\": 1, \"pages\": 2, \"read\": false, \"author\": \{\"name\": \"A\"\}, \"tags\": [], \"notes\": \{\"z\": 1, \"z\": 5, \"y\": true\}\}"))
+    print(Book.from_json("\{\"extra\": [1, \{\}], \"title\": \"x\", \"price\": 1e2, \"pages\": 2, \"read\": false, \"author\": \{\"name\": \"A\", \"born\": null\}, \"tags\": [], \"notes\": \{\"z\": 1, \"z\": 5\}\}"))
+}
+
+struct Node {
+    value: Int
+    kids: List<Node>
+}
+
+struct Cell {
+    v: Int
+    next: Cell?
+}
+
+struct Pair<T> {
+    a: T
+    b: T
+}
+
+struct Numbers {
+    f: List<Float>
+    i: List<Int>
+}
+
+struct People {
+    list: List<Pair<String>>
+}
+
+fn shapes {
+    let tree := Node { value := 1, kids := [Node { value := 2, kids := [] }, Node { value := 3, kids := [Node { value := 4, kids := [] }] }] }
+    let t: String := tree.to_json
+    print(t)
+    print(Node.from_json(t))
+    let c := Cell { v := 1, next := Cell { v := 2, next := none } }
+    let ct: String := c.to_json
+    print(ct)
+    print(Cell.from_json(ct))
+    print(Cell.from_json("\{\"v\": 1\}"))
+    print(Cell.from_json("\{\"v\": 1, \"next\": \{\"v\": \"x\"\}\}"))
+    let p := Pair<Int> { a := 1, b := 2 }
+    print(p.to_json)
+    print(Pair<Int>.from_json("\{\"a\": -9223372036854775808, \"b\": 9223372036854775807\}"))
+    print(Pair<Int>.from_json("\{\"a\": 9223372036854775808, \"b\": 1\}"))
+    print(Pair<Float>.from_json("\{\"a\": 1e400, \"b\": 1\}"))
+    print(Pair<String>.from_json("\{\"a\": \"\\u00e9\\ud83d\\ude00\\u0041\\\"\\/\", \"b\": \"\"\}"))
+    print(Pair<String>.from_json("\{\"a\": \"\\ud800\", \"b\": \"\"\}"))
+    let n := Numbers { f := [0.1, 1.5e-5, 1e16, -0.0, 1.0 / 3.0, 123456789012345680000.0, (-1.0).sqrt, 1e308 * 10.0], i := [0, -1, 42] }
+    print(n.to_json)
+    print(People.from_json("\{\"list\": [\{\"a\": \"x\", \"b\": \"y\"\}, \{\"a\": \"z\"\}]\}"))
+    print(People.from_json("\{\"list\": [\{\"a\": \"x\", \"b\": \"y\"\}, \{\"a\": \"z\", \"b\": null\}]\}"))
+    print(People.from_json("[".repeat(300)))
+    print(People.from_json(""))
+}
+
+fn main {
+    books
+    shapes
+}
+// expect: {"title":"Le \"Petit\" Prince","price":9.5,"pages":96,"read":true,"author":{"name":"Saint-Ex","born":null},"tags":["conte","été"],"notes":{"a":1,"b":2}}
+// expect: Book { title: "Le "Petit" Prince", price: 9.5, pages: 96, read: true, author: Author { name: "Saint-Ex", born: none }, tags: ["conte", "été"], notes: ["a" := 1, "b" := 2] }
+// expect: true
+// expect: missing: price
+// expect: error: NotJson(1)
+// expect: err(WrongKind("."))
+// expect: err(WrongKind("title"))
+// expect: err(Missing("price"))
+// expect: err(NotJson(3))
+// expect: err(WrongKind("tags[1]"))
+// expect: err(WrongKind("pages"))
+// expect: err(WrongKind("author.name"))
+// expect: err(WrongKind("notes.y"))
+// expect: ok(Book { title: "x", price: 100.0, pages: 2, read: false, author: Author { name: "A", born: none }, tags: [], notes: ["z" := 5] })
+// expect: {"value":1,"kids":[{"value":2,"kids":[]},{"value":3,"kids":[{"value":4,"kids":[]}]}]}
+// expect: ok(Node { value: 1, kids: [Node { value: 2, kids: [] }, Node { value: 3, kids: [Node { value: 4, kids: [] }] }] })
+// expect: {"v":1,"next":{"v":2,"next":null}}
+// expect: ok(Cell { v: 1, next: Cell { v: 2, next: none } })
+// expect: ok(Cell { v: 1, next: none })
+// expect: err(WrongKind("next.v"))
+// expect: {"a":1,"b":2}
+// expect: ok(Pair<Int> { a: -9223372036854775808, b: 9223372036854775807 })
+// expect: err(WrongKind("a"))
+// expect: err(WrongKind("a"))
+// expect: ok(Pair<String> { a: "é😀A"/", b: "" })
+// expect: err(NotJson(1))
+// expect: {"f":[0.1,1.5e-5,1e16,-0.0,0.3333333333333333,1.2345678901234568e20,null,null],"i":[0,-1,42]}
+// expect: err(Missing("list[1].b"))
+// expect: err(WrongKind("list[1].b"))
+// expect: err(NotJson(1))
+// expect: err(NotJson(1))

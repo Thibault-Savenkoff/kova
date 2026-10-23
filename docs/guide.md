@@ -563,7 +563,46 @@ or holding a line break gives `BadHeader`.
 certificates are always checked (`BadCertificate`). On Linux, a program using the web asks for the
 system's C library, and `https://` for OpenSSL (`NoHttps` without it); the others stay standalone.
 
-## 17. The tools
+## 17. JSON
+
+```kova
+struct Author {
+    name: String
+    born: Int?
+}
+
+struct Book {
+    title: String
+    tags: List<String>
+    author: Author
+}
+
+fn main {
+    let b := Book { title := "Dune", tags := ["sf"], author := Author { name := "Herbert", born := 1920 } }
+    let text: String := b.to_json
+    print(text)
+    match Book.from_json(text) {
+        ok(book) => print(book.author.name)
+        err(e) => print("not a book: {e}")
+    }
+    print(Book.from_json("\{\"title\": \"Dune\"\}"))
+}
+```
+
+```text
+{"title":"Dune","tags":["sf"],"author":{"name":"Herbert","born":1920}}
+Herbert
+err(Missing("tags"))
+```
+
+Every struct has `T.from_json(text)` and `value.to_json`, checked against its fields: the compiler
+refuses a field JSON cannot hold. JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`,
+`Map<String, T>` and structs made of them. A field the struct does not have is ignored; a `T?` that is
+missing or `null` is `none`. A failure says where: `NotJson(line)`, `Missing(field)` or
+`WrongKind(field)`, the field written as a path (`author.name`, `tags[2]`). With the web:
+`Book.from_json(page.body)`. In a Kova text, a brace is written `\{`.
+
+## 18. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.
 - `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).

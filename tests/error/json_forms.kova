@@ -1,0 +1,34 @@
+// What JSON cannot hold, and the two names Kova makes for every struct.
+struct Meeting {
+    title: String
+    day: Date
+}
+
+struct Scores {
+    by: Map<Int, String>
+}
+
+enum Kind {
+    A,
+    B,
+}
+
+struct Shape {
+    kinds: List<Kind>?
+}
+
+struct Own {
+    x: Int
+    fn to_json(self) -> String { return "" }
+}
+
+fn main {
+    print(Meeting.from_json(""))
+    let s: String := Scores { by := [1 := "a"] }.to_json
+    print(Shape.from_json(""))
+}
+// error: `Meeting.from_json` cannot hold `day`: a `Date` has no JSON form
+// error: `Scores.to_json` cannot hold `by`: a `Map<Int, String>` has no JSON form
+// error: `Shape.from_json` cannot hold `kinds`: a `Kind` has no JSON form
+// error: `to_json` is made by Kova for every struct
+// error: help: JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them

@@ -1,0 +1,7 @@
+public:
+
+struct Point {
+public:
+    x: Int
+    y: Int
+}

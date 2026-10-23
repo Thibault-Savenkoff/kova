@@ -10,6 +10,7 @@ mod debug;
 mod diag;
 mod format;
 mod http;
+mod json;
 #[cfg(target_os = "macos")]
 mod network_framework;
 #[cfg(target_os = "linux")]

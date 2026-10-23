@@ -516,6 +516,9 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
     let s = file.structs.iter().find(|s| s.name.text == name)?;
     let statics = s.methods.iter().filter(|m| m.receiver.is_none() && !hidden(&types::method_name(&name, &m.name.text)));
     items.extend(statics.map(|m| item(&m.name.text, CompletionItemKind::FUNCTION, types::heading_text(m))));
+    if s.variants.is_none() {
+        items.push(item("from_json", CompletionItemKind::FUNCTION, format!("{name}.from_json(text: String) -> {name} or JsonError")));
+    }
     for v in s.variants.iter().flatten() {
         let fields: Vec<String> = v.fields.iter().map(|f| format!("{}: {}", f.name.text, f.ty_text())).collect();
         let shown = if fields.is_empty() { v.name.text.clone() } else { format!("{}({})", v.name.text, fields.join(", ")) };
@@ -625,6 +628,9 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             if let Some(s) = file.structs.iter().find(|s| s.name.text == owner) {
                 let own = s.methods.iter().filter(|m| m.receiver.is_some() && !hidden(&m.name.text));
                 items.extend(own.map(method));
+                if s.variants.is_none() {
+                    items.push(item("to_json", CompletionItemKind::METHOD, "-> String".into()));
+                }
                 // The default methods of its interfaces it doesn't write itself.
                 for i in s.interfaces.iter().filter_map(|n| interface(&n.text)) {
                     let defaults = i.methods.iter().filter(|(m, body)| *body && !s.methods.iter().any(|x| x.name.text == m.name.text));
@@ -1293,7 +1299,7 @@ mod tests {
     fn completion_after_a_dot() {
         let at = |src: &str, cursor: usize| labels(members("/none/main.kova", src, cursor));
         let src = DOGS.replace("print(rex.bark)", "print(rex.ba)");
-        assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "clone"]);
+        assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
         assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "clone"]);
@@ -1334,7 +1340,8 @@ mod tests {
             assert!(geo.contains(&name.to_string()), "{name} in {geo:?}");
         }
         assert!(!geo.iter().any(|n| n == "helper" || n.contains('.')), "{geo:?}");
-        assert!(at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.").contains(&"origin".to_string()));
+        let point = at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.");
+        assert!(point.contains(&"origin".to_string()) && point.contains(&"from_json".to_string()), "{point:?}");
         let src = "enum Light { Red, Green }\nfn main {\n  let l := Light.";
         assert_eq!(at("/none/main.kova", src), ["Red", "Green"]);
         let mut dates = members("/none/main.kova", "fn main {\n  let d := Date.", 26).unwrap();
