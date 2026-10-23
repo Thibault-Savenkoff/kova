@@ -1,0 +1,20 @@
+// What a hidden box cannot fix (PLAN Part 4, "Recursive types").
+struct Cell {
+    next: Cell
+}
+
+struct Pair {
+    both: (Int, Pair)
+}
+
+copy struct Link {
+    value: Int
+    next: Link?
+}
+
+fn main {
+}
+// error: `Cell` contains itself: its size would be infinite
+// error: write `Cell?` (it may be `none`) or `List<Cell>`
+// error: `Pair` contains itself
+// error: `Link` is a `copy struct`: its field `next` (`Link?`) cannot be copied

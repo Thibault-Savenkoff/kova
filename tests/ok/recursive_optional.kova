@@ -1,0 +1,93 @@
+// A struct holding another of its kind through an optional, an enum holding itself
+// (PLAN Part 4, "Recursive types"): such fields are laid out in a hidden box.
+struct Cell : Equal {
+    value: Int
+    next: Cell?
+
+    fn sum(self) -> Int {
+        match self.next {
+            none => return self.value
+            n => return self.value + n.sum
+        }
+    }
+
+    fn length(self) -> Int {
+        return match self.next {
+            none => 1
+            n => 1 + n.length
+        }
+    }
+}
+
+fn chain(n: Int) -> Cell {
+    var c := Cell { value := 0, next := none }
+    var i: Int := 1
+    while i < n {
+        c := Cell { value := i, next := c }
+        i += 1
+    }
+    return c
+}
+
+enum Expr : Equal {
+    Num(value: Int)
+    Add(left: Expr, right: Expr)
+    Times(left: Expr, right: Expr)
+    Minus(inner: Expr)
+}
+
+fn eval(e: Expr) -> Int {
+    match e {
+        Num(v) => return v
+        Add(a, b) => return eval(a) + eval(b)
+        Times(a, b) => return eval(a) * eval(b)
+        Minus(x) => return -eval(x)
+    }
+}
+
+fn give(e: move Expr) -> Int {
+    // Owned here: the fields leave their boxes.
+    match e {
+        Add(a, b) => return eval(a) - eval(b)
+        _ => return 0
+    }
+}
+
+fn main {
+    var c := Cell { value := 1, next := Cell { value := 2, next := Cell { value := 3, next := none } } }
+    print(c)
+    print(c.sum)
+    print(c.length)
+    c.next := Cell { value := 10, next := none }
+    print(c)
+    c.value := 5
+    let d: Cell := c.clone
+    c.next := none
+    print(c)
+    print(d = Cell { value := 5, next := Cell { value := 10, next := none } })
+    print(d = Cell { value := 5, next := none })
+    let long: Cell := chain(10000)
+    print(long.sum)
+    print(long.length)
+    let e := Expr.Add(Expr.Num(2), Expr.Times(Expr.Num(3), Expr.Minus(Expr.Num(4))))
+    print(e)
+    print(eval(e))
+    print(e = Expr.Num(2))
+    let copies: List<Expr> := [e.clone, Expr.Num(7)]
+    print(copies[0] = copies[0])
+    print(give(move e))
+}
+// expect: Cell { value: 1, next: Cell { value: 2, next: Cell { value: 3, next: none } } }
+// expect: 6
+// expect: 3
+// expect: Cell { value: 1, next: Cell { value: 10, next: none } }
+// expect: Cell { value: 5, next: none }
+// expect: true
+// expect: false
+// expect: 49995000
+// expect: 10000
+// expect: Expr.Add(left: Expr.Num(value: 2), right: Expr.Times(left: Expr.Num(value: 3), right: Expr.Minus(inner: Expr.Num(value: 4))))
+// expect: -10
+// expect: false
+// expect: true
+// expect: 14

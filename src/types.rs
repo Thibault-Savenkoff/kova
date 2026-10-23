@@ -55,6 +55,9 @@ pub enum Type {
     Param(Rc<ParamDef>),
     /// `{Int -> Bool}`: a block, only as a parameter (it never outlives its call); `Unit` if it gives nothing.
     Block(Vec<Type>, Box<Type>),
+    /// Never written nor checked: how the KIR lays out a field holding its own type again
+    /// (`next: Cell?` in `Cell`), one slot, the address of a List of one element (`kir::laid_out`).
+    Box(Box<Type>),
     /// What a function without `->` returns.
     Unit,
     /// Unknown type because of an error already reported: it is not repeated.
@@ -102,6 +105,7 @@ impl Type {
                 let r = (**r != Type::Unit).then(|| r.text());
                 crate::ast::block_text(ps.iter().map(Type::text).collect(), r)
             }
+            Type::Box(t) => format!("box {}", t.text()),
             Type::Unit => t!("type_nothing"),
             Type::Error => "?".into(),
         }
@@ -137,8 +141,8 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
 }
 
 /// Does a value of `t` hold a `name` in its own slots? Not through a List, a Map or a Set,
-/// which are one slot each (the address of their elements).
-fn holds(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
+/// which are one slot each (the address of their elements). If so, the KIR puts it in a box.
+pub fn holds(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
     let look = |n: &String, inside: Vec<&Type>, seen: &mut Vec<String>| {
         if n == name {
             return true;
@@ -155,6 +159,20 @@ fn holds(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
         Type::Optional(t) => holds(t, name, seen),
         Type::Result(t, e) => holds(t, name, seen) || holds(e, name, seen),
         Type::Tuple(ts) => ts.iter().any(|t| holds(t, name, seen)),
+        _ => false,
+    }
+}
+
+/// Does every value of `t` hold a `name`, so that none could ever be made? Through fields only:
+/// an optional may be `none`, an enum another variant.
+fn must_hold(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
+    match t {
+        Type::Struct(d) if d.name == name => true,
+        Type::Struct(d) if !seen.contains(&d.name) => {
+            seen.push(d.name.clone());
+            d.fields().iter().any(|(_, t)| must_hold(t, name, seen))
+        }
+        Type::Tuple(ts) => ts.iter().any(|t| must_hold(t, name, seen)),
         _ => false,
     }
 }
@@ -509,7 +527,9 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
-        Type::Enum(d) => d.variants().iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
+        // A field holding the enum again is in a box, owned like a List.
+        Type::Enum(d) => d.variants().iter().all(|(_, fs)| fs.iter().all(|(_, t)| !holds(t, &d.name, &mut vec![]) && is_copy(t))),
+        Type::Box(_) => false,
         Type::Optional(t) => is_copy(t),
         Type::Result(t, e) => is_copy(t) && is_copy(e),
         // Checked once for every real type: as if it were owned.
@@ -1611,10 +1631,14 @@ impl Checker<'_> {
             _ => unreachable!("made just above"),
         };
         // `struct Cell { next: Cell }`: no value could ever be made, it would need one already.
-        // ponytail: `next: Cell?` and an enum's variant too, until they hold it through a box (PLAN Part 4 "Recursive types").
+        // `next: Cell?` is laid out in a box (`kir::laid_out`), so a `copy struct` cannot have it.
         for (span, t) in held {
-            if holds(&t, &s.name.text, &mut vec![]) {
+            if must_hold(&t, &s.name.text, &mut vec![]) {
                 self.contains_itself(&Name { text: s.name.text.clone(), span });
+            } else if s.copy && holds(&t, &s.name.text, &mut vec![]) {
+                let name = &self.src[span.start..span.end];
+                let msg = t!("copy_struct_field", type = s.name.text, name = name, field_type = t.text());
+                self.diags.push(Diag::new(span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
             }
         }
         self.close_struct(saved);

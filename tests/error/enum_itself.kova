@@ -1,6 +1,0 @@
-enum Expr { Num(v: Int), Add(a: Expr, b: Expr) }
-
-fn main {
-}
-// error: `Expr` contains itself: its size would be infinite
-// error: to hold others of its kind, use a `List<Expr>`

@@ -56,9 +56,15 @@ pub enum Scalar {
 fn members(t: &Type) -> Vec<Type> {
     match t {
         Type::Tuple(ts) => ts.clone(),
-        Type::Struct(d) => d.fields().iter().map(|(_, t)| t.clone()).collect(),
+        Type::Struct(d) => d.fields().iter().map(|(_, t)| laid_out(&d.name, t)).collect(),
         _ => unreachable!("tuple or struct checked by the type checker"),
     }
+}
+
+/// A field holding its owner again (`next: Cell?` in `Cell`) is laid out in a box (`Type::Box`):
+/// otherwise a `Cell` would need the slots of a `Cell` plus more.
+fn laid_out(owner: &str, t: &Type) -> Type {
+    if crate::types::holds(t, owner, &mut vec![]) { Type::Box(Box::new(t.clone())) } else { t.clone() }
 }
 
 /// Where member `i` (see `members`) lies in the slots of a value of type `t`: (start, length).
@@ -87,20 +93,20 @@ fn field_index(t: &Type, name: &str) -> usize {
 /// Where the fields of variant `i` lie in the slots of an enum value: (start, length).
 /// Slot 0 holds the variant's number; then come the fields of every variant, side by side.
 fn variant_slice(d: &EnumDef, i: usize) -> (usize, usize) {
-    let size = |fs: &[(String, Type)]| fs.iter().map(|(_, t)| scalars(t).len()).sum::<usize>();
+    let size = |fs: &[(String, Type)]| fs.iter().map(|(_, t)| scalars(&laid_out(&d.name, t)).len()).sum::<usize>();
     let start = 1 + d.variants()[..i].iter().map(|(_, fs)| size(fs)).sum::<usize>();
     (start, size(&d.variants()[i].1))
 }
 
 /// The fields of an enum's variants, all of them, in the order of their slots.
-fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
-    d.variants().iter().flat_map(|(_, fs)| fs.iter().map(|(_, t)| t))
+fn variant_fields(d: &EnumDef) -> impl Iterator<Item = Type> + '_ {
+    d.variants().iter().flat_map(|(_, fs)| fs.iter().map(|(_, t)| laid_out(&d.name, t)))
 }
 
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Box(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
@@ -108,7 +114,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
         // ponytail: no slot is shared between variants (a Float and a String never meet in one),
         // so a value is wider than its largest variant; slots of the other variants hold 0.
-        Type::Enum(d) => std::iter::once(Scalar::Int).chain(variant_fields(d).flat_map(scalars)).collect(),
+        Type::Enum(d) => std::iter::once(Scalar::Int).chain(variant_fields(d).flat_map(|t| scalars(&t))).collect(),
         // Slot 0: 1 if there is a value (0 = `none`); then the value's slots, 0 for `none`.
         Type::Optional(t) => std::iter::once(Scalar::Int).chain(scalars(t)).collect(),
         // Slot 0: 1 for `ok`; then the error's slots, then the value's.
@@ -125,7 +131,9 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
-        Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(heap)).collect(),
+        Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(|t| heap(&t))).collect(),
+        // Its one element is the value: freed and copied like a List of one.
+        Type::Box(t) => vec![Some(Type::List(t.clone()))],
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
@@ -1033,6 +1041,7 @@ impl<'a> Translator<'a> {
                 pieces.push(Piece::Text(format!("{}.{name}", d.name)));
                 for (j, (field, t)) in fields.iter().enumerate() {
                     pieces.push(Piece::Text(format!("{}{field}: ", if j == 0 { "(" } else { ", " })));
+                    let t = &laid_out(&d.name, t);
                     let n = scalars(t).len();
                     self.value_pieces(&v[at..at + n], t, &mut pieces);
                     at += n;
@@ -1095,6 +1104,10 @@ impl<'a> Translator<'a> {
     /// the fields (or the variant, then its fields) are compared one by one.
     fn equal(&mut self, a: &[Local], b: &[Local], ty: &Type, span: Span) -> Local {
         match ty {
+            Type::Box(t) => {
+                let (a, b) = (self.unbox(a[0], t), self.unbox(b[0], t));
+                self.equal(&a, &b, t, span)
+            }
             // A `BigInt` is written one way only: equal texts.
             Type::String | Type::BigInt => {
                 let d = self.int_local();
@@ -1130,6 +1143,9 @@ impl<'a> Translator<'a> {
     /// where a key is put in the index of a Map or a Set (`find_in_index`).
     fn hash(&mut self, v: &[Local], ty: &Type) -> Local {
         match ty {
+            // Written inline, the hash of a `Cell` would hold that of its `next`, and so on forever.
+            // ponytail: values differing only inside a box share a number; a `Hash` helper if Maps of such keys get slow.
+            Type::Box(_) => self.constant(0),
             Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime => v[0],
             Type::String | Type::BigInt => {
                 let d = self.int_local();
@@ -1158,8 +1174,8 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Copy(h, v[0]));
                 let mut at = 1;
                 for t in variant_fields(&d) {
-                    let n = scalars(t).len();
-                    let x = self.hash(&v[at..at + n], t);
+                    let n = scalars(&t).len();
+                    let x = self.hash(&v[at..at + n], &t);
                     self.emit(Inst::Mix(h, h, x));
                     at += n;
                 }
@@ -1185,6 +1201,7 @@ impl<'a> Translator<'a> {
             self.go(End::Branch(test, yes, no), yes);
             let mut at = variant_slice(&d, i).0;
             for (_, t) in fields {
+                let t = &laid_out(&d.name, t);
                 let n = scalars(t).len();
                 let eq = self.equal(&a[at..at + n], &b[at..at + n], t, Span::new(0, 0));
                 self.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
@@ -1224,6 +1241,21 @@ impl<'a> Translator<'a> {
         let one = self.constant(1);
         self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
         self.go(End::Jump(head), exit);
+    }
+
+    /// The slots of a field laid out as `t`: the value `v` itself, or a box holding it (`laid_out`).
+    fn boxing(&mut self, v: Slots, t: &Type) -> Slots {
+        let Type::Box(inner) = t else { return v };
+        let b = self.int_local();
+        self.emit(Inst::ListNew(b, scalars(inner).len()));
+        self.push(b, &v);
+        vec![b]
+    }
+
+    /// The value inside the box `b` (see `laid_out`): borrowed from it.
+    fn unbox(&mut self, b: Local, t: &Type) -> Slots {
+        let zero = self.constant(0);
+        self.load(b, zero, t)
     }
 
     /// The slots of element `i` (checked before): borrowed from the List.
@@ -1528,6 +1560,20 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Where member `i` of the value at `place` (of type `ty`) lives, and its type: inside its
+    /// box if it has one (`laid_out`).
+    fn member(&mut self, place: Place, ty: &Type, i: usize) -> (Place, Type) {
+        let place = place.narrow(slice_of(ty, i));
+        match element(ty, i) {
+            Type::Box(t) => {
+                let list = self.read(&place)[0];
+                let index = self.constant(0);
+                (Place::Element { list, index, start: 0, kinds: scalars(&t) }, *t)
+            }
+            t => (place, t),
+        }
+    }
+
     /// The places designated by a `:=` target, in order, with their types.
     fn target_places(&mut self, t: &Target) -> Vec<(Place, Type)> {
         match t {
@@ -1537,10 +1583,10 @@ impl<'a> Translator<'a> {
                 let mut place = Place::Slots(slots);
                 for step in fields {
                     (place, ty) = match step {
-                        Step::Index(i) => (place.narrow(slice_of(&ty, *i)), element(&ty, *i)),
+                        Step::Index(i) => self.member(place, &ty, *i),
                         Step::Name(n) => {
                             let i = field_index(&ty, &n.text);
-                            (place.narrow(slice_of(&ty, i)), element(&ty, i))
+                            self.member(place, &ty, i)
                         }
                         // `ages["Rex"] := 3`: the place of the key's value, added if missing.
                         Step::At(i) if matches!(ty, Type::Map(..)) => {
@@ -1566,11 +1612,12 @@ impl<'a> Translator<'a> {
             ExprKind::Mark(_, x) => self.place(x),
             ExprKind::Field(x, i) => {
                 let (p, t) = self.place(x);
-                (p.narrow(slice_of(&t, *i)), ty)
+                (self.member(p, &t, *i).0, ty)
             }
             ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
                 let (p, t) = self.place(receiver);
-                (p.narrow(slice_of(&t, field_index(&t, &name.text))), ty)
+                let i = field_index(&t, &name.text);
+                (self.member(p, &t, i).0, ty)
             }
             ExprKind::Index(x, i) if !matches!(self.ty(x), Type::Map(..)) && i.range().is_none() => {
                 let (p, t) = self.place(x);
@@ -2111,6 +2158,10 @@ impl<'a> Translator<'a> {
     /// `Dog { name: "Rex", age: 3 }`, `[1, 2]`.
     fn value_pieces(&mut self, v: &[Local], ty: &Type, m: &mut Vec<Piece>) {
         match ty {
+            Type::Box(t) => {
+                let inner = self.unbox(v[0], t);
+                self.value_pieces(&inner, t, m)
+            }
             // A type following `Display` is always shown by its `to_string`.
             Type::Struct(_) | Type::Enum(_) if self.info.follows(ty, "Display") && !self.debug => {
                 let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
@@ -2119,11 +2170,11 @@ impl<'a> Translator<'a> {
             Type::Struct(d) if d.fields().is_empty() => m.push(Piece::Text(format!("{} {{}}", ty.text()))),
             Type::Struct(d) => {
                 m.push(Piece::Text(format!("{} {{ ", ty.text())));
-                for (i, (name, t)) in d.fields().iter().enumerate() {
+                for (i, ((name, _), t)) in d.fields().iter().zip(members(ty)).enumerate() {
                     let sep = if i > 0 { ", " } else { "" };
                     m.push(Piece::Text(format!("{sep}{name}: ")));
                     let (start, n) = slice_of(ty, i);
-                    self.value_pieces(&v[start..start + n], t, m);
+                    self.value_pieces(&v[start..start + n], &t, m);
                 }
                 m.push(Piece::Text(" }".into()));
             }
@@ -3028,8 +3079,16 @@ impl<'a> Translator<'a> {
                     let (i, fields) = d.variant(name).unwrap();
                     let mut at = variant_slice(d, i).0;
                     for (p, (_, t)) in binds.into_iter().zip(fields) {
-                        let n = scalars(t).len();
-                        self.bind(p, &v[at..at + n], t);
+                        let n = scalars(&laid_out(&d.name, t)).len();
+                        let mut slots = v[at..at + n].to_vec();
+                        if let Type::Box(_) = laid_out(&d.name, t) {
+                            // Out of its box: given to the name, the box alone is freed.
+                            slots = self.unbox(v[at], t);
+                            if !borrowed {
+                                self.emit(Inst::ListFree(v[at]));
+                            }
+                        }
+                        self.bind(p, &slots, t);
                         at += n;
                     }
                 }
@@ -3092,7 +3151,9 @@ impl<'a> Translator<'a> {
                 let ty = self.ty(e);
                 let mut parts: Vec<Slots> = vec![vec![]; members(&ty).len()];
                 for (name, value) in fields {
-                    parts[field_index(&ty, &name.text)] = self.owned(value);
+                    let i = field_index(&ty, &name.text);
+                    let v = self.owned(value);
+                    parts[i] = self.boxing(v, &element(&ty, i));
                 }
                 let v: Slots = parts.concat();
                 self.track(&v, &ty);
@@ -3424,7 +3485,11 @@ impl<'a> Translator<'a> {
                 let ty = self.ty(e);
                 let Type::Enum(d) = &ty else { unreachable!("enum checked by the type checker") };
                 let i = d.variant(&name.text).unwrap().0;
-                let fields: Slots = args.iter().flat_map(|a| self.owned(a)).collect();
+                let mut fields: Slots = vec![];
+                for (a, (_, t)) in args.iter().zip(&d.variants()[i].1) {
+                    let v = self.owned(a);
+                    fields.extend(self.boxing(v, &laid_out(&d.name, t)));
+                }
                 let (start, n) = variant_slice(d, i);
                 let v = self.new_slots(&ty);
                 // Every slot is written: in a loop, these locals still hold the previous turn's value.

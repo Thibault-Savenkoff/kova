@@ -1,0 +1,61 @@
+// Generic and mutual recursion through optionals (PLAN Part 4, "Recursive types").
+struct Tree<T: Display> {
+    value: T
+    left: Tree<T>?
+    right: Tree<T>?
+
+    fn walk(self, out: var List<T>) {
+        match self.left {
+            none => {}
+            l => l.walk(var out)
+        }
+        out.add(self.value.clone)
+        match self.right {
+            none => {}
+            r => r.walk(var out)
+        }
+    }
+}
+
+struct A : Equal {
+    name: String
+    b: B?
+}
+
+struct B : Equal {
+    count: Int
+    a: A?
+}
+
+fn build(low: Int, high: Int) -> Tree<Int> {
+    let mid: Int := (low + high) / 2
+    var t := Tree<Int> { value := mid, left := none, right := none }
+    if low < mid {
+        t.left := build(low, mid - 1)
+    }
+    if mid < high {
+        t.right := build(mid + 1, high)
+    }
+    return t
+}
+
+fn main {
+    let t: Tree<Int> := build(1, 9)
+    var out: List<Int> := []
+    t.walk(var out)
+    print(out)
+    var s := Tree<String> { value := "m", left := none, right := none }
+    s.left := Tree<String> { value := "a", left := none, right := none }
+    print(s)
+    let a := A { name := "x", b := B { count := 2, a := A { name := "y", b := none } } }
+    print(a)
+    let m: Map<A, Int> := [a.clone := 1]
+    print(m[a])
+    let set: Set<A> := [a.clone, a.clone]
+    print(set.length)
+}
+// expect: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+// expect: Tree<String> { value: "m", left: Tree<String> { value: "a", left: none, right: none }, right: none }
+// expect: A { name: "x", b: B { count: 2, a: A { name: "y", b: none } } }
+// expect: 1
+// expect: 1
