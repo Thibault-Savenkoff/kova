@@ -8,7 +8,8 @@ use crate::http::{Fail, Network};
 
 pub struct System;
 
-/// What `kova run` connects with: the system, encrypted by SChannel on Windows, OpenSSL on Linux.
+/// What `kova run` connects with: the system, encrypted by SChannel on Windows, OpenSSL on Linux,
+/// Network.framework on macOS.
 #[cfg(windows)]
 pub fn network() -> crate::schannel::Tls<System> {
     crate::schannel::Tls(System)
@@ -20,18 +21,15 @@ pub fn network() -> crate::openssl::Tls<System> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn network() -> System {
-    System
+pub fn network() -> crate::network_framework::Tls<System> {
+    crate::network_framework::Tls(System)
 }
 
 impl Network for System {
     type Link = TcpStream;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<TcpStream, Fail> {
-        // ponytail: HTTPS on macOS comes next (PLAN "The web, step 3").
-        if secure && cfg!(target_os = "macos") {
-            return Err(Fail::BadUrl);
-        }
+    /// Never `secure`: each system's encryption is around it (`network`).
+    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<TcpStream, Fail> {
         let addresses: Vec<_> = (host, port).to_socket_addrs().map_err(|_| Fail::NoHost)?.collect();
         let mut failure = Fail::NoHost;
         for a in addresses {

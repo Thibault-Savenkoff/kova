@@ -853,6 +853,8 @@ pub fn fat(slices: &[(u32, u32, &[u8])]) -> Vec<u8> {
 const MACHO_PAGE: u64 = 0x4000;
 /// The header's commands (see `macho`).
 const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16;
+/// Its name and the 0 after it: a multiple of 8, as a load command's size must be.
+const NETWORK: &str = "/System/Library/Frameworks/Network.framework/Versions/A/Network";
 
 fn macho_got(flags: RelocationFlags) -> bool {
     use object::macho::*;
@@ -887,11 +889,15 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
         }
     }
     let n = r.imports.len() as u64;
+    // HTTPS (src/network_framework.rs): a second library, Network.framework, number 2 for `dyld`.
+    let from_network = |f: &str| f.trim_start_matches('_').starts_with("nw_");
+    let network = r.imports.iter().any(|f| from_network(f));
+    let commands = COMMANDS + if network { NETWORK.len() as u64 + 1 + 24 } else { 0 };
     let split = |part| r.kept.iter().position(|p| parts[p] >= part).unwrap_or(r.kept.len());
     let (constants, data) = (split(Part::Constants), split(Part::Data));
 
     let mut address = HashMap::new();
-    let code_at = MACHO_BASE + 32 + COMMANDS;
+    let code_at = MACHO_BASE + 32 + commands;
     let stubs = align(inputs.place(&r.kept[..constants], code_at, |_, _| {}, &mut address)?, 4);
     let text_end = inputs.place(&r.kept[constants..data], stubs + stub_size * n, |_, _| {}, &mut address)?;
     let data_at = align(text_end, page_size);
@@ -999,7 +1005,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
     }
 
     // What `dyld` reads: each address to move (segment 2 = `__DATA`, its place in it), then each
-    // function to write (from library 1 = `libSystem`).
+    // function to write (from library 1 = `libSystem`, or 2 = Network.framework).
     fixups.sort();
     let (mut rebase, mut bind) = (vec![0x11], vec![]); // pointers
     for (at, f) in &fixups {
@@ -1010,7 +1016,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
                 rebase.push(0x51); // once
             }
             Some(f) => {
-                bind.extend_from_slice(&[0x11, 0x40]);
+                bind.extend_from_slice(&[if from_network(f) { 0x12 } else { 0x11 }, 0x40]);
                 bind.extend_from_slice(f.as_bytes());
                 bind.extend_from_slice(&[0, 0x51, 0x72]);
                 uleb(&mut bind, at - data_at);
@@ -1042,7 +1048,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
     // 64 bits, arm64 (or x86-64), an executable; no undefined names, linked by dyld, two-level
     // names, PIE.
     let (cpu, subtype) = if arm { (0x0100_000C, 0) } else { (0x0100_0007, 3) };
-    for v in [0xFEED_FACF, cpu, subtype, 2, 12, COMMANDS, 0x20_0085, 0] {
+    for v in [0xFEED_FACF, cpu, subtype, 2, 12 + network as u64, commands, 0x20_0085, 0] {
         le32(&mut h, v);
     }
     let segment = |h: &mut Vec<u8>, name: &str, at: u64, size: u64, file: u64, file_size: u64, rights: u64, sections: u64| {
@@ -1089,13 +1095,19 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
         le32(&mut h, v); // LC_LOAD_DYLIB, version 1.0
     }
     named(&mut h, "/usr/lib/libSystem.B.dylib", 32);
+    if network {
+        for v in [0xC, NETWORK.len() as u64 + 1 + 24, 24, 2, 0x1_0000, 0x1_0000] {
+            le32(&mut h, v); // LC_LOAD_DYLIB
+        }
+        named(&mut h, NETWORK, NETWORK.len() + 1);
+    }
     for v in [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] {
         le32(&mut h, v); // LC_BUILD_VERSION: macOS 11 and later (10.15 on an Intel Mac)
     }
     for v in [0x1D, 16, signed, signature_size] {
         le32(&mut h, v); // LC_CODE_SIGNATURE
     }
-    debug_assert_eq!(h.len() as u64, 32 + COMMANDS);
+    debug_assert_eq!(h.len() as u64, 32 + commands);
     out[..h.len()].copy_from_slice(&h);
     let s = signature(&out, name, data_at - MACHO_BASE);
     debug_assert_eq!(s.len() as u64, signature_size);

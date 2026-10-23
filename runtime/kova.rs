@@ -13,6 +13,9 @@ extern crate alloc;
 mod bigint;
 #[path = "../src/http.rs"]
 mod http;
+#[cfg(target_os = "macos")]
+#[path = "../src/network_framework.rs"]
+mod network_framework;
 #[cfg(target_os = "linux")]
 #[path = "../src/openssl.rs"]
 mod openssl;
@@ -819,7 +822,8 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64
     }
 }
 
-/// The system's connections, encrypted by SChannel on Windows, OpenSSL on Linux.
+/// The system's connections, encrypted by SChannel on Windows, OpenSSL on Linux, made by
+/// Network.framework on macOS.
 #[cfg(windows)]
 fn network() -> schannel::Tls<sys::Net> {
     schannel::Tls(sys::Net)
@@ -831,8 +835,8 @@ fn network() -> openssl::Tls<sys::Net> {
 }
 
 #[cfg(target_os = "macos")]
-fn network() -> sys::Net {
-    sys::Net
+fn network() -> network_framework::Tls<sys::Net> {
+    network_framework::Tls(sys::Net)
 }
 
 // ---- Time and chance (src/interp.rs does the same) ----

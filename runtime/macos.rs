@@ -149,11 +149,8 @@ pub struct Net;
 impl Network for Net {
     type Link = i32;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<i32, Fail> {
-        // ponytail: HTTPS comes with Network.framework (PLAN "The web", step 3).
-        if secure {
-            return Err(Fail::BadUrl);
-        }
+    /// Never `secure`: src/network_framework.rs makes those.
+    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<i32, Fail> {
         if host.contains('\0') {
             return Err(Fail::NoHost);
         }
