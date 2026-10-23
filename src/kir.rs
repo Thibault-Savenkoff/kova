@@ -926,16 +926,11 @@ impl<'a> Translator<'a> {
                 ("clone", vec![copy])
             }
             Helper::Show(_) => {
-                let text = self.text("[");
-                self.each_element(list, elem, |t, i, v| {
-                    // `, ` before each element but the first.
-                    let (zero, comma, next) = (t.constant(0), t.new_block(), t.new_block());
-                    let first = t.int_local();
-                    t.emit(Inst::Binary(first, Op::Eq, i, zero, NOWHERE));
-                    t.go(End::Branch(first, next, comma), comma);
-                    let sep = t.text(", ");
-                    t.append(text, sep);
-                    t.go(End::Jump(next), next);
+                // Each element's text goes into a List joined once: appending to the text made so
+                // far would copy it at each element.
+                let parts = self.int_local();
+                self.emit(Inst::ListNew(parts, 1));
+                self.each_element(list, elem, |t, _, v| {
                     let mark = t.temps.len();
                     let mut pieces = vec![];
                     if map {
@@ -949,9 +944,15 @@ impl<'a> Translator<'a> {
                         t.value_pieces(&v, elem, &mut pieces);
                     }
                     let piece = t.join(pieces);
-                    t.append(text, piece);
+                    t.push(parts, &[piece]);
                     t.free_temps(mark);
                 });
+                let (sep, joined) = (self.text(", "), self.int_local());
+                self.emit(Inst::Str(joined, StrOp::Join, vec![parts, sep]));
+                self.emit(Inst::Free(sep));
+                self.free_value(&[parts], &Type::List(Box::new(Type::String)));
+                let text = self.text("[");
+                self.append(text, joined);
                 let close = self.text("]");
                 self.append(text, close);
                 ("show", vec![text])
