@@ -466,6 +466,7 @@ lang en {
     rename_invalid := "`{name}` cannot be this name: letters, digits and `_`, starting with a capital only for a type"
     debug_given_away := "(given away)"
     debug_variables := "Variables"
+    debug_evaluate_running := "the program is running: pause it to evaluate"
     debug_not_yet := "not in the debugger yet"
     not_handled := "not handled yet"
     completion_default := "{help} (default)"

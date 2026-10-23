@@ -1,0 +1,14 @@
+// Run by the `debugger` test of tests/kova.rs: a breakpoint on line 7, inside a method.
+struct Dog {
+    name: String
+
+    fn shout(self, times: Int) -> String {
+        let word: String := self.name.to_upper
+        return word.repeat(times)
+    }
+}
+
+fn main {
+    let rex := Dog { name := "Rex" }
+    print(rex.shout(2))
+}

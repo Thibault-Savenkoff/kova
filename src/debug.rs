@@ -7,6 +7,9 @@
 //
 // The KIR is translated with `watching` on: an `Inst::Line` before each statement says where it
 // is and which variables are visible; `kova run` and `kova build` never see them.
+//
+// While stopped, the console evaluates what is typed (`rex.age + 1`): `evaluation` adds to the
+// program a function taking the visible variables, borrowed, that prints it.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -26,6 +29,16 @@ pub struct Frame {
     pub at: Option<(usize, usize, usize, Loc)>,
     pub values: Vec<i64>,
 }
+
+/// What the editor asks while the program is stopped, about a frame.
+pub enum Ask {
+    Variables(usize),
+    /// What the console shows for this expression.
+    Evaluate(usize, String),
+}
+
+/// The function `evaluation` adds; its name cannot clash with a program's own.
+const EVAL: &str = "kova_debug_console";
 
 /// Where to stop next, besides the breakpoints.
 #[derive(Clone, Copy, PartialEq)]
@@ -51,6 +64,9 @@ pub struct Debugger {
     asked: Option<Value>,
     /// Ctrl+F5 ("run without debugging"): never stops.
     quiet: bool,
+    /// The program run (its path and text), for `evaluation`.
+    path: String,
+    source: String,
 }
 
 pub fn serve() -> i32 {
@@ -65,7 +81,17 @@ pub fn serve() -> i32 {
         // The editor is gone.
         let _ = sender.send(json!({ "type": "request", "seq": 0, "command": "disconnect" }));
     });
-    let mut d = Debugger { requests, breakpoints: HashMap::new(), step: Step::Run, frames: vec![], errored: false, asked: None, quiet: false };
+    let mut d = Debugger {
+        requests,
+        breakpoints: HashMap::new(),
+        step: Step::Run,
+        frames: vec![],
+        errored: false,
+        asked: None,
+        quiet: false,
+        path: String::new(),
+        source: String::new(),
+    };
 
     // Until the editor has said what to run and where to stop.
     let (mut launch, mut ready) = (None, false);
@@ -73,7 +99,10 @@ pub fn serve() -> i32 {
         let req = d.next();
         match req["command"].as_str().unwrap_or("") {
             "initialize" => {
-                respond(&req, json!({ "supportsConfigurationDoneRequest": true, "supportsTerminateRequest": true }));
+                respond(
+                    &req,
+                    json!({ "supportsConfigurationDoneRequest": true, "supportsTerminateRequest": true, "supportsEvaluateForHovers": true }),
+                );
                 event("initialized", json!({}));
             }
             "launch" => {
@@ -93,6 +122,7 @@ pub fn serve() -> i32 {
     let (path, args) = launch.unwrap();
     let code = match program(&path) {
         Ok((program, files)) => {
+            (d.path, d.source) = (path.clone(), std::fs::read_to_string(&path).unwrap_or_default());
             let (code, back) = interp::debug(&program, &files, &args, d);
             d = *back;
             code
@@ -174,9 +204,9 @@ impl Debugger {
         event("stopped", json!({ "reason": reason, "threadId": 1, "allThreadsStopped": true, "text": text, "description": text }));
     }
 
-    /// While stopped: answers the editor until it asks for a function's variables (its frame
-    /// number, `Some`) or to go on (`None`).
-    pub fn variables_asked(&mut self) -> Option<usize> {
+    /// While stopped: answers the editor until it asks something about a function being run
+    /// (`Some`) or to go on (`None`).
+    pub fn asked(&mut self) -> Option<Ask> {
         loop {
             let req = self.next();
             let depth = self.frames.len();
@@ -184,7 +214,14 @@ impl Debugger {
                 "variables" => {
                     let frame = req["arguments"]["variablesReference"].as_u64().unwrap_or(1) as usize - 1;
                     self.asked = Some(req);
-                    return Some(frame);
+                    return Some(Ask::Variables(frame));
+                }
+                // Without a frame (the console's first line): the innermost function.
+                "evaluate" => {
+                    let frame = req["arguments"]["frameId"].as_u64().map_or(depth.saturating_sub(1), |f| f as usize);
+                    let expression = req["arguments"]["expression"].as_str().unwrap_or("").to_string();
+                    self.asked = Some(req);
+                    return Some(Ask::Evaluate(frame, expression));
                 }
                 "continue" => Step::Run,
                 "next" => Step::Over(depth),
@@ -201,7 +238,48 @@ impl Debugger {
         }
     }
 
-    /// The answer to `variables_asked`: (name, type, value as text) of each variable.
+    /// The program with a function `EVAL` printing `expression`, taking the variables `visible`
+    /// ((name, type) of each), and its number; or why it cannot be.
+    // ponytail: the whole program is checked again at each evaluation (fine for programs of a
+    // few thousand lines).
+    pub fn evaluation(&self, visible: &[(String, String)], expression: &str) -> Result<(kir::Program, usize), String> {
+        // `self` cannot name a parameter of a plain function: it becomes `kova_self`, in the
+        // expression too (texts included: `"{self.name}"`).
+        let rename = |n: &str| if n == "self" { "kova_self".to_string() } else { n.to_string() };
+        let params: Vec<String> = visible.iter().map(|(n, t)| format!("{}: {t}", rename(n))).collect();
+        let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
+        let mut code = String::new();
+        let mut rest = expression.trim();
+        while let Some(at) = rest.find("self") {
+            let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let alone = !word(rest[..at].chars().next_back()) && !word(rest[at + 4..].chars().next());
+            code += &rest[..at];
+            code += if alone { "kova_self" } else { "self" };
+            rest = &rest[at + 4..];
+        }
+        code += rest;
+        let source = format!("{}\nfn {EVAL}{params} {{\n    print({code})\n}}\n", self.source);
+        let (tree, info, diags, _) = analyze(&self.path, &source);
+        let info = match (info, diags.first()) {
+            (Some(info), None) => info,
+            (_, Some(d)) => return Err(d.message.clone()),
+            (None, None) => return Err(t!("debug_not_yet")),
+        };
+        let program = kir::translate(&tree, &info, &source, true, false, false, false);
+        let num = program.functions.iter().position(|f| f.name == EVAL).expect("just added");
+        Ok((program, num))
+    }
+
+    /// The answer to `Ask::Evaluate`: what the console shows, or the error.
+    pub fn evaluated(&mut self, result: Result<String, String>) {
+        let Some(req) = self.asked.take() else { return };
+        match result {
+            Ok(text) => respond(&req, json!({ "result": text, "variablesReference": 0 })),
+            Err(message) => fail(&req, &message),
+        }
+    }
+
+    /// The answer to `Ask::Variables`: (name, type, value as text) of each variable.
     pub fn variables(&mut self, shown: Vec<(String, String, String)>) {
         let variables: Vec<Value> =
             shown.into_iter().map(|(name, ty, value)| json!({ "name": name, "value": value, "type": ty, "variablesReference": 0 })).collect();
@@ -244,6 +322,7 @@ impl Debugger {
             }
             // Not answered while running: the editor asks again once stopped.
             "variables" | "continue" | "next" | "stepIn" | "stepOut" => respond(req, json!({ "variables": [] })),
+            "evaluate" => fail(req, &t!("debug_evaluate_running")),
             _ => fail(req, &t!("debug_not_yet")),
         }
     }

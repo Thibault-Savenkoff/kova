@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, BufWriter, Write};
 
-use crate::debug::Debugger;
+use crate::debug::{Ask, Debugger};
 
 use crate::kir::*;
 use crate::locale::{self, t};
@@ -199,9 +199,17 @@ fn pause(p: &Program, out: &mut dyn Write, files: &[String], heap: &mut Heap, re
     let _ = out.flush();
     let Some(mut d) = heap.debugger.take() else { return };
     d.stopped(reason, text);
-    while let Some(frame) = d.variables_asked() {
+    while let Some(ask) = d.asked() {
+        let frame = match &ask {
+            Ask::Variables(f) | Ask::Evaluate(f, _) => *f,
+        };
         let at = d.frames.get(frame).and_then(|f| f.at);
         let values = d.frames.get(frame).map_or(vec![], |f| f.values.clone());
+        if let Ask::Evaluate(_, expression) = &ask {
+            let result = evaluate(p, at, &values, expression, &d, files, heap);
+            d.evaluated(result);
+            continue;
+        }
         let mut shown = vec![];
         let mut k = 0;
         for w in watches(p, at) {
@@ -224,6 +232,36 @@ fn pause(p: &Program, out: &mut dyn Write, files: &[String], heap: &mut Heap, re
         d.variables(shown);
     }
     heap.debugger = Some(d);
+}
+
+/// What the console shows for `expression`, with the values of the variables of a frame
+/// (stopped at `at`): what `print` would write.
+fn evaluate(
+    p: &Program,
+    at: Option<(usize, usize, usize, Loc)>,
+    values: &[i64],
+    expression: &str,
+    d: &Debugger,
+    files: &[String],
+    heap: &mut Heap,
+) -> Result<String, String> {
+    let visible = watches(p, at);
+    let named: Vec<(String, String)> = visible.iter().map(|w| (w.name.clone(), w.ty.clone())).collect();
+    let (q, num) = d.evaluation(&named, expression)?;
+    let mut printed = vec![];
+    heap.looking = true;
+    heap.broken.set(false);
+    let result = call(&q, num, values, &mut printed, files, heap);
+    heap.looking = false;
+    if heap.broken.get() {
+        return Ok(t!("debug_given_away"));
+    }
+    match result {
+        Ok(_) => Ok(String::from_utf8_lossy(&printed).trim_end_matches('\n').to_string()),
+        // Its first line only: the place after it is in the function `evaluation` added.
+        Err(Stop::Error(message)) => Err(message.lines().next().unwrap_or("").to_string()),
+        Err(Stop::Exit(code)) => Err(format!("exit({code})")),
+    }
 }
 
 /// Same check as `kova_leaks` in `runtime/runtime.c`.

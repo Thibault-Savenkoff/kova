@@ -549,6 +549,11 @@ fn debugger() {
             let shown = |v: &Value| format!("{} = {}", v["name"].as_str().unwrap(), v["value"].as_str().unwrap());
             r["body"]["variables"].as_array().unwrap().iter().map(shown).collect()
         }
+        /// What the console shows for `expression` (`frame`: as `stackTrace` numbers them), or its error.
+        fn evaluate(&mut self, expression: &str, frame: Option<u64>) -> String {
+            let r = self.ask("evaluate", json!({"expression": expression, "frameId": frame, "context": "repl"}));
+            if r["success"] == true { r["body"]["result"].as_str().unwrap().to_string() } else { format!("error: {}", r["message"].as_str().unwrap()) }
+        }
         fn stack(&mut self) -> Vec<(String, u64)> {
             let r = self.ask("stackTrace", json!({"threadId": 1}));
             let frame = |f: &Value| (f["name"].as_str().unwrap().to_string(), f["line"].as_u64().unwrap());
@@ -569,17 +574,47 @@ fn debugger() {
 
     assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
     assert_eq!(e.variables(0), ["rex = Dog { name: \"Rex\", age: 3 }", "names = [\"a\", \"b\"]"]);
+    // The console: what `print` would write; the variables are only borrowed.
+    assert_eq!(e.evaluate("rex.age + 1", None), "4");
+    assert_eq!(e.evaluate("\"{rex.name} has {names.length} names\"", Some(0)), "Rex has 2 names");
+    assert_eq!(e.evaluate("names", None), "[\"a\", \"b\"]");
+    assert_eq!(e.evaluate("older(rex)", None), "4");
+    assert_eq!(e.evaluate("nope + 1", None), "error: unknown variable `nope`");
+    assert!(e.evaluate("names[5]", None).starts_with("error: error: index out of bounds"));
+    assert!(e.evaluate("names.add(\"c\")", None).starts_with("error: "));
     assert_eq!(e.go("stepIn"), "step");
     assert_eq!(e.stack(), [("older".to_string(), 8), ("main".to_string(), 15)]);
     e.go("next");
     assert_eq!(e.variables(1), ["d = Dog { name: \"Rex\", age: 3 }", "years = 4"]);
+    assert_eq!(e.evaluate("years * d.age", Some(1)), "12");
+    assert_eq!(e.evaluate("names.length", Some(0)), "2");
     e.go("stepOut");
     assert_eq!(e.stack(), [("main".to_string(), 16)]);
     assert_eq!(e.go("continue"), "breakpoint");
     assert_eq!(e.variables(0), ["rex = (given away)", "names = [\"a\", \"b\"]", "next = 4", "gone = Dog { name: \"Rex\", age: 3 }"]);
+    assert_eq!(e.evaluate("rex.name", None), "(given away)");
+    assert_eq!(e.evaluate("gone.name", None), "Rex");
     e.send("continue", json!({"threadId": 1}));
     assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 0);
     assert_eq!(e.printed, "4\n3 2\n");
+    e.send("disconnect", json!({}));
+    assert!(adapter.wait().unwrap().success());
+
+    // In a method: `self` too.
+    let mut adapter = kova(LANG).arg("debug").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut e = Editor { input: adapter.stdin.take().unwrap(), output: BufReader::new(adapter.stdout.take().unwrap()), seq: 0, printed: String::new() };
+    let path = std::fs::canonicalize("tests/debug/method.kova").unwrap().display().to_string();
+    e.send("initialize", json!({"adapterID": "kova"}));
+    e.ask("launch", json!({"program": path}));
+    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 7}]}));
+    e.send("configurationDone", json!({}));
+    assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
+    assert_eq!(e.evaluate("self.name", None), "Rex");
+    assert_eq!(e.evaluate("\"{self.name}: {word}\" + \"!\".repeat(times)", None), "Rex: REX!!");
+    assert_eq!(e.evaluate("myself", None), "error: unknown variable `myself`");
+    e.send("continue", json!({"threadId": 1}));
+    assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 0);
+    assert_eq!(e.printed, "REXREX\n");
     e.send("disconnect", json!({}));
     assert!(adapter.wait().unwrap().success());
 
