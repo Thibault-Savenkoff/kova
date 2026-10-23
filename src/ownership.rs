@@ -425,7 +425,7 @@ impl Owner<'_> {
                 self.body_of_loop(body, &[counter], false);
             }
             // The List (or Map) stays `pending` during the whole loop: frozen (PLAN 2.7.9).
-            Stmt::Each { name, value, list, body } => {
+            Stmt::Each { name, value, list, body, .. } => {
                 self.borrow(list);
                 let names: Vec<&Name> = std::iter::once(name).chain(value).collect();
                 if let Some((root, _)) = place_root(list, &self.info.types) {

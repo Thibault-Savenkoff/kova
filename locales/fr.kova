@@ -280,6 +280,12 @@ lang fr {
     index_move_help := "donne une copie avec `{place}.clone`, ou sors-le avec `{list}.remove({index})`"
     read_then_changed := "`{name}` est encore lu par cette expression : elle ne peut pas le changer"
     loop_frozen := "`{name}` est parcouru par une boucle `for` : il ne peut pas changer ni être déplacé dedans"
+    for_var_list := "`for x in var` change les éléments d'une List, pas d'un {type}"
+    for_var_temporary := "`for x in var` change la List : ce doit être une variable (ou un de ses champs)"
+    lent_to_loop := "`{name}` est prêté à la boucle `for` de la ligne {line} : dedans, on l'utilise seulement par son élément"
+    lent_to_loop_help := "change l'élément par `{element}` ; pour utiliser `{name}` lui-même, prends un indice : `for i in 0..{name}.length`"
+    for_move_later := "`for x in move` arrive plus tard"
+    for_move_later_help := "parcours-la avec `for x in`, ou sors les éléments avec `remove`"
     element_immutable := "`{name}` emprunte un élément de la List : il ne peut pas changer"
     for_needs_list := "`for` parcourt un intervalle ou une List, pas `{type}`"
 

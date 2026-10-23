@@ -666,6 +666,8 @@ enum VarKind {
     Narrowed,
     /// `self` in a method.
     Receiver(Mode),
+    /// `l` inside `for x in var l`: lent to the loop, used only through `x` (the span of `x`).
+    Lent(Span),
 }
 
 struct Variable {
@@ -2397,7 +2399,19 @@ impl Checker<'_> {
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
             }
+            VarKind::Lent(x) => self.lent(n, span, x),
         }
+    }
+
+    /// `l` used inside `for x in var l` (`x` at `element`).
+    fn lent(&mut self, name: &str, span: Span, element: Span) {
+        // `l.add(3)`: read, then changed; said once.
+        if self.diags.iter().any(|d| d.span.start == span.start) {
+            return;
+        }
+        let (line, _) = line_col(self.src, element.start);
+        let x = &self.src[element.start..element.end];
+        self.diags.push(Diag::new(span, t!("lent_to_loop", name = name, line = line)).help(t!("lent_to_loop_help", name = name, element = x)));
     }
 
     /// `rex.rename(...)` with `var self`, or `f(var a)`: the place must be a variable that may
@@ -3027,7 +3041,10 @@ impl Checker<'_> {
                 self.block(body, vec![(counter, Type::Int, VarKind::Counter)]);
                 self.loops -= 1;
             }
-            Stmt::Each { name, value: Some(value), list, body } => {
+            Stmt::Each { name, value: Some(value), mode, list, body } => {
+                if *mode == Mode::Var {
+                    self.error(list.span, t!("for_var_list", type = "Map"));
+                }
                 let (k, v) = match self.expr(list) {
                     Type::Map(k, v) => (*k, *v),
                     Type::Error => (Type::Error, Type::Error),
@@ -3040,7 +3057,30 @@ impl Checker<'_> {
                 self.block(body, vec![(name, k, VarKind::Element), (value, v, VarKind::Element)]);
                 self.loops -= 1;
             }
-            Stmt::Each { name, value: None, list, body } => {
+            Stmt::Each { name, value: None, mode: Mode::Var, list, body } => {
+                let elem = match self.expr(list) {
+                    Type::List(elem) => *elem,
+                    Type::Error => Type::Error,
+                    t => {
+                        self.error(list.span, t!("for_var_list", type = t.text()));
+                        Type::Error
+                    }
+                };
+                self.changes(list, t!("for_var_temporary"));
+                // `l` is lent to the loop: inside it, only `x` reaches its elements.
+                let mut lent = HashMap::new();
+                if let Some((root, _)) = place_root(list, &self.types)
+                    && let Some(v) = self.lookup(root)
+                {
+                    lent.insert(root.to_string(), Variable { ty: v.ty.clone(), kind: VarKind::Lent(name.span), span: v.span });
+                }
+                self.scopes.push(lent);
+                self.loops += 1;
+                self.block(body, vec![(name, elem, VarKind::Var)]);
+                self.loops -= 1;
+                self.scopes.pop();
+            }
+            Stmt::Each { name, value: None, list, body, .. } => {
                 let elem = match self.expr(list) {
                     Type::List(elem) | Type::Set(elem) => *elem,
                     Type::Map(..) => {
@@ -3138,6 +3178,9 @@ impl Checker<'_> {
             ExprKind::Var(name) => match self.lookup(name) {
                 Some(v) => {
                     let (ty, decl) = (v.ty.clone(), v.span);
+                    if let VarKind::Lent(x) = v.kind {
+                        self.lent(name, e.span, x);
+                    }
                     self.mention_variable(name, &ty, e.span, decl);
                     match ty {
                         // `body` alone calls the block, like a function without parameters (Eiffel).

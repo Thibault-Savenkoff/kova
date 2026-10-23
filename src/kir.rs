@@ -646,6 +646,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         blocks: vec![],
         current: 0,
         loops: vec![],
+        writes: vec![],
         temps: vec![],
         envs: vec![],
         env_marks: vec![],
@@ -750,6 +751,9 @@ struct Translator<'a> {
     current: BlockId,
     /// For each open loop: (target of `continue`, target of `break`, number of open blocks).
     loops: Vec<(BlockId, BlockId, usize)>,
+    /// For each open `for x in var l`: its loop (in `loops`), the List, the index and `x`'s slots,
+    /// written back into the element at the end of each turn, and before a `break` or a `return`.
+    writes: Vec<(usize, Local, Local, Slots)>,
     /// The Strings and Lists made by the current statement and not given to anyone yet
     /// (with what they are, see `heap`): freed at the end of the statement.
     temps: Vec<(Local, Type)>,
@@ -1860,6 +1864,15 @@ impl<'a> Translator<'a> {
     }
 
     /// Runs `body` with `name` bound to slots it borrows: no block frees them.
+    /// `for x in var l`: puts back each `x` of the loops from number `from` on into its element.
+    fn write_back(&mut self, from: usize) {
+        for (_, l, i, v) in self.writes.clone().into_iter().filter(|w| w.0 >= from) {
+            for (k, &s) in v.iter().enumerate() {
+                self.emit(Inst::ListStore(l, i, k, s));
+            }
+        }
+    }
+
     fn borrowing(&mut self, name: &str, v: Slots, ty: Type, body: &Block) {
         self.names.push(Scope { borrowed: true, vars: HashMap::from([(name.to_string(), (v, ty))]) });
         self.block(body);
@@ -1953,6 +1966,7 @@ impl<'a> Translator<'a> {
                 }
             }
             Stmt::Break(_) => {
+                self.write_back(self.loops.len() - 1);
                 let (_, exit, depth) = *self.loops.last().unwrap();
                 self.free_scopes(depth);
                 self.finish(End::Jump(exit));
@@ -2032,7 +2046,7 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(i, Op::Plus, i, one, loc));
                 self.go(End::Jump(head), exit);
             }
-            Stmt::Each { name, value, list, body } => {
+            Stmt::Each { name, value, mode, list, body } => {
                 let elem = match self.ty(list) {
                     Type::List(elem) | Type::Set(elem) => *elem,
                     Type::Map(k, v) => pair(&k, &v),
@@ -2050,6 +2064,9 @@ impl<'a> Translator<'a> {
                 self.go(End::Branch(more, b_body, exit), b_body);
                 let v = self.load(l, i, &elem);
                 self.loops.push((next, exit, self.names.len()));
+                if *mode == ast::Mode::Var {
+                    self.writes.push((self.loops.len() - 1, l, i, v.clone()));
+                }
                 // Borrowed from the List: nobody frees it.
                 match value {
                     None => self.borrowing(&name.text, v, elem, body),
@@ -2063,8 +2080,12 @@ impl<'a> Translator<'a> {
                         self.names.pop();
                     }
                 }
-                self.loops.pop();
                 self.go(End::Jump(next), next);
+                self.write_back(self.loops.len() - 1);
+                if *mode == ast::Mode::Var {
+                    self.writes.pop();
+                }
+                self.loops.pop();
                 let one = self.constant(1);
                 self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
                 self.go(End::Jump(head), exit);
@@ -2079,6 +2100,7 @@ impl<'a> Translator<'a> {
     /// `return v`: frees what the function still owns, checks the `ensure`s with
     /// `result` = v, then exits. The parameters are borrowed: the caller frees them.
     fn exit(&mut self, v: Slots) {
+        self.write_back(0);
         // The temporaries of the enclosing statements (a loop bound…) are freed on this path
         // only: they stay listed, the normal path frees them at the end of their statement.
         for (l, kind) in self.temps.clone().into_iter().rev() {
@@ -2616,6 +2638,7 @@ impl<'a> Translator<'a> {
             blocks: vec![],
             current: 0,
             loops: vec![],
+            writes: vec![],
             temps: vec![],
             envs: vec![],
             env_marks: vec![],

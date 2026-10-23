@@ -1,0 +1,83 @@
+// `for x in var l` (PLAN 2.7.9): each `x` changes its element, also after `break`, `continue`, `return`.
+struct Dog {
+    name: String
+    age: Int
+
+    fn birthday(var self) {
+        self.age += 1
+    }
+}
+
+struct Kennel {
+    dogs: List<Dog>
+
+    fn all_older(var self) {
+        for d in var self.dogs {
+            d.birthday
+        }
+    }
+}
+
+fn shout(words: var List<String>) {
+    for w in var words {
+        w := w.to_upper
+    }
+}
+
+fn first_big(l: var List<Int>) -> Int {
+    for x in var l {
+        x := x * 10
+        if x > 25 {
+            return x
+        }
+    }
+    return 0
+}
+
+fn main {
+    var n: List<Int> := [1, 2, 3, 4]
+    for x in var n {
+        x += 100
+    }
+    print(n)
+    var words: List<String> := ["a", "b", "c"]
+    shout(var words)
+    print(words)
+    for w in var words {
+        if w = "B" {
+            w := "bee"
+            break
+        }
+        w := "{w}!"
+    }
+    print(words)
+    for w in var words {
+        if w = "bee" {
+            continue
+        }
+        w := w.repeat(2)
+    }
+    print(words)
+    var k := Kennel { dogs := [Dog { name := "Rex", age := 3 }, Dog { name := "Fido", age := 5 }] }
+    k.all_older
+    print(k)
+    var m: List<Int> := [1, 2, 3, 4]
+    print(first_big(var m))
+    print(m)
+    var grid: List<List<Int>> := [[1, 2], [3]]
+    for row in var grid {
+        for cell in var row {
+            cell := cell * cell
+        }
+        row.add(0)
+    }
+    print(grid)
+}
+// expect: [101, 102, 103, 104]
+// expect: ["A", "B", "C"]
+// expect: ["A!", "bee", "C"]
+// expect: ["A!A!", "bee", "CC"]
+// expect: Kennel { dogs: [Dog { name: "Rex", age: 4 }, Dog { name: "Fido", age: 6 }] }
+// expect: 30
+// expect: [10, 20, 30, 4]
+// expect: [[1, 4, 0], [9, 0]]

@@ -350,7 +350,8 @@ pub enum Stmt {
     Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
     /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).
     /// `for x in l`, or `for name, age in ages` on a Map (`value`).
-    Each { name: Name, value: Option<Name>, list: Expr, body: Block },
+    /// `for x in var l`: `mode` = `Var`, each `x` changes its element (PLAN 2.7.9).
+    Each { name: Name, value: Option<Name>, mode: Mode, list: Expr, body: Block },
     Match(Match),
     Expr(Expr),
 }

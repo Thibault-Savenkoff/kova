@@ -1,0 +1,11 @@
+// An element of `for x in var l` stays in the List: it cannot be given away.
+fn keep(x: move String) {
+}
+
+fn main {
+    var names: List<String> := ["a"]
+    for n in var names {
+        keep(move n)
+    }
+}
+// error: `n` is borrowed here: it cannot be moved

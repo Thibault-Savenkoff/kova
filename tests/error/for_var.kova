@@ -1,0 +1,28 @@
+// `for x in var l` (PLAN 2.7.9): what it refuses.
+fn make -> List<Int> {
+    return [1]
+}
+
+fn main {
+    var l: List<Int> := [1, 2]
+    for x in var l {
+        print(l.length)
+        l.add(3)
+    }
+    let fixed: List<Int> := [1]
+    for x in var fixed {
+        x := 2
+    }
+    for x in var make {
+        x := 2
+    }
+    var ages: Map<String, Int> := ["a" := 1]
+    for k, v in var ages {
+        print(k)
+    }
+}
+// error: `l` is lent to the `for` loop of line 8: inside it, it is used through its element only
+// error: change the element through `x`; to use `l` itself, use an index: `for i in 0..l.length`
+// error: `fixed` is declared with let
+// error: `for x in var` changes the List: it must be a variable (or one of its fields)
+// error: `for x in var` changes the elements of a List, not of a Map

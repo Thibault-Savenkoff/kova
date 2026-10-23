@@ -1197,6 +1197,16 @@ impl Parser<'_> {
                     return self.error(self.token().span, msg);
                 }
                 self.advance();
+                let mode = if self.is_keyword("var") {
+                    self.advance();
+                    Mode::Var
+                } else {
+                    if self.is_keyword("move") {
+                        self.diags.push(Diag::new(self.token().span, t!("for_move_later")).help(t!("for_move_later_help")));
+                        self.advance();
+                    }
+                    Mode::Read
+                };
                 let e = self.heading_expr()?;
                 self.skip_newlines();
                 let body = self.block()?;
@@ -1205,9 +1215,12 @@ impl Parser<'_> {
                         if let Some(v) = &value {
                             self.diags.push(Diag::new(v.span, t!("for_two_names", type = "Int")));
                         }
+                        if mode == Mode::Var {
+                            self.diags.push(Diag::new(start.span.to(end.span), t!("for_var_list", type = "range")));
+                        }
                         Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
                     }
-                    _ => Ok(Stmt::Each { name: counter, value, list: e, body }),
+                    _ => Ok(Stmt::Each { name: counter, value, mode, list: e, body }),
                 }
             }
             Kind::Keyword("from") => {
