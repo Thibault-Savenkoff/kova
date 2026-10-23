@@ -178,8 +178,10 @@ fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
     diags
         .into_iter()
         .map(|d| {
+            // On one line: many editors show a message at the end of its line, where a line break
+            // becomes a symbol (`⏎` in VS Code's Error Lens) or cuts the help off.
             let mut message = match d.help {
-                Some(help) => format!("{}\n{}{help}", d.message, t!("help_prefix")),
+                Some(help) => format!("{} — {}{help}", d.message, t!("help_prefix")),
                 None => d.message,
             };
             let n = diag::file_number(&sources.text, d.span.start);
@@ -1230,6 +1232,14 @@ mod tests {
             })
             .collect();
         assert_eq!(labels, ["8:: Int"]);
+    }
+
+    #[test]
+    fn one_line_messages() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let found = errors(&uri, "fn main {\n    let d := Date.today.plus_days(1)\n}\n");
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].message.contains('\n') && found[0].message.contains(" — "), "{}", found[0].message);
     }
 
     #[test]
