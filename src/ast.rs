@@ -390,7 +390,7 @@ pub enum ExprKind {
     /// `Stack<Int>.empty`: `types` = the type arguments written after the struct's name.
     Static { ty: Name, types: Vec<TypeAst>, name: Name, args: Vec<Expr> },
     /// `Shape.Circle(2.0)`, `Light.Red`: a new value of an enum.
-    Variant { ty: Name, name: Name, args: Vec<Expr> },
+    Variant { ty: Name, types: Vec<TypeAst>, name: Name, args: Vec<Expr> },
     /// `x.to_float`, `rex.name`: a built-in method or a struct's field (decided by the type checker).
     Method { receiver: Box<Expr>, name: Name, args: Vec<Expr> },
     Unary(UnOp, Box<Expr>),

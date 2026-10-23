@@ -340,7 +340,6 @@ lang en {
     generic_not_deduced := "the type `{name}` of `{function}` cannot be deduced from these arguments"
     generic_bound := "`{function}` needs its `{name}` to follow `{bound}`, and `{type}` does not"
     generic_bound_help := "write `struct {type} : {bound}` (or `enum`) with its method"
-    generic_enum_later := "an enum with type parameters comes later: use a struct, `T?` or `T or E`"
     not_generic := "`{name}` has no type parameters"
     not_generic_help := "write `{name}` alone"
     generic_count := "`{name}` takes {expected} type(s), not {given}: `{example}`"

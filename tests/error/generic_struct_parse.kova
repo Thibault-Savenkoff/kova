@@ -1,4 +1,4 @@
-// A generic enum comes later.
+// Type arguments for an enum that has no type parameters, none for one that has.
 enum Tree<T> {
     Leaf
     Node(value: T)
@@ -8,6 +8,7 @@ enum Light {
 }
 fn main {
     print(Light<Int>.Red)
+    let t: Tree<Int> := Tree.Leaf
 }
-// error: an enum with type parameters comes later
 // error: `Light` has no type parameters
+// error: `Tree` needs its types

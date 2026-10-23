@@ -74,7 +74,17 @@ impl Type {
     pub fn owner(&self) -> String {
         match self {
             Type::Struct(d) => d.name.clone(),
+            Type::Enum(d) => d.name.clone(),
             t => t.text(),
+        }
+    }
+
+    /// `Stack<Int>`, `Tree<Int>`: the types given for its type parameters (none for other types).
+    pub fn args(&self) -> &[Type] {
+        match self {
+            Type::Struct(d) => &d.args,
+            Type::Enum(d) => &d.args,
+            _ => &[],
         }
     }
 
@@ -90,9 +100,8 @@ impl Type {
             Type::Date => "Date".into(),
             Type::DateTime => "DateTime".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
-            Type::Struct(d) if d.args.is_empty() => d.name.clone(),
-            Type::Struct(d) => format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
-            Type::Enum(d) => d.name.clone(),
+            Type::Struct(_) | Type::Enum(_) if self.args().is_empty() => self.owner(),
+            Type::Struct(_) | Type::Enum(_) => format!("{}<{}>", self.owner(), self.args().iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Optional(t) => format!("{}?", t.text()),
             Type::Result(t, e) if **t == Type::Unit => format!("Nothing or {}", e.text()),
             Type::Result(t, e) => format!("{} or {}", t.text(), e.text()),
@@ -135,6 +144,10 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Struct(d) if !d.args.is_empty() => {
             let template = d.from.as_ref().map_or(d, |(t, _)| t);
             Type::Struct(StructDef::instance(template, d.args.iter().map(|t| substitute(t, s)).collect()))
+        }
+        Type::Enum(d) if !d.args.is_empty() => {
+            let template = d.from.as_ref().map_or(d, |(t, _)| t);
+            Type::Enum(EnumDef::instance(template, d.args.iter().map(|t| substitute(t, s)).collect()))
         }
         _ => t.clone(),
     }
@@ -179,13 +192,28 @@ fn must_hold(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
 
 /// `Stack<T>` as declared, under its own name (`T` may stand for a `Stack<Int>`).
 fn is_template(t: &Type, name: &str) -> bool {
-    matches!(t, Type::Struct(d) if !d.args.is_empty() && d.name == name)
+    matches!(t, Type::Struct(_) | Type::Enum(_)) && !t.args().is_empty() && t.owner() == name
 }
 
 /// `Stack<Int>` from the struct `Stack<T>` as declared (`None` if it has no type parameters).
 pub fn instance(template: &Type, types: &[Type]) -> Option<Type> {
-    let Type::Struct(d) = template else { return None };
-    (!d.args.is_empty() && d.args.len() == types.len()).then(|| Type::Struct(StructDef::instance(d, types.to_vec())))
+    if template.args().is_empty() || template.args().len() != types.len() {
+        return None;
+    }
+    match template {
+        Type::Struct(d) => Some(Type::Struct(StructDef::instance(d, types.to_vec()))),
+        Type::Enum(d) => Some(Type::Enum(EnumDef::instance(d, types.to_vec()))),
+        _ => None,
+    }
+}
+
+/// The names of a declared type's parameters with the types given for them: `T` → `Int`.
+fn given(args: &[Type], types: &[Type]) -> Vec<(String, Type)> {
+    let names = args.iter().map(|a| match a {
+        Type::Param(p) => p.name.clone(),
+        _ => unreachable!("a declared type has its parameters as arguments"),
+    });
+    names.zip(types.iter().cloned()).collect()
 }
 
 /// A struct's type. Its fields are given once it exists, so that one of them may refer to it
@@ -212,11 +240,7 @@ impl StructDef {
         if args == template.args {
             return template.clone();
         }
-        let names = template.args.iter().map(|a| match a {
-            Type::Param(p) => p.name.clone(),
-            _ => unreachable!("a declared struct has its parameters as arguments"),
-        });
-        let s = names.zip(args.iter().cloned()).collect();
+        let s = given(&template.args, &args);
         Rc::new(StructDef { name: template.name.clone(), args, fields: OnceCell::new(), copy: template.copy, from: Some((template.clone(), s)) })
     }
 
@@ -256,19 +280,32 @@ impl std::fmt::Debug for StructDef {
 /// An enum's type, its variants given once it exists (like `StructDef`'s fields).
 pub struct EnumDef {
     pub name: String,
+    /// `Tree<Int>`: the types given for its type parameters, as for a `StructDef`.
+    pub args: Vec<Type>,
     /// Each variant: its name and its fields.
     variants: OnceCell<Vec<(String, Vec<(String, Type)>)>>,
+    /// `Tree<Int>`: the enum as declared, as for a `StructDef`.
+    from: Option<(Rc<EnumDef>, Vec<(String, Type)>)>,
 }
 
 impl EnumDef {
-    pub fn new(name: String) -> Rc<EnumDef> {
-        Rc::new(EnumDef { name, variants: OnceCell::new() })
+    pub fn new(name: String, args: Vec<Type>) -> Rc<EnumDef> {
+        Rc::new(EnumDef { name, args, variants: OnceCell::new(), from: None })
     }
 
     pub fn with_variants(name: String, variants: Vec<(String, Vec<(String, Type)>)>) -> Rc<EnumDef> {
-        let d = EnumDef::new(name);
+        let d = EnumDef::new(name, vec![]);
         d.set_variants(variants);
         d
+    }
+
+    /// `Tree<Int>` from `Tree<T>` as declared.
+    fn instance(template: &Rc<EnumDef>, args: Vec<Type>) -> Rc<EnumDef> {
+        if args == template.args {
+            return template.clone();
+        }
+        let s = given(&template.args, &args);
+        Rc::new(EnumDef { name: template.name.clone(), args, variants: OnceCell::new(), from: Some((template.clone(), s)) })
     }
 
     fn set_variants(&self, variants: Vec<(String, Vec<(String, Type)>)>) {
@@ -276,6 +313,13 @@ impl EnumDef {
     }
 
     pub fn variants(&self) -> &[(String, Vec<(String, Type)>)] {
+        if let Some((template, s)) = &self.from
+            && self.variants.get().is_none()
+            && template.variants.get().is_some()
+        {
+            let made = template.variants().iter().map(|(n, fs)| (n.clone(), fs.iter().map(|(f, t)| (f.clone(), substitute(t, s))).collect()));
+            let _ = self.variants.set(made.collect());
+        }
         self.variants.get().map_or(&[], |v| v)
     }
 
@@ -290,16 +334,16 @@ impl EnumDef {
     }
 }
 
-/// The name of an optional's or a result's view is its whole type (`Int?`), so the name is enough.
+/// The name of an optional's or a result's view is its whole type (`Int?`).
 impl PartialEq for EnumDef {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.name == other.name && self.args == other.args
     }
 }
 
 impl std::fmt::Debug for EnumDef {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{}{:?}", self.name, self.args)
     }
 }
 
@@ -655,7 +699,7 @@ fn mentions(t: &Type, name: &str) -> bool {
         Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
         Type::Optional(t) | Type::List(t) | Type::Set(t) => mentions(t, name),
         Type::Result(a, b) | Type::Map(a, b) => mentions(a, name) || mentions(b, name),
-        Type::Struct(d) => d.args.iter().any(|t| mentions(t, name)),
+        Type::Struct(_) | Type::Enum(_) => t.args().iter().any(|t| mentions(t, name)),
         Type::Block(ps, r) => ps.iter().any(|t| mentions(t, name)) || mentions(r, name),
         _ => false,
     }
@@ -677,8 +721,8 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
         }
-        (Type::Struct(p), Type::Struct(t)) if p.name == t.name => {
-            p.args.iter().zip(&t.args).for_each(|(p, t)| deduce(p, t, generics, found));
+        (Type::Struct(_), Type::Struct(_)) | (Type::Enum(_), Type::Enum(_)) if param.owner() == given.owner() => {
+            param.args().iter().zip(given.args()).for_each(|(p, t)| deduce(p, t, generics, found));
         }
         (Type::Block(ps, p), Type::Block(ts, t)) => {
             ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found));
@@ -1190,7 +1234,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 /// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
 fn later(t: &Type, interface: &str) -> Option<String> {
     match t {
-        Type::Struct(d) if !d.args.is_empty() => Some(t!("generic_interface_later_help", name = d.name, interface = interface)),
+        Type::Struct(_) | Type::Enum(_) if !t.args().is_empty() => Some(t!("generic_interface_later_help", name = t.owner(), interface = interface)),
         _ => None,
     }
 }
@@ -1205,9 +1249,8 @@ fn bound_help(t: &Type, bound: &str) -> String {
 
 /// The type parameters of `struct Stack<T>`, as types and as definitions.
 fn struct_params(t: &Type) -> (Vec<Type>, Vec<Rc<ParamDef>>) {
-    let Type::Struct(d) = t else { return (vec![], vec![]) };
-    let defs = d.args.iter().filter_map(|a| if let Type::Param(p) = a { Some(p.clone()) } else { None }).collect();
-    (d.args.clone(), defs)
+    let defs = t.args().iter().filter_map(|a| if let Type::Param(p) = a { Some(p.clone()) } else { None }).collect();
+    (t.args().to_vec(), defs)
 }
 
 /// `Equal`, `Comparable`, `Display` (`parser::PRELUDE`).
@@ -1587,7 +1630,7 @@ impl Checker<'_> {
         // Known before its fields are read: a field may refer to it (`kids: List<Node>`).
         let ty = match &s.variants {
             None => Type::Struct(StructDef::new(s.name.text.clone(), args, s.copy)),
-            Some(_) => Type::Enum(EnumDef::new(s.name.text.clone())),
+            Some(_) => Type::Enum(EnumDef::new(s.name.text.clone(), args)),
         };
         self.structs.insert(s.name.text.clone(), ty.clone());
         // Each field's place in the code and its type.
@@ -1711,7 +1754,7 @@ impl Checker<'_> {
                     return Type::Error;
                 };
                 match self.define(f, decls, j, open) {
-                    Some(Type::Struct(d)) if !d.args.is_empty() => {
+                    Some(t) if !t.args().is_empty() => {
                         self.generic_without_types(n);
                         Type::Error
                     }
@@ -1803,7 +1846,7 @@ impl Checker<'_> {
             };
         }
         let d = match template {
-            Some(t @ Type::Struct(d)) if is_template(t, &n.text) => d.clone(),
+            Some(t) if is_template(t, &n.text) => t.clone(),
             Some(Type::Param(_)) | None => {
                 self.error(n.span, t!("type_unknown", name = n.text));
                 return Type::Error;
@@ -1813,23 +1856,23 @@ impl Checker<'_> {
                 return Type::Error;
             }
         };
-        if d.args.len() != types.len() {
-            let example = format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", "));
-            self.error(n.span, t!("generic_count", name = n.text, expected = d.args.len(), given = types.len(), example = example));
+        if d.args().len() != types.len() {
+            let example = d.text();
+            self.error(n.span, t!("generic_count", name = n.text, expected = d.args().len(), given = types.len(), example = example));
             return Type::Error;
         }
         if types.contains(&Type::Error) {
             return Type::Error;
         }
         // Checked at the end: what each type follows is only known once all are read.
-        for (p, t) in d.args.iter().zip(types) {
+        for (p, t) in d.args().iter().zip(types) {
             if let Type::Param(p) = p {
                 for b in &p.bounds {
                     self.bounds.push((n.span, n.text.clone(), p.name.clone(), t.clone(), b.clone()));
                 }
             }
         }
-        instance(&Type::Struct(d), types).unwrap()
+        instance(&d, types).unwrap()
     }
 
     fn contains_itself(&mut self, n: &Name) -> Type {
@@ -1855,16 +1898,15 @@ impl Checker<'_> {
     /// A value going where an `any Animal` is expected: a struct or an enum following `Animal`.
     fn boxable(&self, t: &Type, interface: &str) -> bool {
         match t {
-            Type::Struct(d) => d.args.is_empty() && self.follows(&d.name, interface),
-            Type::Enum(d) => self.follows(&d.name, interface),
+            Type::Struct(_) | Type::Enum(_) => t.args().is_empty() && self.follows(&t.owner(), interface),
             _ => false,
         }
     }
 
     /// `Stack` written without its types.
     fn generic_without_types(&mut self, n: &Name) {
-        let Some(Type::Struct(d)) = self.structs.get(&n.text) else { return };
-        let example = format!("{}<{}>", d.name, d.args.iter().map(Type::text).collect::<Vec<_>>().join(", "));
+        let Some(t) = self.structs.get(&n.text) else { return };
+        let example = t.text();
         self.diags.push(Diag::new(n.span, t!("generic_struct_types", name = n.text)).help(t!("generic_struct_types_help", example = example)));
     }
 
@@ -2128,7 +2170,7 @@ impl Checker<'_> {
                 let mut d = Diag::new(e.span, t!("types_differ", expected = expected.text(), given = t.text()));
                 if let Type::Param(p) = &t {
                     d = d.help(t!("any_param_later", type = p.name, interface = i));
-                } else if matches!(t, Type::Struct(_) | Type::Enum(_)) && !matches!(&t, Type::Struct(s) if !s.args.is_empty()) {
+                } else if matches!(t, Type::Struct(_) | Type::Enum(_)) && t.args().is_empty() {
                     d = d.help(t!("any_needs_follow", type = t.text(), interface = i));
                 } else if !matches!(t, Type::Any(_)) {
                     d = d.help(t!("any_struct_only", interface = i));
@@ -2704,7 +2746,7 @@ impl Checker<'_> {
         let mut given = vec![];
         if !types.is_empty() || self.structs.get(&ty.text).is_some_and(|t| is_template(t, &ty.text)) {
             match self.with_types(ty, types) {
-                Type::Struct(d) => given = d.args.clone(),
+                t @ (Type::Struct(_) | Type::Enum(_)) => given = t.args().to_vec(),
                 _ => {
                     self.unchecked(args);
                     return Type::Error;
@@ -3171,7 +3213,7 @@ impl Checker<'_> {
             ExprKind::StructLit { ty, types, fields } => self.struct_literal(ty, types, fields),
             ExprKind::Call { name, args } => self.call(e.id, name, args),
             ExprKind::Static { ty, types, name, args } => self.static_call(e.id, ty, types, name, args),
-            ExprKind::Variant { ty, name, args } => self.variant(ty, name, args),
+            ExprKind::Variant { ty, types, name, args } => self.variant(ty, types, name, args),
             ExprKind::None => {
                 self.diags.push(Diag::new(e.span, t!("none_needs_type")).help(t!("none_needs_type_help")));
                 Type::Error
@@ -3223,7 +3265,7 @@ impl Checker<'_> {
                 if matches!(t, Type::Struct(_) | Type::Enum(_))
                     && let Some(sig) = self.functions.get(&method_name(&t.owner(), &name.text)).cloned()
                 {
-                    let given = if let Type::Struct(d) = &t { d.args.clone() } else { vec![] };
+                    let given = t.args().to_vec();
                     let sig = self.for_types(e.id, sig, given);
                     self.hidden(&method_name(&t.owner(), &name.text), name.span);
                     return self.method_call(receiver, &t.text(), name, args, sig);
@@ -3528,11 +3570,15 @@ impl Checker<'_> {
         self.generic(ty, template.as_ref(), &given)
     }
 
-    /// `Shape.Circle(2.0)`: the fields in their declared order.
-    fn variant(&mut self, ty: &Name, name: &Name, args: &[Expr]) -> Type {
+    /// `Shape.Circle(2.0)`, `Tree<Int>.Leaf(5)`: the fields in their declared order.
+    fn variant(&mut self, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
         self.hidden(&ty.text, ty.span);
         self.mention(&method_name(&ty.text, &name.text), name.span);
         let d = match self.structs.get(&ty.text).cloned() {
+            Some(t @ Type::Enum(_)) if !types.is_empty() || is_template(&t, &ty.text) => match self.with_types(ty, types) {
+                Type::Enum(d) => Some(d),
+                _ => return self.unchecked(args),
+            },
             Some(Type::Enum(d)) => Some(d),
             Some(_) => {
                 self.error(name.span, t!("not_enum", type = ty.text, name = name.text));

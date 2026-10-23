@@ -1038,7 +1038,7 @@ impl<'a> Translator<'a> {
                 // `ok` of a `Nothing or E`.
                 pieces.push(Piece::Text(name.clone()));
             } else {
-                pieces.push(Piece::Text(format!("{}.{name}", d.name)));
+                pieces.push(Piece::Text(format!("{}.{name}", ty.text())));
                 for (j, (field, t)) in fields.iter().enumerate() {
                     pieces.push(Piece::Text(format!("{}{field}: ", if j == 0 { "(" } else { ", " })));
                     let t = &laid_out(&d.name, t);
@@ -3037,7 +3037,14 @@ impl<'a> Translator<'a> {
     fn match_(&mut self, m: &Match, dst: Option<(&[Local], &Type)>) {
         let ty = self.ty(&m.subject);
         let d = &enum_view(&ty).expect("enum checked by the type checker");
-        let borrowed = place_root(&m.subject, &self.info.types).is_some();
+        // `match chain(3).next`: a part of a temporary is borrowed too, the temporary freed after.
+        let part = match &m.subject.kind {
+            ExprKind::Field(..) => true,
+            ExprKind::Method { receiver, name, .. } => self.ty(receiver).is_field(&name.text),
+            ExprKind::Index(x, i) => !matches!(self.ty(x), Type::Map(..)) && i.range().is_none(),
+            _ => false,
+        };
+        let borrowed = part || place_root(&m.subject, &self.info.types).is_some();
         let v = if borrowed {
             let (p, _) = self.place(&m.subject);
             let v = self.read(&p);

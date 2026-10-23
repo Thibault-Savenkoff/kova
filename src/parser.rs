@@ -729,9 +729,6 @@ impl Parser<'_> {
         self.advance(); // struct, enum
         let name = self.type_name()?;
         let generics = self.generics()?;
-        if variants.is_some() && !generics.is_empty() {
-            self.diags.push(Diag::new(generics[0].name.span, t!("generic_enum_later")));
-        }
         let mut interfaces = vec![];
         if self.is_sym(":") {
             self.advance();
@@ -1743,11 +1740,8 @@ impl Parser<'_> {
             if !variant {
                 end = self.trailing_block(&mut args)?.unwrap_or(end);
             }
-            if variant && !types.is_empty() {
-                self.diags.push(Diag::new(ty.span, t!("not_generic", name = ty.text)).help(t!("not_generic_help", name = ty.text)));
-            }
             let span = ty.span.to(end);
-            let kind = if variant { ExprKind::Variant { ty, name, args } } else { ExprKind::Static { ty, types, name, args } };
+            let kind = if variant { ExprKind::Variant { ty, types, name, args } } else { ExprKind::Static { ty, types, name, args } };
             return Ok(self.expr(span, kind));
         }
         if !brace {
