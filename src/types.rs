@@ -705,13 +705,18 @@ impl Signature {
 
 /// Does `t` contain the type parameter `name`?
 fn mentions(t: &Type, name: &str) -> bool {
+    reaches(t, &|p| p.name == name)
+}
+
+/// Does `t` hold a `Type::Param` for which `f` is true?
+fn reaches(t: &Type, f: &dyn Fn(&ParamDef) -> bool) -> bool {
     match t {
-        Type::Param(p) => p.name == name,
-        Type::Tuple(ts) => ts.iter().any(|t| mentions(t, name)),
-        Type::Optional(t) | Type::List(t) | Type::Set(t) => mentions(t, name),
-        Type::Result(a, b) | Type::Map(a, b) => mentions(a, name) || mentions(b, name),
-        Type::Struct(_) | Type::Enum(_) => t.args().iter().any(|t| mentions(t, name)),
-        Type::Block(ps, r) => ps.iter().any(|t| mentions(t, name)) || mentions(r, name),
+        Type::Param(p) => f(p),
+        Type::Tuple(ts) => ts.iter().any(|t| reaches(t, f)),
+        Type::Optional(t) | Type::List(t) | Type::Set(t) => reaches(t, f),
+        Type::Result(a, b) | Type::Map(a, b) => reaches(a, f) || reaches(b, f),
+        Type::Struct(_) | Type::Enum(_) => t.args().iter().any(|t| reaches(t, f)),
+        Type::Block(ps, r) => ps.iter().any(|t| reaches(t, f)) || reaches(r, f),
         _ => false,
     }
 }
@@ -1081,12 +1086,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         if decls.get(s.name.text.as_str()) != Some(&i) {
             continue;
         }
-        // ponytail: a generic type follows only `Equal` for now; the others need a copy of
-        // their default methods per instance, and a number per instance for `any`.
-        match s.interfaces.iter().find(|n| n.text != "Equal") {
-            Some(it) if !s.generics.is_empty() => c.error(it.span, t!("generic_struct_interface_later", name = s.name.text, interface = it.text)),
-            _ => c.conforms(f, s),
-        }
+        c.conforms(f, s);
     }
     // `struct Point : Equal` without `equals`: every field must have `=` (known once all conform).
     for (i, s) in f.structs.iter().enumerate() {
@@ -1215,6 +1215,15 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             impls.entry(it.clone()).or_default().push(t.clone());
         }
     }
+    // `Kennel<Int>`: each instance put in a box.
+    for (id, i) in c.boxes.iter().enumerate() {
+        if let Some(i) = i
+            && !c.types[id].args().is_empty()
+            && !impls.get(i).is_some_and(|ts| ts.contains(&c.types[id]))
+        {
+            impls.entry(i.clone()).or_default().push(c.types[id].clone());
+        }
+    }
     // Each interface method, for the KIR's dispatch: its parameters' types and its result.
     let methods = (f.interfaces.iter())
         .flat_map(|it| it.methods.iter().map(move |(m, _)| method_name(&it.name.text, &m.name.text)))
@@ -1247,19 +1256,11 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     (info, c.diags)
 }
 
-/// The help for a `Stack<Int>` that does not follow `interface`: it cannot yet (J5, step 4).
-fn later(t: &Type, interface: &str) -> Option<String> {
-    match t {
-        Type::Struct(_) | Type::Enum(_) if !t.args().is_empty() && interface != "Equal" => Some(t!("generic_interface_later_help", name = t.owner(), interface = interface)),
-        _ => None,
-    }
-}
-
 /// How `t` can follow `bound`: `struct Dog : Comparable`, or `<T: Comparable>` for a `T`.
 fn bound_help(t: &Type, bound: &str) -> String {
     match t {
         Type::Param(p) => t!("param_bound_help", type = p.name, bound = bound),
-        t => later(t, bound).unwrap_or_else(|| t!("generic_bound_help", type = t.text(), bound = bound)),
+        t => t!("generic_bound_help", type = t.owner(), bound = bound),
     }
 }
 
@@ -1407,8 +1408,8 @@ impl Checker<'_> {
     /// Checks that `s` has every method of the interfaces it follows, as they are written
     /// there (with `Self` = `s`), and gives it their default methods.
     fn conforms(&mut self, f: &File, s: &Struct) {
-        let me = self.structs[&s.name.text].clone();
-        let sub = [("Self".to_string(), me)];
+        let me_ty = self.structs[&s.name.text].clone();
+        let sub = [("Self".to_string(), me_ty.clone())];
         let mut followed: HashMap<&str, Span> = HashMap::new();
         // Default method name → the interface that gives it.
         let mut given: HashMap<&str, &str> = HashMap::new();
@@ -1467,7 +1468,9 @@ impl Checker<'_> {
                             .help(t!("field_and_method_help", name = m.name.text)),
                     );
                 } else {
-                    self.functions.insert(mine, want);
+                    // A generic type's copy keeps its type parameters, given at each call.
+                    let generics = struct_params(&me_ty).1;
+                    self.functions.insert(mine, Signature { generics, ..want });
                     self.defaults.push((s.name.text.clone(), k, j));
                 }
             }
@@ -1963,7 +1966,9 @@ impl Checker<'_> {
     /// A value going where an `any Animal` is expected: a struct or an enum following `Animal`.
     fn boxable(&self, t: &Type, interface: &str) -> bool {
         match t {
-            Type::Struct(_) | Type::Enum(_) => t.args().is_empty() && self.follows(&t.owner(), interface),
+            // ponytail: not a `Kennel<T>` inside a generic function: its box would need a number
+            // per copy of the function.
+            Type::Struct(_) | Type::Enum(_) => self.follows(&t.owner(), interface) && !reaches(t, &|_| true),
             _ => false,
         }
     }
@@ -2032,7 +2037,6 @@ impl Checker<'_> {
                 t if !self.has(&t, "Display") => {
                     let code = &self.src[e.span.start..e.span.end];
                     let help = match &t {
-                        t if later(t, "Display").is_some() => later(t, "Display").unwrap(),
                         Type::Struct(d) => t!("interp_display_help", name = d.name, kind = "struct"),
                         Type::Enum(d) => t!("interp_display_help", name = d.name, kind = "enum"),
                         Type::Param(p) => t!("param_display_help", type = p.name),
@@ -2247,9 +2251,9 @@ impl Checker<'_> {
                 self.boxes[e.id] = Some(i.clone());
             } else if t != *expected && t != Type::Error {
                 let mut d = Diag::new(e.span, t!("types_differ", expected = expected.text(), given = t.text()));
-                if let Type::Param(p) = &t {
-                    d = d.help(t!("any_param_later", type = p.name, interface = i));
-                } else if matches!(t, Type::Struct(_) | Type::Enum(_)) && t.args().is_empty() {
+                if reaches(&t, &|_| true) {
+                    d = d.help(t!("any_param_later", type = t.text(), interface = i));
+                } else if matches!(t, Type::Struct(_) | Type::Enum(_)) {
                     d = d.help(t!("any_needs_follow", type = t.text(), interface = i));
                 } else if !matches!(t, Type::Any(_)) {
                     d = d.help(t!("any_struct_only", interface = i));
@@ -3583,7 +3587,7 @@ impl Checker<'_> {
                                     Type::Enum(_) => (culprit.owner(), "enum"),
                                     t => (t.owner(), "struct"),
                                 };
-                                let help = later(&culprit, "Equal").unwrap_or_else(|| t!("compare_needs_equal_help", name = name, kind = kind));
+                                let help = t!("compare_needs_equal_help", name = name, kind = kind);
                                 self.diags.push(Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(help));
                             }
                         }
@@ -3594,7 +3598,6 @@ impl Checker<'_> {
                         let ta = self.expr(a);
                         if !self.has(&ta, "Comparable") {
                             let help = match &ta {
-                                t if later(t, "Comparable").is_some() => later(t, "Comparable").unwrap(),
                                 Type::Struct(d) => t!("order_needs_comparable_help", name = d.name, kind = "struct"),
                                 Type::Enum(d) => t!("order_needs_comparable_help", name = d.name, kind = "enum"),
                                 Type::Param(p) => t!("param_order_help", type = p.name),

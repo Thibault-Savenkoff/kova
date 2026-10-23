@@ -1,0 +1,33 @@
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Kennel<T> : Animal {
+    dog: T
+}
+
+struct Cage<T> : Animal {
+    bird: T
+
+    fn sound(self) -> String {
+        return "cui"
+    }
+}
+
+struct Box<T> {
+    value: T
+}
+
+fn boxed<T>(x: T) -> any Animal {
+    return Cage<T> { bird := x }
+}
+
+fn main {
+    let b := Box<Int> { value := 1 }
+    print("{b}")
+    print(b < b)
+}
+// error: `Kennel` follows `Animal` but has no method `sound`
+// error: different types: `any Animal` expected, `Cage<T>` given
+// error: `b` (`Box<Int>`) has no text for people
+// error: `<` cannot order `Box<Int>` values

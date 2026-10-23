@@ -1,0 +1,84 @@
+// Generic types follow any interface (PLAN Part 4 "Generic types and interfaces"): default
+// methods, `any Animal`, `Display`, `Comparable`, bounds of generic functions.
+interface Animal {
+    fn sound(self) -> String
+    fn twice(self) -> String {
+        return "{self.sound} {self.sound}"
+    }
+}
+
+struct Kennel<T: Display> : Animal, Display {
+    dog: T
+    count: Int
+
+    fn sound(self) -> String {
+        return "{self.dog} x{self.count}"
+    }
+
+    fn to_string(self) -> String {
+        return "Kennel({self.dog})"
+    }
+}
+
+struct Score<T> : Comparable, Equal {
+    points: Int
+    tag: T
+
+    fn less(self, other: Score<T>) -> Bool {
+        return self.points < other.points
+    }
+
+    fn equals(self, other: Score<T>) -> Bool {
+        return self.points = other.points
+    }
+}
+
+struct Dog : Animal {
+    fn sound(self) -> String {
+        return "wouf"
+    }
+}
+
+fn loud<T: Animal>(a: T) -> String {
+    return a.twice
+}
+
+fn larger<T: Comparable>(a: T, b: T) -> T {
+    if a < b {
+        return b.clone
+    }
+    return a.clone
+}
+
+fn main {
+    let k := Kennel<String> { dog := "rex", count := 2 }
+    print(k.sound)
+    print(k.twice)
+    print(k)
+    print("in {k}")
+    print(loud(k))
+    let zoo: List<any Animal> := [Dog {}, Kennel<Int> { dog := 7, count := 1 }, Kennel<String> { dog := "pif", count := 3 }]
+    for a in zoo {
+        print(a.twice)
+    }
+    let a := Score<String> { points := 3, tag := "a" }
+    let b := Score<String> { points := 5, tag := "b" }
+    print(a < b)
+    print(larger(a, b).tag)
+    let l: List<Score<String>> := [b, a]
+    for s in l.sorted {
+        print(s.points)
+    }
+}
+// expect: rex x2
+// expect: rex x2 rex x2
+// expect: Kennel(rex)
+// expect: in Kennel(rex)
+// expect: rex x2 rex x2
+// expect: wouf wouf
+// expect: 7 x1 7 x1
+// expect: pif x3 pif x3
+// expect: true
+// expect: b
+// expect: 3
+// expect: 5

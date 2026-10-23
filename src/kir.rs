@@ -599,9 +599,16 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         let names: Vec<String> = s.generics.iter().map(|g| g.name.text.clone()).collect();
         generic.extend(s.methods.iter().map(|m| (method_name(&s.name.text, &m.name.text), (method(&ty, &s.name.text, m), names.clone()))));
     }
-    // One copy of a default method for each type taking it: `Dog.introduce`, `Cat.introduce`.
+    // One copy of a default method for each type taking it: `Dog.introduce`, `Cat.introduce`
+    // (for `Kennel<T>`, one per list of types, like its own methods).
     for (owner, k, j) in &info.defaults {
-        all.push(method(&info.structs[owner], owner, &f.interfaces[*k].methods[*j].0));
+        let m = method(&info.structs[owner], owner, &f.interfaces[*k].methods[*j].0);
+        match f.structs.iter().find(|s| s.name.text == *owner).filter(|s| !s.generics.is_empty()) {
+            Some(s) => {
+                generic.insert(m.0.clone(), (m, s.generics.iter().map(|g| g.name.text.clone()).collect()));
+            }
+            None => all.push(m),
+        }
     }
     let signatures: HashMap<String, (Option<Mode>, Vec<Mode>)> = (all.iter().chain(generic.values().map(|(g, _)| g)))
         .map(|g| (g.0.clone(), (g.1.as_ref().map(|r| r.0), g.2.iter().map(|p| p.mode).collect())))
@@ -1001,9 +1008,13 @@ impl<'a> Translator<'a> {
         self.current = self.new_block();
         let result = self.new_slots(&ret);
         self.on_boxed(b, interface, |t, ty, v| {
-            let num = t.numbers[method_name(&ty.owner(), method).as_str()];
+            let name = method_name(&ty.owner(), method);
+            let (num, site) = match t.numbers.get(name.as_str()) {
+                Some(&num) => (num, t.sites[num]),
+                None => (t.helper(Helper::Instance(name.clone(), ty.args().to_vec())), t.generic_sites[name.as_str()]),
+            };
             let mut vals: Slots = [v.clone(), args.concat()].concat();
-            if t.sites[num] {
+            if site {
                 vals.extend([line, col]);
             }
             let out = if receiver == Mode::Var { t.new_slots(ty) } else { vec![] };
@@ -1125,16 +1136,7 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Str(d, StrOp::Eq, vec![a[0], b[0]]));
                 d
             }
-            Type::Struct(_) | Type::Enum(_) if self.writes_equals(ty) => {
-                let name = method_name(&ty.owner(), "equals");
-                if ty.args().is_empty() {
-                    return self.call(&name, [a, b].concat(), vec![], span, &Type::Bool)[0];
-                }
-                // `Answer<Int>`: its own copy of `Answer.equals`.
-                let types = ty.args().iter().map(|t| substitute(t, &self.subst)).collect();
-                let num = self.helper(Helper::Instance(name.clone(), types));
-                self.call_to(num, self.generic_sites[name.as_str()], [a, b].concat(), vec![], span, &Type::Bool)[0]
-            }
+            Type::Struct(_) | Type::Enum(_) if self.writes_equals(ty) => self.call_on(ty, "equals", [a, b].concat(), vec![], span, &Type::Bool)[0],
             Type::Struct(_) | Type::Tuple(_) => {
                 let same = self.constant(1);
                 for (i, t) in members(ty).iter().enumerate() {
@@ -1241,7 +1243,7 @@ impl<'a> Translator<'a> {
             self.emit(Inst::Str(d, op, vec![a[0], b[0]]));
             return d;
         }
-        self.call(&method_name(&ty.text(), "less"), [a, b].concat(), vec![], span, &Type::Bool)[0]
+        self.call_on(ty, "less", [a, b].concat(), vec![], span, &Type::Bool)[0]
     }
 
     /// Runs `body` on each element of `list` (with its index), in order.
@@ -2234,7 +2236,7 @@ impl<'a> Translator<'a> {
             }
             // A type following `Display` is always shown by its `to_string`.
             Type::Struct(_) | Type::Enum(_) if self.info.follows(ty, "Display") && !self.debug => {
-                let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
+                let text = self.call_on(ty, "to_string", v.to_vec(), vec![], Span::new(0, 0), &Type::String);
                 m.push(Piece::Value(text[0], Show::String));
             }
             Type::Struct(d) if d.fields().is_empty() => m.push(Piece::Text(format!("{} {{}}", ty.text()))),
@@ -2647,6 +2649,18 @@ impl<'a> Translator<'a> {
         let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
         let num = self.helper(Helper::Instance(name.to_string(), types));
         self.call_to(num, self.generic_sites[name], vals, places, span, ty)
+    }
+
+    /// Calls `method` of `ty`: for a `Stack<Int>`, its own copy of `Stack.push` (also when the
+    /// type checker only saw a `T`, in a copy of a generic function).
+    fn call_on(&mut self, ty: &Type, method: &str, vals: Slots, places: Vec<(Place, Slots)>, span: Span, ret: &Type) -> Slots {
+        let name = method_name(&ty.owner(), method);
+        if ty.args().is_empty() || !self.generic_sites.contains_key(name.as_str()) {
+            return self.call(&name, vals, places, span, ret);
+        }
+        let types = ty.args().iter().map(|t| substitute(t, &self.subst)).collect();
+        let num = self.helper(Helper::Instance(name.clone(), types));
+        self.call_to(num, self.generic_sites[name.as_str()], vals, places, span, ret)
     }
 
     /// Calls function `num` (`site`: it receives the call location).
@@ -3789,7 +3803,7 @@ impl<'a> Translator<'a> {
                 let mut vals = vals;
                 self.arguments(&q, args, &mut vals, &mut places);
                 let result = self.ty(e);
-                self.call_at(e.id, &q, vals, places, name.span, &result)
+                self.call_on(&ty, &name.text, vals, places, name.span, &result)
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
