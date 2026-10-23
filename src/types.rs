@@ -268,6 +268,12 @@ pub fn io_error() -> Type {
     Type::Enum(Rc::new(EnumDef { name: "IoError".into(), variants: names.iter().map(|n| (n.to_string(), path())).collect() }))
 }
 
+/// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
+pub fn weekday() -> Type {
+    let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    Type::Enum(Rc::new(EnumDef { name: "Weekday".into(), variants: names.iter().map(|n| (n.to_string(), vec![])).collect() }))
+}
+
 /// Built-in methods: (receiver type, name, result, true if the result is optional: `Int?`).
 pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::Int, "to_float", Type::Float, false),
@@ -342,8 +348,11 @@ fn quoted(names: &[&str]) -> String {
     names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
 }
 
-pub const NUMBER_METHODS: &[&str] =
-    &["abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp"];
+/// The methods of `number_method`, numbers' and dates'.
+pub const NUMBER_METHODS: &[&str] = &[
+    "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
+    "plus_days", "plus_hours", "plus_minutes", "plus_seconds", "days_until", "seconds_until", "date", "weekday",
+];
 
 /// `n.abs`, `a.max(b)`, `x.sqrt`, `x.round` on an `Int` or a `Float` (Part 4, "Standard library
 /// v2"): their parameters, their result. `floor`, `ceil` and `round` give an `Int`.
@@ -357,6 +366,11 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         // `libm`'s (musl's, in Rust): the same digits in run and build (`shared::math`).
         (Type::Float, "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "ln" | "log10" | "exp") => (vec![], float()),
         (Type::Float, "floor" | "ceil" | "round") => (vec![], int()),
+        // Dates (PLAN Part 4, "Dates, the rest"): what a day or a time becomes.
+        (Type::Date | Type::DateTime, "plus_days") | (Type::DateTime, "plus_hours" | "plus_minutes" | "plus_seconds") => (vec![int()], t.clone()),
+        (Type::Date, "days_until") | (Type::DateTime, "seconds_until") => (vec![t.clone()], int()),
+        (Type::DateTime, "date") => (vec![], Type::Date),
+        (Type::Date | Type::DateTime, "weekday") => (vec![], weekday()),
         _ => return None,
     })
 }
@@ -749,6 +763,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // 1. The structs, then the signatures: what is written further down can be used.
     c.structs.insert("IoError".into(), io_error());
+    c.structs.insert("Weekday".into(), weekday());
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);

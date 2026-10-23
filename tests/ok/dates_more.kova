@@ -1,0 +1,57 @@
+// Dates, the rest (PLAN Part 4): `plus_days`, `days_until`, `weekday`, `date`… checked against Python.
+fn kind(d: Date) -> String {
+    match d.weekday {
+        Saturday => return "week-end"
+        Sunday => return "week-end"
+        _ => return "travail"
+    }
+}
+
+fn main {
+    let d := Date.year(2026) month(10) day(23)
+    print(d.weekday)
+    print(kind(d))
+    print(kind(d.plus_days(1)))
+    print(d.plus_days(1).weekday = Weekday.Saturday)
+    let noel := Date.year(2026) month(12) day(25)
+    print(d.days_until(noel))
+    print(noel.days_until(d))
+    print(d.plus_days(-365))
+    print(Date.year(2024) month(2) day(28).plus_days(1))
+    print(Date.year(1) month(1) day(1).weekday)
+    print(Date.year(1969) month(12) day(31).weekday)
+    let t := DateTime.year(2026) month(10) day(23) hour(23) minute(30)
+    print(t.plus_minutes(90))
+    print(t.plus_hours(-24))
+    print(t.plus_seconds(1))
+    print(t.plus_days(10))
+    print(t.date)
+    print(t.weekday)
+    print(t.seconds_until(DateTime.year(2026) month(10) day(24) hour(0) minute(0)))
+    print(DateTime.year(1969) month(12) day(31) hour(23) minute(59).date)
+    let w: Weekday := Weekday.Monday
+    print(w)
+    print(Date.year(9999) month(12) day(31).plus_days(1))
+}
+// expect: Weekday.Friday
+// expect: travail
+// expect: week-end
+// expect: true
+// expect: 63
+// expect: -63
+// expect: 2025-10-23
+// expect: 2024-02-29
+// expect: Weekday.Monday
+// expect: Weekday.Wednesday
+// expect: 2026-10-24 01:00:00
+// expect: 2026-10-22 23:30:00
+// expect: 2026-10-23 23:30:01
+// expect: 2026-11-02 23:30:00
+// expect: 2026-10-23
+// expect: Weekday.Friday
+// expect: 1800
+// expect: 1969-12-31
+// expect: Weekday.Monday
+// code: 101
+// stderr: error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
+// stderr: dates_more.kova:34:45

@@ -2303,11 +2303,41 @@ impl<'a> Translator<'a> {
         total
     }
 
-    /// `d.year`, `t.minute`, `d.to_string`, `d.clone`.
-    fn date_method(&mut self, v: Local, ty: &Type, name: &str) -> Local {
+    /// `d.year`, `t.minute`, `d.plus_days(3)`, `d.days_until(e)`, `d.weekday`, `d.to_string`, `d.clone`.
+    fn date_method(&mut self, v: Local, ty: &Type, name: &str, arg: Option<Local>, loc: Loc) -> Local {
         let parts = ["year", "month", "day", "hour", "minute", "second"];
         if let Some(i) = parts.iter().position(|p| *p == name) {
             return self.civil(v, ty)[i];
+        }
+        let day = if *ty == Type::Date { 1 } else { 86400 };
+        let step = [("plus_days", day), ("plus_hours", 3600), ("plus_minutes", 60), ("plus_seconds", 1)];
+        if let Some(&(_, k)) = step.iter().find(|(n, _)| *n == name) {
+            let n = self.constant(k);
+            let by = self.operation(Op::Times, arg.unwrap(), n, false, loc);
+            let r = self.operation(Op::Plus, v, by, false, loc);
+            // Still between 0001-01-01 and 9999-12-31 23:59:59.
+            let (first, after) = (-719162 * day, 2932897 * day);
+            let low = self.with(Op::Ge, r, first);
+            let high = self.with(Op::Lt, r, after);
+            let ok = self.op(Op::Times, low, high);
+            self.unless(ok, Fault::BadDate, loc);
+            return r;
+        }
+        match name {
+            "days_until" | "seconds_until" => return self.op(Op::Minus, arg.unwrap(), v),
+            // The days counted from 0000-03-01, so that the division rounds down.
+            "date" => {
+                let s = self.with(Op::Plus, v, 719468 * 86400);
+                let z = self.with(Op::Div, s, 86400);
+                return self.with(Op::Minus, z, 719468);
+            }
+            // 1970-01-01 was a Thursday (3, from Monday = 0); 719468 days is 1 more than whole weeks.
+            "weekday" => {
+                let z = if *ty == Type::Date { v } else { self.date_method(v, ty, "date", None, loc) };
+                let t = self.with(Op::Plus, z, 719468 + 2);
+                return self.with(Op::Rem, t, 7);
+            }
+            _ => {}
         }
         if name == "to_string" {
             let mut pieces = vec![];
@@ -3634,7 +3664,9 @@ impl<'a> Translator<'a> {
             ExprKind::Method { receiver, name, args } => {
                 let v = self.expr1(receiver);
                 if let ty @ (Type::Date | Type::DateTime) = self.ty(receiver) {
-                    return vec![self.date_method(v, &ty, &name.text)];
+                    let arg = args.first().map(|a| self.expr1(a));
+                    let loc = self.loc(name.span);
+                    return vec![self.date_method(v, &ty, &name.text, arg, loc)];
                 }
                 let string = |op| match op {
                     "length" => StrOp::Length,

@@ -11,6 +11,10 @@ fn main {
     let i: Int := Date.year(2026) month(1) day(1).year
     print(a < 3)
     print(i.month)
+    let j := Date.year(2026) month(1) day(1)
+    print(j.plus_days(1.5))
+    print(j.days_until(DateTime.now))
+    print(j.hour)
 }
 // error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
 // error: this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)
@@ -22,3 +26,6 @@ fn main {
 // error: different types: `Int` expected, `Float` given
 // error: different types: `Date` expected, `Int` given
 // error: `Int` has no method `month`
+// error: different types: `Int` expected, `Float` given
+// error: different types: `Date` expected, `DateTime` given
+// error: `Date` has no method `hour`
