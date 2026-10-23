@@ -10,6 +10,7 @@ fn main {
     if s != none {
         keep(move s)
     }
+    print(s)
 }
-// error: `s` is borrowed here: it cannot be moved
+// error: `s` was moved (line 11)
 // error: `s?` takes the value out of `s`, but `s` is only borrowed here

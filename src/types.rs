@@ -377,6 +377,8 @@ pub fn narrowed(cond: &Expr, then: bool) -> Vec<&str> {
             _ => vec![],
         },
         ExprKind::Binary(BinOp::And, a, b) if then => [narrowed(a, true), narrowed(b, true)].concat(),
+        // `if a = none || b = none { return }`: after it, neither is.
+        ExprKind::Binary(BinOp::Or, a, b) if !then => [narrowed(a, false), narrowed(b, false)].concat(),
         _ => vec![],
     }
 }
@@ -1339,16 +1341,36 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     }
 }
 
-/// Does the block always end with a `return`?
-fn always_returns(b: &Block) -> bool {
+/// Does the block never reach its end: a `return`, `exit`, (with `loops`) `break` or `continue` on every path?
+fn stops(b: &Block, loops: bool) -> bool {
     b.stmts.iter().any(|s| match s {
         Stmt::Return { .. } => true,
-        Stmt::If { then, otherwise: Some(otherwise), .. } => always_returns(then) && always_returns(otherwise),
-        Stmt::Match(m) => !m.arms.is_empty() && m.arms.iter().all(|a| always_returns(&a.body)),
+        Stmt::Break(_) | Stmt::Continue(_) => loops,
+        Stmt::If { then, otherwise: Some(otherwise), .. } => stops(then, loops) && stops(otherwise, loops),
+        Stmt::Match(m) => !m.arms.is_empty() && m.arms.iter().all(|a| stops(&a.body, loops)),
         // `exit(1)` stops the program: nothing after it runs.
         Stmt::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) => name.text == "exit",
         _ => false,
     })
+}
+
+fn leaves(b: &Block) -> bool {
+    stops(b, true)
+}
+
+/// `if x = none { return }` (or `if x != none { … } else { return }`): the names known present
+/// after it, until the end of the block. The 3 passes narrow them there (PLAN Part 4, "Narrowing after a guard").
+pub fn guarded(s: &Stmt) -> Vec<&str> {
+    match s {
+        Stmt::If { cond, then, otherwise } if leaves(then) && !otherwise.as_ref().is_some_and(leaves) => narrowed(cond, false),
+        Stmt::If { cond, then, otherwise: Some(o) } if leaves(o) && !leaves(then) => narrowed(cond, true),
+        _ => vec![],
+    }
+}
+
+/// Does the block always end with a `return`?
+fn always_returns(b: &Block) -> bool {
+    stops(b, false)
 }
 
 impl Checker<'_> {
@@ -2036,14 +2058,25 @@ impl Checker<'_> {
 
     /// Checks a block; `before` = variables to declare at its start (a loop counter).
     fn block(&mut self, b: &Block, before: Vec<(&Name, Type, VarKind)>) {
+        let base = self.scopes.len();
         self.scopes.push(HashMap::new());
         for (name, ty, kind) in before {
             self.declare(name, ty, kind);
         }
-        for s in &b.stmts {
+        self.statements(&b.stmts);
+        self.scopes.truncate(base);
+    }
+
+    /// In order. After `if x = none { return }`, `x` is its value until the end of the block
+    /// (`guarded`): the scopes opened for that are closed with the block's.
+    fn statements(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
             self.stmt(s);
+            let names = guarded(s);
+            if !names.is_empty() {
+                self.narrow(&names);
+            }
         }
-        self.scopes.pop();
     }
 
     /// Checks that `e` has type `expected`.
@@ -3795,14 +3828,13 @@ impl Checker<'_> {
 
     /// The type of a block giving a value: that of its last line.
     fn block_value(&mut self, b: &Block, expected: Option<&Type>) -> Type {
+        let base = self.scopes.len();
         self.scopes.push(HashMap::new());
         let (last, before) = match b.stmts.split_last() {
             Some((l, b)) => (Some(l), b),
             None => (None, &[][..]),
         };
-        for s in before {
-            self.stmt(s);
-        }
+        self.statements(before);
         let ty = match last {
             Some(Stmt::Expr(e)) => match expected {
                 Some(t) => {
@@ -3823,7 +3855,7 @@ impl Checker<'_> {
                 Type::Error
             }
         };
-        self.scopes.pop();
+        self.scopes.truncate(base);
         ty
     }
 

@@ -1,0 +1,60 @@
+// Narrowing after a guard (PLAN Part 4, "Narrowing after a guard"): once `if x = none` has left,
+// `x` is its value until the end of the block.
+fn greet(name: String?) -> String {
+    if name = none {
+        return "nobody"
+    }
+    let loud: String := name.to_upper
+    return "hello {name} ({loud}, {name.length})"
+}
+
+fn first_long(words: List<String>) -> String? {
+    for w in words {
+        let found: String? := if w.length > 3 { w.clone } else { none }
+        if found = none {
+            continue
+        }
+        print("found {found}")
+        return found
+    }
+    return none
+}
+
+fn total(a: Int?, b: Int?) -> Int {
+    if a = none || b = none {
+        return 0
+    }
+    return a + b
+}
+
+fn keep(s: move String) {
+    print("kept {s}")
+}
+
+fn main {
+    print(greet("ann"))
+    print(greet(none))
+    print(first_long(["a", "bb", "cccc", "dd"]))
+    print(total(2, 3))
+    print(total(2, none))
+    var line: String? := "x"
+    if line != none {
+        print("yes")
+    } else {
+        exit(3)
+    }
+    print(line.length)
+    let s: String? := "this"
+    if s != none {
+        keep(move s)
+    }
+}
+// expect: hello ann (ANN, 3)
+// expect: nobody
+// expect: found cccc
+// expect: "cccc"
+// expect: 5
+// expect: 0
+// expect: yes
+// expect: 1
+// expect: kept this

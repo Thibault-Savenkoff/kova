@@ -44,7 +44,7 @@ fn main {
 }
 // error: `none` needs a type
 // error: `Int` is never `none`
-// error: `x` is the value of an optional inside this `if`: it cannot change here
+// error: `x` was compared with `none`: here it is the optional's value, which cannot change
 // error: `k` has type `Int`: a `var Int?` parameter needs a variable of type `Int?`
 // error: different types: `Int` expected, `Int?` given
 // error: `?` applies to an optional (`T?`) or a result (`T or E`), not to `Int`

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
-use crate::types::{Info, Type, enum_view, is_copy, method_name, narrowed, place_root};
+use crate::types::{Info, Type, enum_view, is_copy, guarded, method_name, narrowed, place_root};
 
 /// A visible name.
 #[derive(Clone)]
@@ -188,27 +188,36 @@ impl Owner<'_> {
     }
 
     fn block(&mut self, b: &Block) {
+        let base = self.scopes.len();
         self.scopes.push(HashMap::new());
-        for s in &b.stmts {
+        self.statements(&b.stmts);
+        self.scopes.truncate(base);
+    }
+
+    /// In order; after `if x = none { return }`, `x` is narrowed until the end of the block.
+    fn statements(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
             self.stmt(s);
+            let names = guarded(s);
+            if !names.is_empty() {
+                self.narrow(&names);
+            }
         }
-        self.scopes.pop();
     }
 
     /// A block whose last line is a value (`if` expression): that value is given.
     fn block_value(&mut self, b: &Block) {
+        let base = self.scopes.len();
         self.scopes.push(HashMap::new());
         let (last, before) = b.stmts.split_last().expect("block checked by the type checker");
-        for s in before {
-            self.stmt(s);
-        }
+        self.statements(before);
         match last {
             Stmt::Expr(e) => self.give(e),
             Stmt::If { cond, then, otherwise: Some(otherwise) } => self.if_value(cond, then, otherwise),
             Stmt::Match(m) => self.match_(m, true),
             _ => unreachable!("block checked by the type checker"),
         }
-        self.scopes.pop();
+        self.scopes.truncate(base);
     }
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) {
@@ -225,11 +234,10 @@ impl Owner<'_> {
     }
 
     /// Opens a scope where each of `names` is the value of its optional: a borrow (PLAN 2.7.6).
-    fn narrow(&mut self, names: &[&str]) {
+    /// A narrowed name is still the optional's variable here: giving it away (`return found`)
+    /// gives the optional away (the KIR empties its value's slots).
+    fn narrow(&mut self, _names: &[&str]) {
         self.scopes.push(HashMap::new());
-        for n in names {
-            self.declare(n, true);
-        }
     }
 
     /// `match x { … }` (PLAN 2.7.6). On a place, the arms borrow its fields, and `x` stays frozen

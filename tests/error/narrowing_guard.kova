@@ -1,0 +1,17 @@
+// A guard that does not leave narrows nothing; a narrowed name cannot change.
+fn size(x: String?) -> Int {
+    if x = none {
+        print("none")
+    }
+    return x.length
+}
+
+fn main {
+    var y: String? := "a"
+    if y = none {
+        return
+    }
+    y := "b"
+}
+// error: `String?` has no method `length`
+// error: `y` was compared with `none`: here it is the optional's value, which cannot change

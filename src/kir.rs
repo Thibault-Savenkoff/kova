@@ -37,7 +37,7 @@ use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Mat
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
-use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{EnumDef, Info, Type, enum_view, guarded, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -1867,12 +1867,24 @@ impl<'a> Translator<'a> {
     }
 
     fn block(&mut self, b: &Block) {
+        let base = self.names.len();
         self.names.push(Scope::default());
-        for s in &b.stmts {
+        self.statements(&b.stmts);
+        self.free_scopes(base);
+        self.names.truncate(base);
+    }
+
+    /// In order. After `if x = none { return }`, `x` is its value until the end of the block
+    /// (`guarded`): a borrowed scope for it, then a new one for the names declared after.
+    fn statements(&mut self, stmts: &[Stmt]) {
+        for s in stmts {
             self.stmt(s);
+            let names = guarded(s);
+            if !names.is_empty() {
+                self.narrow(&names);
+                self.names.push(Scope::default());
+            }
         }
-        self.free_scopes(self.names.len() - 1);
-        self.names.pop();
     }
 
     fn stmt(&mut self, s: &Stmt) {
@@ -3006,11 +3018,10 @@ impl<'a> Translator<'a> {
 
     /// The value of a block: that of its last line (checked by the type checker).
     fn block_value(&mut self, b: &Block, ty: &Type) -> Slots {
+        let base = self.names.len();
         self.names.push(Scope::default());
         let (last, before) = b.stmts.split_last().expect("block checked by the type checker");
-        for s in before {
-            self.stmt(s);
-        }
+        self.statements(before);
         let v = match last {
             Stmt::Expr(e) => self.owned(e),
             Stmt::If { cond, then, otherwise: Some(otherwise) } => {
@@ -3025,8 +3036,8 @@ impl<'a> Translator<'a> {
             }
             _ => unreachable!("block checked by the type checker"),
         };
-        self.free_scopes(self.names.len() - 1);
-        self.names.pop();
+        self.free_scopes(base);
+        self.names.truncate(base);
         v
     }
 
