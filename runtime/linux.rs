@@ -250,11 +250,8 @@ pub struct Net;
 impl Network for Net {
     type Link = usize;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<usize, Fail> {
-        // ponytail: HTTPS comes with OpenSSL (PLAN "The web", step 3).
-        if secure {
-            return Err(Fail::BadUrl);
-        }
+    /// Never `secure`: src/openssl.rs encrypts around it.
+    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<usize, Fail> {
         if host.contains('\0') {
             return Err(Fail::NoHost);
         }

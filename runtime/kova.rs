@@ -13,6 +13,9 @@ extern crate alloc;
 mod bigint;
 #[path = "../src/http.rs"]
 mod http;
+#[cfg(target_os = "linux")]
+#[path = "../src/openssl.rs"]
+mod openssl;
 #[cfg(windows)]
 #[path = "../src/schannel.rs"]
 mod schannel;
@@ -816,13 +819,18 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64
     }
 }
 
-/// The system's connections, encrypted by SChannel on Windows.
+/// The system's connections, encrypted by SChannel on Windows, OpenSSL on Linux.
 #[cfg(windows)]
 fn network() -> schannel::Tls<sys::Net> {
     schannel::Tls(sys::Net)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn network() -> openssl::Tls<sys::Net> {
+    openssl::Tls(sys::Net)
+}
+
+#[cfg(target_os = "macos")]
 fn network() -> sys::Net {
     sys::Net
 }

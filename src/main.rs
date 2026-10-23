@@ -10,6 +10,8 @@ mod debug;
 mod diag;
 mod format;
 mod http;
+#[cfg(target_os = "linux")]
+mod openssl;
 #[cfg(windows)]
 mod schannel;
 mod interp;

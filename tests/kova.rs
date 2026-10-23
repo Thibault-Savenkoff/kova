@@ -786,8 +786,8 @@ fn web() {
 /// network is promised (`KOVA_NETWORK`, set by the GitHub workflow).
 #[test]
 fn https() {
-    // ponytail: Windows only until OpenSSL (Linux) and Network.framework (Mac) are there.
-    if std::env::var_os("KOVA_NETWORK").is_none() || !cfg!(windows) {
+    // ponytail: not on the Mac until Network.framework is there.
+    if std::env::var_os("KOVA_NETWORK").is_none() || cfg!(target_os = "macos") {
         return;
     }
     let source = "tests/web/https.kova";

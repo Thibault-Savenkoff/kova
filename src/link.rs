@@ -389,7 +389,8 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let stub_size = if arm { 12 } else { 6 };
     let stubs = align(at, 4);
     let stub = |f: &str| stubs + stub_size * r.imports.iter().position(|g| g == f).unwrap() as u64;
-    let mut strings = b"\0libc.so.6\0".to_vec();
+    // `dlopen` (src/openssl.rs) is in `libc.so.6` since glibc 2.34, in `libdl.so.2` before.
+    let mut strings = b"\0libc.so.6\0libdl.so.2\0".to_vec();
     let names: Vec<u64> = r.imports.iter().map(|f| {
         let at = strings.len() as u64;
         strings.extend(f.as_bytes());
@@ -408,9 +409,9 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let got_at = first_end + shift;
     let dynamic_at = got_at + 8 * r.got.len() as u64;
     let table: Vec<(u64, u64)> = if dynamic {
-        // NEEDED, HASH, STRTAB, SYMTAB, RELA, RELASZ, RELAENT, STRSZ, SYMENT; every address at once
+        // NEEDED (twice), HASH, STRTAB, SYMTAB, RELA, RELASZ, RELAENT, STRSZ, SYMENT; every address at once
         // (BIND_NOW, FLAGS = BIND_NOW, FLAGS_1 = NOW); the end.
-        vec![(1, 1), (4, hash), (5, dynstr), (6, dynsym), (7, rela), (8, 24 * n), (9, 24), (10, strings.len() as u64), (11, 24), (24, 0), (30, 8), (0x6fff_fffb, 1), (0, 0)]
+        vec![(1, 1), (1, 11), (4, hash), (5, dynstr), (6, dynsym), (7, rela), (8, 24 * n), (9, 24), (10, strings.len() as u64), (11, 24), (24, 0), (30, 8), (0x6fff_fffb, 1), (0, 0)]
     } else {
         vec![]
     };
