@@ -7,11 +7,13 @@ fn size(x: String?) -> Int {
 }
 
 fn main {
+    // A `var` may still change: it stays a `String?` after the guard.
     var y: String? := "a"
     if y = none {
         return
     }
+    print(y.length)
     y := "b"
 }
 // error: `String?` has no method `length`
-// error: `y` was compared with `none`: here it is the optional's value, which cannot change
+// error: or after `if x = none { return }` when `x` is not a `var`

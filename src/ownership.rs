@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
-use crate::types::{Info, Type, enum_view, is_copy, guarded, method_name, narrowed, place_root};
+use crate::types::{Info, Type, enum_view, is_copy, method_name, narrowed, place_root};
 
 /// A visible name.
 #[derive(Clone)]
@@ -190,19 +190,10 @@ impl Owner<'_> {
     fn block(&mut self, b: &Block) {
         let base = self.scopes.len();
         self.scopes.push(HashMap::new());
-        self.statements(&b.stmts);
-        self.scopes.truncate(base);
-    }
-
-    /// In order; after `if x = none { return }`, `x` is narrowed until the end of the block.
-    fn statements(&mut self, stmts: &[Stmt]) {
-        for s in stmts {
+        for s in &b.stmts {
             self.stmt(s);
-            let names = guarded(s);
-            if !names.is_empty() {
-                self.narrow(&names);
-            }
         }
+        self.scopes.truncate(base);
     }
 
     /// A block whose last line is a value (`if` expression): that value is given.
@@ -210,7 +201,9 @@ impl Owner<'_> {
         let base = self.scopes.len();
         self.scopes.push(HashMap::new());
         let (last, before) = b.stmts.split_last().expect("block checked by the type checker");
-        self.statements(before);
+        for s in before {
+            self.stmt(s);
+        }
         match last {
             Stmt::Expr(e) => self.give(e),
             Stmt::If { cond, then, otherwise: Some(otherwise) } => self.if_value(cond, then, otherwise),

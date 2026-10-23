@@ -37,7 +37,7 @@ use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKin
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
-use crate::types::{EnumDef, Info, Type, enum_view, guarded, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -1888,12 +1888,14 @@ impl<'a> Translator<'a> {
     }
 
     /// In order. After `if x = none { return }`, `x` is its value until the end of the block
-    /// (`guarded`): a borrowed scope for it, then a new one for the names declared after.
+    /// (`Info::guards`): a borrowed scope for it, then a new one for the names declared after.
     fn statements(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             self.stmt(s);
-            let names = guarded(s);
-            if !names.is_empty() {
+            if let Stmt::If { cond, .. } = s
+                && let Some(names) = self.info.guards.get(&cond.id)
+            {
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
                 self.narrow(&names);
                 self.names.push(Scope::default());
             }

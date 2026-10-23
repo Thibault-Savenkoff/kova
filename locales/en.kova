@@ -181,6 +181,7 @@ lang en {
     result_help := "`ensure result >= 0` checks the value returned by the function"
     tuple_no_value := "this expression gives no value to put in a tuple"
     no_method := "`{type}` has no method `{name}`"
+    optional_method_help := "it may be `none`: use it inside `if x != none \{ … \}`, or after `if x = none \{ return \}` when `x` is not a `var`"
     methods_of := "methods of `{type}`: {methods}"
     no_arguments := "`{name}` takes no argument"
     expression_nothing := "this expression returns nothing"

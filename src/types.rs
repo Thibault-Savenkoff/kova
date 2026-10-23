@@ -181,6 +181,7 @@ pub fn holds(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
 fn must_hold(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
     match t {
         Type::Struct(d) if d.name == name => true,
+        Type::Enum(d) if d.name == name => true,
         Type::Struct(d) if !seen.contains(&d.name) => {
             seen.push(d.name.clone());
             d.fields().iter().any(|(_, t)| must_hold(t, name, seen))
@@ -620,6 +621,9 @@ pub struct Info {
     /// For the editor: each `match` on an enum, an optional or a result (from its subject to its
     /// `}`), with the cases it doesn't handle as they are written: `Circle(radius)`, `none`.
     pub matches: Vec<(Span, Vec<String>)>,
+    /// By the `Expr::id` of a guard's condition (`if x = none { return }`): the names narrowed
+    /// after it, until the end of the block.
+    pub guards: HashMap<usize, Vec<String>>,
     /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
     pub invoked: HashSet<usize>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
@@ -831,6 +835,7 @@ struct Checker<'a> {
     seen: Vec<Seen>,
     hints: Vec<(Span, Type)>,
     matches: Vec<(Span, Vec<String>)>,
+    guards: HashMap<usize, Vec<String>>,
     diags: Vec<Diag>,
 }
 
@@ -892,6 +897,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         seen: vec![],
         hints: vec![],
         matches: vec![],
+        guards: HashMap::new(),
         diags: vec![],
     };
     // Hovering a declaration shows it too.
@@ -1229,6 +1235,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         seen,
         hints,
         matches,
+        guards: c.guards,
         invoked,
         captures: HashMap::new(),
     };
@@ -1361,8 +1368,9 @@ fn leaves(b: &Block) -> bool {
 }
 
 /// `if x = none { return }` (or `if x != none { … } else { return }`): the names known present
-/// after it, until the end of the block. The 3 passes narrow them there (PLAN Part 4, "Narrowing after a guard").
-pub fn guarded(s: &Stmt) -> Vec<&str> {
+/// after it, until the end of the block (PLAN Part 4, "Narrowing after a guard"). The checker
+/// keeps those that cannot change (`Info::guards`); the KIR reads them there.
+fn guarded(s: &Stmt) -> Vec<&str> {
     match s {
         Stmt::If { cond, then, otherwise } if leaves(then) && !otherwise.as_ref().is_some_and(leaves) => narrowed(cond, false),
         Stmt::If { cond, then, otherwise: Some(o) } if leaves(o) && !leaves(then) => narrowed(cond, true),
@@ -1699,8 +1707,16 @@ impl Checker<'_> {
         };
         // `struct Cell { next: Cell }`: no value could ever be made, it would need one already.
         // `next: Cell?` is laid out in a box (`kir::laid_out`), so a `copy struct` cannot have it.
+        // `enum Bad { Only(x: Bad) }`: every variant needs one already.
+        if let Type::Enum(d) = &ty
+            && let Some(variants) = &s.variants
+            && !variants.is_empty()
+            && d.variants().iter().all(|(_, fs)| fs.iter().any(|(_, t)| must_hold(t, &s.name.text, &mut vec![])))
+        {
+            self.contains_itself(&s.name);
+        }
         for (span, t) in held {
-            if must_hold(&t, &s.name.text, &mut vec![]) {
+            if s.variants.is_none() && must_hold(&t, &s.name.text, &mut vec![]) {
                 self.contains_itself(&Name { text: s.name.text.clone(), span });
             } else if s.copy && holds(&t, &s.name.text, &mut vec![]) {
                 let name = &self.src[span.start..span.end];
@@ -2070,13 +2086,16 @@ impl Checker<'_> {
     }
 
     /// In order. After `if x = none { return }`, `x` is its value until the end of the block
-    /// (`guarded`): the scopes opened for that are closed with the block's.
+    /// (`guarded`), unless it is a `var` (it may still change); the scopes opened for that are
+    /// closed with the block's.
     fn statements(&mut self, stmts: &[Stmt]) {
         for s in stmts {
             self.stmt(s);
-            let names = guarded(s);
+            let Stmt::If { cond, .. } = s else { continue };
+            let names: Vec<&str> = guarded(s).into_iter().filter(|n| self.lookup(n).is_some_and(|v| v.kind != VarKind::Var)).collect();
             if !names.is_empty() {
                 self.narrow(&names);
+                self.guards.insert(cond.id, names.iter().map(|n| n.to_string()).collect());
             }
         }
     }
@@ -2920,6 +2939,10 @@ impl Checker<'_> {
                 }
             },
             Type::Error => Type::Error,
+            Type::Optional(_) => {
+                self.diags.push(Diag::new(name.span, t!("no_method", type = ty.text(), name = name.text)).help(t!("optional_method_help")));
+                Type::Error
+            }
             other => {
                 self.error(name.span, t!("no_method", type = other.text(), name = name.text));
                 Type::Error
@@ -3459,6 +3482,8 @@ impl Checker<'_> {
                     if t == Type::Int && number_method(&Type::Float, &name.text).is_some() {
                         let code = format!("{}.to_float.{}", &self.src[receiver.span.start..receiver.span.end], name.text);
                         d = d.help(t!("float_method", name = name.text, code = code));
+                    } else if let Type::Optional(_) = t {
+                        d = d.help(t!("optional_method_help"));
                     } else if !known.is_empty() {
                         d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));
                     }

@@ -12,9 +12,15 @@ copy struct Link {
     next: Link?
 }
 
+enum Bad {
+    Only(x: Bad)
+    Both(a: Int, b: Bad)
+}
+
 fn main {
 }
 // error: `Cell` contains itself: its size would be infinite
 // error: write `Cell?` (it may be `none`) or `List<Cell>`
 // error: `Pair` contains itself
 // error: `Link` is a `copy struct`: its field `next` (`Link?`) cannot be copied
+// error: `Bad` contains itself

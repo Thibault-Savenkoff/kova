@@ -37,7 +37,7 @@ fn main {
     print(first_long(["a", "bb", "cccc", "dd"]))
     print(total(2, 3))
     print(total(2, none))
-    var line: String? := "x"
+    let line: String? := "x"
     if line != none {
         print("yes")
     } else {
