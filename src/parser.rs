@@ -1303,6 +1303,12 @@ impl Parser<'_> {
     /// `match x { Circle(r) => …, _ => … }`: arms separated by `,` or a line break.
     fn match_(&mut self) -> R<Match> {
         self.advance(); // match
+        let mode = if self.is_keyword("var") {
+            self.advance();
+            Mode::Var
+        } else {
+            Mode::Read
+        };
         let subject = self.heading_expr()?;
         self.skip_newlines();
         self.expect("{")?;
@@ -1324,7 +1330,7 @@ impl Parser<'_> {
             }
         };
         self.no_literal = saved;
-        Ok(Match { subject, arms, close: close? })
+        Ok(Match { mode, subject, arms, close: close? })
     }
 
     /// `Circle(r) => 3.14 * r * r` or `Red => { … }`.

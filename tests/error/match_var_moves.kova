@@ -1,0 +1,12 @@
+// A name of a `match var` case stays in the value: it cannot be given away.
+fn keep(s: move String) {
+}
+
+fn main {
+    var name: String? := "a"
+    match var name {
+        none => print("none")
+        n => keep(move n)
+    }
+}
+// error: `n` is borrowed here: it cannot be moved

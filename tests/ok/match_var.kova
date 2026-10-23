@@ -1,0 +1,105 @@
+// `match var` (PLAN Part 4, "match var"): the names of a case change the value matched.
+struct Tree {
+    value: Int
+    left: Tree?
+    right: Tree?
+
+    fn leaf(x: Int) -> Tree {
+        return Tree { value := x, left := none, right := none }
+    }
+
+    fn insert(var self, x: Int) {
+        if x < self.value {
+            match var self.left {
+                none => self.left := Tree.leaf(x)
+                l => l.insert(x)
+            }
+        } else {
+            match var self.right {
+                none => self.right := Tree.leaf(x)
+                r => r.insert(x)
+            }
+        }
+    }
+
+    fn walk(self, out: var List<Int>) {
+        match self.left {
+            none => {}
+            l => l.walk(var out)
+        }
+        out.add(self.value)
+        match self.right {
+            none => {}
+            r => r.walk(var out)
+        }
+    }
+}
+
+enum Shape {
+    Circle(radius: Float)
+    Rect(width: Float, height: Float)
+}
+
+enum Expr {
+    Num(value: Int)
+    Add(left: Expr, right: Expr)
+}
+
+fn double(e: var Expr) {
+    match var e {
+        Num(v) => v := v * 2
+        Add(a, b) => {
+            double(var a)
+            double(var b)
+        }
+    }
+}
+
+fn first_round(shapes: var List<Shape>) -> Int {
+    var i: Int := 0
+    for s in var shapes {
+        match var s {
+            Circle(r) => {
+                r := r * 10.0
+                return i
+            }
+            Rect(w, h) => w := w + 1.0
+        }
+        i += 1
+    }
+    return -1
+}
+
+fn main {
+    var t: Tree := Tree.leaf(5)
+    for x in [3, 8, 1, 4, 9, 7] {
+        t.insert(x)
+    }
+    var out: List<Int> := []
+    t.walk(var out)
+    print(out)
+    var s := Shape.Circle(1.0)
+    match var s {
+        Circle(r) => r := 2.5
+        Rect(w, _) => w := 0.0
+    }
+    print(s)
+    var e := Expr.Add(Expr.Num(1), Expr.Add(Expr.Num(2), Expr.Num(3)))
+    double(var e)
+    print(e)
+    var shapes: List<Shape> := [Shape.Rect(1.0, 2.0), Shape.Circle(1.0), Shape.Rect(3.0, 3.0)]
+    print(first_round(var shapes))
+    print(shapes)
+    var name: String? := "ann"
+    match var name {
+        none => print("nobody")
+        n => n := n.to_upper
+    }
+    print(name)
+}
+// expect: [1, 3, 4, 5, 7, 8, 9]
+// expect: Shape.Circle(radius: 2.5)
+// expect: Expr.Add(left: Expr.Num(value: 2), right: Expr.Add(left: Expr.Num(value: 4), right: Expr.Num(value: 6)))
+// expect: 1
+// expect: [Shape.Rect(width: 2.0, height: 2.0), Shape.Circle(radius: 10.0), Shape.Rect(width: 3.0, height: 3.0)]
+// expect: "ANN"

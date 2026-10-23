@@ -236,12 +236,19 @@ impl Owner<'_> {
     /// `match x { … }` (PLAN 2.7.6). On a place, the arms borrow its fields, and `x` stays frozen
     /// during them unless it is copied (the KIR copies it first). On a computed value, they own them.
     fn match_(&mut self, m: &Match, value: bool) {
+        let mark = self.pending.len();
         self.borrow(&m.subject);
+        // `match var`: a case that names nothing may change it (`none => self.left := …`); the
+        // others cannot even reach it (the checker lends it to them).
+        if m.mode == Mode::Var {
+            self.pending.truncate(mark);
+        }
         let ty = self.info.types[m.subject.id].clone();
         // `None` for a `match` on values (`match n { 0 => … }`): no field to bind.
         let d = enum_view(&ty);
         let root = place_root(&m.subject, &self.info.types).map(|(r, _)| self.lookup(r).id);
-        let frozen = root.filter(|_| !is_copy(&ty));
+        // `match var`: frozen only in the cases that name its fields (the checker lends it there).
+        let frozen = root.filter(|_| !is_copy(&ty) && m.mode == Mode::Read);
         if let Some(id) = frozen {
             self.looped.push((id, "match_frozen"));
         }

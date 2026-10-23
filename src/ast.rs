@@ -78,6 +78,8 @@ pub struct Variant {
 
 /// `match shape { Circle(r) => …, Square(s) => … }`, as a statement or giving a value.
 pub struct Match {
+    /// `match var self.left`: `Var`, the names of its cases change the value matched.
+    pub mode: Mode,
     pub subject: Expr,
     pub arms: Vec<Arm>,
     /// The `}`: where missing cases are reported.

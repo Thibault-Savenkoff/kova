@@ -670,8 +670,9 @@ enum VarKind {
     Narrowed,
     /// `self` in a method.
     Receiver(Mode),
-    /// `l` inside `for x in var l`: lent to the loop, used only through `x` (the span of `x`).
-    Lent(Span),
+    /// `l` inside `for x in var l`: lent to the loop, used only through `x` (the span of `x`);
+    /// `true`: in a case of `match var l` that names its fields.
+    Lent(Span, bool),
 }
 
 struct Variable {
@@ -2421,26 +2422,31 @@ impl Checker<'_> {
             ),
             VarKind::Counter => self.error(span, t!("counter_immutable", name = n)),
             VarKind::Element => self.error(span, t!("element_immutable", name = n)),
-            VarKind::Matched => self.error(span, t!("matched_immutable", name = n)),
+            VarKind::Matched => self.diags.push(Diag::new(span, t!("matched_immutable", name = n)).help(t!("matched_immutable_help", name = n))),
             VarKind::Narrowed => self.diags.push(
                 Diag::new(span, t!("narrowed_immutable", name = n)).help(t!("narrowed_immutable_help", name = n)),
             ),
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
             }
-            VarKind::Lent(x) => self.lent(n, span, x),
+            VarKind::Lent(x, matched) => self.lent(n, span, x, matched),
         }
     }
 
-    /// `l` used inside `for x in var l` (`x` at `element`).
-    fn lent(&mut self, name: &str, span: Span, element: Span) {
+    /// `l` used inside `for x in var l` (`x` at `element`), or in a case of `match var l`.
+    fn lent(&mut self, name: &str, span: Span, element: Span, matched: bool) {
         // `l.add(3)`: read, then changed; said once.
         if self.diags.iter().any(|d| d.span.start == span.start) {
             return;
         }
         let (line, _) = line_col(self.src, element.start);
         let x = &self.src[element.start..element.end];
-        self.diags.push(Diag::new(span, t!("lent_to_loop", name = name, line = line)).help(t!("lent_to_loop_help", name = name, element = x)));
+        let d = if matched {
+            Diag::new(span, t!("lent_to_match", name = name, line = line)).help(t!("lent_to_match_help", element = x))
+        } else {
+            Diag::new(span, t!("lent_to_loop", name = name, line = line)).help(t!("lent_to_loop_help", name = name, element = x))
+        };
+        self.diags.push(d);
     }
 
     /// `rex.rename(...)` with `var self`, or `f(var a)`: the place must be a variable that may
@@ -3105,7 +3111,7 @@ impl Checker<'_> {
                 if let Some((root, _)) = place_root(list, &self.types)
                     && let Some(v) = self.lookup(root)
                 {
-                    lent.insert(root.to_string(), Variable { ty: v.ty.clone(), kind: VarKind::Lent(name.span), span: v.span });
+                    lent.insert(root.to_string(), Variable { ty: v.ty.clone(), kind: VarKind::Lent(name.span, false), span: v.span });
                 }
                 self.scopes.push(lent);
                 self.loops += 1;
@@ -3211,8 +3217,8 @@ impl Checker<'_> {
             ExprKind::Var(name) => match self.lookup(name) {
                 Some(v) => {
                     let (ty, decl) = (v.ty.clone(), v.span);
-                    if let VarKind::Lent(x) = v.kind {
-                        self.lent(name, e.span, x);
+                    if let VarKind::Lent(x, matched) = v.kind {
+                        self.lent(name, e.span, x, matched);
                     }
                     self.mention_variable(name, &ty, e.span, decl);
                     match ty {
@@ -3732,6 +3738,9 @@ impl Checker<'_> {
     /// `match x { … }`; `value`: each arm gives a value (of the `expected` type if known).
     fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
         let t = self.expr(&m.subject);
+        if m.mode == Mode::Var {
+            self.changes(&m.subject, t!("match_var_temporary"));
+        }
         if matches!(t, Type::Int | Type::Char | Type::String) {
             return self.match_values(m, &t, expected, value);
         }
@@ -3851,9 +3860,24 @@ impl Checker<'_> {
                         }
                         None => vec![],
                     };
+                    // `match var self.left { l => l.insert(x) }`: `l` changes the value, which is
+                    // lent to this case (only to the cases that name its fields).
+                    if m.mode == Mode::Var
+                        && let Some(first) = binds.first()
+                        && let Some((root, _)) = place_root(&m.subject, &self.types)
+                        && let Some(v) = self.lookup(root)
+                    {
+                        let at = match first {
+                            Pattern::Name(n) => n.span,
+                            Pattern::Tuple(_, s) | Pattern::Ignore(s) => *s,
+                        };
+                        let lent = Variable { ty: v.ty.clone(), kind: VarKind::Lent(at, true), span: v.span };
+                        self.scopes.last_mut().unwrap().insert(root.to_string(), lent);
+                    }
+                    let kind = if m.mode == Mode::Var { VarKind::Var } else { VarKind::Matched };
                     for (i, p) in binds.iter().enumerate() {
                         let ty = fields.get(i).cloned().unwrap_or(Type::Error);
-                        self.bind(p, &ty, VarKind::Matched);
+                        self.bind(p, &ty, kind);
                     }
                 }
             }

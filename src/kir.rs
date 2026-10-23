@@ -751,9 +751,10 @@ struct Translator<'a> {
     current: BlockId,
     /// For each open loop: (target of `continue`, target of `break`, number of open blocks).
     loops: Vec<(BlockId, BlockId, usize)>,
-    /// For each open `for x in var l`: its loop (in `loops`), the List, the index and `x`'s slots,
-    /// written back into the element at the end of each turn, and before a `break` or a `return`.
-    writes: Vec<(usize, Local, Local, Slots)>,
+    /// For each open `for x in var l` (and case of `match var`): the number of loops open around
+    /// its body, where its value lives and the slots that hold it meanwhile, written back at the
+    /// end of each turn (of the case), and before a `break` or a `return`.
+    writes: Vec<(usize, Place, Slots)>,
     /// The Strings and Lists made by the current statement and not given to anyone yet
     /// (with what they are, see `heap`): freed at the end of the statement.
     temps: Vec<(Local, Type)>,
@@ -1866,10 +1867,9 @@ impl<'a> Translator<'a> {
     /// Runs `body` with `name` bound to slots it borrows: no block frees them.
     /// `for x in var l`: puts back each `x` of the loops from number `from` on into its element.
     fn write_back(&mut self, from: usize) {
-        for (_, l, i, v) in self.writes.clone().into_iter().filter(|w| w.0 >= from) {
-            for (k, &s) in v.iter().enumerate() {
-                self.emit(Inst::ListStore(l, i, k, s));
-            }
+        // The innermost first: a box of a `match var` field before the value holding it.
+        for (_, place, v) in self.writes.clone().into_iter().rev().filter(|w| w.0 >= from) {
+            self.write(&place, &v);
         }
     }
 
@@ -1968,12 +1968,13 @@ impl<'a> Translator<'a> {
                 }
             }
             Stmt::Break(_) => {
-                self.write_back(self.loops.len() - 1);
+                self.write_back(self.loops.len());
                 let (_, exit, depth) = *self.loops.last().unwrap();
                 self.free_scopes(depth);
                 self.finish(End::Jump(exit));
             }
             Stmt::Continue(_) => {
+                self.write_back(self.loops.len());
                 let (next, _, depth) = *self.loops.last().unwrap();
                 self.free_scopes(depth);
                 self.finish(End::Jump(next));
@@ -2067,7 +2068,8 @@ impl<'a> Translator<'a> {
                 let v = self.load(l, i, &elem);
                 self.loops.push((next, exit, self.names.len()));
                 if *mode == ast::Mode::Var {
-                    self.writes.push((self.loops.len() - 1, l, i, v.clone()));
+                    let place = Place::Element { list: l, index: i, start: 0, kinds: scalars(&elem) };
+                    self.writes.push((self.loops.len(), place, v.clone()));
                 }
                 // Borrowed from the List: nobody frees it.
                 match value {
@@ -2083,7 +2085,7 @@ impl<'a> Translator<'a> {
                     }
                 }
                 self.go(End::Jump(next), next);
-                self.write_back(self.loops.len() - 1);
+                self.write_back(self.loops.len());
                 if *mode == ast::Mode::Var {
                     self.writes.pop();
                 }
@@ -3082,9 +3084,11 @@ impl<'a> Translator<'a> {
             _ => false,
         };
         let borrowed = part || place_root(&m.subject, &self.info.types).is_some();
+        let mut place = None;
         let v = if borrowed {
             let (p, _) = self.place(&m.subject);
             let v = self.read(&p);
+            place = Some(p);
             if is_copy(&ty) {
                 let c = self.new_slots(&ty);
                 self.copy(&c, &v);
@@ -3146,11 +3150,16 @@ impl<'a> Translator<'a> {
                 _ => self.go(End::Jump(body), body),
             }
             self.names.push(Scope { borrowed, vars: HashMap::new() });
+            let marks = self.writes.len();
             match arm.case.variant() {
                 Some((name, binds)) if !binds.is_empty() => {
                     let d = view.as_ref().expect("an enum, an optional or a result");
                     let (i, fields) = d.variant(name).unwrap();
                     let mut at = variant_slice(d, i).0;
+                    // `match var`: the value changed through the names goes back to its place.
+                    if m.mode == ast::Mode::Var {
+                        self.writes.push((self.loops.len(), place.clone().expect("a place checked by the type checker"), v.clone()));
+                    }
                     for (p, (_, t)) in binds.into_iter().zip(fields) {
                         let n = scalars(&laid_out(&d.name, t)).len();
                         let mut slots = v[at..at + n].to_vec();
@@ -3159,6 +3168,9 @@ impl<'a> Translator<'a> {
                             slots = self.unbox(v[at], t);
                             if !borrowed {
                                 self.emit(Inst::ListFree(v[at]));
+                            } else if m.mode == ast::Mode::Var {
+                                let index = self.constant(0);
+                                self.writes.push((self.loops.len(), Place::Element { list: v[at], index, start: 0, kinds: scalars(t) }, slots.clone()));
                             }
                         }
                         self.bind(p, &slots, t);
@@ -3174,6 +3186,9 @@ impl<'a> Translator<'a> {
                     self.copy(dst, &value);
                 }
                 None => self.block(&arm.body),
+            }
+            for (_, p, v) in self.writes.split_off(marks).into_iter().rev() {
+                self.write(&p, &v);
             }
             self.free_scopes(self.names.len() - 1);
             self.names.pop();
