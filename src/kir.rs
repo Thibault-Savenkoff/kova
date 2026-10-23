@@ -3107,8 +3107,19 @@ impl<'a> Translator<'a> {
                     let mark = self.temps.len();
                     let mut test = None;
                     for x in values {
-                        let x = self.expr(x);
-                        let is = self.equal(&v, &x, &ty, m.subject.span);
+                        let is = match &x.kind {
+                            // `1..=5 =>`: from 1 to 5.
+                            ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), a, b) => {
+                                let (lo, hi) = (self.expr1(a), self.expr1(b));
+                                let above = self.op(Op::Ge, v[0], lo);
+                                let below = self.op(if *op == BinOp::Range { Op::Lt } else { Op::Le }, v[0], hi);
+                                self.op(Op::Times, above, below)
+                            }
+                            _ => {
+                                let x = self.expr(x);
+                                self.equal(&v, &x, &ty, m.subject.span)
+                            }
+                        };
                         test = Some(match test {
                             None => is,
                             Some(t) => self.op(Op::Plus, t, is),

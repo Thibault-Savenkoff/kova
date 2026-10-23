@@ -1,0 +1,23 @@
+// Ranges as cases (PLAN Part 4, "Match on values").
+fn main {
+    let n: Int := 3
+    let top: Int := 9
+    match n {
+        1..=5 => print("low")
+        5..=9 => print("mid")
+        2, 3 => print("again")
+        7..3 => print("none")
+        1..top => print("computed")
+        _ => print("other")
+    }
+    match "b" {
+        "a".."c" => print("text")
+        _ => print("other")
+    }
+}
+// error: `5..=9` overlaps a case of line 6: each value has a single case
+// error: the case `2` is already handled (line 6)
+// error: the case `3` is already handled (line 6)
+// error: `7..3` holds no value
+// error: a case is a value written out
+// error: a range of texts cannot be a case: write each text

@@ -1,0 +1,44 @@
+// Ranges as cases (PLAN Part 4, "Match on values").
+fn stage(age: Int) -> String {
+    return match age {
+        0 => "baby"
+        1..=12 => "child"
+        13..18 => "teen"
+        - 5..0, 1000 => "odd"
+        _ => "adult"
+    }
+}
+
+fn kind(c: Char) -> String {
+    return match c {
+        'a'..='z' => "lower"
+        'A'..='Z' => "upper"
+        '0'..='9', '_' => "digit or _"
+        _ => "other"
+    }
+}
+
+fn main {
+    for a in [0, 5, 12, 13, 17, 18, -1, -5, -6, 1000] {
+        print("{a}: {stage(a)}")
+    }
+    for c in "aZ5_ é".chars {
+        print(kind(c))
+    }
+}
+// expect: 0: baby
+// expect: 5: child
+// expect: 12: child
+// expect: 13: teen
+// expect: 17: teen
+// expect: 18: adult
+// expect: -1: odd
+// expect: -5: odd
+// expect: -6: adult
+// expect: 1000: odd
+// expect: lower
+// expect: upper
+// expect: digit or _
+// expect: digit or _
+// expect: other
+// expect: other

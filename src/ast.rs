@@ -98,7 +98,8 @@ pub enum Case {
     Variant { name: Name, binds: Vec<Pattern> },
     /// `n =>` on an optional: a name alone receives the value (PLAN Part 4, J4 step 2).
     Bind(Pattern),
-    /// `0`, `1, 2`, `'a'`, `"yes"`: values written out, on an `Int`, a `Char` or a `String`
+    /// `0`, `1, 2`, `'a'`, `"yes"`, `1..=5`: values written out (ranges too, but not of texts),
+    /// on an `Int`, a `Char` or a `String`
     /// (PLAN Part 4, "Match on values").
     Values(Vec<Expr>),
     /// `_`: every other case.

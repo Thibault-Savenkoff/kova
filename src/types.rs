@@ -1350,6 +1350,16 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     }
 }
 
+/// `5`, `-1`, `'a'` (its code) in a case of a `match` on values; `None` if not written out.
+fn number_written(e: &Expr) -> Option<i128> {
+    match &e.kind {
+        ExprKind::Int(n) => Some(*n as i128),
+        ExprKind::Char(c) => Some(*c as i128),
+        ExprKind::Unary(UnOp::Neg, x) => number_written(x).filter(|_| matches!(x.kind, ExprKind::Int(_))).map(|n| -n),
+        _ => None,
+    }
+}
+
 /// Does the block never reach its end: a `return`, `exit`, (with `loops`) `break` or `continue` on every path?
 fn stops(b: &Block, loops: bool) -> bool {
     b.stmts.iter().any(|s| match s {
@@ -3891,8 +3901,10 @@ impl Checker<'_> {
     /// `match n { 0 => …, 1, 2 => …, _ => … }` on an `Int`, a `Char` or a `String`: each case
     /// is a value written out, once; `_` ends it, since no list could hold every value.
     fn match_values(&mut self, m: &Match, t: &Type, expected: Option<&Type>, value: bool) -> Type {
-        // The value as written (`-1`, `"yes"`) → where its case is.
+        // A text as written → where its case is; the numbers (a `Char`'s code) of each case, from
+        // first to last, with where it is.
         let mut seen: HashMap<String, Span> = HashMap::new();
+        let mut held: Vec<(i128, i128, Span)> = vec![];
         let mut any: Option<Span> = None;
         let mut result: Option<Type> = None;
         for arm in &m.arms {
@@ -3910,18 +3922,51 @@ impl Checker<'_> {
                 Case::Any(_) => any = Some(span),
                 Case::Values(vs) => {
                     for v in vs {
-                        self.expect(v, t);
-                        let literal = match &v.kind {
-                            ExprKind::Int(_) | ExprKind::Char(_) | ExprKind::Str(_) => true,
-                            ExprKind::Unary(UnOp::Neg, x) => matches!(x.kind, ExprKind::Int(_)),
-                            _ => false,
-                        };
                         let shown = self.src[v.span.start..v.span.end].to_string();
-                        if !literal {
-                            self.error(v.span, t!("case_literal", type = t.text()));
-                        } else if let Some(first) = seen.insert(shown.clone(), v.span) {
+                        let numbers = match &v.kind {
+                            ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), a, b) => {
+                                self.expect(a, t);
+                                self.expect(b, t);
+                                if *t == Type::String {
+                                    self.error(v.span, t!("case_range_text"));
+                                    continue;
+                                }
+                                match (number_written(a), number_written(b)) {
+                                    (Some(lo), Some(hi)) => Some((lo, if *op == BinOp::Range { hi - 1 } else { hi })),
+                                    _ => {
+                                        self.error(v.span, t!("case_literal"));
+                                        continue;
+                                    }
+                                }
+                            }
+                            ExprKind::Str(_) => {
+                                self.expect(v, t);
+                                if let Some(first) = seen.insert(shown.clone(), v.span) {
+                                    let (line, _) = line_col(self.src, first.start);
+                                    self.error(v.span, t!("case_twice", name = shown, line = line));
+                                }
+                                None
+                            }
+                            _ => {
+                                self.expect(v, t);
+                                match number_written(v) {
+                                    Some(n) => Some((n, n)),
+                                    None => {
+                                        self.error(v.span, t!("case_literal"));
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+                        let Some((lo, hi)) = numbers else { continue };
+                        if lo > hi {
+                            self.error(v.span, t!("case_range_empty", range = shown));
+                        } else if let Some(&(a, b, first)) = held.iter().find(|(a, b, _)| lo <= *b && *a <= hi) {
                             let (line, _) = line_col(self.src, first.start);
-                            self.error(v.span, t!("case_twice", name = shown, line = line));
+                            let key = if a <= lo && hi <= b { "case_twice" } else { "case_overlap" };
+                            self.error(v.span, crate::locale::text(key, &[("name", &shown), ("line", &line.to_string())]));
+                        } else {
+                            held.push((lo, hi, v.span));
                         }
                     }
                 }

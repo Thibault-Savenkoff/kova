@@ -1335,10 +1335,12 @@ impl Parser<'_> {
             let span = self.advance().span;
             Case::Variant { name: Name { text: "none".into(), span }, binds: vec![] }
         } else if matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str) || self.is_sym("-") {
-            let mut values = vec![self.unary()?];
+            // From the level of `..`: `1..=5` is a case too.
+            let range = LEVELS.iter().position(|(ops, _)| ops[0].0 == "..").unwrap();
+            let mut values = vec![self.level(range)?];
             while self.is_sym(",") {
                 self.advance();
-                values.push(self.unary()?);
+                values.push(self.level(range)?);
             }
             Case::Values(values)
         } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
