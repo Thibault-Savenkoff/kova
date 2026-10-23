@@ -649,6 +649,9 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             let (k, v) = (k.text(), v.text());
             let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?")), ("keys", format!("-> List<{k}>")), ("values", format!("-> List<{v}>"))];
             items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
+            if k == "String" {
+                items.push(item("to_json", CompletionItemKind::METHOD, "-> String".into()));
+            }
         }
         Type::Set(e) => {
             let e = e.text();

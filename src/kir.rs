@@ -4450,7 +4450,7 @@ impl<'a> Translator<'a> {
                 v
             }
             // `book.to_json` (PLAN Part 4 "JSON").
-            ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_) | Type::List(_)) => {
+            ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_) | Type::List(_) | Type::Map(..)) => {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
                 let text = self.json_text(&v, &ty);

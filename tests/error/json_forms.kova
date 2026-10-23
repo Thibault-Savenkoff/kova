@@ -29,6 +29,9 @@ fn main {
     print(List<Date>.from_json(""))
     let m: List<Meeting> := []
     print(m.to_json)
+    print(Map<Int, String>.from_json(""))
+    let n: Map<String, Date> := []
+    print(n.to_json)
 }
 // error: `Meeting.from_json` cannot hold `day`: a `Date` has no JSON form
 // error: `Scores.to_json` cannot hold `by`: a `Map<Int, String>` has no JSON form
@@ -38,3 +41,5 @@ fn main {
 // error: help: JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them
 // error: `List<Date>.from_json` cannot hold its elements: a `Date` has no JSON form
 // error: `List<Meeting>.to_json` cannot hold `day`: a `Date` has no JSON form
+// error: `Map<Int, String>.from_json`: a `Map<Int, String>` has no JSON form
+// error: `Map<String, Date>.to_json` cannot hold its elements: a `Date` has no JSON form

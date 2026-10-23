@@ -2860,6 +2860,10 @@ impl Checker<'_> {
             // Copies, in the order the keys were added.
             "keys" => (vec![], Type::List(Box::new(k.clone()))),
             "values" => (vec![], Type::List(Box::new(v.clone()))),
+            "to_json" => {
+                self.json_form(t, &format!("{}.to_json", t.text()), name.span);
+                (vec![], Type::String)
+            }
             "clone" => return None,
             _ => {
                 self.diags.push(
@@ -2963,7 +2967,7 @@ impl Checker<'_> {
                 return self.unchecked(args);
             };
             let t = self.expr(value);
-            if !matches!(t, Type::Struct(_) | Type::List(_)) && t != Type::Error {
+            if !matches!(t, Type::Struct(_) | Type::List(_) | Type::Map(..)) && t != Type::Error {
                 self.error(value.span, t!("json_answer", type = t.text()));
             } else {
                 self.json_form(&t, "Answer.json", name.span);
@@ -2976,6 +2980,13 @@ impl Checker<'_> {
             self.json_form(&list, &format!("{}.from_json", list.text()), name.span);
             self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
             return Type::Result(Box::new(list), Box::new(json_error()));
+        }
+        // `Map<String, Book>.from_json(text)`: a JSON object whose keys are not known before.
+        if let ("Map", "from_json", [k, v]) = (ty.text.as_str(), name.text.as_str(), types) {
+            let map = Type::Map(Box::new(self.written_type(k)), Box::new(self.written_type(v)));
+            self.json_form(&map, &format!("{}.from_json", map.text()), name.span);
+            self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+            return Type::Result(Box::new(map), Box::new(json_error()));
         }
         if let kind @ ("List" | "Map" | "Set") = ty.text.as_str() {
             let help = match kind {
@@ -3044,6 +3055,8 @@ impl Checker<'_> {
     fn json_form(&mut self, t: &Type, call: &str, span: Span) {
         let Some((field, why)) = self.no_json(t, "", span, &mut vec![]) else { return };
         self.diags.push(match why {
+            // `Map<Int, String>.from_json`: the type itself.
+            Ok(ty) if field.is_empty() && ty == *t => Diag::new(span, t!("json_no_form_root", call = call, type = ty.text())).help(t!("json_no_form_help")),
             // `List<Date>`: no field to name.
             Ok(ty) if field.is_empty() => Diag::new(span, t!("json_no_form_element", call = call, type = ty.text())).help(t!("json_no_form_help")),
             Ok(ty) => Diag::new(span, t!("json_no_form", call = call, field = field, type = ty.text())).help(t!("json_no_form_help")),

@@ -110,6 +110,14 @@ fn lists {
     print(List<Author>.from_json("\{\}"))
     print(List<List<Int>>.from_json("[[1], [2, \"x\"]]"))
     print([1.5, 2.0].to_json)
+    // A root object whose keys are not known before.
+    let ages: Map<String, Author> := ["x" := Author { name := "X", born := 3 }]
+    let written: String := ages.to_json
+    print(written)
+    print(Map<String, Author>.from_json(written))
+    print(Map<String, Int>.from_json("\{\"b\": 2, \"a\": 1, \"b\": 3\}"))
+    print(Map<String, Int>.from_json("\{\"a\": \"x\"\}"))
+    print(Map<String, Int>.from_json("[1]"))
 }
 
 fn main {
@@ -156,3 +164,8 @@ fn main {
 // expect: err(WrongKind("."))
 // expect: err(WrongKind("[1][1]"))
 // expect: [1.5,2.0]
+// expect: {"x":{"name":"X","born":3}}
+// expect: ok(["x" := Author { name: "X", born: 3 }])
+// expect: ok(["b" := 3, "a" := 1])
+// expect: err(WrongKind("a"))
+// expect: err(WrongKind("."))

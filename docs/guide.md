@@ -600,7 +600,8 @@ refuses a field JSON cannot hold. JSON holds `Int`, `Float`, `Bool`, `String`, `
 `Map<String, T>` and structs made of them. A field the struct does not have is ignored; a `T?` that is
 missing or `null` is `none`. A failure says where: `NotJson(line)`, `Missing(field)` or
 `WrongKind(field)`, the field written as a path (`author.name`, `tags[2]`). A text whose root is an
-array is read by `List<Book>.from_json(text)` and written by `books.to_json`. With the web:
+array is read by `List<Book>.from_json(text)` and written by `books.to_json`; an object whose keys are
+not known before, by `Map<String, Book>.from_json(text)` and `shelf.to_json`. With the web:
 `Book.from_json(page.body)`. In a Kova text, a brace is written `\{`.
 
 ## 18. A web server
@@ -631,8 +632,8 @@ program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` to s
 computer can ask (127.0.0.1). The block receives a `Request`: `q.method`, `q.path` (decoded, without
 the `?…`), `q.query(name)` and `q.header(name)` (both `String?`), `q.body`, `q.headers`.
 
-An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct or a List, as `to_json` writes
-it), `Answer.status(404)` (the body says `404 Not Found`) or `Answer.file(path)` (its type from its
+An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct, a List or a Map, as `to_json`
+writes it), `Answer.status(404)` (the body says `404 Not Found`) or `Answer.file(path)` (its type from its
 name: `.html`, `.css`, `.png`…; `404` if it does not exist or the path goes up with `..`). Add headers
 with `.header("Cache-Control") is("no-store")`. `serve_files("public") at(8080)` serves a folder alone,
 `index.html` for a folder's own address.
