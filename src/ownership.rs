@@ -541,7 +541,7 @@ impl Owner<'_> {
                 let place = &self.src[e.span.start..e.span.end];
                 self.diags.push(Diag::new(e.span, t!("field_move", place = place)).help(t!("field_move_help", place = place)));
             }
-            ExprKind::Method { receiver, name, .. } if self.info.types[receiver.id].is_field(&name.text) => {
+            ExprKind::Method { receiver, name, args } if args.is_empty() && self.info.types[receiver.id].is_field(&name.text) => {
                 self.borrow(e);
                 let place = &self.src[e.span.start..e.span.end];
                 self.diags.push(

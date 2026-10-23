@@ -29,12 +29,20 @@ impl Network for System {
     type Link = TcpStream;
 
     /// Never `secure`: each system's encryption is around it (`network`).
-    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<TcpStream, Fail> {
+    fn open(&mut self, host: &str, port: u16, _: bool, ms: u64) -> Result<TcpStream, Fail> {
         let addresses: Vec<_> = (host, port).to_socket_addrs().map_err(|_| Fail::NoHost)?.collect();
+        let limit = (ms > 0).then(|| std::time::Duration::from_millis(ms));
         let mut failure = Fail::NoHost;
         for a in addresses {
-            match TcpStream::connect(a) {
-                Ok(s) => return Ok(s),
+            let link = match limit {
+                Some(d) => TcpStream::connect_timeout(&a, d),
+                None => TcpStream::connect(a),
+            };
+            match link {
+                Ok(s) => {
+                    s.set_read_timeout(limit).and_then(|()| s.set_write_timeout(limit)).map_err(cut)?;
+                    return Ok(s);
+                }
                 Err(e) => failure = if e.kind() == ErrorKind::TimedOut { Fail::Timeout } else { Fail::Refused },
             }
         }

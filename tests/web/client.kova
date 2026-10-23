@@ -13,6 +13,13 @@ fn show(answer: Response or WebError) {
     }
 }
 
+fn status(answer: Response or WebError) {
+    match answer {
+        ok(r) => print("{r.status}, {r.body.length} letters")
+        err(e) => print("no answer: {e}")
+    }
+}
+
 fn main {
     let site: String := "http://127.0.0.1:{args[0]}"
     show(get("{site}/hello"))
@@ -36,6 +43,18 @@ fn main {
     show(get("http://127.0.0.1:{args[1]}/"))
     show(get("http://no-such-host.invalid/"))
     show(get("ftp://127.0.0.1/"))
+    // A `Request`, built step by step.
+    let asked: Request := Request.put("{site}/asked")
+        .header("User-Agent") is("tests")
+        .header("X-Kind") is("one")
+        .header("X-Kind") is("two")
+        .body("a note")
+    show(send(asked))
+    show(send(Request.delete("{site}/asked")))
+    status(send(Request.get("{site}/moved").no_redirections))
+    status(send(Request.head("{site}/hello")))
+    show(send(Request.get("{site}/slow").seconds(0.5)))
+    show(send(Request.get("{site}/hello").header("Host") is("elsewhere")))
 }
 
 // expect: 200 hello
@@ -53,3 +72,9 @@ fn main {
 // expect: no answer: Refused("http://127.0.0.1:CLOSED/")
 // expect: no answer: NoHost("http://no-such-host.invalid/")
 // expect: no answer: BadUrl("ftp://127.0.0.1/")
+// expect: 200 PUT|tests|two|a note
+// expect: 200 DELETE|Kova||
+// expect: 302, 0 letters
+// expect: 200, 0 letters
+// expect: no answer: Timeout("http://127.0.0.1:PORT/slow")
+// expect: no answer: BadHeader("http://127.0.0.1:PORT/hello")

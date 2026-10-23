@@ -538,6 +538,27 @@ A site's answer is always `ok(…)`, even a `404`: look at `status`. `err` means
 followed (`page.url` says where it ended). A `Response` has `status`, `url`, `body` and `headers` (a
 `Map<String, String>` with names in small letters); `header(name)` finds one whatever its capitals.
 
+For anything else, build a `Request` step by step, then `send` it:
+
+```kova
+fn main {
+    let asked: Request := Request.put("https://example.com/notes/1")
+        .header("Accept") is("text/plain")
+        .body("hello")
+        .seconds(5)
+        .no_redirections
+    match send(asked) {
+        ok(page) => print(page.status)
+        err(e) => print("no answer: {e}")
+    }
+}
+```
+
+A `Request` starts with `Request.get`, `post`, `put`, `patch`, `delete` or `head`; each step gives a
+changed copy. Without `seconds`, Kova waits 30 seconds at most for each step (connecting, each piece
+of the answer); `seconds(0)` waits forever. A header Kova writes itself (`Host`, `Content-Length`…)
+or holding a line break gives `BadHeader`.
+
 `https://` uses each system's own encryption, so security fixes come with the system's updates;
 certificates are always checked (`BadCertificate`). On Linux, a program using the web asks for the
 system's C library, and `https://` for OpenSSL (`NoHttps` without it); the others stay standalone.

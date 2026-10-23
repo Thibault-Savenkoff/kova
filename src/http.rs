@@ -28,6 +28,8 @@ pub enum Fail {
     BadCertificate,
     /// This system cannot encrypt (a Linux without OpenSSL).
     NoHttps,
+    /// A header Kova cannot send: a line break in it, or one Kova writes itself (`Host`…).
+    BadHeader,
 }
 
 impl Fail {
@@ -108,8 +110,9 @@ fn strip_scheme<'a>(url: &'a str, scheme: &str) -> Option<&'a str> {
 /// What a system gives to talk to a machine.
 pub trait Network {
     type Link;
-    /// Finds `host`, connects to its `port`, encrypted if `secure`.
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<Self::Link, Fail>;
+    /// Finds `host`, connects to its `port`, encrypted if `secure`. `ms`: the time limit of
+    /// connecting and then of each `send` and `receive`, in milliseconds (0 = none).
+    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail>;
     fn send(&mut self, link: &mut Self::Link, data: &[u8]) -> Result<(), Fail>;
     /// Some bytes of the answer; 0 when the machine closed the connection.
     fn receive(&mut self, link: &mut Self::Link, buffer: &mut [u8]) -> Result<usize, Fail>;
@@ -128,16 +131,54 @@ pub struct Answer {
     pub headers: Vec<(String, String)>,
 }
 
-/// Asks `url` with `method` (`GET`, `POST`…), sending `body` when it is not empty, and follows
-/// the redirections when `follow`.
-pub fn exchange<N: Network>(net: &mut N, method: &str, url: &str, body: &str, follow: bool) -> Result<Answer, Fail> {
-    let mut url = url.to_string();
-    let mut method = method.to_string();
-    let mut body = body.to_string();
+/// What to ask: a `Request` in Kova.
+pub struct Request<'a> {
+    /// `GET`, `POST`…
+    pub method: &'a str,
+    pub url: &'a str,
+    /// Sent when it is not empty.
+    pub body: &'a str,
+    /// The program's own headers; they replace Kova's of the same name (`User-Agent`…).
+    pub headers: Vec<(&'a str, &'a str)>,
+    /// Whether the redirections are followed.
+    pub follow: bool,
+    /// See `Network::open`.
+    pub ms: u64,
+}
+
+/// A time limit in seconds (`Request.seconds`) as milliseconds, rounded up; 0 (none) when it
+/// is not above 0.
+pub fn milliseconds(seconds: f64) -> u64 {
+    let ms = seconds * 1000.0;
+    if ms.is_nan() || ms <= 0.0 {
+        return 0;
+    }
+    // `as` stops at the largest u64; `ceil` is not in `core`.
+    let whole = ms as u64;
+    if (whole as f64) < ms { whole.saturating_add(1) } else { whole }
+}
+
+/// The headers Kova writes itself, which say where the answer starts and ends.
+const OWN: [&str; 4] = ["host", "content-length", "connection", "transfer-encoding"];
+
+/// What HTTP allows in a header's name ("token").
+fn token(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+
+/// Asks `r.url` and its redirections.
+pub fn exchange<N: Network>(net: &mut N, r: &Request) -> Result<Answer, Fail> {
+    // A line break in a header would let it write other headers.
+    if r.headers.iter().any(|(n, v)| !token(n) || OWN.iter().any(|o| n.eq_ignore_ascii_case(o)) || v.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0))) {
+        return Err(Fail::BadHeader);
+    }
+    let mut url = r.url.to_string();
+    let mut method = r.method.to_string();
+    let mut body = r.body.to_string();
     for _ in 0..=10 {
-        let answer = once(net, &method, &url, &body)?;
+        let answer = once(net, r, &method, &url, &body)?;
         let to = answer.headers.iter().find(|(n, _)| n == "location").map(|(_, v)| v.clone());
-        let Some(to) = to.filter(|_| follow && matches!(answer.status, 301 | 302 | 303 | 307 | 308)) else {
+        let Some(to) = to.filter(|_| r.follow && matches!(answer.status, 301 | 302 | 303 | 307 | 308)) else {
             return Ok(answer);
         };
         url = resolve(&url, &to).ok_or(Fail::BadAnswer)?;
@@ -151,15 +192,27 @@ pub fn exchange<N: Network>(net: &mut N, method: &str, url: &str, body: &str, fo
 }
 
 /// One request and its answer.
-fn once<N: Network>(net: &mut N, method: &str, url: &str, body: &str) -> Result<Answer, Fail> {
+fn once<N: Network>(net: &mut N, r: &Request, method: &str, url: &str, body: &str) -> Result<Answer, Fail> {
     let u = parse_url(url).ok_or(Fail::BadUrl)?;
-    let mut request = format!("{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Kova\r\nAccept: */*\r\nConnection: close\r\n", u.path, u.authority);
-    if !body.is_empty() || method == "POST" || method == "PUT" {
-        request += &format!("Content-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n", body.len());
+    let theirs = |name: &str| r.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(name));
+    let mut request = format!("{method} {} HTTP/1.1\r\nHost: {}\r\n", u.path, u.authority);
+    for (name, value) in [("User-Agent", "Kova"), ("Accept", "*/*"), ("Connection", "close")] {
+        if !theirs(name) {
+            request += &format!("{name}: {value}\r\n");
+        }
+    }
+    if !body.is_empty() || matches!(method, "POST" | "PUT" | "PATCH") {
+        if !theirs("Content-Type") {
+            request += "Content-Type: text/plain; charset=utf-8\r\n";
+        }
+        request += &format!("Content-Length: {}\r\n", body.len());
+    }
+    for (name, value) in &r.headers {
+        request += &format!("{name}: {value}\r\n");
     }
     request += "\r\n";
     request += body;
-    let mut link = net.open(&u.host, u.port, u.secure)?;
+    let mut link = net.open(&u.host, u.port, u.secure, r.ms)?;
     let read = net.send(&mut link, request.as_bytes()).and_then(|()| read_answer(net, &mut link, method == "HEAD"));
     net.close(link);
     let (status, headers, body) = read?;
@@ -291,7 +344,7 @@ mod tests {
 
     impl Network for Fake {
         type Link = (Vec<u8>, usize);
-        fn open(&mut self, host: &str, port: u16, _: bool) -> Result<Self::Link, Fail> {
+        fn open(&mut self, host: &str, port: u16, _: bool, _: u64) -> Result<Self::Link, Fail> {
             if host == "nowhere" {
                 return Err(Fail::NoHost);
             }
@@ -313,6 +366,23 @@ mod tests {
 
     fn fake(answers: &[&'static str]) -> Fake {
         Fake { answers: answers.iter().copied().collect(), sent: vec![] }
+    }
+
+    fn exchange(net: &mut Fake, method: &str, url: &str, body: &str, follow: bool) -> Result<Answer, Fail> {
+        super::exchange(net, &Request { method, url, body, headers: vec![], follow, ms: 0 })
+    }
+
+    #[test]
+    fn headers() {
+        let ok = "HTTP/1.1 204 No Content\r\n\r\n";
+        let mut net = fake(&[ok]);
+        let r = Request { method: "PUT", url: "http://a/", body: "", headers: vec![("user-agent", "me"), ("X-Kind", "test")], follow: true, ms: 0 };
+        assert_eq!(super::exchange(&mut net, &r).unwrap().status, 204);
+        assert_eq!(net.sent[0].2, "PUT / HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 0\r\nuser-agent: me\r\nX-Kind: test\r\n\r\n");
+        for bad in [("X", "a\r\nEvil: 1"), ("Host", "b"), ("a b", "c"), ("", "d")] {
+            let r = Request { headers: vec![bad], ..r };
+            assert_eq!(super::exchange(&mut net, &r), Err(Fail::BadHeader), "{bad:?}");
+        }
     }
 
     #[test]

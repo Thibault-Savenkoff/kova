@@ -510,6 +510,9 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
         return Some(made.collect());
     }
+    if name == "Request" {
+        return Some(types::REQUEST_STARTS.iter().map(|f| item(f, CompletionItemKind::FUNCTION, format!("Request.{f}(url: String) -> Request"))).collect());
+    }
     let s = file.structs.iter().find(|s| s.name.text == name)?;
     let statics = s.methods.iter().filter(|m| m.receiver.is_none() && !hidden(&types::method_name(&name, &m.name.text)));
     items.extend(statics.map(|m| item(&m.name.text, CompletionItemKind::FUNCTION, types::heading_text(m))));
@@ -645,6 +648,17 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     }
     if *t == types::response() {
         items.push(item("header", CompletionItemKind::METHOD, "(name: String) -> String?".into()));
+    }
+    if *t == types::request() {
+        for (name, params) in types::request_methods() {
+            let params: Vec<String> = params.iter().map(Type::text).collect();
+            let (label, detail, insert) = match name {
+                "header(…) is(…)" => ("header", "header(name: String) is(value: String) -> Request".to_string(), "header($1) is($2)".to_string()),
+                _ if params.is_empty() => (name, "-> Request".to_string(), name.to_string()),
+                _ => (name, format!("({}) -> Request", params.join(", ")), format!("{name}($1)")),
+            };
+            items.push(CompletionItem { insert_text: Some(insert), insert_text_format: Some(InsertTextFormat::SNIPPET), ..item(label, CompletionItemKind::METHOD, detail) });
+        }
     }
     if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..) | Type::Set(_)) {
         items.push(item("clone", CompletionItemKind::METHOD, t.text()));

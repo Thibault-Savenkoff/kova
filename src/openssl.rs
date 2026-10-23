@@ -106,12 +106,12 @@ pub struct Session<L> {
 impl<N: Network> Network for Tls<N> {
     type Link = Link<N::Link>;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<Self::Link, Fail> {
+    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail> {
         if !secure {
-            return self.0.open(host, port, false).map(Link::Plain);
+            return self.0.open(host, port, false, ms).map(Link::Plain);
         }
         let ssl = Ssl::load().ok_or(Fail::NoHttps)?;
-        let raw = self.0.open(host, port, false)?;
+        let raw = self.0.open(host, port, false, ms)?;
         let ctx = (ssl.ctx_new)((ssl.method)());
         let session = if ctx.is_null() {
             null_mut()

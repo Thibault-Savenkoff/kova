@@ -29,6 +29,7 @@ unsafe extern "C" {
     fn nw_error_get_error_domain(e: P) -> i32;
     fn nw_error_get_error_code(e: P) -> i32;
     fn nw_release(o: P);
+    fn nw_tcp_options_set_connection_timeout(options: P, seconds: u32);
     static _nw_content_context_default_message: P;
 }
 
@@ -38,6 +39,7 @@ unsafe extern "C" {
     fn dispatch_queue_create(label: *const u8, attributes: P) -> P;
     fn dispatch_semaphore_create(n: isize) -> P;
     fn dispatch_semaphore_wait(s: P, until: u64) -> isize;
+    fn dispatch_time(from: u64, ns: i64) -> u64;
     fn dispatch_semaphore_signal(s: P) -> isize;
     fn dispatch_data_create(b: *const u8, n: usize, queue: P, destructor: *const Block) -> P;
     fn dispatch_data_create_map(d: P, at: *mut *const u8, n: *mut usize) -> P;
@@ -81,6 +83,8 @@ struct Shared {
     /// What the last receive got, and whether the site closed.
     got: core::cell::UnsafeCell<Vec<u8>>,
     closed: AtomicI32,
+    /// See `Network::open`.
+    ms: u64,
 }
 
 const WAITING: i32 = 1;
@@ -127,8 +131,16 @@ extern "C" fn received(b: *const Block, content: P, _: P, complete: bool, error:
     unsafe { dispatch_semaphore_signal(s.done) };
 }
 
-/// The TLS and TCP options left as they are.
+/// The TLS options left as they are.
 extern "C" fn as_is(_: *const Block, _: P) {}
+
+/// The TCP options: the time limit of connecting.
+extern "C" fn tcp(b: *const Block, options: P) {
+    let s = unsafe { &*(*b).shared };
+    if s.ms > 0 {
+        unsafe { nw_tcp_options_set_connection_timeout(options, s.ms.div_ceil(1000).min(u32::MAX as u64) as u32) };
+    }
+}
 
 /// The certificate failures (Security's codes, domain TLS).
 const CERTIFICATE: [i32; 9] = [-9807, -9808, -9812, -9813, -9814, -9815, -9843, -67843, -67901];
@@ -159,12 +171,27 @@ pub struct Session {
     shared: Box<Shared>,
 }
 
+/// Waits for the send or receive under way, within the time limit; false if it came first: the
+/// connection is then cancelled, and its block (called all the same) waited for.
+fn finished(s: &Session) -> bool {
+    let ms = s.shared.ms;
+    let until = if ms == 0 { u64::MAX } else { unsafe { dispatch_time(0, (ms as i64).saturating_mul(1_000_000)) } };
+    if unsafe { dispatch_semaphore_wait(s.shared.done, until) } == 0 {
+        return true;
+    }
+    unsafe {
+        nw_connection_cancel(s.connection);
+        dispatch_semaphore_wait(s.shared.done, u64::MAX);
+    }
+    false
+}
+
 impl<N: Network> Network for Tls<N> {
     type Link = Link<N::Link>;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<Self::Link, Fail> {
+    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail> {
         if !secure {
-            return self.0.open(host, port, false).map(Link::Plain);
+            return self.0.open(host, port, false, ms).map(Link::Plain);
         }
         if host.contains('\0') {
             return Err(Fail::NoHost);
@@ -179,10 +206,11 @@ impl<N: Network> Network for Tls<N> {
                 code: AtomicI32::new(0),
                 got: core::cell::UnsafeCell::new(Vec::new()),
                 closed: AtomicI32::new(0),
+                ms,
             });
             let endpoint = nw_endpoint_create_host(host.as_ptr(), port.as_ptr());
-            let options = block(as_is as *const c_void, null());
-            let parameters = nw_parameters_create_secure_tcp(&options, &options);
+            let (tls, tcp) = (block(as_is as *const c_void, null()), block(tcp as *const c_void, &*shared));
+            let parameters = nw_parameters_create_secure_tcp(&tls, &tcp);
             let connection = nw_connection_create(endpoint, parameters);
             nw_release(endpoint);
             nw_release(parameters);
@@ -219,8 +247,11 @@ impl<N: Network> Network for Tls<N> {
             s.shared.domain.store(0, SeqCst);
         let done = block(sent as *const c_void, &*s.shared);
             nw_connection_send(s.connection, content, _nw_content_context_default_message, true, &done);
-            dispatch_semaphore_wait(s.shared.done, u64::MAX);
+            let late = !finished(s);
             dispatch_release(content);
+            if late {
+                return Err(Fail::Timeout);
+            }
         }
         if s.shared.domain.load(SeqCst) != 0 { Err(s.shared.failure(false)) } else { Ok(()) }
     }
@@ -237,7 +268,9 @@ impl<N: Network> Network for Tls<N> {
         let done = block(received as *const c_void, &*s.shared);
         unsafe {
             nw_connection_receive(s.connection, 1, buffer.len().min(1 << 30) as u32, &done);
-            dispatch_semaphore_wait(s.shared.done, u64::MAX);
+            if !finished(s) {
+                return Err(Fail::Timeout);
+            }
         }
         let got = unsafe { &mut *s.shared.got.get() };
         let n = got.len();

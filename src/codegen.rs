@@ -260,7 +260,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::LocalNow => (43, "kova_local_now", 0),
         StrOp::ToDate => (44, "kova_str_to_date", 1),
         StrOp::ToDateTime => (45, "kova_str_to_datetime", 1),
-        StrOp::Web => (46, "kova_web", 4),
+        StrOp::Web => (46, "kova_web", 6),
     }
 }
 
@@ -291,7 +291,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         s.returns.extend(returns.iter().map(|&t| AbiParam::new(machine_type(t))));
         s
     };
-    let ints = [Scalar::Int; 4];
+    let ints = [Scalar::Int; 6];
     let rt = Runtime {
         print: module.declare_function("kova_print", Linkage::Import, &signature(&ints[..3], &[]))?,
         fault: module.declare_function("kova_fault", Linkage::Import, &signature(&ints[..3], &[]))?,

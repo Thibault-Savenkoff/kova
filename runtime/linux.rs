@@ -50,6 +50,7 @@ mod numbers {
     pub const UNLINKAT: usize = 263;
     pub const STATX: usize = 332;
     pub const SOCKET: usize = 41;
+    pub const SETSOCKOPT: usize = 54;
     pub const CONNECT: usize = 42;
     pub const SENDTO: usize = 44;
     pub const RECVFROM: usize = 45;
@@ -76,6 +77,7 @@ mod numbers {
     pub const UNLINKAT: usize = 35;
     pub const STATX: usize = 291;
     pub const SOCKET: usize = 198;
+    pub const SETSOCKOPT: usize = 208;
     pub const CONNECT: usize = 203;
     pub const SENDTO: usize = 206;
     pub const RECVFROM: usize = 207;
@@ -251,7 +253,7 @@ impl Network for Net {
     type Link = usize;
 
     /// Never `secure`: src/openssl.rs encrypts around it.
-    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<usize, Fail> {
+    fn open(&mut self, host: &str, port: u16, _: bool, ms: u64) -> Result<usize, Fail> {
         if host.contains('\0') {
             return Err(Fail::NoHost);
         }
@@ -265,12 +267,20 @@ impl Network for Net {
         while let Some(i) = unsafe { a.as_ref() } {
             let fd = unsafe { call(SOCKET, i.family as usize, SOCK_STREAM as usize | 0o2000000, i.protocol as usize, 0, 0, 0) };
             if fd >= 0 {
+                if ms > 0 {
+                    // SO_RCVTIMEO, SO_SNDTIMEO (which `connect` follows too): seconds, microseconds.
+                    let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+                    for option in [20, 21] {
+                        unsafe { call(SETSOCKOPT, fd as usize, 1, option, limit.as_ptr() as usize, 16, 0) };
+                    }
+                }
                 match unsafe { call(CONNECT, fd as usize, i.addr as usize, i.addrlen as usize, 0, 0, 0) } {
                     0 => {
                         failure = Ok(fd as usize);
                         break;
                     }
-                    e => failure = Err(if e == -ETIMEDOUT { Fail::Timeout } else { Fail::Refused }),
+                    // EINPROGRESS: the time limit came first.
+                    e => failure = Err(if e == -ETIMEDOUT || e == -115 { Fail::Timeout } else { Fail::Refused }),
                 }
                 close(fd as usize);
             }

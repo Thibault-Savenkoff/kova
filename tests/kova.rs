@@ -723,6 +723,8 @@ fn web() {
     std::thread::spawn(move || {
         for link in server.incoming() {
             let mut link = link.unwrap();
+            // One thread each: `/slow` must not hold the others.
+            std::thread::spawn(move || {
             let mut got = vec![];
             let mut buffer = [0u8; 4096];
             // The request: its head, then as many bytes as its Content-Length says.
@@ -739,7 +741,10 @@ fn web() {
                     panic!("request cut");
                 }
             };
-            let path = head.split(' ').nth(1).unwrap().to_string();
+            let mut words = head.split(' ');
+            let method = words.next().unwrap().to_string();
+            let path = words.next().unwrap().to_string();
+            let header = |name: &str| head.lines().find_map(|l| l.split_once(": ").filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.to_string())).unwrap_or_default();
             let answer = |status: &str, headers: &str, body: &str| {
                 format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
             };
@@ -755,9 +760,15 @@ fn web() {
                 "/moved" => answer("302 Found", "Location: /hello\r\n", ""),
                 "/twice" => answer("200 OK", "Set-Cookie: a=1\r\nset-cookie: b=2\r\n", ""),
                 "/loop" => answer("301 Moved Permanently", "Location: /loop\r\n", ""),
+                "/asked" => answer("200 OK", "", &format!("{method}|{}|{}|{}", header("user-agent"), header("x-kind"), String::from_utf8_lossy(&body))),
+                "/slow" => {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    answer("200 OK", "", "too late")
+                }
                 _ => b"nonsense\r\n\r\n".to_vec(),
             };
             let _ = link.write_all(&reply);
+            });
         }
     });
 

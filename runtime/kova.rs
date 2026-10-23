@@ -805,12 +805,22 @@ pub extern "C" fn kova_args() -> i64 {
 
 // ---- The web (src/http.rs speaks HTTP; `sys::Net` connects) ----
 
-/// `get(url)`, `post(url) body(text)`: a List of one `Response` (status, url, body, headers: a
+/// `get(url)`, `post(url) body(text)`, `send(request)` (`headers`: a List of pairs, or 0;
+/// `seconds`: a Float's bits): a List of one `Response` (status, url, body, headers: a
 /// List of pairs), or minus the `WebError`'s number + 1 (src/http.rs `Fail::number`). Like
 /// src/interp.rs.
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64 {
-    match http::exchange(&mut network(), text_of(method), text_of(url), text_of(body), follow != 0) {
+pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, headers: i64, seconds: i64) -> i64 {
+    let headers = if headers == 0 { &[][..] } else { &list(headers).slots[..] };
+    let r = http::Request {
+        method: text_of(method),
+        url: text_of(url),
+        body: text_of(body),
+        headers: headers.chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect(),
+        follow: follow != 0,
+        ms: http::milliseconds(f64::from_bits(seconds as u64)),
+    };
+    match http::exchange(&mut network(), &r) {
         Err(f) => -(f.number() + 1),
         Ok(a) => {
             let length = a.headers.len();

@@ -227,6 +227,7 @@ unsafe extern "system" {
     fn getaddrinfo(host: *const u8, port: *const u8, hints: *const AddrInfo, found: *mut *mut AddrInfo) -> i32;
     fn freeaddrinfo(found: *mut AddrInfo);
     fn socket(family: i32, kind: i32, protocol: i32) -> usize;
+    fn setsockopt(s: usize, level: i32, name: i32, value: *const u32, n: i32) -> i32;
     fn connect(s: usize, address: *const u8, n: i32) -> i32;
     fn send(s: usize, b: *const u8, n: i32, flags: i32) -> i32;
     fn recv(s: usize, b: *mut u8, n: i32, flags: i32) -> i32;
@@ -256,7 +257,7 @@ impl Network for Net {
     type Link = usize;
 
     /// Never `secure`: src/schannel.rs encrypts around it.
-    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<usize, Fail> {
+    fn open(&mut self, host: &str, port: u16, _: bool, ms: u64) -> Result<usize, Fail> {
         if host.contains('\0') {
             return Err(Fail::NoHost);
         }
@@ -273,6 +274,13 @@ impl Network for Net {
         while let Some(i) = unsafe { a.as_ref() } {
             let s = unsafe { socket(i.family, SOCK_STREAM, i.protocol) };
             if s != usize::MAX {
+                if ms > 0 {
+                    // SO_RCVTIMEO, SO_SNDTIMEO: milliseconds; TCP_MAXRT (which `connect` follows): seconds.
+                    for option in [0x1006, 0x1005] {
+                        unsafe { setsockopt(s, 0xFFFF, option, &(ms.min(u32::MAX as u64) as u32), 4) };
+                    }
+                    unsafe { setsockopt(s, 6, 5, &(ms.div_ceil(1000).min(u32::MAX as u64) as u32), 4) };
+                }
                 if unsafe { connect(s, i.addr, i.addrlen as i32) } == 0 {
                     failure = Ok(s);
                     break;

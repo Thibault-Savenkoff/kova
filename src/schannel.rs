@@ -111,8 +111,8 @@ pub struct Session<L> {
 impl<N: Network> Network for Tls<N> {
     type Link = Link<N::Link>;
 
-    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<Self::Link, Fail> {
-        let raw = self.0.open(host, port, false)?;
+    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail> {
+        let raw = self.0.open(host, port, false, ms)?;
         if !secure {
             return Ok(Link::Plain(raw));
         }

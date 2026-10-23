@@ -482,6 +482,9 @@ pub enum Math {
     Pow,
 }
 
+/// The time limit of a `get`, a `post` or a new `Request` (PLAN Part 4 "The web, Request").
+const DEFAULT_SECONDS: f64 = 30.0;
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Conversion {
     /// `n.to_float()`
@@ -1655,7 +1658,7 @@ impl<'a> Translator<'a> {
                 let (p, t) = self.place(x);
                 (self.member(p, &t, *i).0, ty)
             }
-            ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
+            ExprKind::Method { receiver, name, args } if args.is_empty() && self.ty(receiver).is_field(&name.text) => {
                 let (p, t) = self.place(receiver);
                 let i = field_index(&t, &name.text);
                 (self.member(p, &t, i).0, ty)
@@ -1883,6 +1886,12 @@ impl<'a> Translator<'a> {
         let l = self.int_local();
         self.emit(Inst::Const(l, v));
         l
+    }
+    /// A Float's bits, for the runtime.
+    fn seconds(&mut self, v: f64) -> Local {
+        let (f, bits) = (self.float_constant(v), self.int_local());
+        self.emit(Inst::Convert(bits, Conversion::ToBits, f, NOWHERE));
+        bits
     }
     fn float_constant(&mut self, v: f64) -> Local {
         let l = self.new_local(Scalar::Float);
@@ -3200,7 +3209,7 @@ impl<'a> Translator<'a> {
         // `match chain(3).next`: a part of a temporary is borrowed too, the temporary freed after.
         let part = match &m.subject.kind {
             ExprKind::Field(..) => true,
-            ExprKind::Method { receiver, name, .. } => self.ty(receiver).is_field(&name.text),
+            ExprKind::Method { receiver, name, args } => args.is_empty() && self.ty(receiver).is_field(&name.text),
             ExprKind::Index(x, i) => !matches!(self.ty(x), Type::Map(..)) && i.range().is_none(),
             _ => false,
         };
@@ -3502,13 +3511,21 @@ impl<'a> Translator<'a> {
                         Some(b) => (self.text("POST"), self.expr1(b)),
                         None => (self.text("GET"), self.text("")),
                     };
-                    let follow = self.constant(1);
-                    let v = self.io_result(StrOp::Web, vec![url, method, body, follow], &ty);
+                    let (follow, headers, seconds) = (self.constant(1), self.constant(0), self.seconds(DEFAULT_SECONDS));
+                    let v = self.io_result(StrOp::Web, vec![url, method, body, follow, headers, seconds], &ty);
                     self.emit(Inst::Free(method));
                     if args.len() == 1 {
                         self.emit(Inst::Free(body));
                     }
                     return v;
+                }
+                // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
+                if name.text == "send" {
+                    let ty = self.ty(e);
+                    let r = self.expr(&args[0]);
+                    let seconds = self.int_local();
+                    self.emit(Inst::Convert(seconds, Conversion::ToBits, r[4], NOWHERE));
+                    return self.io_result(StrOp::Web, vec![r[1], r[0], r[3], r[5], r[2], seconds], &ty);
                 }
                 if name.text == "now" {
                     let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);
@@ -3601,6 +3618,16 @@ impl<'a> Translator<'a> {
                 let s = self.with(Op::Plus, now, 719468 * 86400);
                 let z = self.with(Op::Div, s, 86400);
                 vec![self.with(Op::Minus, z, 719468)]
+            }
+            // `Request.put(url)`: no header, no body, `DEFAULT_SECONDS`, redirections followed.
+            ExprKind::Static { ty, name, args, .. } if ty.text == "Request" => {
+                let url = self.owned(&args[0]);
+                let (method, headers) = (self.text(&name.text.to_uppercase()), self.int_local());
+                self.emit(Inst::ListNew(headers, 2));
+                let (body, seconds, follow) = (self.text(""), self.float_constant(DEFAULT_SECONDS), self.constant(1));
+                let v = vec![method, url[0], headers, body, seconds, follow];
+                self.track(&v, &crate::types::request());
+                v
             }
             ExprKind::Static { ty, name, args, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") => {
                 let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
@@ -3792,7 +3819,7 @@ impl<'a> Translator<'a> {
                 let loc = self.operator(a);
                 vec![self.operation(kir_op(*op), va, vb, self.is_float(a), loc)]
             }
-            ExprKind::Method { receiver, name, .. } if self.ty(receiver).is_field(&name.text) => {
+            ExprKind::Method { receiver, name, args } if args.is_empty() && self.ty(receiver).is_field(&name.text) => {
                 let (p, _) = self.place(e);
                 self.read(&p)
             }
@@ -3821,6 +3848,34 @@ impl<'a> Translator<'a> {
                 let num = self.helper(Helper::Dispatch(interface, name.text.clone()));
                 let result = self.ty(e);
                 self.call_to(num, true, vals, places, name.span, &result)
+            }
+            // `r.header("Accept") is("text/plain")`, `r.body(…)`, `r.seconds(…)`, `r.no_redirections`:
+            // a copy of `r`, changed.
+            ExprKind::Method { receiver, name, args } if self.ty(receiver) == crate::types::request() => {
+                let ty = crate::types::request();
+                let r = self.expr(receiver);
+                let v = self.clone_value(&r, &ty);
+                match name.text.as_str() {
+                    "header(…) is(…)" => {
+                        let (key, value) = (self.expr(&args[0]), self.owned(&args[1]));
+                        let place = self.entry(v[2], &key, &Type::String, &Type::String);
+                        let old = self.read(&place);
+                        self.free_value(&old, &Type::String);
+                        self.write(&place, &value);
+                    }
+                    "body" => {
+                        let body = self.owned(&args[0]);
+                        self.emit(Inst::Free(v[3]));
+                        self.emit(Inst::Copy(v[3], body[0]));
+                    }
+                    "seconds" => {
+                        let seconds = self.expr1(&args[0]);
+                        self.emit(Inst::Copy(v[4], seconds));
+                    }
+                    _ => self.emit(Inst::Const(v[5], 0)),
+                }
+                self.track(&v, &ty);
+                v
             }
             // `r.header("Content-Type")`: looked up in small letters in `r.headers`.
             ExprKind::Method { receiver, name, args } if name.text == "header" && self.ty(receiver) == crate::types::response() => {

@@ -480,7 +480,20 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         },
                         StrOp::Web => {
                             let (url, method, body) = (s(0).to_string(), s(1).to_string(), s(2).to_string());
-                            match crate::http::exchange(&mut crate::web::network(), &method, &url, &body, locals[a[3]] != 0) {
+                            let mut headers = vec![];
+                            if locals[a[4]] != 0 {
+                                let slots = heap.list(locals[a[4]]).2.clone();
+                                headers = slots.chunks(2).map(|p| (heap.get(p[0]).to_string(), heap.get(p[1]).to_string())).collect();
+                            }
+                            let r = crate::http::Request {
+                                method: &method,
+                                url: &url,
+                                body: &body,
+                                headers: headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect(),
+                                follow: locals[a[3]] != 0,
+                                ms: crate::http::milliseconds(f64::from_bits(locals[a[5]] as u64)),
+                            };
+                            match crate::http::exchange(&mut crate::web::network(), &r) {
                                 Err(f) => -(f.number() + 1),
                                 Ok(answer) => {
                                     // As the runtime makes it: a List of one `Response`.

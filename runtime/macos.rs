@@ -150,7 +150,7 @@ impl Network for Net {
     type Link = i32;
 
     /// Never `secure`: src/network_framework.rs makes those.
-    fn open(&mut self, host: &str, port: u16, _: bool) -> Result<i32, Fail> {
+    fn open(&mut self, host: &str, port: u16, _: bool, ms: u64) -> Result<i32, Fail> {
         if host.contains('\0') {
             return Err(Fail::NoHost);
         }
@@ -167,6 +167,14 @@ impl Network for Net {
             if fd >= 0 {
                 // SO_NOSIGPIPE: a closed connection is a failure, not the end of the program.
                 unsafe { c::setsockopt(fd, 0xFFFF, 0x1022, &1, 4) };
+                if ms > 0 {
+                    // SO_RCVTIMEO, SO_SNDTIMEO: seconds, microseconds; TCP_CONNECTIONTIMEOUT: seconds.
+                    let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+                    for option in [0x1006, 0x1005] {
+                        unsafe { c::setsockopt(fd, 0xFFFF, option, limit.as_ptr() as *const i32, 16) };
+                    }
+                    unsafe { c::setsockopt(fd, 6, 0x20, &(ms.div_ceil(1000) as i32), 4) };
+                }
                 if unsafe { c::connect(fd, i.addr, i.addrlen) } == 0 {
                     failure = Ok(fd);
                     break;

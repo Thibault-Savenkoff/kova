@@ -422,6 +422,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("exit", "fn exit(code: Int)"),
         ("get", "fn get(url: String) -> Response or WebError"),
         ("post(…) body(…)", "fn post(url: String) body(text: String) -> Response or WebError"),
+        ("send", "fn send(request: Request) -> Response or WebError"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -436,7 +437,7 @@ pub fn io_error() -> Type {
 /// asked; numbered like `http::Fail`.
 pub fn web_error() -> Type {
     let url = || vec![("url".to_string(), Type::String)];
-    let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects", "BadCertificate", "NoHttps"];
+    let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects", "BadCertificate", "NoHttps", "BadHeader"];
     Type::Enum(EnumDef::with_variants("WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
 }
 
@@ -447,6 +448,30 @@ pub fn response() -> Type {
     let text = || Type::String;
     d.set_fields(vec![("status".into(), Type::Int), ("url".into(), text()), ("body".into(), text()), ("headers".into(), Type::Map(Box::new(text()), Box::new(text())))]);
     Type::Struct(d)
+}
+
+/// `Request`, a question to a site built step by step (PLAN Part 4 "The web, Request"):
+/// `Request.put(url).header("Accept") is("text/plain").seconds(5)`, then `send(r)`. Its fields
+/// in this order are read by kir.rs (`request_made`, `request_method`, `send`).
+pub fn request() -> Type {
+    let d = StructDef::new("Request".into(), vec![], false);
+    let text = || Type::String;
+    d.set_fields(vec![
+        ("method".into(), text()),
+        ("url".into(), text()),
+        ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))),
+        ("body".into(), text()),
+        ("seconds".into(), Type::Float),
+        ("follow".into(), Type::Bool),
+    ]);
+    Type::Struct(d)
+}
+
+/// `Request.get(url)`…: the methods of HTTP a request can start with.
+pub const REQUEST_STARTS: [&str; 6] = ["get", "post", "put", "patch", "delete", "head"];
+/// The methods giving a changed copy of a request: name, parameters.
+pub fn request_methods() -> [(&'static str, Vec<Type>); 4] {
+    [("header(…) is(…)", vec![Type::String, Type::String]), ("body", vec![Type::String]), ("seconds", vec![Type::Float]), ("no_redirections", vec![])]
 }
 
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
@@ -817,7 +842,7 @@ pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
         // `ages["Rex"]` is not a place: reading it gives a copy (a Map has no slot per key).
         ExprKind::Index(x, i) if matches!(types[x.id], Type::Map(..)) || i.range().is_some() => None,
         ExprKind::Field(x, _) | ExprKind::Index(x, _) => place_root(x, types),
-        ExprKind::Method { receiver, name, .. } if types[receiver.id].is_field(&name.text) => place_root(receiver, types),
+        ExprKind::Method { receiver, name, args } if args.is_empty() && types[receiver.id].is_field(&name.text) => place_root(receiver, types),
         _ => None,
     }
 }
@@ -964,6 +989,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.structs.insert("Weekday".into(), weekday());
     c.structs.insert("WebError".into(), web_error());
     c.structs.insert("Response".into(), response());
+    c.structs.insert("Request".into(), request());
+    for start in REQUEST_STARTS {
+        c.functions.insert(method_name("Request", start), Signature::new(None, vec![(Mode::Read, Type::String)], request()));
+    }
+    for (name, params) in request_methods() {
+        let params = params.into_iter().map(|p| (Mode::Read, p)).collect();
+        c.functions.insert(method_name("Request", name), Signature::new(Some(Mode::Read), params, request()));
+    }
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
@@ -982,6 +1015,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
     }
+    c.functions.insert("send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
