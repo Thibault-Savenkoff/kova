@@ -87,6 +87,8 @@ pub struct Match {
 /// `Circle(r) => 3.14 * r * r`: a single statement after `=>` becomes a block.
 pub struct Arm {
     pub case: Case,
+    /// `Saturday, Sunday =>`: the other variants of the arm, without fields (PLAN Part 4, "Grouped cases").
+    pub also: Vec<Name>,
     pub body: Block,
 }
 

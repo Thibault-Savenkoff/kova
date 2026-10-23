@@ -292,6 +292,8 @@ lang en {
     lang_check_ok := "  complete compared with {others}"
 
     // ---- Enums and `match` (J4) ----
+    grouped_fields := "cases grouped with `,` cannot take fields yet"
+    grouped_fields_help := "write one case per variant to use its fields, or leave the fields out: `Circle, Square =>`"
     empty_parens_variant := "a variant without fields is written without `()`: `{name}`"
     variant_exists := "the variant `{name}` already exists (line {line})"
     not_enum := "`{type}` is not an enum: it has no variant `{name}`"

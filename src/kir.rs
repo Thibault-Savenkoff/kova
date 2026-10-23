@@ -3008,9 +3008,17 @@ impl<'a> Translator<'a> {
             match arm.case.variant() {
                 // The last arm takes what is left: the type checker made sure nothing else is.
                 Some((name, _)) if k + 1 < m.arms.len() => {
-                    let (number, test) = (self.constant(d.variant(name).unwrap().0 as i64), self.int_local());
-                    self.emit(Inst::Binary(test, Op::Eq, v[0], number, NOWHERE));
-                    self.go(End::Branch(test, body, next), body);
+                    // `Saturday, Sunday =>`: the variants are different, so at most one test gives 1.
+                    let mut test = None;
+                    for name in std::iter::once(name).chain(arm.also.iter().map(|n| n.text.as_str())) {
+                        let (number, is) = (self.constant(d.variant(name).unwrap().0 as i64), self.int_local());
+                        self.emit(Inst::Binary(is, Op::Eq, v[0], number, NOWHERE));
+                        test = Some(match test {
+                            None => is,
+                            Some(t) => self.op(Op::Plus, t, is),
+                        });
+                    }
+                    self.go(End::Branch(test.unwrap(), body, next), body);
                 }
                 _ => self.go(End::Jump(body), body),
             }

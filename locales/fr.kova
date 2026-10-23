@@ -292,6 +292,8 @@ lang fr {
     lang_check_ok := "  complet par rapport à {others}"
 
     // ---- Enums et `match` (J4) ----
+    grouped_fields := "des cas groupés avec `,` ne peuvent pas encore prendre de champs"
+    grouped_fields_help := "écris un cas par variante pour utiliser ses champs, ou laisse les champs de côté : `Circle, Square =>`"
     empty_parens_variant := "une variante sans champs s'écrit sans `()` : `{name}`"
     variant_exists := "la variante `{name}` existe déjà (ligne {line})"
     not_enum := "`{type}` n'est pas un enum : il n'a pas de variante `{name}`"

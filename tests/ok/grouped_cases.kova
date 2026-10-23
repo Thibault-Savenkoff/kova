@@ -1,0 +1,51 @@
+// Grouped cases (PLAN Part 4): `Saturday, Sunday =>` takes either variant.
+enum Shape {
+    Circle(radius: Float)
+    Square(side: Float)
+    Dot
+}
+
+fn kind(d: Date) -> String {
+    match d.weekday {
+        Saturday, Sunday => return "week-end"
+        _ => return "travail"
+    }
+}
+
+fn main {
+    let d := Date.year(2026) month(10) day(23)
+    for i in 0..7 {
+        print(d.plus_days(i).weekday)
+        print(kind(d.plus_days(i)))
+    }
+    let shapes: List<Shape> := [Shape.Circle(1.0), Shape.Dot, Shape.Square(2.0)]
+    for s in shapes {
+        let flat: Bool := match s {
+            Circle, Square => false
+            Dot => true
+        }
+        print(flat)
+    }
+    let r: Int or IoError := ok(3)
+    match r {
+        ok, err => print("either")
+    }
+}
+// expect: Weekday.Friday
+// expect: travail
+// expect: Weekday.Saturday
+// expect: week-end
+// expect: Weekday.Sunday
+// expect: week-end
+// expect: Weekday.Monday
+// expect: travail
+// expect: Weekday.Tuesday
+// expect: travail
+// expect: Weekday.Wednesday
+// expect: travail
+// expect: Weekday.Thursday
+// expect: travail
+// expect: false
+// expect: true
+// expect: false
+// expect: either

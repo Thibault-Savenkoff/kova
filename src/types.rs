@@ -3465,6 +3465,33 @@ impl Checker<'_> {
                 }
                 (None, None) => any = Some(span),
                 (Some((name, binds)), d) => {
+                    // `Saturday, Sunday =>`: the others, without fields (the parser refused them).
+                    for other in &arm.also {
+                        let shown = &self.src[other.span.start..other.span.end];
+                        let wrong = if optional { other.text != "none" } else { outcome && !matches!(other.text.as_str(), "ok" | "err") };
+                        match d.as_ref().map(|d| (d.variant(&other.text), d)) {
+                            Some((_, d)) if wrong => {
+                                let text = if optional { t!("optional_cases", type = d.name) } else { t!("result_cases", type = t.text()) };
+                                self.error(other.span, text);
+                            }
+                            Some((Some((i, _)), d)) => {
+                                if !optional && !outcome {
+                                    self.mention(&method_name(&d.name, &other.text), other.span);
+                                }
+                                if let Some(first) = seen.insert(i, other.span) {
+                                    let (line, _) = line_col(self.src, first.start);
+                                    self.error(other.span, t!("case_twice", name = shown, line = line));
+                                }
+                            }
+                            Some((None, d)) => {
+                                self.diags.push(
+                                    Diag::new(other.span, t!("no_variant", type = d.name, name = other.text))
+                                        .help(t!("variants_of", type = d.name, variants = d.names())),
+                                );
+                            }
+                            None => {}
+                        }
+                    }
                     // An optional takes `none` and a name; an enum, its variants.
                     let wrong = match &arm.case {
                         Case::Bind(_) => !optional,

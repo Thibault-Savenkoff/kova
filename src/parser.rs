@@ -1347,6 +1347,31 @@ impl Parser<'_> {
             }
             Case::Variant { name, binds }
         };
+        let mut also = vec![];
+        if matches!(case, Case::Variant { .. }) {
+            while self.is_sym(",") {
+                self.advance();
+                let name = match self.kind() {
+                    Kind::Keyword(word @ ("ok" | "err" | "none")) => Name { text: word.into(), span: self.advance().span },
+                    _ => self.plain_type_name()?,
+                };
+                if self.is_sym("(") {
+                    let open = self.advance().span;
+                    while !self.is_sym(")") && self.kind() != Kind::Eof {
+                        self.advance();
+                    }
+                    let close = self.expect(")")?;
+                    self.diags.push(Diag::new(open.to(close), t!("grouped_fields")).help(t!("grouped_fields_help")));
+                }
+                also.push(name);
+            }
+            if let Case::Variant { name, binds } = &case
+                && !also.is_empty()
+                && !binds.is_empty()
+            {
+                self.diags.push(Diag::new(name.span, t!("grouped_fields")).help(t!("grouped_fields_help")));
+            }
+        }
         let arrow = self.expect("=>")?;
         self.skip_newlines();
         let body = if self.is_sym("{") {
@@ -1361,7 +1386,7 @@ impl Parser<'_> {
             Block { open: arrow, stmts: s.into_iter().collect(), close: self.token().span }
         };
         self.separator()?;
-        Ok(Arm { case, body })
+        Ok(Arm { case, also, body })
     }
 
     // ---- Expressions ----
