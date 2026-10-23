@@ -61,15 +61,15 @@ Kova is written in Rust. Install Rust with [rustup](https://rustup.rs), then:
 cargo install --git https://github.com/Thibault-Savenkoff/kova --locked
 ```
 
-`kova build` needs nothing else: Kova links the executables itself, on Linux (x86-64 and arm64), Windows
-x86-64 and macOS (Apple chips and Intel).
+`kova build` needs nothing else: Kova links the executables itself, on Linux, Windows and macOS (x86-64
+and arm64 each). On a Mac, one executable runs on every Mac (Apple chips and Intel).
 
 To build for other systems (`kova build app.kova --target windows`), add their Rust targets **before**
 installing Kova:
 
 ```sh
 rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
-    aarch64-unknown-linux-gnu x86_64-apple-darwin
+    aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
 ```
 
 ## Use
