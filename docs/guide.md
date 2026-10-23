@@ -521,7 +521,7 @@ true
 
 ```kova
 fn main {
-    match get("http://example.com/") {
+    match get("https://example.com/") {
         ok(page) => {
             print(page.status)
             print(page.header("Content-Type"))
@@ -529,7 +529,7 @@ fn main {
         }
         err(e) => print("no answer: {e}")
     }
-    let sent: Response or WebError := post("http://example.com/notes") body("hello")
+    let sent: Response or WebError := post("https://example.com/notes") body("hello")
 }
 ```
 
@@ -538,8 +538,9 @@ A site's answer is always `ok(…)`, even a `404`: look at `status`. `err` means
 followed (`page.url` says where it ended). A `Response` has `status`, `url`, `body` and `headers` (a
 `Map<String, String>` with names in small letters); `header(name)` finds one whatever its capitals.
 
-For now only `http://`: `https://` comes next, with each system's own encryption. On Linux, a program
-using the web asks for the system's C library (every desktop Linux has it); the others stay standalone.
+`https://` uses each system's own encryption, so security fixes come with the system's updates;
+certificates are always checked (`BadCertificate`). On Linux, a program using the web asks for the
+system's C library, and `https://` for OpenSSL (`NoHttps` without it); the others stay standalone.
 
 ## 17. The tools
 
