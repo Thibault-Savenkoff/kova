@@ -5,7 +5,8 @@
 //
 // 1. Every defined symbol of every object is noted (a strong one wins over a weak one).
 // 2. From the entry point, the sections reached through relocations are kept: the functions a
-//    program never calls are not in its executable.
+//    program never calls are not in its executable. A Mach-O section holds many functions: it is
+//    cut at each name, as Apple's linker does.
 // 3. The kept sections get their addresses: code, constants, then data, then zeros.
 // 4. Each relocation is written: the address (or the distance to it) the code needs.
 //
@@ -19,8 +20,9 @@ use std::collections::{HashMap, HashSet};
 use object::read::archive::ArchiveFile;
 use object::{Object, ObjectSection, ObjectSymbol, RelocationFlags, RelocationKind, RelocationTarget, SectionIndex, SectionKind, SymbolIndex, SymbolSection};
 
-/// A section of an object: (object number, section index).
-type Place = (usize, SectionIndex);
+/// A section of an object, or a piece of one: (object number, section index, where the piece
+/// starts in it).
+type Place = (usize, SectionIndex, u64);
 
 /// What a relocation points to.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -49,6 +51,8 @@ struct Inputs<'a> {
     defined: HashMap<&'a str, (usize, SymbolIndex, bool)>,
     /// Undefined symbols are the system's (Windows), not errors.
     imports: bool,
+    /// Where the pieces of a cut section start (0 first).
+    pieces: HashMap<(usize, SectionIndex), Vec<u64>>,
 }
 
 fn error(e: object::Error) -> String {
@@ -83,13 +87,37 @@ impl<'a> Inputs<'a> {
                 }
             }
         }
-        Ok(Inputs { objects, defined, imports })
+        let pieces = objects.iter().enumerate().flat_map(|(k, o)| cut(k, o)).collect();
+        Ok(Inputs { objects, defined, imports, pieces })
+    }
+
+    /// The piece of section `i` of object `k` holding `offset`, and where `offset` is in it.
+    fn piece(&self, k: usize, i: SectionIndex, offset: u64) -> (Place, u64) {
+        let start = self.pieces.get(&(k, i)).map_or(0, |starts| starts[starts.partition_point(|&s| s <= offset) - 1]);
+        ((k, i, start), offset - start)
+    }
+
+    /// Where piece `p` starts and ends in its section.
+    fn range(&self, p: Place) -> Result<(u64, u64), String> {
+        let starts = self.pieces.get(&(p.0, p.1));
+        let next = starts.and_then(|s| s.iter().find(|&&s| s > p.2));
+        Ok((p.2, match next {
+            Some(&end) => end,
+            None => self.section(p)?.size(),
+        }))
+    }
+
+    /// The relocations of piece `p`, with their offsets in it and in the section.
+    fn relocations(&self, p: Place) -> Result<Vec<(u64, u64, object::Relocation)>, String> {
+        let (start, end) = self.range(p)?;
+        Ok(self.section(p)?.relocations().filter(|(o, _)| (start..end).contains(o)).map(|(o, r)| (o - start, o, r)).collect())
     }
 
     fn target(&self, k: usize, t: RelocationTarget) -> Result<Target, String> {
         let s = match t {
             // Mach-O: the place holds the target's address in its object, from its section's.
-            RelocationTarget::Section(i) => return Ok(Target::At((k, i), 0u64.wrapping_sub(self.section((k, i))?.address()))),
+            // Such a section is never cut (`cut`).
+            RelocationTarget::Section(i) => return Ok(Target::At((k, i, 0), 0u64.wrapping_sub(self.objects[k].section_by_index(i).map_err(error)?.address()))),
             RelocationTarget::Symbol(i) => self.objects[k].symbol_by_index(i).map_err(error)?,
             _ => return Err("absolute relocation".into()),
         };
@@ -110,10 +138,8 @@ impl<'a> Inputs<'a> {
                 }
             }
         };
-        match s.section() {
-            SymbolSection::Section(i) => Ok(Target::At((k, i), self.offset(k, &s)?)),
-            _ => Err(format!("`{}` is in no section", s.name().unwrap_or("?"))),
-        }
+        let (p, offset) = self.at(k, &s)?;
+        Ok(Target::At(p, offset))
     }
 
     /// 2. The sections reached from `entry` (and the place of `entry`), the targets reached
@@ -122,16 +148,16 @@ impl<'a> Inputs<'a> {
     fn reach(&self, entry: &str, got: fn(RelocationFlags) -> bool) -> Result<Reached, String> {
         let &(k, i, _) = self.defined.get(entry).ok_or(format!("no `{entry}`"))?;
         let s = self.objects[k].symbol_by_index(i).map_err(error)?;
-        let first = (k, s.section_index().ok_or(format!("`{entry}` is in no section"))?);
-        let mut r = Reached { kept: vec![first], entry: (first, self.offset(k, &s)?), got: vec![], imports: vec![] };
+        let (first, offset) = self.at(k, &s)?;
+        let mut r = Reached { kept: vec![first], entry: (first, offset), got: vec![], imports: vec![] };
         let mut seen: HashSet<Place> = HashSet::from([first]);
         let mut seen_targets = HashSet::new();
         let mut i = 0;
         while i < r.kept.len() {
-            let (k, s) = r.kept[i];
+            let p = r.kept[i];
             i += 1;
-            for (_, rel) in self.objects[k].section_by_index(s).map_err(error)?.relocations() {
-                let t = self.target(k, rel.target())?;
+            for (_, _, rel) in self.relocations(p)? {
+                let t = self.target(p.0, rel.target())?;
                 if got(rel.flags()) && seen_targets.insert(t.clone()) {
                     r.got.push(t.clone());
                 }
@@ -145,11 +171,11 @@ impl<'a> Inputs<'a> {
         Ok(r)
     }
 
-    /// Where symbol `s` of object `k` is in its section (a Mach-O object gives its sections
-    /// addresses, ELF and COFF ones don't).
-    fn offset(&self, k: usize, s: &object::Symbol) -> Result<u64, String> {
-        let i = s.section_index().ok_or("a symbol in no section")?;
-        Ok(s.address() - self.section((k, i))?.address())
+    /// The piece holding symbol `s` of object `k`, and where it is in it (a Mach-O object gives
+    /// its sections addresses, ELF and COFF ones don't).
+    fn at(&self, k: usize, s: &object::Symbol) -> Result<(Place, u64), String> {
+        let i = s.section_index().ok_or(format!("`{}` is in no section", s.name().unwrap_or("?")))?;
+        Ok(self.piece(k, i, s.address() - self.objects[k].section_by_index(i).map_err(error)?.address()))
     }
 
     fn section(&self, p: Place) -> Result<object::Section<'a, '_>, String> {
@@ -184,10 +210,12 @@ impl<'a> Inputs<'a> {
                 next(this, &mut at);
                 part = Some(this);
             }
-            let section = self.section(p)?;
-            at = align(at, section.align().max(1));
+            // A piece is aligned as its section, or less if it starts at a smaller power of 2.
+            let (start, end) = self.range(p)?;
+            let alignment = self.section(p)?.align().max(1);
+            at = align(at, if start == 0 { alignment } else { alignment.min(1 << start.trailing_zeros()) });
             address.insert(p, at);
-            at += section.size();
+            at += end - start;
         }
         Ok(at)
     }
@@ -209,10 +237,11 @@ impl<'a> Inputs<'a> {
                 continue;
             }
             let section = self.section(p)?;
-            let data = section.data().map_err(error)?;
+            let (start, end) = self.range(p)?;
+            let data = &section.data().map_err(error)?[start as usize..end as usize];
             let o = offset(address[&p]);
             out[o..o + data.len()].copy_from_slice(data);
-            for (r_offset, r) in section.relocations() {
+            for (r_offset, in_section, r) in self.relocations(p)? {
                 let t = self.target(p.0, r.target())?;
                 let at = o + r_offset as usize;
                 // COFF and x86-64 Mach-O keep a part of the value in the code itself; arm64 Mach-O
@@ -233,7 +262,7 @@ impl<'a> Inputs<'a> {
                     };
                     // x86-64 Mach-O: a distance to a section was measured from the place in the object.
                     if let (RelocationFlags::MachO { r_pcrel: true, .. }, RelocationTarget::Section(_)) = (r.flags(), r.target()) {
-                        a += (section.address() + r_offset) as i64 - r.addend();
+                        a += (section.address() + in_section) as i64 - r.addend();
                     }
                 }
                 let mut value = (address_of(&t)? as i64).wrapping_add(a);
@@ -249,6 +278,33 @@ impl<'a> Inputs<'a> {
         }
         Ok(())
     }
+}
+
+/// Where the sections of Mach-O object `o` (number `k`) are cut: at each name, when its compiler
+/// promises that no code goes from one name to the next ("subsections via symbols"). A section
+/// that a relocation reaches without a name stays whole (the debug information and unwind tables
+/// do, but they are never kept).
+fn cut(k: usize, o: &object::File) -> Vec<((usize, SectionIndex), Vec<u64>)> {
+    if !matches!(o.flags(), object::FileFlags::MachO { flags } if flags.0 & object::macho::MH_SUBSECTIONS_VIA_SYMBOLS.0 != 0) {
+        return vec![];
+    }
+    let kept = |s: &object::Section| s.kind() != SectionKind::Debug && !matches!(s.name(), Ok("__compact_unwind" | "__eh_frame"));
+    let whole: HashSet<SectionIndex> = o.sections().filter(kept).flat_map(|s| s.relocations().filter_map(|(_, r)| match r.target() {
+        RelocationTarget::Section(i) => Some(i),
+        _ => None,
+    }).collect::<Vec<_>>()).collect();
+    let mut starts: HashMap<SectionIndex, Vec<u64>> = HashMap::new();
+    for sym in o.symbols() {
+        if let Some(i) = sym.section_index().filter(|i| !whole.contains(i)) {
+            let Ok(section) = o.section_by_index(i) else { continue };
+            starts.entry(i).or_insert_with(|| vec![0]).push(sym.address() - section.address());
+        }
+    }
+    starts.into_iter().map(|(i, mut s)| {
+        s.sort();
+        s.dedup();
+        ((k, i), s)
+    }).collect()
 }
 
 /// Whether symbol `s` is in a COMDAT section of a COFF object.
@@ -660,15 +716,18 @@ pub fn fat(slices: &[(u32, u32, &[u8])]) -> Vec<u8> {
     for v in [0xCAFE_BABE, slices.len() as u32] {
         out.extend(v.to_be_bytes());
     }
-    let mut at = MACHO_PAGE as usize;
+    // Each one starts on a page of its processor (16 KB on arm64, 4 KB on x86-64).
+    let page = |cpu: u32| if cpu == 0x0100_000C { MACHO_PAGE } else { PAGE };
+    let mut at = 8 + 20 * slices.len() as u64;
     for &(cpu, subtype, exe) in slices {
-        for v in [cpu, subtype, at as u32, exe.len() as u32, MACHO_PAGE.trailing_zeros()] {
+        at = align(at, page(cpu));
+        for v in [cpu, subtype, at as u32, exe.len() as u32, page(cpu).trailing_zeros()] {
             out.extend(v.to_be_bytes());
         }
-        at = align((at + exe.len()) as u64, MACHO_PAGE) as usize;
+        at += exe.len() as u64;
     }
-    for &(_, _, exe) in slices {
-        out.resize(align(out.len() as u64, MACHO_PAGE) as usize, 0);
+    for &(cpu, _, exe) in slices {
+        out.resize(align(out.len() as u64, page(cpu)) as usize, 0);
         out.extend(exe);
     }
     out
@@ -700,6 +759,8 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
     let mut r = inputs.reach("_main", if arm { macho_got } else { macho_got_intel })?;
     // A stub jumps to a function of `libSystem`, reading its address in the GOT.
     let stub_size = if arm { 12 } else { 6 };
+    // A page of the processor: what each segment is rounded to.
+    let page_size = if arm { MACHO_PAGE } else { PAGE };
     let parts = inputs.sorted(&mut r)?;
     // ponytail: the runtime's code is one section, kept whole (76 KB); split it by symbol
     // (`subsections_via_symbols`) if the executables' size matters.
@@ -717,7 +778,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
     let code_at = MACHO_BASE + 32 + COMMANDS;
     let stubs = align(inputs.place(&r.kept[..constants], code_at, |_, _| {}, &mut address)?, 4);
     let text_end = inputs.place(&r.kept[constants..data], stubs + stub_size * n, |_, _| {}, &mut address)?;
-    let data_at = align(text_end, MACHO_PAGE);
+    let data_at = align(text_end, page_size);
     let got_at = data_at;
     let mut zeros = None;
     let end = inputs.place(
@@ -732,8 +793,8 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
     )?;
     let zeros = zeros.unwrap_or(end);
     // Whole pages in the file; the zeros after them only in memory.
-    let data_file = align(zeros - data_at, MACHO_PAGE);
-    let data_size = align(end - data_at, MACHO_PAGE).max(data_file);
+    let data_file = align(zeros - data_at, page_size);
+    let data_size = align(end - data_at, page_size).max(data_file);
     let linkedit = data_at - MACHO_BASE + data_file;
 
     let offset = |a: u64| (a - MACHO_BASE) as usize;
@@ -889,7 +950,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
         le32(&mut h, v); // aligned on 4, only instructions
     }
     segment(&mut h, "__DATA", data_at, data_size, data_at - MACHO_BASE, data_file, 3, 0); // read, write
-    segment(&mut h, "__LINKEDIT", data_at + data_size, align(file_end - linkedit, MACHO_PAGE), linkedit, file_end - linkedit, 1, 0);
+    segment(&mut h, "__LINKEDIT", data_at + data_size, align(file_end - linkedit, page_size), linkedit, file_end - linkedit, 1, 0);
     for v in [0x8000_0022, 48, rebase_at, rebase.len() as u64, bind_at, bind.len() as u64, 0, 0, 0, 0, 0, 0] {
         le32(&mut h, v); // LC_DYLD_INFO_ONLY: no weak, lazy nor exported names
     }
