@@ -335,12 +335,15 @@ fn cross_build() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("hello.kova");
     std::fs::copy("tests/ok/strings.kova", &source).unwrap();
-    // The start of the file, then the processor's number at `at` (none for Windows).
-    let systems: [(&str, &str, &[u8], usize, u8); 5] = [
+    // The start of the file, then the processor's number at `at`.
+    let systems: [(&str, &str, &[u8], usize, u8); 7] = [
         ("linux", "hello", b"\x7fELF", 0x12, 62),
         ("linux-arm", "hello", b"\x7fELF", 0x12, 183),
-        ("windows", "hello.exe", b"MZ", 0, b'M'),
-        ("mac", "hello", b"\xcf\xfa\xed\xfe", 4, 0x0C),
+        ("windows", "hello.exe", b"MZ", 0x45, 0x86),
+        ("windows-arm", "hello.exe", b"MZ", 0x45, 0xAA),
+        // Both Macs' executables, the Intel one first.
+        ("mac", "hello", b"\xca\xfe\xba\xbe\0\0\0\x02", 11, 0x07),
+        ("mac-arm", "hello", b"\xcf\xfa\xed\xfe", 4, 0x0C),
         ("mac-intel", "hello", b"\xcf\xfa\xed\xfe", 4, 0x07),
     ];
     for (target, file, start, at, cpu) in systems {
@@ -351,7 +354,7 @@ fn cross_build() {
         }
         // The report: the file, the system, its size and the time taken.
         let report = text(&out.stderr);
-        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("mac", "Mac"), ("mac-intel", "Mac Intel")].iter().find(|(n, _)| *n == target).unwrap().1;
+        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("windows-arm", "Windows arm"), ("mac", "Mac"), ("mac-arm", "Mac arm"), ("mac-intel", "Mac Intel")].iter().find(|(n, _)| *n == target).unwrap().1;
         assert!(out.status.success() && report.starts_with(&format!("✓ {}", dir.join(file).display())), "{target}: {report}");
         assert!(report.contains(&format!(" ({title}, ")) && report.contains(" KB) in ") && report.lines().count() == 1, "{report}");
         let exe = std::fs::read(dir.join(file)).unwrap();

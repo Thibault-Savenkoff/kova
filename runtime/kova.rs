@@ -895,7 +895,7 @@ pub static _fltused: i32 = 0;
 
 // Microsoft's: a function whose variables take more than a page (4 KB) first touches each page,
 // from the top, so that Windows grows the stack (`rax` = their size). The same as LLVM's own.
-#[cfg(target_env = "msvc")]
+#[cfg(all(target_env = "msvc", target_arch = "x86_64"))]
 core::arch::global_asm!(
     ".globl __chkstk",
     "__chkstk:",
@@ -915,6 +915,21 @@ core::arch::global_asm!(
     "test [rcx], rcx",
     "pop rax",
     "pop rcx",
+    "ret",
+);
+
+// The same on arm64: `x15` = the size divided by 16; only `x16` and `x17` may change.
+#[cfg(all(target_env = "msvc", target_arch = "aarch64"))]
+core::arch::global_asm!(
+    ".globl __chkstk",
+    "__chkstk:",
+    "lsl x16, x15, #4",
+    "mov x17, sp",
+    "2:",
+    "sub x17, x17, #0x1000",
+    "subs x16, x16, #0x1000",
+    "ldr xzr, [x17]",
+    "b.gt 2b",
     "ret",
 );
 
@@ -968,9 +983,9 @@ mod memory {
     }
 }
 
-// On arm64 Linux: byte by byte, each byte "volatile" so that the loops stay loops.
+// On arm64 Linux and Windows: byte by byte, each byte "volatile" so that the loops stay loops.
 // ponytail: one byte at a time; by words of 8 bytes if copying ever shows in a profile.
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
 mod memory {
     use core::ffi::c_void;
 

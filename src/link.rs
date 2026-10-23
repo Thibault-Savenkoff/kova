@@ -216,10 +216,16 @@ impl<'a> Inputs<'a> {
                 let t = self.target(p.0, r.target())?;
                 let at = o + r_offset as usize;
                 // COFF and x86-64 Mach-O keep a part of the value in the code itself; arm64 Mach-O
-                // only in a pointer (its instructions get theirs from a relocation of their own).
+                // only in a pointer (its instructions get theirs from a relocation of their own);
+                // arm64 COFF in an instruction's own number (read by `pe`).
                 let mut a = r.addend();
-                let arm_macho = self.objects[p.0].architecture() == object::Architecture::Aarch64;
-                if r.has_implicit_addend() && !(arm_macho && matches!(r.flags(), RelocationFlags::MachO { r_type, .. } if r_type != object::macho::ARM64_RELOC_UNSIGNED)) {
+                let arm = self.objects[p.0].architecture() == object::Architecture::Aarch64;
+                let in_instruction = match r.flags() {
+                    RelocationFlags::MachO { r_type, .. } => r_type != object::macho::ARM64_RELOC_UNSIGNED,
+                    RelocationFlags::Coff { .. } => !matches!(r.size(), 32 | 64),
+                    _ => false,
+                };
+                if r.has_implicit_addend() && !(arm && in_instruction) {
                     a += match r.size() {
                         32 => i32::from_le_bytes(out[at..at + 4].try_into().unwrap()) as i64,
                         64 => i64::from_le_bytes(out[at..at + 8].try_into().unwrap()),
@@ -405,12 +411,14 @@ const FILE_ALIGN: u64 = 0x200;
 /// The executable of `main` and `runtime`, for Windows x86-64: three sections, `.text` (code, then
 /// the jumps to the system's functions), `.rdata` (constants, then the import table, which Windows
 /// fills with the addresses of `kernel32.dll`'s functions) and `.data` (data then zeros).
-pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
+pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("kova_start", |_| false)?;
     inputs.sorted(&mut r)?;
-    let headers = align(0x40 + 4 + 20 + 240 + 40 * 3, FILE_ALIGN);
+    let headers = align(0x40 + 4 + 20 + 240 + 40 * 4, FILE_ALIGN);
     let n = r.imports.len() as u64;
+    // A jump to a function of Windows, through its address in the IAT.
+    let thunk = if arm { 12 } else { 6 };
 
     // Where each section starts and ends (addresses); the jumps after the code.
     let mut address = HashMap::new();
@@ -420,7 +428,7 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let mut enter = |part: Part, at: &mut u64| {
         if part >= Part::Constants && ends[0] == 0 {
             thunks = *at;
-            ends[0] = thunks + 6 * n;
+            ends[0] = thunks + thunk * n;
             starts[1] = align(ends[0], PAGE);
             *at = starts[1];
         }
@@ -469,21 +477,68 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
         Target::At(p, off) => Ok(address[p] + off),
         Target::Nothing => Ok(0),
         Target::Import(name, true) => Ok(iat + 8 * index(name)),
-        Target::Import(name, false) => Ok(thunks + 6 * index(name)),
+        Target::Import(name, false) => Ok(thunks + thunk * index(name)),
     };
-    let apply = |out: &mut [u8], rel: &object::Relocation, _: &Target, place: u64, value: i64| match (rel.kind(), rel.size()) {
-        (RelocationKind::Absolute, 64) => put(out, value, 64),
-        // The addend (-4…) already counts from the end of the instruction.
-        (RelocationKind::Relative, 32) => put(out, value - place as i64, 32),
-        (RelocationKind::ImageOffset, 32) => put(out, value - PE_BASE as i64, 32),
-        (kind, size) => Err(format!("relocation {kind:?} of {size} bits")),
+    // The addresses written in the program, which Windows changes when it puts it elsewhere.
+    let based = RefCell::new(vec![]);
+    let apply = |out: &mut [u8], rel: &object::Relocation, t: &Target, place: u64, value: i64| {
+        use object::pe::*;
+        // arm64: an instruction, which holds its addend itself (see `Inputs::write`).
+        let insn = || u32::from_le_bytes(out[..4].try_into().unwrap());
+        match (rel.kind(), rel.size(), rel.flags()) {
+            (RelocationKind::Absolute, 64, _) => {
+                if *t != Target::Nothing {
+                    based.borrow_mut().push(place);
+                }
+                put(out, value, 64)
+            }
+            // The addend (-4…) already counts from the end of the instruction.
+            (RelocationKind::Relative, 32, _) => put(out, value - place as i64, 32),
+            (RelocationKind::ImageOffset, 32, _) => put(out, value - PE_BASE as i64, 32),
+            (_, _, RelocationFlags::Coff { typ }) if arm => match typ {
+                IMAGE_REL_ARM64_BRANCH26 => branch(out, value + ((insn() << 6) as i32 >> 4) as i64 - place as i64),
+                IMAGE_REL_ARM64_PAGEBASE_REL21 => {
+                    let low = (insn() >> 29 & 3 | (insn() >> 3 & 0x1F_FFFC)) as i64;
+                    page(out, value + (low << 43 >> 43), place)
+                }
+                IMAGE_REL_ARM64_PAGEOFFSET_12A => in_page(out, value + (insn() >> 10 & 0xFFF) as i64),
+                IMAGE_REL_ARM64_PAGEOFFSET_12L => in_page(out, value + ((insn() >> 10 & 0xFFF) << scale(insn())) as i64),
+                _ => Err(format!("relocation of type {typ}")),
+            },
+            // The program's own object, written for Linux (see `codegen::executable`).
+            (_, _, RelocationFlags::Elf { r_type }) if arm => {
+                use object::elf::*;
+                match r_type {
+                    R_AARCH64_CALL26 | R_AARCH64_JUMP26 => branch(out, value - place as i64),
+                    R_AARCH64_ADR_PREL_PG_HI21 => page(out, value, place),
+                    R_AARCH64_ADD_ABS_LO12_NC
+                    | R_AARCH64_LDST8_ABS_LO12_NC
+                    | R_AARCH64_LDST16_ABS_LO12_NC
+                    | R_AARCH64_LDST32_ABS_LO12_NC
+                    | R_AARCH64_LDST64_ABS_LO12_NC
+                    | R_AARCH64_LDST128_ABS_LO12_NC => in_page(out, value),
+                    _ => Err(format!("relocation of type {r_type}")),
+                }
+            }
+            (kind, size, _) => Err(format!("relocation {kind:?} of {size} bits")),
+        }
     };
     inputs.write(&r.kept, &address, offset, &mut out, address_of, apply)?;
 
     for (i, f) in r.imports.iter().enumerate() {
-        let (i, t) = (i as u64, offset(thunks + 6 * i as u64));
-        out[t..t + 2].copy_from_slice(&[0xFF, 0x25]); // jmp [rip + …]
-        out[t + 2..t + 6].copy_from_slice(&((iat + 8 * i) as i32 - (thunks + 6 * i + 6) as i32).to_le_bytes());
+        let (i, t) = (i as u64, offset(thunks + thunk * i as u64));
+        let slot = iat + 8 * i;
+        if arm {
+            // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
+            for (k, insn) in [0x9000_0010u32, 0xF940_0210, 0xD61F_0200].into_iter().enumerate() {
+                out[t + 4 * k..t + 4 * k + 4].copy_from_slice(&insn.to_le_bytes());
+            }
+            page(&mut out[t..], slot as i64, thunks + thunk * i)?;
+            in_page(&mut out[t + 4..], slot as i64)?;
+        } else {
+            out[t..t + 2].copy_from_slice(&[0xFF, 0x25]); // jmp [rip + …]
+            out[t + 2..t + 6].copy_from_slice(&(slot as i32 - (thunks + 6 * i + 6) as i32).to_le_bytes());
+        }
         for table in [iat, ilt] {
             let o = offset(table + 8 * i);
             out[o..o + 8].copy_from_slice(&rva(names[i as usize]).to_le_bytes());
@@ -498,6 +553,28 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let o = offset(dll_name);
     out[o..o + 12].copy_from_slice(b"KERNEL32.dll");
 
+    // A fourth section, `.reloc`: for each page of 4 KB, the places in it holding an address
+    // (type 10: 64 bits). Windows on arm64 always puts a program at an address of its choosing.
+    let mut based = based.into_inner();
+    based.sort();
+    let mut relocs = vec![];
+    for places in based.chunk_by(|a, b| a >> 12 == b >> 12) {
+        let size = 8 + 2 * places.len().next_multiple_of(2);
+        relocs.extend((rva(places[0] & !0xFFF) as u32).to_le_bytes());
+        relocs.extend((size as u32).to_le_bytes());
+        for a in places {
+            relocs.extend((0xA000 | (a & 0xFFF) as u16).to_le_bytes());
+        }
+        relocs.resize(relocs.len().next_multiple_of(4), 0);
+    }
+    if relocs.is_empty() {
+        relocs.extend([0, 0, 0, 0, 8, 0, 0, 0]); // one page, no place
+    }
+    let reloc_at = align(end, PAGE);
+    let reloc_raw = (out.len() as u64, align(relocs.len() as u64, FILE_ALIGN));
+    out.extend(&relocs);
+    out.resize((reloc_raw.0 + reloc_raw.1) as usize, 0);
+
     // The headers: MS-DOS's (which only says where the next one is), PE's, the "optional" one
     // (which every executable has), then the three sections'.
     let mut h = vec![0u8; 0x40];
@@ -507,17 +584,17 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     let le16 = |h: &mut Vec<u8>, v: u16| h.extend_from_slice(&v.to_le_bytes());
     let le32 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&(v as u32).to_le_bytes());
     let le64 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&v.to_le_bytes());
-    le16(&mut h, 0x8664); // x86-64
-    le16(&mut h, 3); // sections
+    le16(&mut h, if arm { 0xAA64 } else { 0x8664 }); // arm64 or x86-64
+    le16(&mut h, 4); // sections
     for _ in 0..3 {
         le32(&mut h, 0); // date, no symbols
     }
     le16(&mut h, 240); // size of the optional header
-    le16(&mut h, 0x23); // an executable, without relocations, using addresses above 2 GB
+    le16(&mut h, 0x22); // an executable using addresses above 2 GB
     le16(&mut h, 0x20B); // PE32+
     h.extend_from_slice(&[14, 0]); // "linker version"
     le32(&mut h, sizes[0]);
-    le32(&mut h, sizes[1] + sizes[2]);
+    le32(&mut h, sizes[1] + sizes[2] + reloc_raw.1);
     le32(&mut h, end - zeros);
     le32(&mut h, rva(address[&r.entry.0] + r.entry.1));
     le32(&mut h, rva(starts[0]));
@@ -528,11 +605,11 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
         le16(&mut h, v); // Windows Vista and later
     }
     le32(&mut h, 0);
-    le32(&mut h, rva(align(end, PAGE))); // size of the image
+    le32(&mut h, rva(align(reloc_at + relocs.len() as u64, PAGE))); // size of the image
     le32(&mut h, headers);
     le32(&mut h, 0); // checksum
     le16(&mut h, 3); // a console program
-    le16(&mut h, 0x8100); // data never runs (NX), terminal server aware; a fixed address
+    le16(&mut h, 0x8160); // anywhere in the 64 bits (ASLR), data never runs (NX), terminal server aware
     for v in [0x10_0000u64, PAGE, 0x10_0000, PAGE] {
         le64(&mut h, v); // stack and heap: reserved, committed
     }
@@ -541,18 +618,21 @@ pub fn pe(main: &[u8], runtime: &[u8]) -> Result<Vec<u8>, String> {
     for k in 0..16 {
         let (at, size) = match k {
             1 => (rva(directory), 40),     // the imports
+            5 => (rva(reloc_at), relocs.len() as u64), // the places holding an address
             12 => (rva(iat), 8 * (n + 1)), // their addresses
             _ => (0, 0),
         };
         le32(&mut h, at);
         le32(&mut h, size);
     }
-    for (k, (name, flags)) in [(*b".text\0\0\0", 0x6000_0020), (*b".rdata\0\0", 0x4000_0040), (*b".data\0\0\0", 0xC000_0040)].into_iter().enumerate() {
+    let sections = [(*b".text\0\0\0", 0x6000_0020), (*b".rdata\0\0", 0x4000_0040), (*b".data\0\0\0", 0xC000_0040), (*b".reloc\0\0", 0x4200_0040)];
+    for (k, (name, flags)) in sections.into_iter().enumerate() {
+        let (start, size, file) = if k < 3 { (starts[k], ends[k] - starts[k], raw(k)) } else { (reloc_at, relocs.len() as u64, reloc_raw) };
         h.extend_from_slice(&name);
-        le32(&mut h, ends[k] - starts[k]);
-        le32(&mut h, rva(starts[k]));
-        le32(&mut h, raw(k).1);
-        le32(&mut h, raw(k).0);
+        le32(&mut h, size);
+        le32(&mut h, rva(start));
+        le32(&mut h, file.1);
+        le32(&mut h, file.0);
         for _ in 0..3 {
             le32(&mut h, 0);
         }
@@ -573,6 +653,27 @@ fn tables_size(imports: &[String]) -> u64 {
 
 /// Under it, 4 GB that no address may be in (`__PAGEZERO`): a pointer cut to 32 bits faults.
 const MACHO_BASE: u64 = 0x1_0000_0000;
+/// One file holding executables for several processors (`(cpu type, subtype, executable)`): a
+/// "universal" Mac executable, in which macOS picks the one for its processor.
+pub fn fat(slices: &[(u32, u32, &[u8])]) -> Vec<u8> {
+    let mut out = vec![];
+    for v in [0xCAFE_BABE, slices.len() as u32] {
+        out.extend(v.to_be_bytes());
+    }
+    let mut at = MACHO_PAGE as usize;
+    for &(cpu, subtype, exe) in slices {
+        for v in [cpu, subtype, at as u32, exe.len() as u32, MACHO_PAGE.trailing_zeros()] {
+            out.extend(v.to_be_bytes());
+        }
+        at = align((at + exe.len()) as u64, MACHO_PAGE) as usize;
+    }
+    for &(_, _, exe) in slices {
+        out.resize(align(out.len() as u64, MACHO_PAGE) as usize, 0);
+        out.extend(exe);
+    }
+    out
+}
+
 /// The Mac's pages on arm64 (4 times those of x86-64).
 const MACHO_PAGE: u64 = 0x4000;
 /// The header's commands (see `macho`).
@@ -849,13 +950,7 @@ fn page(out: &mut [u8], target: i64, place: u64) -> Result<(), String> {
 /// After an `adrp`: `target`'s place in its page, counted in the size a load or store reads.
 fn in_page(out: &mut [u8], target: i64) -> Result<(), String> {
     let insn = u32::from_le_bytes(out[..4].try_into().unwrap());
-    let mut scale = 0;
-    if insn & 0x3B00_0000 == 0x3900_0000 {
-        scale = insn >> 30;
-        if scale == 0 && insn & 0x0480_0000 == 0x0480_0000 {
-            scale = 4; // 128 bits
-        }
-    }
+    let scale = scale(insn);
     let low = (target & 0xFFF) as u32;
     if low % (1 << scale) != 0 {
         return Err("misaligned address".into());
@@ -863,6 +958,17 @@ fn in_page(out: &mut [u8], target: i64) -> Result<(), String> {
     let insn = insn & 0xFFC0_03FF | (low >> scale) << 10;
     out[..4].copy_from_slice(&insn.to_le_bytes());
     Ok(())
+}
+
+/// How many bytes (as a power of 2) a load or store `insn` reads; 0 for an `add`.
+fn scale(insn: u32) -> u32 {
+    if insn & 0x3B00_0000 != 0x3900_0000 {
+        return 0;
+    }
+    match insn >> 30 {
+        0 if insn & 0x0480_0000 == 0x0480_0000 => 4, // 128 bits
+        n => n,
+    }
 }
 
 fn uleb(out: &mut Vec<u8>, mut v: u64) {

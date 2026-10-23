@@ -27,10 +27,11 @@ fn main() {
     };
     // The same names as `Target::triples` in src/codegen.rs; Windows: Microsoft's or GNU's
     // Rust library, whichever is installed (the runtime asks nothing of either).
-    let targets: [(&str, &[&str]); 5] = [
+    let targets: [(&str, &[&str]); 6] = [
         ("linux", &["x86_64-unknown-linux-gnu"]),
         ("windows", &["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"]),
-        ("mac", &["aarch64-apple-darwin"]),
+        ("windows-arm", &["aarch64-pc-windows-msvc", "aarch64-pc-windows-gnullvm"]),
+        ("mac-arm", &["aarch64-apple-darwin"]),
         ("linux-arm", &["aarch64-unknown-linux-gnu"]),
         ("mac-intel", &["x86_64-apple-darwin"]),
     ];

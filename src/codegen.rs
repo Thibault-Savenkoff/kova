@@ -27,20 +27,26 @@ pub enum Target {
     Linux,
     /// Windows on x86-64.
     Windows,
-    /// macOS on arm64 (Apple's own processors).
+    /// Every Mac: one file holding the arm64 and the x86-64 executables, macOS runs the one it needs.
     Mac,
     /// Linux on arm64 (a Raspberry Pi, servers).
     LinuxArm,
+    /// Windows on arm64 (Surface and other Snapdragon PCs).
+    WindowsArm,
+    /// macOS on arm64 (Apple's own processors).
+    MacArm,
     /// macOS on x86-64 (the Macs before 2020).
     MacIntel,
 }
 
 impl Target {
-    pub const NAMES: [(&str, Target); 5] = [
+    pub const NAMES: [(&str, Target); 7] = [
         ("linux", Target::Linux),
         ("windows", Target::Windows),
         ("mac", Target::Mac),
         ("linux-arm", Target::LinuxArm),
+        ("windows-arm", Target::WindowsArm),
+        ("mac-arm", Target::MacArm),
         ("mac-intel", Target::MacIntel),
     ];
 
@@ -52,18 +58,19 @@ impl Target {
         Target::NAMES.iter().find(|(_, t)| *t == self).unwrap().0
     }
 
-    /// The machine `kova` runs on, if it is one of them.
+    /// The machine `kova` runs on, if it is one of them; on a Mac, every Mac (user, 2026-10-23: the
+    /// executable can be given to anyone).
     pub fn host() -> Option<Target> {
         if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
             Some(Target::Linux)
         } else if cfg!(all(windows, target_arch = "x86_64")) {
             Some(Target::Windows)
-        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        } else if cfg!(target_os = "macos") {
             Some(Target::Mac)
         } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
             Some(Target::LinuxArm)
-        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-            Some(Target::MacIntel)
+        } else if cfg!(all(windows, target_arch = "aarch64")) {
+            Some(Target::WindowsArm)
         } else {
             None
         }
@@ -76,13 +83,15 @@ impl Target {
             Target::Windows => "Windows",
             Target::Mac => "Mac",
             Target::LinuxArm => "Linux arm",
+            Target::WindowsArm => "Windows arm",
+            Target::MacArm => "Mac arm",
             Target::MacIntel => "Mac Intel",
         }
     }
 
     /// The end of its executables' names.
     pub fn suffix(self) -> &'static str {
-        if self == Target::Windows { ".exe" } else { "" }
+        if matches!(self, Target::Windows | Target::WindowsArm) { ".exe" } else { "" }
     }
 
     /// What Cranelift and Rust call it (the first one: the one to install, see build.rs).
@@ -90,8 +99,9 @@ impl Target {
         match self {
             Target::Linux => "x86_64-unknown-linux-gnu",
             Target::Windows => "x86_64-pc-windows-msvc",
-            Target::Mac => "aarch64-apple-darwin",
+            Target::Mac | Target::MacArm => "aarch64-apple-darwin",
             Target::LinuxArm => "aarch64-unknown-linux-gnu",
+            Target::WindowsArm => "aarch64-pc-windows-msvc",
             Target::MacIntel => "x86_64-apple-darwin",
         }
     }
@@ -101,8 +111,9 @@ impl Target {
         match self {
             Target::Linux => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux.a")),
             Target::Windows => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows.a")),
-            Target::Mac => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac.a")),
+            Target::Mac | Target::MacArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-arm.a")),
             Target::LinuxArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux-arm.a")),
+            Target::WindowsArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows-arm.a")),
             Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),
         }
     }
@@ -112,21 +123,34 @@ impl Target {
 /// `target`: the system to make it for (the machine's own if none is given).
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, target: Option<Target>) -> Result<(), String> {
     let Some(target) = target.or(Target::host()) else { return Err(t!("unknown_system")) };
+    let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy().into_owned());
+    write_executable(output, &executable(p, files, &name, lang, target)?)
+}
+
+fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, target: Target) -> Result<Vec<u8>, String> {
+    if target == Target::Mac {
+        let intel = executable(p, files, name, lang, Target::MacIntel)?;
+        return Ok(crate::link::fat(&[(0x0100_0007, 3, &intel), (0x0100_000C, 0, &executable(p, files, name, lang, Target::MacArm)?)]));
+    }
     let runtime = target.runtime();
     if runtime.is_empty() {
         return Err(t!("no_runtime", target = target.name(), triple = target.triple()));
     }
-    let object = make_object(p, files, lang, target.triple().parse().unwrap()).map_err(|e| t!("codegen_failed", error = e))?;
+    // Windows on arm64: Cranelift cannot write its addresses in Microsoft's object format, so the
+    // program's object is Linux's; arm64 Windows and Linux call functions the same way.
+    let windows_arm = target == Target::WindowsArm;
+    let triple = if windows_arm { "aarch64-unknown-linux-gnu" } else { target.triple() };
+    let object = make_object(p, files, lang, triple.parse().unwrap(), windows_arm).map_err(|e| t!("codegen_failed", error = e))?;
     // Kova's own linker: no `cc`, nor Microsoft's or Apple's linker (src/link.rs).
-    let name = || Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy().into_owned());
     let exe = match target {
         Target::Linux => crate::link::elf(&object, runtime, false),
         Target::LinuxArm => crate::link::elf(&object, runtime, true),
-        Target::Windows => crate::link::pe(&object, runtime),
-        Target::Mac => crate::link::macho(&object, runtime, &name(), true),
-        Target::MacIntel => crate::link::macho(&object, runtime, &name(), false),
+        Target::Windows => crate::link::pe(&object, runtime, false),
+        Target::WindowsArm => crate::link::pe(&object, runtime, true),
+        Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
+        Target::MacIntel => crate::link::macho(&object, runtime, name, false),
     };
-    write_executable(output, &exe.map_err(|e| t!("codegen_failed", error = e))?)
+    exe.map_err(|e| t!("codegen_failed", error = e))
 }
 
 /// The executable, which may be run.
@@ -239,10 +263,17 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     }
 }
 
-fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: target_lexicon::Triple) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: target_lexicon::Triple, windows_arm: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
-    flags.set("is_pic", "true")?; // Fedora's gcc makes "PIE" executables, macOS only those
+    // Code that runs at any address, as macOS wants it; not for Windows on arm64, where Cranelift
+    // writes addresses instead (Windows moves them with the program: `link::pe`'s `.reloc`), and
+    // touches each page of a big stack frame, as Windows wants.
+    flags.set("is_pic", if windows_arm { "false" } else { "true" })?;
+    if windows_arm {
+        flags.set("enable_probestack", "true")?;
+        flags.set("probestack_strategy", "inline")?;
+    }
     // A function returning many values (big tuple): Cranelift stores them in memory.
     flags.set("enable_multi_ret_implicit_sret", "true")?;
     let isa = cranelift_codegen::isa::lookup(triple)?.finish(settings::Flags::new(flags))?;

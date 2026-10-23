@@ -20,7 +20,7 @@ lang fr {
     what_field := "champ"
 
     // ---- Command line ----
-    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|mac-intel]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
+    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|windows-arm|mac-arm|mac-intel]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
     cannot_read := "impossible de lire `{file}` : {error}"
     cannot_write := "impossible d'écrire `{file}` : {error}"
     fmt_unreadable := "`{file}` n'est pas mis en forme : il ne se lit pas (un texte ou un commentaire jamais fermé, un caractère inconnu) ; `kova run` dit où"
@@ -32,7 +32,7 @@ lang fr {
     unknown_target := "système `{name}` inconnu après `--target` : Kova connaît {names}"
     built := "✓ {file} ({system}, {size} Ko) en {time}"
     decimal_mark := ","
-    unknown_system := "`kova build` ne connaît pas ce système : il fabrique des exécutables pour Linux (x86-64, arm64), Windows (x86-64) et macOS (puces Apple, Intel). Choisis-en un avec `--target`"
+    unknown_system := "`kova build` ne connaît pas ce système : il fabrique des exécutables pour Linux (x86-64, arm64), Windows (x86-64, arm64) et macOS (puces Apple, Intel). Choisis-en un avec `--target`"
     tests_none := "aucun bloc `test` dans {file}"
     test_unknown := "aucun test \"{name}\" dans {file}"
     tests_summary := "{passed} réussi(s), {failed} raté(s) sur {total}"
