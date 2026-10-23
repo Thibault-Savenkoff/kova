@@ -1,3 +1,13 @@
+struct Kennel {
+    names: List<String>
+}
+
+fn walk(l: List<String>) {
+    for x in move l {
+        print(x)
+    }
+}
+
 fn main {
     let l: List<String> := ["a"]
     for x in move l {
@@ -8,6 +18,12 @@ fn main {
     for x in move m {
         print(m.length)
     }
+    let k := Kennel { names := ["c"] }
+    for x in move k.names {
+        print(x)
+    }
 }
-// error: `l` was moved (line 3)
-// error: `m` was moved (line 8)
+// error: `l` is borrowed here: it cannot be moved
+// error: `l` was moved (line 13)
+// error: `m` was moved (line 18)
+// error: `k.names` cannot be moved out of its struct
