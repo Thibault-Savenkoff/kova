@@ -998,29 +998,30 @@ impl<'a> Translator<'a> {
                 text
             }
             Type::List(elem) | Type::Map(_, elem) => {
+                // Each element's text in a List, joined once: appending one by one would copy the
+                // text made so far at each element.
                 let map = matches!(ty, Type::Map(..));
-                let text = self.text(if map { "{" } else { "[" });
                 let each = if map { pair(&Type::String, elem) } else { (**elem).clone() };
-                self.each_element(v[0], &each, |t, i, x| {
-                    let (zero, comma, next) = (t.constant(0), t.new_block(), t.new_block());
-                    let first = t.int_local();
-                    t.emit(Inst::Binary(first, Op::Eq, i, zero, NOWHERE));
-                    t.go(End::Branch(first, next, comma), comma);
-                    let sep = t.text(",");
-                    t.append(text, sep);
-                    t.go(End::Jump(next), next);
-                    let value = if map {
-                        let key = t.json_text(&x[..1], &Type::String);
-                        t.append(text, key);
-                        let colon = t.text(":");
-                        t.append(text, colon);
-                        &x[1..]
+                let parts = self.int_local();
+                self.emit(Inst::ListNew(parts, 1));
+                self.each_element(v[0], &each, |t, _, x| {
+                    let piece = if map {
+                        let (key, colon) = (t.json_text(&x[..1], &Type::String), t.text(":"));
+                        t.append(key, colon);
+                        let value = t.json_text(&x[1..], elem);
+                        t.append(key, value);
+                        key
                     } else {
-                        &x[..]
+                        t.json_text(&x, elem)
                     };
-                    let piece = t.json_text(value, elem);
-                    t.append(text, piece);
+                    t.push(parts, &[piece]);
                 });
+                let (sep, joined) = (self.text(","), self.int_local());
+                self.emit(Inst::Str(joined, StrOp::Join, vec![parts, sep]));
+                self.emit(Inst::Free(sep));
+                self.free_value(&[parts], &Type::List(Box::new(Type::String)));
+                let text = self.text(if map { "{" } else { "[" });
+                self.append(text, joined);
                 let close = self.text(if map { "}" } else { "]" });
                 self.append(text, close);
                 text

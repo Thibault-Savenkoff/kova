@@ -249,7 +249,7 @@ lang fr {
     field_and_method := "`{name}` est à la fois un champ et une méthode de `{type}`"
     field_and_method_help := "`x.{name}` ne doit vouloir dire qu'une seule chose : renomme l'un des deux"
     json_made := "`{name}` est fait par Kova pour chaque struct"
-    json_made_help := "`T.from_json(texte)` lit du JSON et `valeur.to_json` en écrit : donne un autre nom à ta méthode"
+    json_made_help := "`T.from_json(texte)` lit du JSON et `valeur.to_json` en écrit : donne un autre nom au tien"
     json_no_form := "`{call}` ne peut pas contenir `{field}` : un `{type}` n'a pas de forme JSON"
     json_no_form_help := "le JSON contient des `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` et des structs faites de ceux-ci"
     json_private := "`{call}` ne peut pas contenir `{field}` : il est privé dans {file}"

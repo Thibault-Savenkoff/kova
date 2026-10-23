@@ -18,7 +18,7 @@ struct Shape {
 }
 
 struct Own {
-    x: Int
+    from_json: Int
     fn to_json(self) -> String { return "" }
 }
 
@@ -31,4 +31,5 @@ fn main {
 // error: `Scores.to_json` cannot hold `by`: a `Map<Int, String>` has no JSON form
 // error: `Shape.from_json` cannot hold `kinds`: a `Kind` has no JSON form
 // error: `to_json` is made by Kova for every struct
+// error: `from_json` is made by Kova for every struct
 // error: help: JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them

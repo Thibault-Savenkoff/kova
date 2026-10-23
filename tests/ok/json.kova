@@ -92,6 +92,7 @@ fn shapes {
     print(Pair<String>.from_json("\{\"a\": \"\\ud800\", \"b\": \"\"\}"))
     let n := Numbers { f := [0.1, 1.5e-5, 1e16, -0.0, 1.0 / 3.0, 123456789012345680000.0, (-1.0).sqrt, 1e308 * 10.0], i := [0, -1, 42] }
     print(n.to_json)
+    print(Pair<String> { a := "x", b := "y" }.to_json)
     print(People.from_json("\{\"list\": [\{\"a\": \"x\", \"b\": \"y\"\}, \{\"a\": \"z\"\}]\}"))
     print(People.from_json("\{\"list\": [\{\"a\": \"x\", \"b\": \"y\"\}, \{\"a\": \"z\", \"b\": null\}]\}"))
     print(People.from_json("[".repeat(300)))
@@ -129,6 +130,7 @@ fn main {
 // expect: ok(Pair<String> { a: "é😀A"/", b: "" })
 // expect: err(NotJson(1))
 // expect: {"f":[0.1,1.5e-5,1e16,-0.0,0.3333333333333333,1.2345678901234568e20,null,null],"i":[0,-1,42]}
+// expect: {"a":"x","b":"y"}
 // expect: err(Missing("list[1].b"))
 // expect: err(WrongKind("list[1].b"))
 // expect: err(NotJson(1))

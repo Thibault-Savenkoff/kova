@@ -1123,6 +1123,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         // `Book.from_json(text)`, `book.to_json` (PLAN Part 4 "JSON"): made for every struct,
         // their fields checked at each call (`json_form`).
         if s.variants.is_none() {
+            for p in s.fields.iter().filter(|p| JSON_METHODS.contains(&p.name.text.as_str())) {
+                c.diags.push(Diag::new(p.name.span, t!("json_made", name = p.name.text)).help(t!("json_made_help")));
+            }
             let read = Type::Result(Box::new(c.structs["Self"].clone()), Box::new(json_error()));
             let from = Signature { receiver: None, params: vec![(Mode::Read, Type::String)], ret: read, generics: generics.clone() };
             c.functions.insert(method_name(&s.name.text, "from_json"), from);
