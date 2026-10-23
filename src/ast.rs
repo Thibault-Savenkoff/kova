@@ -98,6 +98,9 @@ pub enum Case {
     Variant { name: Name, binds: Vec<Pattern> },
     /// `n =>` on an optional: a name alone receives the value (PLAN Part 4, J4 step 2).
     Bind(Pattern),
+    /// `0`, `1, 2`, `'a'`, `"yes"`: values written out, on an `Int`, a `Char` or a `String`
+    /// (PLAN Part 4, "Match on values").
+    Values(Vec<Expr>),
     /// `_`: every other case.
     Any(Span),
 }
@@ -108,7 +111,7 @@ impl Case {
         match self {
             Case::Variant { name, binds } => Some((&name.text, binds.iter().collect())),
             Case::Bind(p) => Some(("some", vec![p])),
-            Case::Any(_) => None,
+            Case::Values(_) | Case::Any(_) => None,
         }
     }
 }

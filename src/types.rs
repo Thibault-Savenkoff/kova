@@ -3654,6 +3654,15 @@ impl Checker<'_> {
     /// `match x { … }`; `value`: each arm gives a value (of the `expected` type if known).
     fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
         let t = self.expr(&m.subject);
+        if matches!(t, Type::Int | Type::Char | Type::String) {
+            return self.match_values(m, &t, expected, value);
+        }
+        for arm in &m.arms {
+            if let Case::Values(vs) = &arm.case {
+                let span = vs[0].span.to(vs[vs.len() - 1].span);
+                self.error(span, t!("case_value_on", type = t.text()));
+            }
+        }
         let optional = matches!(t, Type::Optional(_));
         let outcome = matches!(t, Type::Result(..));
         let d = match &t {
@@ -3673,6 +3682,7 @@ impl Checker<'_> {
                 Case::Variant { name, .. } => name.span,
                 Case::Bind(Pattern::Name(n)) => n.span,
                 Case::Bind(Pattern::Tuple(_, s) | Pattern::Ignore(s)) | Case::Any(s) => *s,
+                Case::Values(vs) => vs[0].span,
             };
             let shown = self.src[span.start..span.end].to_string();
             if let Some(a) = any {
@@ -3681,6 +3691,8 @@ impl Checker<'_> {
             }
             self.scopes.push(HashMap::new());
             match (arm.case.variant(), &d) {
+                // Already reported above.
+                _ if matches!(arm.case, Case::Values(_)) => {}
                 (None, Some(d)) => {
                     if any.is_none() && seen.len() == d.variants().len() {
                         self.error(span, t!("case_any_useless", type = d.name));
@@ -3804,6 +3816,65 @@ impl Checker<'_> {
                         .help(t!("cases_missing_help")),
                 );
             }
+        }
+        result.unwrap_or(Type::Error)
+    }
+
+    /// `match n { 0 => …, 1, 2 => …, _ => … }` on an `Int`, a `Char` or a `String`: each case
+    /// is a value written out, once; `_` ends it, since no list could hold every value.
+    fn match_values(&mut self, m: &Match, t: &Type, expected: Option<&Type>, value: bool) -> Type {
+        // The value as written (`-1`, `"yes"`) → where its case is.
+        let mut seen: HashMap<String, Span> = HashMap::new();
+        let mut any: Option<Span> = None;
+        let mut result: Option<Type> = None;
+        for arm in &m.arms {
+            let span = match &arm.case {
+                Case::Variant { name, .. } => name.span,
+                Case::Bind(Pattern::Name(n)) => n.span,
+                Case::Bind(Pattern::Tuple(_, s) | Pattern::Ignore(s)) | Case::Any(s) => *s,
+                Case::Values(vs) => vs[0].span,
+            };
+            if let Some(a) = any {
+                let (line, _) = line_col(self.src, a.start);
+                self.error(span, t!("case_after_any", line = line));
+            }
+            match &arm.case {
+                Case::Any(_) => any = Some(span),
+                Case::Values(vs) => {
+                    for v in vs {
+                        self.expect(v, t);
+                        let literal = match &v.kind {
+                            ExprKind::Int(_) | ExprKind::Char(_) | ExprKind::Str(_) => true,
+                            ExprKind::Unary(UnOp::Neg, x) => matches!(x.kind, ExprKind::Int(_)),
+                            _ => false,
+                        };
+                        let shown = self.src[v.span.start..v.span.end].to_string();
+                        if !literal {
+                            self.error(v.span, t!("case_literal", type = t.text()));
+                        } else if let Some(first) = seen.insert(shown.clone(), v.span) {
+                            let (line, _) = line_col(self.src, first.start);
+                            self.error(v.span, t!("case_twice", name = shown, line = line));
+                        }
+                    }
+                }
+                _ => {
+                    let shown = &self.src[span.start..span.end];
+                    self.diags.push(Diag::new(span, t!("case_not_value", name = shown, type = t.text())).help(t!("case_not_value_help")));
+                }
+            }
+            self.scopes.push(HashMap::new());
+            if value {
+                let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
+                if result.is_none() {
+                    result = Some(ty);
+                }
+            } else {
+                self.block(&arm.body, vec![]);
+            }
+            self.scopes.pop();
+        }
+        if any.is_none() {
+            self.diags.push(Diag::new(m.subject.span, t!("match_needs_any", type = t.text())).help(t!("match_needs_any_help")));
         }
         result.unwrap_or(Type::Error)
     }

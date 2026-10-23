@@ -1,0 +1,55 @@
+// A `match` on values written out (PLAN Part 4, "Match on values").
+fn name(n: Int) -> String {
+    return match n {
+        0 => "zero"
+        1, 2, 3 => "a few"
+        - 1 => "minus one"
+        _ => "many"
+    }
+}
+
+fn kind(c: Char) -> String {
+    match c {
+        'a', 'e', 'i', 'o', 'u' => return "vowel"
+        ' ' => return "space"
+        _ => return "other"
+    }
+}
+
+fn answer(s: String) -> Bool {
+    return match s.to_lower {
+        "yes", "y", "oui" => true
+        _ => false
+    }
+}
+
+fn main {
+    for n in [0, 2, -1, 7] {
+        print(name(n))
+    }
+    print(kind('e'))
+    print(kind(' '))
+    print(kind('z'))
+    print(answer("YES"))
+    print(answer("no"))
+    var i: Int := 0
+    while i < 3 {
+        match "{i}" {
+            "1" => print("one")
+            _ => print("not one")
+        }
+        i += 1
+    }
+}
+// expect: zero
+// expect: a few
+// expect: minus one
+// expect: many
+// expect: vowel
+// expect: space
+// expect: other
+// expect: true
+// expect: false
+// expect: not one
+// expect: one
+// expect: not one

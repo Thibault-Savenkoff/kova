@@ -33,7 +33,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
@@ -3047,7 +3047,8 @@ impl<'a> Translator<'a> {
     /// what it does not bind.
     fn match_(&mut self, m: &Match, dst: Option<(&[Local], &Type)>) {
         let ty = self.ty(&m.subject);
-        let d = &enum_view(&ty).expect("enum checked by the type checker");
+        // `None` for a `match` on values (`match n { 0 => … }`).
+        let view = enum_view(&ty);
         // `match chain(3).next`: a part of a temporary is borrowed too, the temporary freed after.
         let part = match &m.subject.kind {
             ExprKind::Field(..) => true,
@@ -3074,9 +3075,26 @@ impl<'a> Translator<'a> {
         let after = self.new_block();
         for (k, arm) in m.arms.iter().enumerate() {
             let (body, next) = (self.new_block(), self.new_block());
-            match arm.case.variant() {
+            match (&arm.case, arm.case.variant()) {
+                // `1, 2 =>`: different values, so at most one test gives 1. A text written there is
+                // freed at once: on another path, it is never made.
+                (Case::Values(values), _) => {
+                    let mark = self.temps.len();
+                    let mut test = None;
+                    for x in values {
+                        let x = self.expr(x);
+                        let is = self.equal(&v, &x, &ty, m.subject.span);
+                        test = Some(match test {
+                            None => is,
+                            Some(t) => self.op(Op::Plus, t, is),
+                        });
+                    }
+                    self.free_temps(mark);
+                    self.go(End::Branch(test.unwrap(), body, next), body);
+                }
                 // The last arm takes what is left: the type checker made sure nothing else is.
-                Some((name, _)) if k + 1 < m.arms.len() => {
+                (_, Some((name, _))) if k + 1 < m.arms.len() => {
+                    let d = view.as_ref().expect("an enum, an optional or a result");
                     // `Saturday, Sunday =>`: the variants are different, so at most one test gives 1.
                     let mut test = None;
                     for name in std::iter::once(name).chain(arm.also.iter().map(|n| n.text.as_str())) {
@@ -3094,6 +3112,7 @@ impl<'a> Translator<'a> {
             self.names.push(Scope { borrowed, vars: HashMap::new() });
             match arm.case.variant() {
                 Some((name, binds)) if !binds.is_empty() => {
+                    let d = view.as_ref().expect("an enum, an optional or a result");
                     let (i, fields) = d.variant(name).unwrap();
                     let mut at = variant_slice(d, i).0;
                     for (p, (_, t)) in binds.into_iter().zip(fields) {

@@ -1,0 +1,34 @@
+// A `match` on values (PLAN Part 4, "Match on values").
+enum Light {
+    Red
+    Green
+}
+
+fn main {
+    let n: Int := 3
+    let limit: Int := 5
+    match n {
+        1 => print("one")
+        1, 2 => print("two")
+        limit => print("limit")
+        "three" => print("three")
+    }
+    match n {
+        _ => print("any")
+        4 => print("four")
+    }
+    match Light.Red {
+        0 => print("zero")
+        _ => print("other")
+    }
+    match 2.5 {
+        _ => print("float")
+    }
+}
+// error: the case `1` is already handled (line 11)
+// error: `limit` is not a value: a `match` on `Int` takes values written out
+// error: different types: `Int` expected, `String` given
+// error: a `match` on `Int` must end with `_ => …`
+// error: this case is never reached: `_` (line 17) already handles every other case
+// error: a value is a case only on an `Int`, a `Char` or a `String`, not on `Light`
+// error: `match` works on an enum, an `Int`, a `Char` or a `String`, not on `Float`

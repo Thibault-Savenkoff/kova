@@ -1321,6 +1321,13 @@ impl Parser<'_> {
         } else if self.is_keyword("none") {
             let span = self.advance().span;
             Case::Variant { name: Name { text: "none".into(), span }, binds: vec![] }
+        } else if matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str) || self.is_sym("-") {
+            let mut values = vec![self.unary()?];
+            while self.is_sym(",") {
+                self.advance();
+                values.push(self.unary()?);
+            }
+            Case::Values(values)
         } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
             Case::Bind(self.pattern()?)
         } else {

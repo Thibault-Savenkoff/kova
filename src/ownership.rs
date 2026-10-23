@@ -245,7 +245,8 @@ impl Owner<'_> {
     fn match_(&mut self, m: &Match, value: bool) {
         self.borrow(&m.subject);
         let ty = self.info.types[m.subject.id].clone();
-        let d = enum_view(&ty).expect("enum checked by the type checker");
+        // `None` for a `match` on values (`match n { 0 => … }`): no field to bind.
+        let d = enum_view(&ty);
         let root = place_root(&m.subject, &self.info.types).map(|(r, _)| self.lookup(r).id);
         let frozen = root.filter(|_| !is_copy(&ty));
         if let Some(id) = frozen {
@@ -256,7 +257,7 @@ impl Owner<'_> {
         for arm in &m.arms {
             self.state = start.clone();
             self.scopes.push(HashMap::new());
-            if let Some((name, binds)) = arm.case.variant() {
+            if let (Some((name, binds)), Some(d)) = (arm.case.variant(), &d) {
                 let (_, fields) = d.variant(name).expect("variant checked by the type checker");
                 for (p, (_, t)) in binds.into_iter().zip(fields) {
                     self.bind(p, t, root.is_some());

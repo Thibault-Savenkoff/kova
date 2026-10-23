@@ -15,7 +15,7 @@ fn main {
     let d := Shape.Circle(true)
     let n := Named.Nobody
     print(n = Named.Nobody)
-    match 3 {
+    match 2.5 {
         _ => print(1)
     }
     let s := Shape.Square(2.0)
@@ -46,7 +46,7 @@ fn main {
 // error: different types: `Float` expected, `Bool` given
 // error: `=` cannot compare `Named` values
 // error: add `: Equal` to `enum Named`: its fields are then compared one by one
-// error: `match` works on an enum, not on `Int`
+// error: `match` works on an enum, an `Int`, a `Char` or a `String`, not on `Float`
 // error: the case `Circle` is already handled (line 23)
 // error: `Square` has 1 field(s) (`side`), 2 given
 // error: `Shape` has no variant `Hexagon`
