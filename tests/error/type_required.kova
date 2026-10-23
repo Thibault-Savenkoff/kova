@@ -1,0 +1,12 @@
+// A missing type: the help writes the value's own.
+fn main {
+    let before := Date.today.plus_days(-60)
+    var words := "a b".words
+    let (a, b) := (1, "x")
+    let m := ["a" := 1]
+}
+// error: the type of `before` must be written
+// error: write `let before: Date := …`
+// error: write `var words: List<String> := …`
+// error: write `let (a, b): (Int, String) := …`
+// error: write `let m: Map<String, Int> := …`

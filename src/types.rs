@@ -2728,20 +2728,26 @@ impl Checker<'_> {
                 let ty = self.expr(value);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
-            Stmt::Declare { mutable, pattern, ty, value } => {
-                let ty = match ty {
-                    Some(t) => self.written_type(t),
-                    None => {
-                        let (span, name) = match pattern {
-                            Pattern::Name(n) => (n.span, n.text.clone()),
-                            Pattern::Tuple(_, s) | Pattern::Ignore(s) => (*s, self.src[s.start..s.end].to_string()),
-                        };
-                        self.diags.push(
-                            Diag::new(span, t!("type_required", name = name)).help(t!("type_required_help", name = name)),
-                        );
-                        Type::Error
-                    }
+            Stmt::Declare { mutable, pattern, ty: None, value } => {
+                let (span, name) = match pattern {
+                    Pattern::Name(n) => (n.span, n.text.clone()),
+                    Pattern::Tuple(_, s) | Pattern::Ignore(s) => (*s, self.src[s.start..s.end].to_string()),
                 };
+                // The value's type is known: the help writes it (`let before: Date := …`), and
+                // the rest of the program is checked with it. Kova still never writes it for you.
+                let mark = self.diags.len();
+                let found = self.expr(value);
+                let help = match &found {
+                    // `let l := []`: the value has its own error, its type may be wrong.
+                    _ if self.diags.len() > mark => t!("type_required_help", name = name),
+                    Type::Error | Type::Unit => t!("type_required_help", name = name),
+                    t => t!("type_required_found", keyword = if *mutable { "var" } else { "let" }, name = name, type = t.text()),
+                };
+                self.diags.push(Diag::new(span, t!("type_required", name = name)).help(help));
+                self.bind(pattern, &found, if *mutable { VarKind::Var } else { VarKind::Let });
+            }
+            Stmt::Declare { mutable, pattern, ty: Some(t), value } => {
+                let ty = self.written_type(t);
                 self.expect(value, &ty);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }

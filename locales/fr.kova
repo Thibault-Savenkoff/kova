@@ -166,6 +166,7 @@ lang fr {
     tuple_field_range := "ce tuple a {count} éléments : de `.0` à `.{last}`"
     field_on_non_tuple := "`.{index}` s'applique à un tuple, pas à `{type}`"
     type_required := "il faut écrire le type de `{name}`"
+    type_required_found := "écris `{keyword} {name}: {type} := …`"
     type_required_help := "par exemple `{name}: Int`"
     not_numeric := "`{target}` n'est ni un `Int` ni un `Float`"
     must_return := "cette fonction doit renvoyer un `{type}`"
