@@ -478,6 +478,24 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 }
                             }
                         },
+                        StrOp::Web => {
+                            let (url, method, body) = (s(0).to_string(), s(1).to_string(), s(2).to_string());
+                            match crate::http::exchange(&mut crate::web::System, &method, &url, &body, locals[a[3]] != 0) {
+                                Err(f) => -(f.number() + 1),
+                                Ok(answer) => {
+                                    // As the runtime makes it: a List of one `Response`.
+                                    let mut headers = vec![];
+                                    for (n, v) in answer.headers {
+                                        headers.push(heap.make(n));
+                                        headers.push(heap.make(v));
+                                    }
+                                    let length = headers.len() / 2;
+                                    let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0 });
+                                    let slots = vec![answer.status, heap.make(answer.url), heap.make(answer.body), headers];
+                                    heap.add(Object::List { width: 4, length: 1, slots, index: 0 })
+                                }
+                            }
+                        }
                         StrOp::MakeDir if s(0).is_empty() => -1,
                         StrOp::MakeDir => match std::fs::create_dir_all(s(0)) {
                             Ok(()) => 0,

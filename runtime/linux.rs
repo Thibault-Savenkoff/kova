@@ -2,10 +2,14 @@
 // `_start`, and its own memory allocator. The executable is then static: it runs on any Linux.
 // On x86-64 and on arm64: only the system calls' numbers, how they are made and `_start` differ.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use core::arch::{asm, global_asm};
+use core::ptr::{null, null_mut};
+
+use crate::http::{Fail, Network};
 
 use crate::{Global, c_text};
 
@@ -45,6 +49,10 @@ mod numbers {
     pub const MKDIRAT: usize = 258;
     pub const UNLINKAT: usize = 263;
     pub const STATX: usize = 332;
+    pub const SOCKET: usize = 41;
+    pub const CONNECT: usize = 42;
+    pub const SENDTO: usize = 44;
+    pub const RECVFROM: usize = 45;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -67,6 +75,10 @@ mod numbers {
     pub const MKDIRAT: usize = 34;
     pub const UNLINKAT: usize = 35;
     pub const STATX: usize = 291;
+    pub const SOCKET: usize = 198;
+    pub const CONNECT: usize = 203;
+    pub const SENDTO: usize = 206;
+    pub const RECVFROM: usize = 207;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -207,6 +219,100 @@ pub fn sleep(s: f64) {
 
 pub fn pid() -> u64 {
     unsafe { call(GETPID, 0, 0, 0, 0, 0, 0) as u64 }
+}
+
+// ---- The network: the C library finds the addresses (`getaddrinfo` reads /etc/hosts, asks the
+// name servers…), so a program using it is dynamic (src/link.rs `elf`); the rest are system calls.
+
+unsafe extern "C" {
+    fn getaddrinfo(host: *const u8, port: *const u8, hints: *const AddrInfo, found: *mut *mut AddrInfo) -> i32;
+    fn freeaddrinfo(found: *mut AddrInfo);
+}
+
+#[repr(C)]
+struct AddrInfo {
+    flags: i32,
+    family: i32,
+    socktype: i32,
+    protocol: i32,
+    addrlen: u32,
+    addr: *const u8,
+    canonname: *const u8,
+    next: *mut AddrInfo,
+}
+
+const SOCK_STREAM: i32 = 1;
+const ETIMEDOUT: isize = 110;
+const EAGAIN: isize = 11;
+
+pub struct Net;
+
+impl Network for Net {
+    type Link = usize;
+
+    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<usize, Fail> {
+        // ponytail: HTTPS comes with OpenSSL (PLAN "The web", step 3).
+        if secure {
+            return Err(Fail::BadUrl);
+        }
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        let (host, port) = (c_path(host), format!("{port}\0"));
+        let hints = AddrInfo { flags: 0, family: 0, socktype: SOCK_STREAM, protocol: 0, addrlen: 0, addr: null(), canonname: null(), next: null_mut() };
+        let mut found = null_mut();
+        if unsafe { getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+            return Err(Fail::NoHost);
+        }
+        let (mut failure, mut a) = (Err(Fail::NoHost), found);
+        while let Some(i) = unsafe { a.as_ref() } {
+            let fd = unsafe { call(SOCKET, i.family as usize, SOCK_STREAM as usize | 0o2000000, i.protocol as usize, 0, 0, 0) };
+            if fd >= 0 {
+                match unsafe { call(CONNECT, fd as usize, i.addr as usize, i.addrlen as usize, 0, 0, 0) } {
+                    0 => {
+                        failure = Ok(fd as usize);
+                        break;
+                    }
+                    e => failure = Err(if e == -ETIMEDOUT { Fail::Timeout } else { Fail::Refused }),
+                }
+                close(fd as usize);
+            }
+            a = i.next;
+        }
+        unsafe { freeaddrinfo(found) };
+        failure
+    }
+
+    fn send(&mut self, fd: &mut usize, mut data: &[u8]) -> Result<(), Fail> {
+        while !data.is_empty() {
+            // MSG_NOSIGNAL: a closed connection is a failure, not the end of the program.
+            match unsafe { call(SENDTO, *fd, data.as_ptr() as usize, data.len(), 0x4000, 0, 0) } {
+                e if e == -EINTR => {}
+                n if n >= 0 => data = &data[n as usize..],
+                e => return Err(cut(e)),
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, fd: &mut usize, buffer: &mut [u8]) -> Result<usize, Fail> {
+        loop {
+            match unsafe { call(RECVFROM, *fd, buffer.as_mut_ptr() as usize, buffer.len(), 0, 0, 0) } {
+                e if e == -EINTR => {}
+                n if n >= 0 => return Ok(n as usize),
+                e => return Err(cut(e)),
+            }
+        }
+    }
+
+    fn close(&mut self, fd: usize) {
+        close(fd);
+    }
+}
+
+/// Like `cut` in src/web.rs.
+fn cut(e: isize) -> Fail {
+    if e == -ETIMEDOUT || e == -EAGAIN { Fail::Timeout } else { Fail::Broken }
 }
 
 // ---- Files ----

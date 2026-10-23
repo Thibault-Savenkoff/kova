@@ -9,6 +9,7 @@ mod codegen;
 mod debug;
 mod diag;
 mod format;
+mod http;
 mod interp;
 mod kir;
 mod lexer;
@@ -19,6 +20,7 @@ mod ownership;
 mod parser;
 mod shared;
 mod types;
+mod web;
 
 use std::process::exit;
 

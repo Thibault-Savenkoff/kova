@@ -709,3 +709,75 @@ fn input_not_text() {
     }
     assert_eq!(run.stderr, build.stderr);
 }
+
+/// `get` and `post` (PLAN Part 4 "The web"), in run and in build, against a small server
+/// answering by path: every kind of answer, and every failure that needs no other machine.
+#[test]
+fn web() {
+    use std::io::Read;
+    use std::net::TcpListener;
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = server.local_addr().unwrap().port().to_string();
+    // A port where nothing answers: taken, then given back.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port().to_string();
+    std::thread::spawn(move || {
+        for link in server.incoming() {
+            let mut link = link.unwrap();
+            let mut got = vec![];
+            let mut buffer = [0u8; 4096];
+            // The request: its head, then as many bytes as its Content-Length says.
+            let (head, body) = loop {
+                let n = link.read(&mut buffer).unwrap();
+                got.extend_from_slice(&buffer[..n]);
+                let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&got[..end]).into_owned();
+                let length = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).map_or(0, |n| n.parse().unwrap());
+                if got.len() >= end + 4 + length {
+                    break (head, got[end + 4..].to_vec());
+                }
+                if n == 0 {
+                    panic!("request cut");
+                }
+            };
+            let path = head.split(' ').nth(1).unwrap().to_string();
+            let answer = |status: &str, headers: &str, body: &str| {
+                format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+            };
+            let reply = match path.as_str() {
+                "/hello" => answer("200 OK", "Content-Type: text/plain\r\n", "hello"),
+                "/missing" => answer("404 Not Found", "", "not here"),
+                "/pieces" => b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nin \r\n6\r\nthree \r\n6\r\npieces\r\n0\r\n\r\n".to_vec(),
+                "/until-closed" => b"HTTP/1.1 200 OK\r\n\r\nuntil the end".to_vec(),
+                "/echo" => {
+                    let kind = head.lines().find_map(|l| l.strip_prefix("Content-Type: ")).unwrap_or("");
+                    answer("200 OK", &format!("Content-Type: {kind}\r\n"), &String::from_utf8_lossy(&body))
+                }
+                "/moved" => answer("302 Found", "Location: /hello\r\n", ""),
+                "/twice" => answer("200 OK", "Set-Cookie: a=1\r\nset-cookie: b=2\r\n", ""),
+                "/loop" => answer("301 Moved Permanently", "Location: /loop\r\n", ""),
+                _ => b"nonsense\r\n\r\n".to_vec(),
+            };
+            let _ = link.write_all(&reply);
+        }
+    });
+
+    let source = "tests/web/client.kova";
+    let expected = Expected {
+        output: expectations(&std::fs::read_to_string(source).unwrap(), "expect")
+            .iter()
+            .map(|l| l.replace("PORT", &port).replace("CLOSED", &closed))
+            .collect(),
+        code: 0,
+        stderr: vec![],
+    };
+    let mut failures = vec![];
+    let run = kova(LANG).arg("run").arg(source).args([&port, &closed]).output().unwrap();
+    check_output("web", "run", &run, &expected, &mut failures);
+    let exe = std::env::temp_dir().join(format!("kova-web-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let build = program(&exe, LANG).args([&port, &closed]).output().unwrap();
+    let _ = std::fs::remove_file(&exe);
+    check_output("web", "build", &build, &expected, &mut failures);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}

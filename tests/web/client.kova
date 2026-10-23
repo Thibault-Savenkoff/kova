@@ -1,0 +1,55 @@
+// `get` and `post` against the small server of tests/kova.rs (`web`): its port, then a port
+// where nothing answers, are the program's words.
+fn show(answer: Response or WebError) {
+    match answer {
+        ok(r) => {
+            print("{r.status} {r.body}")
+            let kind: String? := r.header("content-TYPE")
+            if kind != none {
+                print("type: {kind}")
+            }
+        }
+        err(e) => print("no answer: {e}")
+    }
+}
+
+fn main {
+    let site: String := "http://127.0.0.1:{args[0]}"
+    show(get("{site}/hello"))
+    show(get("{site}/missing"))
+    show(get("{site}/pieces"))
+    show(get("{site}/until-closed"))
+    show(post("{site}/echo") body("Kova écrit"))
+    match get("{site}/moved") {
+        ok(r) => print("{r.status} {r.body} from {r.url.ends_with("/hello")}")
+        err(e) => print(e)
+    }
+    match get("{site}/twice") {
+        ok(r) => {
+            print(r.headers["set-cookie"])
+            print(r.header("Nothing") = none)
+        }
+        err(e) => print(e)
+    }
+    show(get("{site}/loop"))
+    show(get("{site}/nonsense"))
+    show(get("http://127.0.0.1:{args[1]}/"))
+    show(get("http://no-such-host.invalid/"))
+    show(get("ftp://127.0.0.1/"))
+}
+
+// expect: 200 hello
+// expect: type: text/plain
+// expect: 404 not here
+// expect: 200 in three pieces
+// expect: 200 until the end
+// expect: 200 Kova écrit
+// expect: type: text/plain; charset=utf-8
+// expect: 200 hello from true
+// expect: "a=1, b=2"
+// expect: true
+// expect: no answer: TooManyRedirects("http://127.0.0.1:PORT/loop")
+// expect: no answer: BadAnswer("http://127.0.0.1:PORT/nonsense")
+// expect: no answer: Refused("http://127.0.0.1:CLOSED/")
+// expect: no answer: NoHost("http://no-such-host.invalid/")
+// expect: no answer: BadUrl("ftp://127.0.0.1/")

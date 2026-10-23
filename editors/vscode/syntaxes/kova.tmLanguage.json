@@ -120,7 +120,7 @@
           "captures": { "1": { "name": "keyword.control.import.kova" }, "3": { "name": "keyword.control.import.kova" } }
         },
         { "name": "keyword.control.import.kova", "match": "\\bimport\\b" },
-        { "name": "keyword.other.header.kova", "match": "\\bheader\\b" },
+        { "name": "keyword.other.header.kova", "match": "(?<!\\.)\\bheader\\b" },
         { "name": "storage.type.kova", "match": "\\b(let|var|fn|struct|enum|interface)\\b" },
         { "name": "storage.modifier.kova", "match": "(?<!\\.)\\b(move|copy|any|public|private)\\b" },
         { "name": "keyword.operator.word.kova", "match": "\\b(or|and)\\b" }

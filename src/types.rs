@@ -420,6 +420,8 @@ pub const LIBRARY: &[(&str, &str)] =
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
+        ("get", "fn get(url: String) -> Response or WebError"),
+        ("post(…) body(…)", "fn post(url: String) body(text: String) -> Response or WebError"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -428,6 +430,23 @@ pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
     let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
     Type::Enum(EnumDef::with_variants("IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
+}
+
+/// `WebError`, why `get` or `post` has no answer (PLAN Part 4 "The web"), each with the address
+/// asked; numbered like `http::Fail`.
+pub fn web_error() -> Type {
+    let url = || vec![("url".to_string(), Type::String)];
+    let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects"];
+    Type::Enum(EnumDef::with_variants("WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
+}
+
+/// `Response`, a site's answer: its code, where it came from (after the redirections), its body
+/// and its headers (names in small letters; `r.header(name)` whatever the capitals).
+pub fn response() -> Type {
+    let d = StructDef::new("Response".into(), vec![], false);
+    let text = || Type::String;
+    d.set_fields(vec![("status".into(), Type::Int), ("url".into(), text()), ("body".into(), text()), ("headers".into(), Type::Map(Box::new(text()), Box::new(text())))]);
+    Type::Struct(d)
 }
 
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
@@ -943,12 +962,17 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     // 1. The structs, then the signatures: what is written further down can be used.
     c.structs.insert("IoError".into(), io_error());
     c.structs.insert("Weekday".into(), weekday());
+    c.structs.insert("WebError".into(), web_error());
+    c.structs.insert("Response".into(), response());
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
     let io = |ok: Type| Type::Result(Box::new(ok), Box::new(io_error()));
     let paths = |n: usize| vec![(Mode::Read, string()); n];
+    let web = || Type::Result(Box::new(response()), Box::new(web_error()));
     for (name, n, result) in [
+        ("get", 1, web()),
+        ("post(…) body(…)", 2, web()),
         ("write_file", 2, io(Type::Unit)),
         ("append_file", 2, io(Type::Unit)),
         ("exists", 1, Type::Bool),
@@ -1511,7 +1535,7 @@ impl Checker<'_> {
             }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
-            Type::Enum(_) if *t == weekday() || *t == io_error() => interface == "Display",
+            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,
@@ -3472,6 +3496,10 @@ impl Checker<'_> {
                             .help(t!("methods_of", type = t.text(), methods = known.join(", "))),
                     );
                     return Type::Error;
+                }
+                if t == response() && name.text == "header" {
+                    self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+                    return Type::Optional(Box::new(Type::String));
                 }
                 if let Type::Struct(d) = &t {
                     let Some((_, ft)) = d.field(&name.text) else {

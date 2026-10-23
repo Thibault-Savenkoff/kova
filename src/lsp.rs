@@ -643,6 +643,9 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
         }
         _ => {}
     }
+    if *t == types::response() {
+        items.push(item("header", CompletionItemKind::METHOD, "(name: String) -> String?".into()));
+    }
     if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..) | Type::Set(_)) {
         items.push(item("clone", CompletionItemKind::METHOD, t.text()));
     }

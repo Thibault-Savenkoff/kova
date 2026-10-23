@@ -1490,7 +1490,13 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Field(Box::new(e), i as usize));
                 continue;
             }
-            let mut name = self.value_name("what_method")?;
+            // `r.header("Content-Type")`: after a dot, `header` is a Response's method.
+            let mut name = if self.kind() == Kind::Keyword("header") {
+                let span = self.advance().span;
+                Name { text: "header".into(), span }
+            } else {
+                self.value_name("what_method")?
+            };
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;

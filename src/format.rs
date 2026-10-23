@@ -172,7 +172,9 @@ fn space(a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in
         Kind::Sym("-") => !value_before(before),
         _ => false,
     };
-    let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || matches!(a.kind, Kind::Sym(")" | "]"));
+    // `r.header("Content-Type")`: a method there, not the keyword.
+    let method = a.kind == Kind::Keyword("header") && before.is_some_and(|t| t.kind == Kind::Sym("."));
+    let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
         (_, Kind::Sym("," | ")" | "]" | "?" | "." | ".." | "..=")) | (Kind::Sym("(" | "[" | "." | ".." | "..="), _) => false,
@@ -216,7 +218,7 @@ mod tests {
     #[test]
     fn test_programs() {
         let mut changed = vec![];
-        for dir in ["tests/ok", "tests/error", "locales", "editors/vscode"] {
+        for dir in ["tests/ok", "tests/error", "tests/web", "locales", "editors/vscode"] {
             // The colors' test: its comments point at columns.
             for f in walk(std::path::Path::new(dir)).into_iter().filter(|f| !f.ends_with("colors.kova")) {
                 let src = std::fs::read_to_string(&f).unwrap();

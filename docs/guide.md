@@ -517,7 +517,31 @@ true
 
 `kova run` and `kova build` print exactly the same digits on every system: Kova has its own maths.
 
-## 16. The tools
+## 16. The web
+
+```kova
+fn main {
+    match get("http://example.com/") {
+        ok(page) => {
+            print(page.status)
+            print(page.header("Content-Type"))
+            print(page.body.length)
+        }
+        err(e) => print("no answer: {e}")
+    }
+    let sent: Response or WebError := post("http://example.com/notes") body("hello")
+}
+```
+
+A site's answer is always `ok(…)`, even a `404`: look at `status`. `err` means there was no answer at all:
+`NoHost`, `Refused`, `Timeout`, `Broken`, `BadAnswer`, `TooManyRedirects` or `BadUrl`. Redirections are
+followed (`page.url` says where it ended). A `Response` has `status`, `url`, `body` and `headers` (a
+`Map<String, String>` with names in small letters); `header(name)` finds one whatever its capitals.
+
+For now only `http://`: `https://` comes next, with each system's own encryption. On Linux, a program
+using the web asks for the system's C library (every desktop Linux has it); the others stay standalone.
+
+## 17. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.
 - `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).

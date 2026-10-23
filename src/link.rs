@@ -10,8 +10,9 @@
 // 3. The kept sections get their addresses: code, constants, then data, then zeros.
 // 4. Each relocation is written: the address (or the distance to it) the code needs.
 //
-// `elf`: Linux x86-64 or arm64, a static executable (no dynamic linker). `pe`: Windows x86-64,
-// whose functions come from `kernel32.dll` through its import table. `macho`: macOS arm64 or
+// `elf`: Linux x86-64 or arm64, static (no dynamic linker) unless it calls the C library. `pe`:
+// Windows x86-64 or arm64, whose functions come from `kernel32.dll` (and `ws2_32.dll` for the
+// network) through its import table. `macho`: macOS arm64 or
 // x86-64, whose functions come from `libSystem` through `dyld`, signed as the Mac requires.
 
 use std::cell::RefCell;
@@ -31,7 +32,7 @@ enum Target {
     At(Place, u64),
     /// A weak symbol defined nowhere: address 0.
     Nothing,
-    /// A function of the system (Windows: its name in `kernel32.dll`); true for the place where
+    /// A function of the system (Windows: its name in its DLL); true for the place where
     /// the system writes its address (`__imp_` + its name).
     Import(String, bool),
 }
@@ -557,11 +558,15 @@ const FILE_ALIGN: u64 = 0x200;
 
 /// The executable of `main` and `runtime`, for Windows x86-64: three sections, `.text` (code, then
 /// the jumps to the system's functions), `.rdata` (constants, then the import table, which Windows
-/// fills with the addresses of `kernel32.dll`'s functions) and `.data` (data then zeros).
+/// fills with the addresses of the DLLs' functions) and `.data` (data then zeros).
 pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("kova_start", |_| false)?;
     inputs.sorted(&mut r)?;
+    // The functions grouped by DLL, `kernel32.dll`'s first.
+    r.imports.sort_by_key(|f| dll(f) != DLLS[0]);
+    let mut dlls: Vec<&str> = r.imports.iter().map(|f| dll(f)).collect();
+    dlls.dedup();
     let headers = align(0x40 + 4 + 20 + 240 + 40 * 4, FILE_ALIGN);
     let n = r.imports.len() as u64;
     // A jump to a function of Windows, through its address in the IAT.
@@ -581,7 +586,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         }
         if part >= Part::Data && ends[1] == 0 {
             tables = align(*at, 8);
-            ends[1] = tables + tables_size(&r.imports);
+            ends[1] = tables + tables_size(&r.imports, dlls.len() as u64);
             starts[2] = align(ends[1], PAGE);
             *at = starts[2];
         }
@@ -594,15 +599,16 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     ends[2] = end;
     let zeros = zeros.unwrap_or(end);
 
-    // The import table: the addresses (IAT, filled by Windows), the same list for Windows to look
-    // the names up (ILT), the directory (one DLL, then an empty entry), the DLL's name, then each
-    // function's name (after a 2-byte "hint").
+    // The import table: the addresses (IAT, filled by Windows: each DLL's, then a 0), the same
+    // list for Windows to look the names up (ILT), the directory (one entry per DLL, then an
+    // empty one), the DLLs' names, then each function's name (after a 2-byte "hint").
+    let g = dlls.len() as u64;
     let iat = tables;
-    let ilt = iat + 8 * (n + 1);
-    let directory = ilt + 8 * (n + 1);
-    let dll_name = directory + 40;
+    let ilt = iat + 8 * (n + g);
+    let directory = ilt + 8 * (n + g);
+    let dll_names = directory + 20 * (g + 1);
     let mut names = vec![];
-    let mut name_at = dll_name + 16;
+    let mut name_at = dll_names + 16 * g;
     for f in &r.imports {
         names.push(name_at);
         name_at = align(name_at + 2 + f.len() as u64 + 1, 2);
@@ -620,10 +626,13 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let mut out = vec![0u8; (raw(2).0 + raw(2).1) as usize];
 
     let index = |name: &str| r.imports.iter().position(|f| f == name).unwrap() as u64;
+    // A function's place in the IAT (or the ILT, from `ilt`): after the 0 of each DLL before its.
+    let group = |name: &str| dlls.iter().position(|d| *d == dll(name)).unwrap() as u64;
+    let slot = |table: u64, name: &str| table + 8 * (index(name) + group(name));
     let address_of = |t: &Target| match t {
         Target::At(p, off) => Ok(address[p] + off),
         Target::Nothing => Ok(0),
-        Target::Import(name, true) => Ok(iat + 8 * index(name)),
+        Target::Import(name, true) => Ok(slot(iat, name)),
         Target::Import(name, false) => Ok(thunks + thunk * index(name)),
     };
     // The addresses written in the program, which Windows changes when it puts it elsewhere.
@@ -674,31 +683,34 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
 
     for (i, f) in r.imports.iter().enumerate() {
         let (i, t) = (i as u64, offset(thunks + thunk * i as u64));
-        let slot = iat + 8 * i;
+        let at = slot(iat, f);
         if arm {
             // adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
             for (k, insn) in [0x9000_0010u32, 0xF940_0210, 0xD61F_0200].into_iter().enumerate() {
                 out[t + 4 * k..t + 4 * k + 4].copy_from_slice(&insn.to_le_bytes());
             }
-            page(&mut out[t..], slot as i64, thunks + thunk * i)?;
-            in_page(&mut out[t + 4..], slot as i64)?;
+            page(&mut out[t..], at as i64, thunks + thunk * i)?;
+            in_page(&mut out[t + 4..], at as i64)?;
         } else {
             out[t..t + 2].copy_from_slice(&[0xFF, 0x25]); // jmp [rip + …]
-            out[t + 2..t + 6].copy_from_slice(&(slot as i32 - (thunks + 6 * i + 6) as i32).to_le_bytes());
+            out[t + 2..t + 6].copy_from_slice(&(at as i32 - (thunks + 6 * i + 6) as i32).to_le_bytes());
         }
         for table in [iat, ilt] {
-            let o = offset(table + 8 * i);
+            let o = offset(slot(table, f));
             out[o..o + 8].copy_from_slice(&rva(names[i as usize]).to_le_bytes());
         }
         let o = offset(names[i as usize]) + 2;
         out[o..o + f.len()].copy_from_slice(f.as_bytes());
     }
-    let d = offset(directory);
-    for (k, v) in [(0, rva(ilt)), (12, rva(dll_name)), (16, rva(iat))] {
-        out[d + k..d + k + 4].copy_from_slice(&(v as u32).to_le_bytes());
+    for (k, name) in dlls.iter().enumerate() {
+        let first = r.imports.iter().find(|f| dll(f) == *name).unwrap();
+        let (d, at) = (offset(directory + 20 * k as u64), dll_names + 16 * k as u64);
+        for (o, v) in [(0, rva(slot(ilt, first))), (12, rva(at)), (16, rva(slot(iat, first)))] {
+            out[d + o..d + o + 4].copy_from_slice(&(v as u32).to_le_bytes());
+        }
+        let o = offset(at);
+        out[o..o + name.len()].copy_from_slice(name.as_bytes());
     }
-    let o = offset(dll_name);
-    out[o..o + 12].copy_from_slice(b"KERNEL32.dll");
 
     // A fourth section, `.reloc`: for each page of 4 KB, the places in it holding an address
     // (type 10: 64 bits). Windows on arm64 always puts a program at an address of its choosing.
@@ -789,11 +801,20 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// The size of the import table of `imports` (see `pe`).
-fn tables_size(imports: &[String]) -> u64 {
+/// The size of the import table of `imports`, from `dlls` DLLs (see `pe`).
+fn tables_size(imports: &[String], dlls: u64) -> u64 {
     let n = imports.len() as u64;
     let names: u64 = imports.iter().map(|f| align(2 + f.len() as u64 + 1, 2)).sum();
-    16 * (n + 1) + 40 + 16 + names
+    16 * (n + dlls) + 20 * (dlls + 1) + 16 * dlls + names
+}
+
+/// The DLLs the runtime calls (runtime/windows.rs); the first one has every function not
+/// named in `WINSOCK`.
+const DLLS: [&str; 2] = ["KERNEL32.dll", "WS2_32.dll"];
+const WINSOCK: [&str; 9] = ["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "connect", "send", "recv", "closesocket"];
+
+fn dll(f: &str) -> &'static str {
+    DLLS[WINSOCK.contains(&f) as usize]
 }
 
 // ---- macOS: Mach-O ----

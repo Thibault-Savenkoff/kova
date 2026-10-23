@@ -370,6 +370,9 @@ pub enum StrOp {
     ToDateTime,
     /// `read_line`: a new String, 0 at the end of the input, -1 if the line is not UTF-8.
     ReadLine,
+    /// `get` / `post`: (address, method, body, follow the redirections: 1 or 0) → a List of one
+    /// `Response` (status, url, body, headers), or minus the `WebError` variant + 1.
+    Web,
     /// `args`: a new `List<String>`, the words given after the program's name.
     Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
@@ -1059,7 +1062,7 @@ impl<'a> Translator<'a> {
             } else if *ty == crate::types::weekday() {
                 // Built in, for people: `Friday`.
                 pieces.push(Piece::Text(name.clone()));
-            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error(), &fields[..]) {
+            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error(), &fields[..]) {
                 // Built in, for people: `NotFound("notes.txt")`.
                 pieces.push(Piece::Text(format!("{name}(")));
                 self.value_pieces(&v[at..at + 1], t, &mut pieces);
@@ -1090,10 +1093,16 @@ impl<'a> Translator<'a> {
     /// `Nothing or IoError`), or `err(IoError.X(path: a copy of path))`. `op` gives the value
     /// (or 0) when it works, minus the failure's number otherwise.
     fn io_call(&mut self, op: StrOp, args: &[Expr], ty: &Type) -> Slots {
+        let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+        self.io_result(op, vals, ty)
+    }
+
+    /// The same once the arguments are computed (the first: the path or the address). A value of
+    /// several slots (a `Response`) comes as the only element of a List made by the runtime.
+    fn io_result(&mut self, op: StrOp, vals: Vec<Local>, ty: &Type) -> Slots {
         let Type::Result(value, error) = ty else { unreachable!("a result checked by the type checker") };
         let Type::Enum(d) = &**error else { unreachable!("IoError is an enum") };
         let d = d.clone();
-        let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
         let p = vals[0];
         let r = self.int_local();
         self.emit(Inst::Str(r, op, vals));
@@ -1106,8 +1115,15 @@ impl<'a> Translator<'a> {
         let (ok, err, after) = (self.new_block(), self.new_block(), self.new_block());
         self.go(End::Branch(good, ok, err), ok);
         self.emit(Inst::Const(v[0], 1));
-        if **value != Type::Unit {
+        let n = scalars(value).len();
+        if n == 1 {
             self.emit(Inst::Copy(*v.last().unwrap(), r));
+        } else if n > 1 {
+            let zero = self.constant(0);
+            for k in 0..n {
+                self.emit(Inst::ListLoad(v[v.len() - n + k], r, zero, k));
+            }
+            self.emit(Inst::ListFree(r));
         }
         self.go(End::Jump(after), err);
         // Variant = failure − 1 = −r − 1.
@@ -3477,6 +3493,23 @@ impl<'a> Translator<'a> {
                     let ty = self.ty(e);
                     return self.io_call(op, args, &ty);
                 }
+                // `get(url)`, `post(url) body(text)` (PLAN Part 4 "The web"): the address, the
+                // method, what is sent, and whether the redirections are followed.
+                if matches!(name.text.as_str(), "get" | "post(…) body(…)") {
+                    let ty = self.ty(e);
+                    let url = self.expr1(&args[0]);
+                    let (method, body) = match args.get(1) {
+                        Some(b) => (self.text("POST"), self.expr1(b)),
+                        None => (self.text("GET"), self.text("")),
+                    };
+                    let follow = self.constant(1);
+                    let v = self.io_result(StrOp::Web, vec![url, method, body, follow], &ty);
+                    self.emit(Inst::Free(method));
+                    if args.len() == 1 {
+                        self.emit(Inst::Free(body));
+                    }
+                    return v;
+                }
                 if name.text == "now" {
                     let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);
                     self.emit(Inst::Str(bits, StrOp::Now, vec![]));
@@ -3788,6 +3821,15 @@ impl<'a> Translator<'a> {
                 let num = self.helper(Helper::Dispatch(interface, name.text.clone()));
                 let result = self.ty(e);
                 self.call_to(num, true, vals, places, name.span, &result)
+            }
+            // `r.header("Content-Type")`: looked up in small letters in `r.headers`.
+            ExprKind::Method { receiver, name, args } if name.text == "header" && self.ty(receiver) == crate::types::response() => {
+                let r = self.expr(receiver);
+                let given = self.expr1(&args[0]);
+                let key = self.int_local();
+                self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
+                self.track(&[key], &Type::String);
+                self.lookup(r[3], &[key], &Type::String, &Type::String, false)
             }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();

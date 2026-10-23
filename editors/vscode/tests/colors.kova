@@ -93,6 +93,10 @@ fn tous(l: List<Int>, garde: {Int -> Bool}) -> Bool {
 //           ^^^ - storage.modifier.kova
 //                        ^^ keyword.operator.arrow.kova
 }
+fn genre(r: Response) -> String? {
+    return r.header("Content-Type")
+//           ^^^^^^ - keyword.other.header.kova
+}
 header {
 // <------ keyword.other.header.kova
 }

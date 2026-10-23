@@ -11,6 +11,8 @@ extern crate alloc;
 
 #[path = "../src/bigint.rs"]
 mod bigint;
+#[path = "../src/http.rs"]
+mod http;
 #[path = "../src/shared.rs"]
 mod shared;
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
@@ -790,6 +792,25 @@ static ARGS: Global<Vec<String>> = Global::new(Vec::new());
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_args() -> i64 {
     texts(ARGS.get().iter().skip(1).map(String::as_str))
+}
+
+// ---- The web (src/http.rs speaks HTTP; `sys::Net` connects) ----
+
+/// `get(url)`, `post(url) body(text)`: a List of one `Response` (status, url, body, headers: a
+/// List of pairs), or minus the `WebError`'s number + 1 (src/http.rs `Fail::number`). Like
+/// src/interp.rs.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64 {
+    match http::exchange(&mut sys::Net, text_of(method), text_of(url), text_of(body), follow != 0) {
+        Err(f) => -(f.number() + 1),
+        Ok(a) => {
+            let length = a.headers.len();
+            let slots = a.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
+            let headers = new_list(List { length, width: 2, slots, index: 0 });
+            let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers];
+            new_list(List { length: 1, width: 4, slots, index: 0 })
+        }
+    }
 }
 
 // ---- Time and chance (src/interp.rs does the same) ----

@@ -1,5 +1,5 @@
-// What the runtime asks of Windows: `kernel32.dll` only, which every Windows has (no C library),
-// and its own entry point `kova_start`. Windows speaks UTF-16: paths, names and words are
+// What the runtime asks of Windows: `kernel32.dll` (and `ws2_32.dll` for the network), which every
+// Windows has (no C library), and its own entry point `kova_start`. Windows speaks UTF-16: paths, names and words are
 // turned from and into UTF-8 here.
 
 use alloc::string::String;
@@ -8,6 +8,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{null, null_mut};
 
 use crate::Global;
+use crate::http::{Fail, Network};
 
 pub const SLASH: char = '\\';
 
@@ -215,6 +216,110 @@ pub fn sleep(s: f64) {
 
 pub fn pid() -> u64 {
     unsafe { GetCurrentProcessId() as u64 }
+}
+
+// ---- The network: `ws2_32.dll`, which every Windows has too ----
+
+#[link(name = "ws2_32")]
+unsafe extern "system" {
+    fn WSAStartup(version: u16, data: *mut u8) -> i32;
+    fn WSAGetLastError() -> i32;
+    fn getaddrinfo(host: *const u8, port: *const u8, hints: *const AddrInfo, found: *mut *mut AddrInfo) -> i32;
+    fn freeaddrinfo(found: *mut AddrInfo);
+    fn socket(family: i32, kind: i32, protocol: i32) -> usize;
+    fn connect(s: usize, address: *const u8, n: i32) -> i32;
+    fn send(s: usize, b: *const u8, n: i32, flags: i32) -> i32;
+    fn recv(s: usize, b: *mut u8, n: i32, flags: i32) -> i32;
+    fn closesocket(s: usize) -> i32;
+}
+
+#[repr(C)]
+struct AddrInfo {
+    flags: i32,
+    family: i32,
+    socktype: i32,
+    protocol: i32,
+    addrlen: usize,
+    canonname: *const u8,
+    addr: *const u8,
+    next: *mut AddrInfo,
+}
+
+const SOCK_STREAM: i32 = 1;
+const WSAEINTR: i32 = 10004;
+const WSAEWOULDBLOCK: i32 = 10035;
+const WSAETIMEDOUT: i32 = 10060;
+
+pub struct Net;
+
+impl Network for Net {
+    type Link = usize;
+
+    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<usize, Fail> {
+        // ponytail: HTTPS comes with SChannel (PLAN "The web", step 3).
+        if secure {
+            return Err(Fail::BadUrl);
+        }
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        // Windows counts the calls: one more each time costs nothing.
+        let mut data = [0u8; 512];
+        unsafe { WSAStartup(0x202, data.as_mut_ptr()) };
+        let (host, port) = ([host.as_bytes(), &[0]].concat(), alloc::format!("{port}\0"));
+        let hints = AddrInfo { flags: 0, family: 0, socktype: SOCK_STREAM, protocol: 0, addrlen: 0, canonname: null(), addr: null(), next: null_mut() };
+        let mut found = null_mut();
+        if unsafe { getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+            return Err(Fail::NoHost);
+        }
+        let (mut failure, mut a) = (Err(Fail::NoHost), found);
+        while let Some(i) = unsafe { a.as_ref() } {
+            let s = unsafe { socket(i.family, SOCK_STREAM, i.protocol) };
+            if s != usize::MAX {
+                if unsafe { connect(s, i.addr, i.addrlen as i32) } == 0 {
+                    failure = Ok(s);
+                    break;
+                }
+                failure = Err(if unsafe { WSAGetLastError() } == WSAETIMEDOUT { Fail::Timeout } else { Fail::Refused });
+                unsafe { closesocket(s) };
+            }
+            a = i.next;
+        }
+        unsafe { freeaddrinfo(found) };
+        failure
+    }
+
+    fn send(&mut self, s: &mut usize, mut data: &[u8]) -> Result<(), Fail> {
+        while !data.is_empty() {
+            let n = data.len().min(1 << 30);
+            match unsafe { send(*s, data.as_ptr(), n as i32, 0) } {
+                n if n >= 0 => data = &data[n as usize..],
+                _ if unsafe { WSAGetLastError() } == WSAEINTR => {}
+                _ => return Err(cut()),
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, s: &mut usize, buffer: &mut [u8]) -> Result<usize, Fail> {
+        let n = buffer.len().min(1 << 30);
+        loop {
+            match unsafe { recv(*s, buffer.as_mut_ptr(), n as i32, 0) } {
+                n if n >= 0 => return Ok(n as usize),
+                _ if unsafe { WSAGetLastError() } == WSAEINTR => {}
+                _ => return Err(cut()),
+            }
+        }
+    }
+
+    fn close(&mut self, s: usize) {
+        unsafe { closesocket(s) };
+    }
+}
+
+/// Like `cut` in src/web.rs.
+fn cut() -> Fail {
+    if matches!(unsafe { WSAGetLastError() }, WSAETIMEDOUT | WSAEWOULDBLOCK) { Fail::Timeout } else { Fail::Broken }
 }
 
 // ---- Files ----

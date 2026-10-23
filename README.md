@@ -87,7 +87,7 @@ completion, types on hover, renaming, run / build / test buttons and a debugger.
 ## Status
 
 Kova is young (version 0.1): the language works and is tested on the three systems, but it still changes.
-Not yet there: threads, networking.
+Not yet there: threads, `https://` (`get` and `post` speak plain `http://` for now).
 
 ## How Kova is made
 

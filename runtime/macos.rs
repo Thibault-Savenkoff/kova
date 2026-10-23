@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 
 use crate::c_text;
+use crate::http::{Fail, Network};
 
 pub const SLASH: char = '/';
 
@@ -35,6 +36,13 @@ mod c {
         pub fn malloc(n: usize) -> *mut u8;
         pub fn realloc(p: *mut u8, n: usize) -> *mut u8;
         pub fn free(p: *mut u8);
+        pub fn getaddrinfo(host: *const u8, port: *const u8, hints: *const super::AddrInfo, found: *mut *mut super::AddrInfo) -> i32;
+        pub fn freeaddrinfo(found: *mut super::AddrInfo);
+        pub fn socket(family: i32, kind: i32, protocol: i32) -> i32;
+        pub fn setsockopt(fd: i32, level: i32, name: i32, value: *const i32, n: u32) -> i32;
+        pub fn connect(fd: i32, address: *const u8, n: u32) -> i32;
+        pub fn send(fd: i32, b: *const u8, n: usize, flags: i32) -> isize;
+        pub fn recv(fd: i32, b: *mut u8, n: usize, flags: i32) -> isize;
     }
 }
 
@@ -115,6 +123,95 @@ pub fn sleep(s: f64) {
 
 pub fn pid() -> u64 {
     unsafe { c::getpid() as u64 }
+}
+
+// ---- The network ----
+
+/// As macOS lays it out: not in Linux's order.
+#[repr(C)]
+pub struct AddrInfo {
+    flags: i32,
+    family: i32,
+    socktype: i32,
+    protocol: i32,
+    addrlen: u32,
+    canonname: *const u8,
+    addr: *const u8,
+    next: *mut AddrInfo,
+}
+
+const SOCK_STREAM: i32 = 1;
+const ETIMEDOUT: i32 = 60;
+const EAGAIN: i32 = 35;
+
+pub struct Net;
+
+impl Network for Net {
+    type Link = i32;
+
+    fn open(&mut self, host: &str, port: u16, secure: bool) -> Result<i32, Fail> {
+        // ponytail: HTTPS comes with Network.framework (PLAN "The web", step 3).
+        if secure {
+            return Err(Fail::BadUrl);
+        }
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        let (host, port) = (c_path(host), c_path(&alloc::format!("{port}")));
+        let null = core::ptr::null();
+        let hints = AddrInfo { flags: 0, family: 0, socktype: SOCK_STREAM, protocol: 0, addrlen: 0, canonname: null, addr: null, next: core::ptr::null_mut() };
+        let mut found = core::ptr::null_mut();
+        if unsafe { c::getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+            return Err(Fail::NoHost);
+        }
+        let (mut failure, mut a) = (Err(Fail::NoHost), found);
+        while let Some(i) = unsafe { a.as_ref() } {
+            let fd = unsafe { c::socket(i.family, SOCK_STREAM, i.protocol) };
+            if fd >= 0 {
+                // SO_NOSIGPIPE: a closed connection is a failure, not the end of the program.
+                unsafe { c::setsockopt(fd, 0xFFFF, 0x1022, &1, 4) };
+                if unsafe { c::connect(fd, i.addr, i.addrlen) } == 0 {
+                    failure = Ok(fd);
+                    break;
+                }
+                failure = Err(if errno() == ETIMEDOUT { Fail::Timeout } else { Fail::Refused });
+                unsafe { c::close(fd) };
+            }
+            a = i.next;
+        }
+        unsafe { c::freeaddrinfo(found) };
+        failure
+    }
+
+    fn send(&mut self, fd: &mut i32, mut data: &[u8]) -> Result<(), Fail> {
+        while !data.is_empty() {
+            match unsafe { c::send(*fd, data.as_ptr(), data.len(), 0) } {
+                n if n >= 0 => data = &data[n as usize..],
+                _ if errno() == EINTR => {}
+                _ => return Err(cut()),
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, fd: &mut i32, buffer: &mut [u8]) -> Result<usize, Fail> {
+        loop {
+            match unsafe { c::recv(*fd, buffer.as_mut_ptr(), buffer.len(), 0) } {
+                n if n >= 0 => return Ok(n as usize),
+                _ if errno() == EINTR => {}
+                _ => return Err(cut()),
+            }
+        }
+    }
+
+    fn close(&mut self, fd: i32) {
+        unsafe { c::close(fd) };
+    }
+}
+
+/// Like `cut` in src/web.rs.
+fn cut() -> Fail {
+    if matches!(errno(), ETIMEDOUT | EAGAIN) { Fail::Timeout } else { Fail::Broken }
 }
 
 // ---- Files ----
