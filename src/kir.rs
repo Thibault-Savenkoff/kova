@@ -1287,16 +1287,22 @@ impl<'a> Translator<'a> {
         let k = x.len();
         self.copy(&v[v.len() - k..], &x);
         self.go(End::Jump(done), no);
-        // `Missing(field)` or `WrongKind(field)`: the path without its first `.`, `.` for the whole.
+        // `Missing(field)` or `WrongKind(field)`: the path without its first `.` (`author.name`,
+        // `[2].title`), `.` for the whole.
         self.emit(Inst::Copy(v[1], st));
-        let (length, field) = (self.int_local(), self.int_local());
+        let (length, field, dot, dotted) = (self.int_local(), self.int_local(), self.text("."), self.int_local());
         self.emit(Inst::Str(length, StrOp::Length, vec![p]));
-        let (whole, part, named) = (self.new_block(), self.new_block(), self.new_block());
+        self.emit(Inst::Str(dotted, StrOp::StartsWith, vec![p, dot]));
+        self.emit(Inst::Free(dot));
+        let (whole, part, cut, kept, named) = (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
         self.go(End::Branch(length, part, whole), whole);
         self.emit(Inst::Text(field, ".".into()));
         self.go(End::Jump(named), part);
+        self.go(End::Branch(dotted, cut, kept), cut);
         let one = self.constant(1);
         self.emit(Inst::Str(field, StrOp::Slice, vec![p, one, length]));
+        self.go(End::Jump(named), kept);
+        self.emit(Inst::Str(field, StrOp::Clone, vec![p]));
         self.go(End::Jump(named), named);
         self.emit(Inst::Free(p));
         let (missing, wrong, after) = (self.new_block(), self.new_block(), self.new_block());
@@ -4271,7 +4277,7 @@ impl<'a> Translator<'a> {
                 v
             }
             // `book.to_json` (PLAN Part 4 "JSON").
-            ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_)) => {
+            ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_) | Type::List(_)) => {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
                 let text = self.json_text(&v, &ty);

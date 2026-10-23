@@ -251,6 +251,7 @@ lang en {
     json_made := "`{name}` is made by Kova for every struct"
     json_made_help := "`T.from_json(text)` reads JSON and `value.to_json` writes it: give yours another name"
     json_no_form := "`{call}` cannot hold `{field}`: a `{type}` has no JSON form"
+    json_no_form_element := "`{call}` cannot hold its elements: a `{type}` has no JSON form"
     json_no_form_help := "JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them"
     json_private := "`{call}` cannot hold `{field}`: it is private in {file}"
     json_private_help := "only {file} sees its private fields: make them public, or write the JSON from a struct of your own"

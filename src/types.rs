@@ -2655,6 +2655,11 @@ impl Checker<'_> {
             }
             "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
+            "to_json" => {
+                let list = Type::List(Box::new(elem.clone()));
+                self.json_form(&list, &format!("{}.to_json", list.text()), name.span);
+                (vec![], Type::String)
+            }
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
             // `words.join(", ")`: only Strings are joined (a number has no single text).
@@ -2679,7 +2684,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "join") {
+        if !matches!(name.text.as_str(), "length" | "join" | "to_json") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -2917,6 +2922,13 @@ impl Checker<'_> {
         if let t @ (Type::Date | Type::DateTime) = primitive(&ty.text).unwrap_or(Type::Error) {
             return self.date_made(t, ty, name, args);
         }
+        // `List<Book>.from_json(text)`: a JSON text whose root is an array (PLAN Part 4 "JSON").
+        if let ("List", "from_json", [elem]) = (ty.text.as_str(), name.text.as_str(), types) {
+            let list = Type::List(Box::new(self.written_type(elem)));
+            self.json_form(&list, &format!("{}.from_json", list.text()), name.span);
+            self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+            return Type::Result(Box::new(list), Box::new(json_error()));
+        }
         if let kind @ ("List" | "Map" | "Set") = ty.text.as_str() {
             let help = match kind {
                 "List" => t!("list_made_help"),
@@ -2984,6 +2996,8 @@ impl Checker<'_> {
     fn json_form(&mut self, t: &Type, call: &str, span: Span) {
         let Some((field, why)) = self.no_json(t, "", span, &mut vec![]) else { return };
         self.diags.push(match why {
+            // `List<Date>`: no field to name.
+            Ok(ty) if field.is_empty() => Diag::new(span, t!("json_no_form_element", call = call, type = ty.text())).help(t!("json_no_form_help")),
             Ok(ty) => Diag::new(span, t!("json_no_form", call = call, field = field, type = ty.text())).help(t!("json_no_form_help")),
             Err(file) => Diag::new(span, t!("json_private", call = call, field = field, file = file)).help(t!("json_private_help", file = file)),
         });

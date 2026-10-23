@@ -99,9 +99,23 @@ fn shapes {
     print(People.from_json(""))
 }
 
+// A JSON text whose root is an array.
+fn lists {
+    let authors: List<Author> := [Author { name := "A", born := 1 }, Author { name := "B", born := none }]
+    let text: String := authors.to_json
+    print(text)
+    print(List<Author>.from_json(text))
+    print(List<Author>.from_json("[\{\"name\": \"A\"\}, \{\"born\": 2\}]"))
+    print(List<Author>.from_json("[\{\"name\": \"A\"\}, 3]"))
+    print(List<Author>.from_json("\{\}"))
+    print(List<List<Int>>.from_json("[[1], [2, \"x\"]]"))
+    print([1.5, 2.0].to_json)
+}
+
 fn main {
     books
     shapes
+    lists
 }
 // expect: {"title":"Le \"Petit\" Prince","price":9.5,"pages":96,"read":true,"author":{"name":"Saint-Ex","born":null},"tags":["conte","été"],"notes":{"a":1,"b":2}}
 // expect: Book { title: "Le "Petit" Prince", price: 9.5, pages: 96, read: true, author: Author { name: "Saint-Ex", born: none }, tags: ["conte", "été"], notes: ["a" := 1, "b" := 2] }
@@ -135,3 +149,10 @@ fn main {
 // expect: err(WrongKind("list[1].b"))
 // expect: err(NotJson(1))
 // expect: err(NotJson(1))
+// expect: [{"name":"A","born":1},{"name":"B","born":null}]
+// expect: ok([Author { name: "A", born: 1 }, Author { name: "B", born: none }])
+// expect: err(Missing("[1].name"))
+// expect: err(WrongKind("[1]"))
+// expect: err(WrongKind("."))
+// expect: err(WrongKind("[1][1]"))
+// expect: [1.5,2.0]

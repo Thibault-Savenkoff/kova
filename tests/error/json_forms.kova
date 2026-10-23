@@ -26,6 +26,9 @@ fn main {
     print(Meeting.from_json(""))
     let s: String := Scores { by := [1 := "a"] }.to_json
     print(Shape.from_json(""))
+    print(List<Date>.from_json(""))
+    let m: List<Meeting> := []
+    print(m.to_json)
 }
 // error: `Meeting.from_json` cannot hold `day`: a `Date` has no JSON form
 // error: `Scores.to_json` cannot hold `by`: a `Map<Int, String>` has no JSON form
@@ -33,3 +36,5 @@ fn main {
 // error: `to_json` is made by Kova for every struct
 // error: `from_json` is made by Kova for every struct
 // error: help: JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them
+// error: `List<Date>.from_json` cannot hold its elements: a `Date` has no JSON form
+// error: `List<Meeting>.to_json` cannot hold `day`: a `Date` has no JSON form

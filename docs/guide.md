@@ -599,7 +599,8 @@ Every struct has `T.from_json(text)` and `value.to_json`, checked against its fi
 refuses a field JSON cannot hold. JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`,
 `Map<String, T>` and structs made of them. A field the struct does not have is ignored; a `T?` that is
 missing or `null` is `none`. A failure says where: `NotJson(line)`, `Missing(field)` or
-`WrongKind(field)`, the field written as a path (`author.name`, `tags[2]`). With the web:
+`WrongKind(field)`, the field written as a path (`author.name`, `tags[2]`). A text whose root is an
+array is read by `List<Book>.from_json(text)` and written by `books.to_json`. With the web:
 `Book.from_json(page.body)`. In a Kova text, a brace is written `\{`.
 
 ## 18. The tools
