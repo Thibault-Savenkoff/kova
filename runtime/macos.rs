@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 
 use crate::c_text;
-use crate::http::{Fail, Network};
+use crate::http::{Fail, Network, Serve};
 
 pub const SLASH: char = '/';
 
@@ -43,6 +43,9 @@ mod c {
         pub fn connect(fd: i32, address: *const u8, n: u32) -> i32;
         pub fn send(fd: i32, b: *const u8, n: usize, flags: i32) -> isize;
         pub fn recv(fd: i32, b: *mut u8, n: usize, flags: i32) -> isize;
+        pub fn bind(fd: i32, address: *const u8, n: u32) -> i32;
+        pub fn listen(fd: i32, backlog: i32) -> i32;
+        pub fn accept(fd: i32, address: *mut u8, n: *mut u32) -> i32;
     }
 }
 
@@ -211,6 +214,44 @@ impl Network for Net {
 
     fn close(&mut self, fd: i32) {
         unsafe { c::close(fd) };
+    }
+}
+
+impl Serve for Net {
+    type Listener = i32;
+
+    fn listen(&mut self, port: u16) -> Option<i32> {
+        let fd = unsafe { c::socket(2, SOCK_STREAM, 0) };
+        if fd < 0 {
+            return None;
+        }
+        // SO_REUSEADDR: the port can be taken again right after a server stops.
+        unsafe { c::setsockopt(fd, 0xFFFF, 4, &1, 4) };
+        // As BSD lays it out: its length first, then family, port (big end first), address.
+        let mut a = [0u8; 16];
+        a[0] = 16;
+        a[1] = 2;
+        a[2..4].copy_from_slice(&port.to_be_bytes());
+        a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        if unsafe { c::bind(fd, a.as_ptr(), 16) } != 0 || unsafe { c::listen(fd, 128) } != 0 {
+            unsafe { c::close(fd) };
+            return None;
+        }
+        Some(fd)
+    }
+
+    fn accept(&mut self, listener: &mut i32, ms: u64) -> Option<i32> {
+        let fd = unsafe { c::accept(*listener, core::ptr::null_mut(), core::ptr::null_mut()) };
+        if fd < 0 {
+            return None;
+        }
+        // An accepted socket does not inherit SO_NOSIGPIPE.
+        unsafe { c::setsockopt(fd, 0xFFFF, 0x1022, &1, 4) };
+        let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+        for option in [0x1006, 0x1005] {
+            unsafe { c::setsockopt(fd, 0xFFFF, option, limit.as_ptr() as *const i32, 16) };
+        }
+        Some(fd)
     }
 }
 

@@ -603,7 +603,45 @@ missing or `null` is `none`. A failure says where: `NotJson(line)`, `Missing(fie
 array is read by `List<Book>.from_json(text)` and written by `books.to_json`. With the web:
 `Book.from_json(page.body)`. In a Kova text, a brace is written `\{`.
 
-## 18. The tools
+## 18. A web server
+
+```kova
+struct Book {
+    title: String
+    pages: Int
+}
+
+fn main {
+    serve(8080) { q: Request =>
+        match q.path {
+            "/" => Answer.text("Hello from Kova")
+            "/book" => Answer.json(Book { title := "Dune", pages := 412 })
+            "/search" => match q.query("author") {
+                none => Answer.status(400)
+                author => Answer.text("books by {author}")
+            }
+            _ => Answer.file("public" + q.path)
+        }
+    }
+}
+```
+
+`serve(port)` answers each question with what its block gives back, one question at a time, until the
+program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` to see it: only this
+computer can ask (127.0.0.1). The block receives a `Request`: `q.method`, `q.path` (decoded, without
+the `?…`), `q.query(name)` and `q.header(name)` (both `String?`), `q.body`, `q.headers`.
+
+An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct or a List, as `to_json` writes
+it), `Answer.status(404)` (the body says `404 Not Found`) or `Answer.file(path)` (its type from its
+name: `.html`, `.css`, `.png`…; `404` if it does not exist or the path goes up with `..`). Add headers
+with `.header("Cache-Control") is("no-store")`. `serve_files("public") at(8080)` serves a folder alone,
+`index.html` for a folder's own address.
+
+A port another program has stops the program (code 101). Kova itself answers a question it cannot read
+(`400`), too long (`431`, `413` past 16 MB of body) or sent in pieces (`501`), and gives up on a
+connection silent for 10 seconds.
+
+## 19. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.
 - `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).

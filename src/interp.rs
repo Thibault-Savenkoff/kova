@@ -34,6 +34,9 @@ struct Heap {
     looking: bool,
     broken: std::cell::Cell<bool>,
     nothing: (usize, Vec<i64>),
+    /// `serve`'s sockets: a listener's number is its place here, a connection's too.
+    listeners: Vec<std::net::TcpListener>,
+    links: Vec<Option<std::net::TcpStream>>,
 }
 
 impl Heap {
@@ -144,7 +147,18 @@ pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
             101
         }
         // What is still alive is not counted as a leak (`kova_exit` in runtime/kova.rs).
-        Err(Stop::Exit(code)) => code,
+        Err(Stop::Exit(code)) => {
+            alive(heap.live);
+            code
+        }
+    }
+}
+
+/// `KOVA_LEAKS=live`: `exit` writes how many Strings and Lists are still alive, the same at each
+/// `exit` of a server that frees what each question made (test `server`). Like runtime/kova.rs.
+fn alive(live: usize) {
+    if std::env::var("KOVA_LEAKS").is_ok_and(|m| m == "live") {
+        eprintln!("alive: {live}");
     }
 }
 
@@ -484,6 +498,53 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 let slots = crate::json::slots(nodes, |t| heap.make(t));
                                 heap.add(Object::List { width: 4, length: slots.len() / 4, slots, index: 0 })
                             }
+                        },
+                        StrOp::Listen => {
+                            use crate::http::Serve;
+                            match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p)) {
+                                None => -1,
+                                Some(l) => {
+                                    heap.listeners.push(l);
+                                    heap.listeners.len() as i64 - 1
+                                }
+                            }
+                        }
+                        StrOp::Accept => {
+                            out.flush().unwrap();
+                            let (link, q) = crate::http::next_question(&mut crate::web::System, &mut heap.listeners[locals[a[0]] as usize]);
+                            heap.links.push(Some(link));
+                            let conn = heap.links.len() as i64 - 1;
+                            let mut headers = vec![];
+                            for (n, v) in q.headers {
+                                headers.push(heap.make(n));
+                                headers.push(heap.make(v));
+                            }
+                            let length = headers.len() / 2;
+                            let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0 });
+                            let slots = vec![heap.make(q.method), heap.make(q.url), headers, heap.make(q.body), 0, 0, conn];
+                            heap.add(Object::List { width: 7, length: 1, slots, index: 0 })
+                        }
+                        StrOp::Reply => {
+                            let slots = heap.list(locals[a[2]]).2.clone();
+                            let headers: Vec<(String, String)> = slots.chunks(2).map(|p| (heap.get(p[0]).to_string(), heap.get(p[1]).to_string())).collect();
+                            let headers: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+                            let link = heap.links[locals[a[0]] as usize].take().expect("answered once");
+                            let (body, file) = (heap.get(locals[a[3]]), heap.get(locals[a[4]]));
+                            crate::http::reply(&mut crate::web::System, link, locals[a[1]], &headers, body, file, |p| std::fs::read(p).ok());
+                            0
+                        }
+                        StrOp::UrlPath => {
+                            let t = crate::http::url_path(s(0));
+                            heap.make(t)
+                        }
+                        StrOp::UrlQuery => match crate::http::url_query(s(0), s(1)) {
+                            None => 0,
+                            Some(t) => heap.make(t),
+                        },
+                        StrOp::StatusText => heap.make(crate::http::status_text(locals[a[0]])),
+                        StrOp::FileToServe => match crate::http::file_to_serve(s(0), |p| std::fs::metadata(p).ok().map(|m| m.is_dir())) {
+                            None => 0,
+                            Some(t) => heap.make(t),
                         },
                         StrOp::JsonQuote => {
                             let t = crate::json::quote(s(0));

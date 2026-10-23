@@ -8,7 +8,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{null, null_mut};
 
 use crate::Global;
-use crate::http::{Fail, Network};
+use crate::http::{Fail, Network, Serve};
 
 pub const SLASH: char = '\\';
 
@@ -232,6 +232,9 @@ unsafe extern "system" {
     fn send(s: usize, b: *const u8, n: i32, flags: i32) -> i32;
     fn recv(s: usize, b: *mut u8, n: i32, flags: i32) -> i32;
     fn closesocket(s: usize) -> i32;
+    fn bind(s: usize, address: *const u8, n: i32) -> i32;
+    fn listen(s: usize, backlog: i32) -> i32;
+    fn accept(s: usize, address: *mut u8, n: *mut i32) -> usize;
 }
 
 #[repr(C)]
@@ -319,6 +322,40 @@ impl Network for Net {
 
     fn close(&mut self, s: usize) {
         unsafe { closesocket(s) };
+    }
+}
+
+impl Serve for Net {
+    type Listener = usize;
+
+    /// Without SO_REUSEADDR, which on Windows would let another program take the port too.
+    fn listen(&mut self, port: u16) -> Option<usize> {
+        let mut data = [0u8; 512];
+        unsafe { WSAStartup(0x202, data.as_mut_ptr()) };
+        let s = unsafe { socket(2, SOCK_STREAM, 0) };
+        if s == usize::MAX {
+            return None;
+        }
+        let mut a = [0u8; 16];
+        a[0] = 2;
+        a[2..4].copy_from_slice(&port.to_be_bytes());
+        a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        if unsafe { bind(s, a.as_ptr(), 16) } != 0 || unsafe { listen(s, 128) } != 0 {
+            unsafe { closesocket(s) };
+            return None;
+        }
+        Some(s)
+    }
+
+    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<usize> {
+        let s = unsafe { accept(*listener, null_mut(), null_mut()) };
+        if s == usize::MAX {
+            return None;
+        }
+        for option in [0x1006, 0x1005] {
+            unsafe { setsockopt(s, 0xFFFF, option, &(ms.min(u32::MAX as u64) as u32), 4) };
+        }
+        Some(s)
     }
 }
 

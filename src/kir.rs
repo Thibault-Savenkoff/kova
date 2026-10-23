@@ -383,6 +383,20 @@ pub enum StrOp {
     JsonParse,
     /// A String as JSON writes it, between quotes: a new String.
     JsonQuote,
+    /// `serve(port)` (PLAN Part 4 "The web server", src/http.rs): what listens on 127.0.0.1, or -1
+    /// if the port is taken or not allowed.
+    Listen,
+    /// The next question that can be read: a List of one element, a `Request`'s 6 slots then the
+    /// connection.
+    Accept,
+    /// (connection, status, headers, body, file): sends the `Answer` and closes; gives 0.
+    Reply,
+    /// `q.path`, `q.query(name)` (a String or 0), `Answer.status(404)`'s text: new Strings.
+    UrlPath,
+    UrlQuery,
+    StatusText,
+    /// `Answer.file(path)`: the file to send (a new String), or 0 for a 404 (`http::file_to_serve`).
+    FileToServe,
     /// `args`: a new `List<String>`, the words given after the program's name.
     Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
@@ -550,6 +564,8 @@ pub enum Fault {
     BadDate,
     /// `DateTime.year(2026) month(10) day(23) hour(25) minute(0)`.
     BadTime,
+    /// `serve(8080)` on a port taken, or not allowed.
+    CannotServe,
 }
 
 impl Fault {
@@ -567,6 +583,7 @@ impl Fault {
             Fault::EmptyRange => "fault_empty_range",
             Fault::BadDate => "fault_bad_date",
             Fault::BadTime => "fault_bad_time",
+            Fault::CannotServe => "fault_cannot_serve",
         }
     }
 }
@@ -946,6 +963,75 @@ impl<'a> Translator<'a> {
         self.finish(End::Return(result.clone()));
         let returns = result.iter().map(|_| Scalar::Int).collect();
         self.function(format!("{name} {}", ty.text()), 1, returns)
+    }
+
+    /// An `Answer` (`types::answer`) owning `body` and `file`, with a `content-type` if given.
+    fn answer_made(&mut self, status: Local, content_type: Option<&str>, body: Local, file: Local) -> Slots {
+        let headers = self.int_local();
+        self.emit(Inst::ListNew(headers, 2));
+        if let Some(t) = content_type {
+            let (name, value) = (self.text("content-type"), self.text(t));
+            self.push(headers, &[name, value]);
+        }
+        vec![status, headers, body, file]
+    }
+
+    /// `Answer.file(path)`: the file (its `content-type` found when it is sent), or a 404.
+    fn file_answer(&mut self, path: Local) -> Slots {
+        let (file, zero, found) = (self.int_local(), self.constant(0), self.int_local());
+        self.emit(Inst::Str(file, StrOp::FileToServe, vec![path]));
+        self.emit(Inst::Binary(found, Op::Ne, file, zero, NOWHERE));
+        let v = self.new_slots(&crate::types::answer());
+        let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Branch(found, yes, no), yes);
+        let (status, body) = (self.constant(200), self.text(""));
+        let a = self.answer_made(status, None, body, file);
+        self.copy(&v, &a);
+        self.go(End::Jump(done), no);
+        let (status, body, empty) = (self.constant(404), self.int_local(), self.text(""));
+        self.emit(Inst::Str(body, StrOp::StatusText, vec![status]));
+        let a = self.answer_made(status, Some("text/plain; charset=utf-8"), body, empty);
+        self.copy(&v, &a);
+        self.go(End::Jump(done), done);
+        v
+    }
+
+    /// `serve(port) { q: Request => … }` (PLAN Part 4 "The web server"): listens, then answers each
+    /// question with the block, one after the other, until the program stops (`exit`). Without a
+    /// block, `serve_files(folder) at(port)`: each answer is `Answer.file(folder + q.path)`.
+    fn serve(&mut self, port: Local, block: Option<&Expr>, folder: Option<Local>, loc: Loc) -> Slots {
+        let given = block.filter(|b| !matches!(b.kind, ExprKind::Block { .. })).map(|b| self.expr(b));
+        let (listener, zero, taken) = (self.int_local(), self.constant(0), self.int_local());
+        self.emit(Inst::Str(listener, StrOp::Listen, vec![port]));
+        self.emit(Inst::Binary(taken, Op::Lt, listener, zero, NOWHERE));
+        self.emit(Inst::FaultIf(taken, Fault::CannotServe, loc));
+        let (request, answer) = (crate::types::request(), crate::types::answer());
+        let head = self.new_block();
+        self.go(End::Jump(head), head);
+        let got = self.int_local();
+        self.emit(Inst::Str(got, StrOp::Accept, vec![listener]));
+        let q = self.load(got, zero, &request);
+        let link = self.node(got, zero, 6);
+        self.emit(Inst::ListFree(got));
+        let a = match (block, folder) {
+            (Some(block), _) => self.run(block, &given, vec![(q.clone(), request.clone())], Some(&answer)),
+            (None, folder) => {
+                let (path, whole) = (self.int_local(), self.int_local());
+                self.emit(Inst::Str(path, StrOp::UrlPath, vec![q[1]]));
+                self.emit(Inst::Str(whole, StrOp::Concat, vec![folder.expect("a folder"), path]));
+                self.emit(Inst::Free(path));
+                let a = self.file_answer(whole);
+                self.emit(Inst::Free(whole));
+                a
+            }
+        };
+        let done = self.int_local();
+        self.emit(Inst::Str(done, StrOp::Reply, vec![link, a[0], a[1], a[2], a[3]]));
+        self.free_value(&a, &answer);
+        self.free_value(&q, &request);
+        let after = self.new_block();
+        self.go(End::Jump(head), after);
+        vec![]
     }
 
     /// The JSON text of a value (PLAN Part 4 "JSON"): a new String, not tracked.
@@ -3913,6 +3999,16 @@ impl<'a> Translator<'a> {
                     }
                     return v;
                 }
+                if name.text == "serve" {
+                    let port = self.expr1(&args[0]);
+                    let loc = self.loc(name.span);
+                    return self.serve(port, Some(&args[1]), None, loc);
+                }
+                if name.text == "serve_files(…) at(…)" {
+                    let (folder, port) = (self.expr1(&args[0]), self.expr1(&args[1]));
+                    let loc = self.loc(name.span);
+                    return self.serve(port, None, Some(folder), loc);
+                }
                 // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
                 if name.text == "send" {
                     let ty = self.ty(e);
@@ -4012,6 +4108,37 @@ impl<'a> Translator<'a> {
                 let s = self.with(Op::Plus, now, 719468 * 86400);
                 let z = self.with(Op::Div, s, 86400);
                 vec![self.with(Op::Minus, z, 719468)]
+            }
+            // `Answer.text("Hello")`, `Answer.json(book)`, `Answer.status(404)`, `Answer.file(path)`.
+            ExprKind::Static { ty, name, args, .. } if ty.text == "Answer" => {
+                let (status, empty) = (self.int_local(), self.text(""));
+                self.emit(Inst::Const(status, 200));
+                let text = "text/plain; charset=utf-8";
+                let v = match name.text.as_str() {
+                    "text" => {
+                        let body = self.owned(&args[0]);
+                        self.answer_made(status, Some(text), body[0], empty)
+                    }
+                    "json" => {
+                        let (value, t) = (self.expr(&args[0]), self.ty(&args[0]));
+                        let body = self.json_text(&value, &t);
+                        self.answer_made(status, Some("application/json"), body, empty)
+                    }
+                    "status" => {
+                        let n = self.expr1(&args[0]);
+                        self.emit(Inst::Copy(status, n));
+                        let body = self.int_local();
+                        self.emit(Inst::Str(body, StrOp::StatusText, vec![n]));
+                        self.answer_made(status, Some(text), body, empty)
+                    }
+                    _ => {
+                        self.emit(Inst::Free(empty));
+                        let path = self.expr1(&args[0]);
+                        self.file_answer(path)
+                    }
+                };
+                self.track(&v, &crate::types::answer());
+                v
             }
             // `Request.put(url)`: no header, no body, `DEFAULT_SECONDS`, redirections followed.
             ExprKind::Static { ty, name, args, .. } if ty.text == "Request" => {
@@ -4250,6 +4377,51 @@ impl<'a> Translator<'a> {
             }
             // `r.header("Accept") is("text/plain")`, `r.body(…)`, `r.seconds(…)`, `r.no_redirections`:
             // a copy of `r`, changed.
+            // `q.path`, `q.query("author")`, `q.header("Accept")`: what a question received says.
+            ExprKind::Method { receiver, name, args } if self.ty(receiver) == crate::types::request() && matches!(name.text.as_str(), "path" | "query" | "header") => {
+                let r = self.expr(receiver);
+                match name.text.as_str() {
+                    "path" => {
+                        let path = self.int_local();
+                        self.emit(Inst::Str(path, StrOp::UrlPath, vec![r[1]]));
+                        self.track(&[path], &Type::String);
+                        vec![path]
+                    }
+                    "query" => {
+                        let (given, value, zero) = (self.expr1(&args[0]), self.int_local(), self.constant(0));
+                        self.emit(Inst::Str(value, StrOp::UrlQuery, vec![r[1], given]));
+                        let present = self.int_local();
+                        self.emit(Inst::Binary(present, Op::Ne, value, zero, NOWHERE));
+                        let v = vec![present, value];
+                        self.track(&v, &Type::Optional(Box::new(Type::String)));
+                        v
+                    }
+                    _ => {
+                        let given = self.expr1(&args[0]);
+                        let key = self.int_local();
+                        self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
+                        self.track(&[key], &Type::String);
+                        self.lookup(r[2], &[key], &Type::String, &Type::String, false)
+                    }
+                }
+            }
+            // `a.header("Content-Type") is("text/html")`: a copy of `a`, the name in small letters
+            // (so that it replaces Kova's own `content-type`).
+            ExprKind::Method { receiver, args, .. } if self.ty(receiver) == crate::types::answer() => {
+                let ty = crate::types::answer();
+                let a = self.expr(receiver);
+                let v = self.clone_value(&a, &ty);
+                let (given, value) = (self.expr1(&args[0]), self.owned(&args[1]));
+                let key = self.int_local();
+                self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
+                self.track(&[key], &Type::String);
+                let place = self.entry(v[1], &[key], &Type::String, &Type::String);
+                let old = self.read(&place);
+                self.free_value(&old, &Type::String);
+                self.write(&place, &value);
+                self.track(&v, &ty);
+                v
+            }
             ExprKind::Method { receiver, name, args } if self.ty(receiver) == crate::types::request() => {
                 let ty = crate::types::request();
                 let r = self.expr(receiver);

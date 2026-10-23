@@ -793,6 +793,90 @@ fn web() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// `serve` (PLAN Part 4 "The web server"), in run and in build: tests/web/server.kova answers what
+/// is asked here, then `/stop` ends it. With `KOVA_LEAKS=live`, its `exit` says how many Strings and
+/// Lists are alive: the same after 1 round of questions and after 4, so no question leaves any.
+#[test]
+fn server() {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    let source = "tests/web/server.kova";
+    let ask = |port: u16, request: &[u8]| -> String {
+        // The server may still be starting.
+        for _ in 0..400 {
+            if let Ok(mut link) = TcpStream::connect(("127.0.0.1", port)) {
+                link.write_all(request).unwrap();
+                let mut got = vec![];
+                let _ = link.read_to_end(&mut got);
+                return String::from_utf8_lossy(&got).replace("\r\n", "\n");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("no server on port {port}");
+    };
+    let get = |path: &str| format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").into_bytes();
+    let head = |status: &str, kind: &str, length: usize| format!("HTTP/1.1 {status}\ncontent-type: {kind}\ncontent-length: {length}\nconnection: close\n\n");
+    let plain = "text/plain; charset=utf-8";
+    let round: Vec<(Vec<u8>, String)> = vec![
+        (get("/"), head("200 OK", plain, 15) + "Hello from Kova"),
+        (get("/book"), head("200 OK", "application/json", 28) + r#"{"title":"Dune","pages":412}"#),
+        (get("/books"), head("200 OK", "application/json", 25) + r#"[{"title":"A","pages":1}]"#),
+        (get("/search?author=Frank+Herbert%21"), head("200 OK", plain, 22) + "author: Frank Herbert!"),
+        (get("/search"), head("400 Bad Request", plain, 15) + "400 Bad Request"),
+        (get("/html"), head("200 OK", "text/html", 9) + "<p>hi</p>"),
+        (b"POST /echo HTTP/1.1\r\nX-Kova: yes\r\nContent-Length: 8\r\n\r\nhi there".to_vec(), head("200 OK", plain, 17) + "POST hi there yes"),
+        (get("/style.css"), head("200 OK", "text/css; charset=utf-8", 20) + "body { color: red }\n"),
+        (get("/docs/dot.png"), head("200 OK", "image/png", 11) + &String::from_utf8_lossy(b"\x89PNG\n\x1a\n\x00\x01\xff")),
+        (get("/docs/"), head("404 Not Found", plain, 13) + "404 Not Found"),
+        (get("/../Cargo.toml"), head("404 Not Found", plain, 13) + "404 Not Found"),
+        (get("/%2e%2e/Cargo.toml"), head("404 Not Found", plain, 13) + "404 Not Found"),
+        // Refused before the program sees it.
+        (b"NONSENSE\r\n\r\n".to_vec(), head("400 Bad Request", plain, 15) + "400 Bad Request"),
+        (b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec(), head("501 Not Implemented", plain, 19) + "501 Not Implemented"),
+    ];
+    let exe = std::env::temp_dir().join(format!("kova-server-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let mut failures = vec![];
+    for mode in ["run", "build"] {
+        let mut alive = vec![];
+        for rounds in [1, 4] {
+            let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+            let mut c = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
+            if mode == "run" {
+                c.arg("run").arg(source);
+            }
+            let child = c.arg(port.to_string()).env("KOVA_LEAKS", "live").stderr(std::process::Stdio::piped()).spawn().unwrap();
+            for _ in 0..rounds {
+                for (question, want) in &round {
+                    let got = ask(port, question);
+                    if got != *want {
+                        failures.push(format!("{mode}: {:?}\n  expected: {want:?}\n  got:      {got:?}", String::from_utf8_lossy(question)));
+                    }
+                }
+            }
+            if rounds == 1 {
+                // The port is taken: a second server stops at once.
+                let second = kova(LANG).arg("run").arg(source).arg(port.to_string()).output().unwrap();
+                if second.status.code() != Some(101) || !text(&second.stderr).contains("cannot serve on this port") {
+                    failures.push(format!("{mode}: a second server on the same port: {second:?}"));
+                }
+            }
+            ask(port, &get("/stop"));
+            let end = child.wait_with_output().unwrap();
+            if end.status.code() != Some(0) {
+                failures.push(format!("{mode}: ended with {:?}: {}", end.status, text(&end.stderr)));
+            }
+            alive.push(text(&end.stderr));
+        }
+        if alive[0] != alive[1] || !alive[0].starts_with("alive: ") {
+            failures.push(format!("{mode}: what is alive grows with the questions: {alive:?}"));
+        }
+    }
+    let _ = std::fs::remove_file(&exe);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
 /// HTTPS against real sites (PLAN Part 4 "The web, step 3"), in run and in build: only where the
 /// network is promised (`KOVA_NETWORK`, set by the GitHub workflow).
 #[test]

@@ -1,6 +1,6 @@
-// `=` on generic types (PLAN Part 4 "Small finishes"): `Answer<Int>` compares its fields when
+// `=` on generic types (PLAN Part 4 "Small finishes"): `Verdict<Int>` compares its fields when
 // `Int` has `=`; a written `equals` is used as is.
-struct Answer<T> : Equal {
+struct Verdict<T> : Equal {
     value: T
 }
 
@@ -24,17 +24,17 @@ fn leaf -> Tree<Int> {
 }
 
 fn main {
-    let a := Answer<Int> { value := 3 }
-    let b := Answer<Int> { value := 3 }
+    let a := Verdict<Int> { value := 3 }
+    let b := Verdict<Int> { value := 3 }
     print(a = b)
-    print(Answer<String> { value := "x" } != Answer<String> { value := "y" })
-    print(Answer<Answer<Int>?> { value := Answer<Int> { value := 3 } } = Answer<Answer<Int>?> { value := none })
+    print(Verdict<String> { value := "x" } != Verdict<String> { value := "y" })
+    print(Verdict<Verdict<Int>?> { value := Verdict<Int> { value := 3 } } = Verdict<Verdict<Int>?> { value := none })
     print(Tree<Int>.Node(2, leaf, leaf) = leaf)
     print(Tree<Int>.Node(2, leaf, leaf) = Tree<Int>.Node(2, leaf, leaf))
     print(Tree<Int>.Node(2, leaf, leaf) = Tree<Int>.Node(2, leaf, Tree<Int>.Node(1, leaf, leaf)))
     print(Pair<Int> { a := 1, b := 2 } = Pair<Int> { a := 2, b := 1 })
     print(Pair<Int> { a := 1, b := 2 } = Pair<Int> { a := 2, b := 2 })
-    let seen: Set<Answer<Int>> := [a, b]
+    let seen: Set<Verdict<Int>> := [a, b]
     print(seen.length)
     let m: Map<Pair<String>, Int> := [Pair<String> { a := "x", b := "y" } := 7]
     print(m[Pair<String> { a := "y", b := "x" }])

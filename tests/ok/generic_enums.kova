@@ -40,16 +40,16 @@ fn insert<T: Comparable>(t: Tree<T>, x: T) -> Tree<T> {
     }
 }
 
-enum Answer<T> {
+enum Verdict<T> {
     Yes(value: T)
     No(reason: String)
 }
 
-fn half(n: Int) -> Answer<Int> {
+fn half(n: Int) -> Verdict<Int> {
     if n % 2 = 0 {
-        return Answer<Int>.Yes(n / 2)
+        return Verdict<Int>.Yes(n / 2)
     }
-    return Answer<Int>.No("{n} is odd")
+    return Verdict<Int>.No("{n} is odd")
 }
 
 fn main {
@@ -84,6 +84,6 @@ fn main {
 // expect: [1, 3, 4, 5, 7, 8, 9]
 // expect: ["brown", "fox", "quick", "the"]
 // expect: Tree<Int>.Node(left: Tree<Int>.Leaf, value: 2, right: Tree<Int>.Leaf)
-// expect: Answer<Int>.Yes(value: 5)
-// expect: Answer<Int>.No(reason: "7 is odd")
+// expect: Verdict<Int>.Yes(value: 5)
+// expect: Verdict<Int>.No(reason: "7 is odd")
 // expect: 9 is odd

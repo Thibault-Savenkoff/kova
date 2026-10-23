@@ -1,0 +1,42 @@
+// The server that tests/kova.rs (`server`) asks: its port is the program's first word. `/stop`
+// ends it; `/count` says how many questions came before.
+struct Book {
+    title: String
+    pages: Int
+}
+
+fn echo(q: Request) -> Answer {
+    let tag: String? := q.header("X-Kova")
+    if tag = none {
+        return Answer.text("{q.method} {q.body} -")
+    }
+    return Answer.text("{q.method} {q.body} {tag}")
+}
+
+fn main {
+    let port: Int? := args[0].to_int
+    if port = none {
+        return
+    }
+    var count: Int := 0
+    serve(port) { q: Request =>
+        count := count + 1
+        match q.path {
+            "/" => Answer.text("Hello from Kova")
+            "/book" => Answer.json(Book { title := "Dune", pages := 412 })
+            "/books" => Answer.json([Book { title := "A", pages := 1 }])
+            "/echo" => echo(q)
+            "/search" => match q.query("author") {
+                none => Answer.status(400)
+                author => Answer.text("author: {author}")
+            }
+            "/html" => Answer.text("<p>hi</p>").header("Content-Type") is("text/html")
+            "/count" => Answer.text("{count}")
+            "/stop" => {
+                exit(0)
+                Answer.status(500)
+            }
+            _ => Answer.file("tests/web/site" + q.path)
+        }
+    }
+}

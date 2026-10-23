@@ -1,4 +1,4 @@
-struct Answer<T> : Equal {
+struct Verdict<T> : Equal {
     value: T
 }
 
@@ -15,11 +15,11 @@ struct Dog {
 }
 
 fn main {
-    let a := Answer<Dog> { value := Dog { name := "rex" } }
+    let a := Verdict<Dog> { value := Dog { name := "rex" } }
     print(a = a)
     let b := Box<Int> { value := 1 }
     print(b = b)
 }
 // error: `Stack` follows `Display` but has no method `to_string`
-// error: `=` cannot compare `Answer<Dog>` values
+// error: `=` cannot compare `Verdict<Dog>` values
 // error: `=` cannot compare `Box<Int>` values

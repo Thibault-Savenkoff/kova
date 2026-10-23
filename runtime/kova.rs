@@ -291,6 +291,13 @@ pub extern "C" fn kova_fail() {
 /// `exit(code)`: what is still alive is not freed, and not counted as a leak (src/interp.rs too).
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_exit(code: i64) {
+    // `KOVA_LEAKS=live`: like `alive` in src/interp.rs.
+    if sys::var("KOVA_LEAKS").is_some_and(|m| m == "live") {
+        let mut m = b"alive: ".to_vec();
+        put_int(&mut m, LIVE.load(Relaxed));
+        m.push(b'\n');
+        error(&m);
+    }
     exit(code as i32)
 }
 
@@ -821,6 +828,62 @@ pub extern "C" fn kova_json_parse(s: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_json_quote(s: i64) -> i64 {
     new_text(json::quote(text_of(s)).as_bytes())
+}
+
+// ---- The web server (src/http.rs reads the questions and writes the answers) ----
+
+/// A socket, as each system numbers it.
+#[cfg(target_os = "macos")]
+type Socket = i32;
+#[cfg(not(target_os = "macos"))]
+type Socket = usize;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_listen(port: i64) -> i64 {
+    use http::Serve;
+    match u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p)) {
+        Some(l) => l as i64,
+        None => -1,
+    }
+}
+
+/// Like src/interp.rs.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_accept(listener: i64) -> i64 {
+    let mut l = listener as Socket;
+    let (link, q) = http::next_question(&mut sys::Net, &mut l);
+    let length = q.headers.len();
+    let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
+    let headers = new_list(List { length, width: 2, slots, index: 0 });
+    let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, link as i64];
+    new_list(List { length: 1, width: 7, slots, index: 0 })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_reply(link: i64, status: i64, headers: i64, body: i64, file: i64) -> i64 {
+    let headers: Vec<(&str, &str)> = list(headers).slots.chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect();
+    http::reply(&mut sys::Net, link as Socket, status, &headers, text_of(body), text_of(file), |p| sys::read_file(p).ok());
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_url_path(url: i64) -> i64 {
+    new_text(http::url_path(text_of(url)).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_url_query(url: i64, name: i64) -> i64 {
+    http::url_query(text_of(url), text_of(name)).map_or(0, |t| new_text(t.as_bytes()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_status_text(status: i64) -> i64 {
+    new_text(http::status_text(status).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_file_to_serve(path: i64) -> i64 {
+    http::file_to_serve(text_of(path), |p| sys::kind(p).ok()).map_or(0, |t| new_text(t.as_bytes()))
 }
 
 // ---- The web (src/http.rs speaks HTTP; `sys::Net` connects) ----

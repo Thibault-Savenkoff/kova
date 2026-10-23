@@ -510,6 +510,11 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
         return Some(made.collect());
     }
+    if name == "Answer" {
+        let mut made: Vec<CompletionItem> = types::ANSWER_MAKERS.iter().map(|(f, p)| item(f, CompletionItemKind::FUNCTION, format!("Answer.{f}({}) -> Answer", p.text()))).collect();
+        made.push(item("json", CompletionItemKind::FUNCTION, "Answer.json(value) -> Answer".into()));
+        return Some(made);
+    }
     if name == "Request" {
         return Some(types::REQUEST_STARTS.iter().map(|f| item(f, CompletionItemKind::FUNCTION, format!("Request.{f}(url: String) -> Request"))).collect());
     }
@@ -665,6 +670,18 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             };
             items.push(CompletionItem { insert_text: Some(insert), insert_text_format: Some(InsertTextFormat::SNIPPET), ..item(label, CompletionItemKind::METHOD, detail) });
         }
+        for (name, params, result) in types::request_questions() {
+            if params.is_empty() {
+                items.push(item(name, CompletionItemKind::METHOD, format!("-> {}", result.text())));
+            } else {
+                let detail = format!("({}) -> {}", params.iter().map(Type::text).collect::<Vec<_>>().join(", "), result.text());
+                items.push(CompletionItem { insert_text: Some(format!("{name}($1)")), insert_text_format: Some(InsertTextFormat::SNIPPET), ..item(name, CompletionItemKind::METHOD, detail) });
+            }
+        }
+    }
+    if *t == types::answer() {
+        let detail = "header(name: String) is(value: String) -> Answer".to_string();
+        items.push(CompletionItem { insert_text: Some("header($1) is($2)".into()), insert_text_format: Some(InsertTextFormat::SNIPPET), ..item("header", CompletionItemKind::METHOD, detail) });
     }
     if matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::Any(_) | Type::List(_) | Type::Map(..) | Type::Set(_)) {
         items.push(item("clone", CompletionItemKind::METHOD, t.text()));
@@ -1343,6 +1360,13 @@ mod tests {
         assert!(!geo.iter().any(|n| n == "helper" || n.contains('.')), "{geo:?}");
         let point = at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.");
         assert!(point.contains(&"origin".to_string()) && point.contains(&"from_json".to_string()), "{point:?}");
+        // The web server's names.
+        assert_eq!(at("/none/main.kova", "fn main {\n  Answer."), ["text", "status", "file", "json"]);
+        let src = "fn main {\n  serve(80) { q: Request =>\n    print(q.)\n    Answer.status(404)\n  }\n}";
+        let asked = labels(members("/none/main.kova", src, src.find("q.)").unwrap() + 2));
+        for name in ["path", "query", "header", "body"] {
+            assert!(asked.contains(&name.to_string()), "{name} in {asked:?}");
+        }
         let src = "enum Light { Red, Green }\nfn main {\n  let l := Light.";
         assert_eq!(at("/none/main.kova", src), ["Red", "Green"]);
         let mut dates = members("/none/main.kova", "fn main {\n  let d := Date.", 26).unwrap();

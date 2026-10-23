@@ -2,9 +2,9 @@
 // runtime does (`getaddrinfo`, then a connection), so that the failures are the same.
 
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-use crate::http::{Fail, Network};
+use crate::http::{Fail, Network, Serve};
 
 pub struct System;
 
@@ -63,6 +63,22 @@ impl Network for System {
     }
 
     fn close(&mut self, _: TcpStream) {}
+}
+
+impl Serve for System {
+    type Listener = TcpListener;
+
+    /// Rust sets `SO_REUSEADDR` on Linux and macOS, as the runtime does, and not on Windows.
+    fn listen(&mut self, port: u16) -> Option<TcpListener> {
+        TcpListener::bind(("127.0.0.1", port)).ok()
+    }
+
+    fn accept(&mut self, listener: &mut TcpListener, ms: u64) -> Option<TcpStream> {
+        let (s, _) = listener.accept().ok()?;
+        let limit = Some(std::time::Duration::from_millis(ms));
+        s.set_read_timeout(limit).and_then(|()| s.set_write_timeout(limit)).ok()?;
+        Some(s)
+    }
 }
 
 fn cut(e: std::io::Error) -> Fail {

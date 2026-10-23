@@ -9,7 +9,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::arch::{asm, global_asm};
 use core::ptr::{null, null_mut};
 
-use crate::http::{Fail, Network};
+use crate::http::{Fail, Network, Serve};
 
 use crate::{Global, c_text};
 
@@ -54,6 +54,9 @@ mod numbers {
     pub const CONNECT: usize = 42;
     pub const SENDTO: usize = 44;
     pub const RECVFROM: usize = 45;
+    pub const BIND: usize = 49;
+    pub const LISTEN: usize = 50;
+    pub const ACCEPT4: usize = 288;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -81,6 +84,9 @@ mod numbers {
     pub const CONNECT: usize = 203;
     pub const SENDTO: usize = 206;
     pub const RECVFROM: usize = 207;
+    pub const BIND: usize = 200;
+    pub const LISTEN: usize = 201;
+    pub const ACCEPT4: usize = 242;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -315,6 +321,47 @@ impl Network for Net {
     fn close(&mut self, fd: usize) {
         close(fd);
     }
+}
+
+impl Serve for Net {
+    type Listener = usize;
+
+    fn listen(&mut self, port: u16) -> Option<usize> {
+        let fd = unsafe { call(SOCKET, 2, SOCK_STREAM as usize | 0o2000000, 0, 0, 0, 0) };
+        if fd < 0 {
+            return None;
+        }
+        // SO_REUSEADDR: the port can be taken again right after a server stops.
+        unsafe { call(SETSOCKOPT, fd as usize, 1, 2, &1i32 as *const i32 as usize, 4, 0) };
+        let address = sockaddr_in(port);
+        let bound = unsafe { call(BIND, fd as usize, address.as_ptr() as usize, 16, 0, 0, 0) } == 0;
+        if !bound || unsafe { call(LISTEN, fd as usize, 128, 0, 0, 0, 0) } != 0 {
+            close(fd as usize);
+            return None;
+        }
+        Some(fd as usize)
+    }
+
+    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<usize> {
+        let fd = unsafe { call(ACCEPT4, *listener, 0, 0, 0o2000000, 0, 0) };
+        if fd < 0 {
+            return None;
+        }
+        let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+        for option in [20, 21] {
+            unsafe { call(SETSOCKOPT, fd as usize, 1, option, limit.as_ptr() as usize, 16, 0) };
+        }
+        Some(fd as usize)
+    }
+}
+
+/// 127.0.0.1, `port`, as the system wants it: family, port (big end first), address, 8 zeros.
+fn sockaddr_in(port: u16) -> [u8; 16] {
+    let mut a = [0u8; 16];
+    a[0] = 2;
+    a[2..4].copy_from_slice(&port.to_be_bytes());
+    a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+    a
 }
 
 /// Like `cut` in src/web.rs.

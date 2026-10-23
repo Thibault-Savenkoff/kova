@@ -52,6 +52,7 @@ pub const RUNTIME: &[&str] = &[
     "fault_empty_range",
     "fault_bad_date",
     "fault_bad_time",
+    "fault_cannot_serve",
 ];
 
 /// A piece of a translated text.

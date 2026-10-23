@@ -55,6 +55,7 @@ lang en {
     fault_empty_range := "this range holds no number to draw: `random(1..=6)` draws from 1 to 6"
     fault_bad_date := "this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)"
     fault_bad_time := "this time does not exist: hour 0 to 23, minute and second 0 to 59"
+    fault_cannot_serve := "cannot serve on this port: another program has it, or it is not allowed (below 1024 on Linux and macOS)"
 
     // ---- Lexer ----
     comment_unclosed := "`/*` comment never closed"
@@ -252,6 +253,7 @@ lang en {
     json_made_help := "`T.from_json(text)` reads JSON and `value.to_json` writes it: give yours another name"
     json_no_form := "`{call}` cannot hold `{field}`: a `{type}` has no JSON form"
     json_no_form_element := "`{call}` cannot hold its elements: a `{type}` has no JSON form"
+    json_answer := "`Answer.json` sends a struct or a List, not a `{type}`"
     json_no_form_help := "JSON holds `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made of them"
     json_private := "`{call}` cannot hold `{field}`: it is private in {file}"
     json_private_help := "only {file} sees its private fields: make them public, or write the JSON from a struct of your own"

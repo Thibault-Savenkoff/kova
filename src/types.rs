@@ -423,6 +423,8 @@ pub const LIBRARY: &[(&str, &str)] =
         ("get", "fn get(url: String) -> Response or WebError"),
         ("post(…) body(…)", "fn post(url: String) body(text: String) -> Response or WebError"),
         ("send", "fn send(request: Request) -> Response or WebError"),
+        ("serve", "fn serve(port: Int) { q: Request => Answer }"),
+        ("serve_files(…) at(…)", "fn serve_files(folder: String) at(port: Int)"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -473,6 +475,25 @@ pub fn request() -> Type {
         ("follow".into(), Type::Bool),
     ]);
     Type::Struct(d)
+}
+
+/// `Answer`, what `serve`'s block gives back (PLAN Part 4 "The web server"): its status, its
+/// headers (names in small letters), its text, and the file sent instead of a text (`Answer.file`:
+/// a file's bytes need not be a text), empty if none. kir.rs reads the fields in this order.
+pub fn answer() -> Type {
+    let d = StructDef::new("Answer".into(), vec![], false);
+    let text = || Type::String;
+    d.set_fields(vec![("status".into(), Type::Int), ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))), ("body".into(), text()), ("file".into(), text())]);
+    Type::Struct(d)
+}
+
+/// `Answer.text(…)`… (`Answer.json` is checked apart: it takes any JSON value): name, parameter.
+pub const ANSWER_MAKERS: [(&str, Type); 3] = [("text", Type::String), ("status", Type::Int), ("file", Type::String)];
+
+/// What a question received says, besides its fields: name, parameters, result.
+pub fn request_questions() -> [(&'static str, Vec<Type>, Type); 3] {
+    let maybe = || Type::Optional(Box::new(Type::String));
+    [("path", vec![], Type::String), ("query", vec![Type::String], maybe()), ("header", vec![Type::String], maybe())]
 }
 
 /// The methods Kova makes for every struct (PLAN Part 4 "JSON"): no struct or enum may write them.
@@ -1009,6 +1030,19 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         let params = params.into_iter().map(|p| (Mode::Read, p)).collect();
         c.functions.insert(method_name("Request", name), Signature::new(Some(Mode::Read), params, request()));
     }
+    for (name, params, result) in request_questions() {
+        let params = params.into_iter().map(|p| (Mode::Read, p)).collect();
+        c.functions.insert(method_name("Request", name), Signature::new(Some(Mode::Read), params, result));
+    }
+    c.structs.insert("Answer".into(), answer());
+    for (name, param) in ANSWER_MAKERS {
+        c.functions.insert(method_name("Answer", name), Signature::new(None, vec![(Mode::Read, param)], answer()));
+    }
+    let header = vec![(Mode::Read, Type::String), (Mode::Read, Type::String)];
+    c.functions.insert(method_name("Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
+    let block = Type::Block(vec![request()], Box::new(answer()));
+    c.functions.insert("serve".into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block)], Type::Unit));
+    c.functions.insert("serve_files(…) at(…)".into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);
@@ -2922,6 +2956,20 @@ impl Checker<'_> {
         if let t @ (Type::Date | Type::DateTime) = primitive(&ty.text).unwrap_or(Type::Error) {
             return self.date_made(t, ty, name, args);
         }
+        // `Answer.json(book)`: any value with a JSON form (PLAN Part 4 "The web server").
+        if (ty.text.as_str(), name.text.as_str()) == ("Answer", "json") && types.is_empty() {
+            let [value] = args else {
+                self.error(name.span, t!("argument_count", name = "Answer.json", expected = 1, given = args.len()));
+                return self.unchecked(args);
+            };
+            let t = self.expr(value);
+            if !matches!(t, Type::Struct(_) | Type::List(_)) && t != Type::Error {
+                self.error(value.span, t!("json_answer", type = t.text()));
+            } else {
+                self.json_form(&t, "Answer.json", name.span);
+            }
+            return answer();
+        }
         // `List<Book>.from_json(text)`: a JSON text whose root is an array (PLAN Part 4 "JSON").
         if let ("List", "from_json", [elem]) = (ty.text.as_str(), name.text.as_str(), types) {
             let list = Type::List(Box::new(self.written_type(elem)));
@@ -3534,7 +3582,9 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                // `q.body` reads the field even where a method has its name (`r.body("text")`).
                 if matches!(t, Type::Struct(_) | Type::Enum(_))
+                    && !(args.is_empty() && t.is_field(&name.text))
                     && let Some(sig) = self.functions.get(&method_name(&t.owner(), &name.text)).cloned()
                 {
                     let given = t.args().to_vec();

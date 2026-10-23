@@ -331,6 +331,264 @@ fn resolve(from: &str, to: &str) -> Option<String> {
     Some(format!("{origin}{dir}{to}"))
 }
 
+// ---- The server (PLAN Part 4 "The web server"): plain HTTP on 127.0.0.1, one question at a
+// time, each connection closed after its answer.
+
+/// What a system gives to wait for questions: its plain sockets (never encrypted).
+pub trait Serve: Network {
+    type Listener;
+    /// Listens on 127.0.0.1, `port`; `None` if the port is taken or not allowed.
+    fn listen(&mut self, port: u16) -> Option<Self::Listener>;
+    /// The next connection, each `send` and `receive` limited to `ms` milliseconds.
+    fn accept(&mut self, listener: &mut Self::Listener, ms: u64) -> Option<Self::Link>;
+}
+
+/// How long a question may take to come, and its answer to leave: a silent connection (browsers
+/// open some in advance) must not stop the server for long.
+pub const SERVER_MS: u64 = 10_000;
+/// The largest head of a question (431 beyond) and the largest body (413 beyond).
+const HEAD_LIMIT: usize = 65536;
+const BODY_LIMIT: usize = 16 << 20;
+
+/// A question received: a `Request` in Kova (its headers' names in small letters).
+#[derive(Debug, PartialEq)]
+pub struct Question {
+    pub method: String,
+    /// As written after the method: `/books?author=Herbert`.
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+/// Waits for the next question that can be read. The others are answered here (400, 413…) and
+/// closed: the program never sees them.
+pub fn next_question<S: Serve>(net: &mut S, listener: &mut S::Listener) -> (S::Link, Question) {
+    loop {
+        let Some(mut link) = net.accept(listener, SERVER_MS) else { continue };
+        match read_question(net, &mut link) {
+            Ok(q) => return (link, q),
+            Err(status) => {
+                if let Some(status) = status {
+                    let text = status_text(status);
+                    let _ = net.send(&mut link, &answer_bytes(status, &[("content-type", "text/plain; charset=utf-8")], text.as_bytes()));
+                }
+                net.close(link);
+            }
+        }
+    }
+}
+
+/// A question, or the status that refuses it (`None`: the connection broke or stayed silent).
+fn read_question<N: Network>(net: &mut N, link: &mut N::Link) -> Result<Question, Option<i64>> {
+    let mut got = Vec::new();
+    let mut buffer = [0u8; 16384];
+    let more = |net: &mut N, link: &mut N::Link, got: &mut Vec<u8>, buffer: &mut [u8]| match net.receive(link, buffer) {
+        Ok(n) if n > 0 => {
+            got.extend_from_slice(&buffer[..n]);
+            Ok(())
+        }
+        _ => Err(None),
+    };
+    let end = loop {
+        if let Some(end) = find(&got, b"\r\n\r\n") {
+            break end;
+        }
+        if got.len() > HEAD_LIMIT {
+            return Err(Some(431));
+        }
+        more(net, link, &mut got, &mut buffer)?;
+    };
+    if end > HEAD_LIMIT {
+        return Err(Some(431));
+    }
+    let head = core::str::from_utf8(&got[..end]).map_err(|_| Some(400))?;
+    let mut lines = head.split("\r\n");
+    let mut words = lines.next().unwrap_or("").split(' ');
+    let (Some(method), Some(url), Some(version), None) = (words.next(), words.next(), words.next(), words.next()) else { return Err(Some(400)) };
+    if !token(method) || !url.starts_with('/') || !version.starts_with("HTTP/1.") {
+        return Err(Some(400));
+    }
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or(Some(400))?;
+        if !token(name) {
+            return Err(Some(400));
+        }
+        let (name, value) = (name.to_ascii_lowercase(), value.trim_matches([' ', '\t']));
+        match headers.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, v)) => {
+                *v += ", ";
+                *v += value;
+            }
+            None => headers.push((name, value.to_string())),
+        }
+    }
+    let header = |name: &str| headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+    // ponytail: a body sent in pieces is refused; read it with `chunks` if programs need it.
+    if header("transfer-encoding").is_some() {
+        return Err(Some(501));
+    }
+    let length = match header("content-length") {
+        None => 0,
+        Some(l) => l.parse::<usize>().map_err(|_| Some(400))?,
+    };
+    if length > BODY_LIMIT {
+        return Err(Some(413));
+    }
+    let (method, url) = (method.to_string(), url.to_string());
+    while got.len() < end + 4 + length {
+        more(net, link, &mut got, &mut buffer)?;
+    }
+    let body = core::str::from_utf8(&got[end + 4..end + 4 + length]).map_err(|_| Some(400))?.to_string();
+    Ok(Question { method, url, headers, body })
+}
+
+/// The bytes of an answer. Kova writes its length and `Connection: close` itself (the program's
+/// own of those are left out); a header it cannot send (a line break in it…) or a status that
+/// is not one makes it a 500.
+pub fn answer_bytes(status: i64, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
+    let bad = |(n, v): &&(&str, &str)| !token(n) || v.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0));
+    if !(200..600).contains(&status) || headers.iter().any(|h| bad(&h)) {
+        return answer_bytes(500, &[("content-type", "text/plain; charset=utf-8")], status_text(500).as_bytes());
+    }
+    let mut out = format!("HTTP/1.1 {status} {}\r\n", reason(status));
+    for (name, value) in headers.iter().filter(|(n, _)| !OWN.iter().any(|o| n.eq_ignore_ascii_case(o))) {
+        out += &format!("{name}: {value}\r\n");
+    }
+    out += &format!("content-length: {}\r\nconnection: close\r\n\r\n", body.len());
+    [out.as_bytes(), body].concat()
+}
+
+/// Sends `serve`'s answer on `link`, then closes it. A file (`Answer.file`) is read now, its
+/// `content-type` found by its extension unless the program gave one; `read` reads it.
+pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &[(&str, &str)], body: &str, file: &str, read: impl Fn(&str) -> Option<Vec<u8>>) {
+    let bytes = if file.is_empty() {
+        answer_bytes(status, headers, body.as_bytes())
+    } else if let Some(content) = read(file) {
+        let mut headers = headers.to_vec();
+        if !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")) {
+            headers.push(("content-type", content_type(file)));
+        }
+        answer_bytes(status, &headers, &content)
+    } else {
+        answer_bytes(500, &[("content-type", "text/plain; charset=utf-8")], status_text(500).as_bytes())
+    };
+    let _ = net.send(&mut link, &bytes);
+    net.close(link);
+}
+
+/// What `Answer.status(404)` says: `404 Not Found`.
+pub fn status_text(status: i64) -> String {
+    format!("{status} {}", reason(status)).trim_end().to_string()
+}
+
+fn reason(status: i64) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        410 => "Gone",
+        413 => "Content Too Large",
+        415 => "Unsupported Media Type",
+        422 => "Unprocessable Content",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        _ => "",
+    }
+}
+
+/// `%20` → a space (and `+` too in a query); `None` if it is not UTF-8 or a `%` is not followed
+/// by two hexadecimal digits.
+fn decode(text: &str, plus: bool) -> Option<String> {
+    let (b, mut out, mut i) = (text.as_bytes(), Vec::new(), 0);
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                let hex = core::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+                continue;
+            }
+            b'+' if plus => out.push(b' '),
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// `q.path`: the path of `url` without `?…`, decoded (as written if it cannot be).
+pub fn url_path(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    decode(path, false).unwrap_or_else(|| path.to_string())
+}
+
+/// `q.query(name)`: the first value of `name` after the `?`, decoded.
+pub fn url_query(url: &str, name: &str) -> Option<String> {
+    let query = url.split('#').next()?.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (n, v) = pair.split_once('=').unwrap_or((pair, ""));
+        (decode(n, true)? == name).then(|| decode(v, true)).flatten()
+    })
+}
+
+/// `Answer.file(path)`: the file to send (a folder's `index.html`), or `None` (a 404). A path
+/// going up (`..`) or holding a 0 is refused whatever made it: it is often built from what a
+/// question asked. `kind`: `Some(true)` for a folder, `Some(false)` for a file, `None` if absent.
+pub fn file_to_serve(path: &str, kind: impl Fn(&str) -> Option<bool>) -> Option<String> {
+    // A drive (`C:`) only at the start: elsewhere `:` names a hidden stream on Windows.
+    let rest = if path.as_bytes().get(1) == Some(&b':') && path.as_bytes()[0].is_ascii_alphabetic() { &path[2..] } else { path };
+    if path.is_empty() || path.contains('\0') || rest.contains(':') || path.split(['/', '\\']).any(|part| part == "..") {
+        return None;
+    }
+    match kind(path)? {
+        false => Some(path.to_string()),
+        true => {
+            let index = format!("{}/index.html", path.trim_end_matches(['/', '\\']));
+            (kind(&index) == Some(false)).then_some(index)
+        }
+    }
+}
+
+/// The `content-type` of a file, by its extension.
+pub fn content_type(path: &str) -> &'static str {
+    let extension = path.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
+    match extension.as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "txt" | "kova" | "md" => "text/plain; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "wasm" => "application/wasm",
+        "woff2" => "font/woff2",
+        "mp4" => "video/mp4",
+        _ => "application/octet-stream",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,4 +695,47 @@ mod tests {
         let mut net = fake(&["HTTP/1.1 301 Moved\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"; 11]);
         assert_eq!(exchange(&mut net, "GET", "http://a.org/", "", true), Err(Fail::TooManyRedirects));
     }
+    #[test]
+    fn questions() {
+        let read = |text: &'static str| read_question(&mut fake(&[]), &mut (text.as_bytes().to_vec(), 0));
+        let q = read("POST /books?a=1 HTTP/1.1\r\nHost: x\r\nX-A: 1\r\nx-a: 2\r\nContent-Length: 5\r\n\r\nhello").unwrap();
+        assert_eq!(q, Question { method: "POST".into(), url: "/books?a=1".into(), headers: vec![("host".into(), "x".into()), ("x-a".into(), "1, 2".into()), ("content-length".into(), "5".into())], body: "hello".into() });
+        assert_eq!(read("GET / HTTP/1.1\r\n\r\n").unwrap().body, "");
+        for (text, status) in [("GET http://x/ HTTP/1.1\r\n\r\n", Some(400)), ("GET / HTTP/1.1\r\nBad Name: 1\r\n\r\n", Some(400)), ("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", Some(501)), ("POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n", Some(413)), ("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhi", None), ("GET /", None)] {
+            assert_eq!(read(text), Err(status), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn answers_written() {
+        let a = answer_bytes(404, &[("content-type", "text/plain"), ("Content-Length", "9")], b"no");
+        assert_eq!(a, b"HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno");
+        assert!(answer_bytes(200, &[("x", "a\r\nb")], b"").starts_with(b"HTTP/1.1 500 Internal Server Error\r\n"));
+        assert!(answer_bytes(42, &[], b"").starts_with(b"HTTP/1.1 500"));
+        assert_eq!(status_text(299), "299");
+    }
+
+    #[test]
+    fn paths() {
+        assert_eq!(url_path("/a%20b/c?x=1"), "/a b/c");
+        assert_eq!(url_path("/%zz"), "/%zz");
+        assert_eq!(url_query("/s?q=a+b%26c&n=&q=2", "q").as_deref(), Some("a b&c"));
+        assert_eq!(url_query("/s?n", "n").as_deref(), Some(""));
+        assert_eq!(url_query("/s?a=1", "b"), None);
+        let kind = |p: &str| match p {
+            "site" | "site/docs" => Some(true),
+            "site/index.html" | "site/a.png" | "C:/site/a.png" => Some(false),
+            _ => None,
+        };
+        assert_eq!(file_to_serve("site/a.png", kind).as_deref(), Some("site/a.png"));
+        assert_eq!(file_to_serve("site", kind).as_deref(), Some("site/index.html"));
+        assert_eq!(file_to_serve("site/docs", kind), None);
+        assert_eq!(file_to_serve("C:/site/a.png", kind).as_deref(), Some("C:/site/a.png"));
+        for bad in ["site/../site/a.png", "site\\..\\x", "site/a.png\0", "site/a.png::$DATA", "", "site/nothing"] {
+            assert_eq!(file_to_serve(bad, kind), None, "{bad:?}");
+        }
+        assert_eq!(content_type("A.PNG"), "image/png");
+        assert_eq!(content_type("x"), "application/octet-stream");
+    }
+
 }
