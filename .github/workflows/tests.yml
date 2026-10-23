@@ -1,13 +1,18 @@
 # The tests on the systems this machine is not: started by hand (`gh workflow run tests.yml`),
 # since a Mac minute counts ten (PLAN Part 4 "Kova without a C compiler").
 name: tests
-on: workflow_dispatch
+# Some systems only: `gh workflow run tests.yml -f systems='["windows-latest"]'`.
+on:
+  workflow_dispatch:
+    inputs:
+      systems:
+        default: '["macos-latest", "windows-latest", "ubuntu-24.04-arm", "macos-15-intel", "windows-11-arm"]'
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-24.04-arm, macos-15-intel, windows-11-arm]
+        os: ${{ fromJSON(inputs.systems) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +23,8 @@ jobs:
       - run: cargo test --locked
         env:
           KOVA_LANG: en
+          # tests/kova.rs `https`: real sites.
+          KOVA_NETWORK: 1
       # `DateTime.now` reads the last rule of the time zone file (src/shared.rs `local_offset`):
       # the hour must be the one `date` gives, in run and in build.
       - if: runner.os == 'macOS'

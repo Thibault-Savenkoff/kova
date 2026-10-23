@@ -24,6 +24,10 @@ pub enum Fail {
     BadAnswer,
     /// More than 10 redirections.
     TooManyRedirects,
+    /// The site's certificate cannot be trusted: expired, self-signed, made for another name.
+    BadCertificate,
+    /// This system cannot encrypt (a Linux without OpenSSL).
+    NoHttps,
 }
 
 impl Fail {

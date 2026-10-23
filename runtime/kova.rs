@@ -13,6 +13,9 @@ extern crate alloc;
 mod bigint;
 #[path = "../src/http.rs"]
 mod http;
+#[cfg(windows)]
+#[path = "../src/schannel.rs"]
+mod schannel;
 #[path = "../src/shared.rs"]
 mod shared;
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
@@ -801,7 +804,7 @@ pub extern "C" fn kova_args() -> i64 {
 /// src/interp.rs.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64 {
-    match http::exchange(&mut sys::Net, text_of(method), text_of(url), text_of(body), follow != 0) {
+    match http::exchange(&mut network(), text_of(method), text_of(url), text_of(body), follow != 0) {
         Err(f) => -(f.number() + 1),
         Ok(a) => {
             let length = a.headers.len();
@@ -811,6 +814,17 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64) -> i64
             new_list(List { length: 1, width: 4, slots, index: 0 })
         }
     }
+}
+
+/// The system's connections, encrypted by SChannel on Windows.
+#[cfg(windows)]
+fn network() -> schannel::Tls<sys::Net> {
+    schannel::Tls(sys::Net)
+}
+
+#[cfg(not(windows))]
+fn network() -> sys::Net {
+    sys::Net
 }
 
 // ---- Time and chance (src/interp.rs does the same) ----

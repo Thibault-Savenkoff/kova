@@ -10,6 +10,8 @@ mod debug;
 mod diag;
 mod format;
 mod http;
+#[cfg(windows)]
+mod schannel;
 mod interp;
 mod kir;
 mod lexer;

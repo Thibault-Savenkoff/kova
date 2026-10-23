@@ -781,3 +781,23 @@ fn web() {
     check_output("web", "build", &build, &expected, &mut failures);
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
+
+/// HTTPS against real sites (PLAN Part 4 "The web, step 3"), in run and in build: only where the
+/// network is promised (`KOVA_NETWORK`, set by the GitHub workflow).
+#[test]
+fn https() {
+    // ponytail: Windows only until OpenSSL (Linux) and Network.framework (Mac) are there.
+    if std::env::var_os("KOVA_NETWORK").is_none() || !cfg!(windows) {
+        return;
+    }
+    let source = "tests/web/https.kova";
+    let expected = Expected { output: expectations(&std::fs::read_to_string(source).unwrap(), "expect"), code: 0, stderr: vec![] };
+    let mut failures = vec![];
+    check_output("https", "run", &kova(LANG).arg("run").arg(source).output().unwrap(), &expected, &mut failures);
+    let exe = std::env::temp_dir().join(format!("kova-https-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    check_output("https", "build", &program(&exe, LANG).output().unwrap(), &expected, &mut failures);
+    let _ = std::fs::remove_file(&exe);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}

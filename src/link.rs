@@ -564,7 +564,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let mut r = inputs.reach("kova_start", |_| false)?;
     inputs.sorted(&mut r)?;
     // The functions grouped by DLL, `kernel32.dll`'s first.
-    r.imports.sort_by_key(|f| dll(f) != DLLS[0]);
+    r.imports.sort_by_key(|f| DLLS.iter().position(|(d, _)| *d == dll(f)));
     let mut dlls: Vec<&str> = r.imports.iter().map(|f| dll(f)).collect();
     dlls.dedup();
     let headers = align(0x40 + 4 + 20 + 240 + 40 * 4, FILE_ALIGN);
@@ -808,13 +808,16 @@ fn tables_size(imports: &[String], dlls: u64) -> u64 {
     16 * (n + dlls) + 20 * (dlls + 1) + 16 * dlls + names
 }
 
-/// The DLLs the runtime calls (runtime/windows.rs); the first one has every function not
-/// named in `WINSOCK`.
-const DLLS: [&str; 2] = ["KERNEL32.dll", "WS2_32.dll"];
-const WINSOCK: [&str; 9] = ["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "connect", "send", "recv", "closesocket"];
+/// The DLLs the runtime calls (runtime/windows.rs, src/schannel.rs) and their functions; the
+/// first one has every function not named here.
+const DLLS: [(&str, &[&str]); 3] = [
+    ("KERNEL32.dll", &[]),
+    ("WS2_32.dll", &["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "connect", "send", "recv", "closesocket"]),
+    ("SECUR32.dll", &["AcquireCredentialsHandleW", "InitializeSecurityContextW", "QueryContextAttributesW", "EncryptMessage", "DecryptMessage", "FreeContextBuffer", "DeleteSecurityContext", "FreeCredentialsHandle"]),
+];
 
 fn dll(f: &str) -> &'static str {
-    DLLS[WINSOCK.contains(&f) as usize]
+    DLLS.iter().find(|(_, functions)| functions.contains(&f)).unwrap_or(&DLLS[0]).0
 }
 
 // ---- macOS: Mach-O ----

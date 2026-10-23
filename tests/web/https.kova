@@ -1,0 +1,24 @@
+// HTTPS against real sites (tests/kova.rs `https`, in the GitHub workflow only): bad certificates
+// must be refused.
+fn try(url: String) {
+    match get(url) {
+        ok(r) => print("{r.status} {r.url}")
+        err(e) => print(e)
+    }
+}
+
+fn main {
+    try("https://example.com/")
+    try("http://github.com/")
+    try("https://expired.badssl.com/")
+    try("https://wrong.host.badssl.com/")
+    try("https://self-signed.badssl.com/")
+    try("https://untrusted-root.badssl.com/")
+}
+
+// expect: 200 https://example.com/
+// expect: 200 https://github.com/
+// expect: BadCertificate("https://expired.badssl.com/")
+// expect: BadCertificate("https://wrong.host.badssl.com/")
+// expect: BadCertificate("https://self-signed.badssl.com/")
+// expect: BadCertificate("https://untrusted-root.badssl.com/")

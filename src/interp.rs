@@ -480,7 +480,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         },
                         StrOp::Web => {
                             let (url, method, body) = (s(0).to_string(), s(1).to_string(), s(2).to_string());
-                            match crate::http::exchange(&mut crate::web::System, &method, &url, &body, locals[a[3]] != 0) {
+                            match crate::http::exchange(&mut crate::web::network(), &method, &url, &body, locals[a[3]] != 0) {
                                 Err(f) => -(f.number() + 1),
                                 Ok(answer) => {
                                     // As the runtime makes it: a List of one `Response`.

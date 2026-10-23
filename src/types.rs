@@ -436,7 +436,7 @@ pub fn io_error() -> Type {
 /// asked; numbered like `http::Fail`.
 pub fn web_error() -> Type {
     let url = || vec![("url".to_string(), Type::String)];
-    let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects"];
+    let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects", "BadCertificate", "NoHttps"];
     Type::Enum(EnumDef::with_variants("WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
 }
 
