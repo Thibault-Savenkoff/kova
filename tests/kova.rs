@@ -107,6 +107,51 @@ fn ok_programs() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// The examples of the README and of docs/guide.md: a ```kova block followed by a ```text block
+/// prints exactly that. A block starting with `// geometry.kova` is a file of the program before it.
+#[test]
+fn guide_examples() {
+    let tmp = std::env::temp_dir().join(format!("kova-guide-{}", std::process::id()));
+    let mut failures = vec![];
+    for doc in ["README.md", "docs/guide.md"] {
+        let page = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(doc)).unwrap();
+        // (language, text) of each fenced block.
+        let mut blocks: Vec<(String, String)> = vec![];
+        let mut open: Option<(String, String)> = None;
+        for line in page.lines() {
+            match (line.strip_prefix("```"), open.take()) {
+                (Some(lang), None) => open = Some((lang.to_string(), String::new())),
+                (Some(_), Some(block)) => blocks.push(block),
+                (None, Some((lang, body))) => open = Some((lang, body + line + "\n")),
+                (None, None) => {}
+            }
+        }
+        let mut files: Vec<(String, String)> = vec![];
+        for (lang, body) in blocks {
+            let named = body.lines().next().and_then(|l| l.strip_prefix("// ")).and_then(|l| l.split_whitespace().next()).map(|n| n.trim_end_matches(',')).filter(|n| n.ends_with(".kova"));
+            match (lang.as_str(), named) {
+                ("kova", Some(name)) => files.push((name.to_string(), body)),
+                ("kova", None) => files = vec![("main.kova".to_string(), body)],
+                ("text", _) if !files.is_empty() => {
+                    let _ = std::fs::remove_dir_all(&tmp);
+                    std::fs::create_dir_all(&tmp).unwrap();
+                    for (name, code) in &files {
+                        std::fs::write(tmp.join(name), code).unwrap();
+                    }
+                    let out = kova(LANG).arg("run").arg(&files[0].0).current_dir(&tmp).output().unwrap();
+                    if text(&out.stdout) != body || !out.status.success() {
+                        failures.push(format!("{doc}, {}:\n{}{}", files[0].1.lines().next().unwrap_or(""), text(&out.stdout), text(&out.stderr)));
+                    }
+                    files.clear();
+                }
+                _ => {}
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
 /// `check` on every file, one per core at a time (most of the time goes to starting programs,
 /// slow on Windows, and to the C compiler of `kova build`); the failures in the files' order.
 fn in_parallel(files: &[PathBuf], check: impl Fn(&PathBuf, &mut Vec<String>) + Sync) -> Vec<String> {

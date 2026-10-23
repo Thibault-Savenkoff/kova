@@ -1059,6 +1059,11 @@ impl<'a> Translator<'a> {
             } else if *ty == crate::types::weekday() {
                 // Built in, for people: `Friday`.
                 pieces.push(Piece::Text(name.clone()));
+            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error(), &fields[..]) {
+                // Built in, for people: `NotFound("notes.txt")`.
+                pieces.push(Piece::Text(format!("{name}(")));
+                self.value_pieces(&v[at..at + 1], t, &mut pieces);
+                pieces.push(Piece::Text(")".into()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", ty.text())));
                 for (j, (field, t)) in fields.iter().enumerate() {

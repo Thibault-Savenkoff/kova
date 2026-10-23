@@ -1511,7 +1511,7 @@ impl Checker<'_> {
             }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
-            Type::Enum(_) if *t == weekday() => interface == "Display",
+            Type::Enum(_) if *t == weekday() || *t == io_error() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,

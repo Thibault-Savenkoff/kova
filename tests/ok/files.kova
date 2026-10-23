@@ -42,8 +42,8 @@ fn main {
 // expect: ok
 // expect: ok
 // expect: false
-// expect: err(IoError.NotFound(path: "tests/data/missing.txt"))
-// expect: err(IoError.IsDirectory(path: "tests/data"))
-// expect: err(IoError.NotFound(path: "tests/data/missing/x.txt"))
-// expect: err(IoError.NotFound(path: "tests/data/nothing here"))
-// expect: err(IoError.Other(path: "tests/data/poem.txt"))
+// expect: err(NotFound("tests/data/missing.txt"))
+// expect: err(IsDirectory("tests/data"))
+// expect: err(NotFound("tests/data/missing/x.txt"))
+// expect: err(NotFound("tests/data/nothing here"))
+// expect: err(Other("tests/data/poem.txt"))

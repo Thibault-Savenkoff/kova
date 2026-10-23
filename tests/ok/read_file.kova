@@ -37,5 +37,5 @@ fn main {
 // expect: no file tests/data/missing.txt
 // expect: tests/data is a folder
 // expect: ok(28)
-// expect: err(IoError.NotFound(path: "nothing"))
-// expect: err(IoError.Other(path: "boom"))
+// expect: err(NotFound("nothing"))
+// expect: err(Other("boom"))
