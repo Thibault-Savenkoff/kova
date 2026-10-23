@@ -839,9 +839,9 @@ type Socket = i32;
 type Socket = usize;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_listen(port: i64) -> i64 {
+pub extern "C" fn kova_listen(port: i64, everyone: i64) -> i64 {
     use http::Serve;
-    match u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p)) {
+    match u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p, everyone != 0)) {
         Some(l) => l as i64,
         None => -1,
     }

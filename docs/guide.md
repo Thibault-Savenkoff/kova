@@ -629,7 +629,8 @@ fn main {
 
 `serve(port)` answers each question with what its block gives back, one question at a time, until the
 program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` to see it: only this
-computer can ask (127.0.0.1). The block receives a `Request`: `q.method`, `q.path` (decoded, without
+computer can ask (127.0.0.1). `serve_network(8080) { … }` and `serve_files_network("public") at(8080)`
+let the other computers of the network ask too (the system may first ask you to allow it). The block receives a `Request`: `q.method`, `q.path` (decoded, without
 the `?…`), `q.query(name)` and `q.header(name)` (both `String?`), `q.body`, `q.headers`.
 
 An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct, a List or a Map, as `to_json`

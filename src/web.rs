@@ -69,8 +69,8 @@ impl Serve for System {
     type Listener = TcpListener;
 
     /// Rust sets `SO_REUSEADDR` on Linux and macOS, as the runtime does, and not on Windows.
-    fn listen(&mut self, port: u16) -> Option<TcpListener> {
-        TcpListener::bind(("127.0.0.1", port)).ok()
+    fn listen(&mut self, port: u16, everyone: bool) -> Option<TcpListener> {
+        TcpListener::bind((if everyone { "0.0.0.0" } else { "127.0.0.1" }, port)).ok()
     }
 
     fn accept(&mut self, listener: &mut TcpListener, ms: u64) -> Option<TcpStream> {

@@ -220,7 +220,7 @@ impl Network for Net {
 impl Serve for Net {
     type Listener = i32;
 
-    fn listen(&mut self, port: u16) -> Option<i32> {
+    fn listen(&mut self, port: u16, everyone: bool) -> Option<i32> {
         let fd = unsafe { c::socket(2, SOCK_STREAM, 0) };
         if fd < 0 {
             return None;
@@ -232,7 +232,9 @@ impl Serve for Net {
         a[0] = 16;
         a[1] = 2;
         a[2..4].copy_from_slice(&port.to_be_bytes());
-        a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        if !everyone {
+            a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        }
         if unsafe { c::bind(fd, a.as_ptr(), 16) } != 0 || unsafe { c::listen(fd, 128) } != 0 {
             unsafe { c::close(fd) };
             return None;

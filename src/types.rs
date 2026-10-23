@@ -425,6 +425,8 @@ pub const LIBRARY: &[(&str, &str)] =
         ("send", "fn send(request: Request) -> Response or WebError"),
         ("serve", "fn serve(port: Int) { q: Request => Answer }"),
         ("serve_files(…) at(…)", "fn serve_files(folder: String) at(port: Int)"),
+        ("serve_network", "fn serve_network(port: Int) { q: Request => Answer }"),
+        ("serve_files_network(…) at(…)", "fn serve_files_network(folder: String) at(port: Int)"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -1041,8 +1043,13 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let header = vec![(Mode::Read, Type::String), (Mode::Read, Type::String)];
     c.functions.insert(method_name("Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
     let block = Type::Block(vec![request()], Box::new(answer()));
-    c.functions.insert("serve".into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block)], Type::Unit));
-    c.functions.insert("serve_files(…) at(…)".into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));
+    // `serve_network` and `serve_files_network`: the same, open to the other computers.
+    for name in ["serve", "serve_network"] {
+        c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block.clone())], Type::Unit));
+    }
+    for name in ["serve_files(…) at(…)", "serve_files_network(…) at(…)"] {
+        c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));
+    }
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
     c.functions.insert("read_file".into(), read_file);

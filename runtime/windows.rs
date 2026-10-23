@@ -329,7 +329,7 @@ impl Serve for Net {
     type Listener = usize;
 
     /// Without SO_REUSEADDR, which on Windows would let another program take the port too.
-    fn listen(&mut self, port: u16) -> Option<usize> {
+    fn listen(&mut self, port: u16, everyone: bool) -> Option<usize> {
         let mut data = [0u8; 512];
         unsafe { WSAStartup(0x202, data.as_mut_ptr()) };
         let s = unsafe { socket(2, SOCK_STREAM, 0) };
@@ -339,7 +339,9 @@ impl Serve for Net {
         let mut a = [0u8; 16];
         a[0] = 2;
         a[2..4].copy_from_slice(&port.to_be_bytes());
-        a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        if !everyone {
+            a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        }
         if unsafe { bind(s, a.as_ptr(), 16) } != 0 || unsafe { listen(s, 128) } != 0 {
             unsafe { closesocket(s) };
             return None;

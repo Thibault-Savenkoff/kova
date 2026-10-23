@@ -881,6 +881,67 @@ fn server() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// `serve_network` answers on the computer's own network address, `serve` does not (PLAN Part 4
+/// "The web server"), in run and in build. Skipped on a computer with no network address.
+#[test]
+fn server_network() {
+    use std::io::{Read, Write};
+    use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
+    // Which address this computer would send from: connecting UDP sends nothing.
+    let Some(ip) = UdpSocket::bind("0.0.0.0:0").and_then(|u| u.connect("192.0.2.1:80").and(u.local_addr())).ok().map(|a| a.ip()).filter(|ip| !ip.is_loopback() && matches!(ip, IpAddr::V4(_))) else {
+        eprintln!("server_network: no network address, skipped");
+        return;
+    };
+    let source = "tests/web/network.kova";
+    let ask = |ip: IpAddr, port: u16| -> Option<String> {
+        let mut link = TcpStream::connect_timeout(&(ip, port).into(), std::time::Duration::from_secs(2)).ok()?;
+        link.write_all(b"GET / HTTP/1.1\r\n\r\n").ok()?;
+        let mut got = String::new();
+        link.read_to_string(&mut got).ok()?;
+        got.rsplit("\r\n").next().map(str::to_string)
+    };
+    let local: IpAddr = [127, 0, 0, 1].into();
+    let exe = std::env::temp_dir().join(format!("kova-network-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let mut failures = vec![];
+    for mode in ["run", "build"] {
+        for open in [true, false] {
+            let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+            let mut c = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
+            if mode == "run" {
+                c.arg("run").arg(source);
+            }
+            c.arg(port.to_string());
+            if !open {
+                c.arg("here");
+            }
+            let mut child = c.spawn().unwrap();
+            // Ready once it answers on this computer.
+            let mut first = None;
+            for _ in 0..400 {
+                first = ask(local, port);
+                if first.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            let want = if open { "everyone" } else { "here" };
+            if first.as_deref() != Some(want) {
+                failures.push(format!("{mode}, open {open}: on 127.0.0.1: {first:?}"));
+            }
+            let far = ask(ip, port);
+            if far.as_deref() != if open { Some(want) } else { None } {
+                failures.push(format!("{mode}, open {open}: on {ip}: {far:?}"));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    let _ = std::fs::remove_file(&exe);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
 /// HTTPS against real sites (PLAN Part 4 "The web, step 3"), in run and in build: only where the
 /// network is promised (`KOVA_NETWORK`, set by the GitHub workflow).
 #[test]

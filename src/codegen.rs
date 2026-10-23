@@ -263,7 +263,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Web => (46, "kova_web", 6),
         StrOp::JsonParse => (47, "kova_json_parse", 1),
         StrOp::JsonQuote => (48, "kova_json_quote", 1),
-        StrOp::Listen => (49, "kova_listen", 1),
+        StrOp::Listen => (49, "kova_listen", 2),
         StrOp::Accept => (50, "kova_accept", 1),
         StrOp::Reply => (51, "kova_reply", 5),
         StrOp::UrlPath => (52, "kova_url_path", 1),

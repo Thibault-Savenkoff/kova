@@ -326,14 +326,14 @@ impl Network for Net {
 impl Serve for Net {
     type Listener = usize;
 
-    fn listen(&mut self, port: u16) -> Option<usize> {
+    fn listen(&mut self, port: u16, everyone: bool) -> Option<usize> {
         let fd = unsafe { call(SOCKET, 2, SOCK_STREAM as usize | 0o2000000, 0, 0, 0, 0) };
         if fd < 0 {
             return None;
         }
         // SO_REUSEADDR: the port can be taken again right after a server stops.
         unsafe { call(SETSOCKOPT, fd as usize, 1, 2, &1i32 as *const i32 as usize, 4, 0) };
-        let address = sockaddr_in(port);
+        let address = sockaddr_in(port, everyone);
         let bound = unsafe { call(BIND, fd as usize, address.as_ptr() as usize, 16, 0, 0, 0) } == 0;
         if !bound || unsafe { call(LISTEN, fd as usize, 128, 0, 0, 0, 0) } != 0 {
             close(fd as usize);
@@ -355,12 +355,15 @@ impl Serve for Net {
     }
 }
 
-/// 127.0.0.1, `port`, as the system wants it: family, port (big end first), address, 8 zeros.
-fn sockaddr_in(port: u16) -> [u8; 16] {
+/// 127.0.0.1 (0.0.0.0 = every address for `everyone`), `port`, as the system wants it: family,
+/// port (big end first), address, 8 zeros.
+fn sockaddr_in(port: u16, everyone: bool) -> [u8; 16] {
     let mut a = [0u8; 16];
     a[0] = 2;
     a[2..4].copy_from_slice(&port.to_be_bytes());
-    a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+    if !everyone {
+        a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+    }
     a
 }
 

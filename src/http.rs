@@ -331,14 +331,15 @@ fn resolve(from: &str, to: &str) -> Option<String> {
     Some(format!("{origin}{dir}{to}"))
 }
 
-// ---- The server (PLAN Part 4 "The web server"): plain HTTP on 127.0.0.1, one question at a
-// time, each connection closed after its answer.
+// ---- The server (PLAN Part 4 "The web server"): plain HTTP on 127.0.0.1 (every address for
+// `serve_network`), one question at a time, each connection closed after its answer.
 
 /// What a system gives to wait for questions: its plain sockets (never encrypted).
 pub trait Serve: Network {
     type Listener;
-    /// Listens on 127.0.0.1, `port`; `None` if the port is taken or not allowed.
-    fn listen(&mut self, port: u16) -> Option<Self::Listener>;
+    /// Listens on `port` of 127.0.0.1, or of every address (0.0.0.0) for `everyone`; `None` if the
+    /// port is taken or not allowed.
+    fn listen(&mut self, port: u16, everyone: bool) -> Option<Self::Listener>;
     /// The next connection, each `send` and `receive` limited to `ms` milliseconds.
     fn accept(&mut self, listener: &mut Self::Listener, ms: u64) -> Option<Self::Link>;
 }

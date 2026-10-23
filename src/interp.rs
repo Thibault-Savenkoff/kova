@@ -501,7 +501,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         },
                         StrOp::Listen => {
                             use crate::http::Serve;
-                            match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p)) {
+                            match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p, locals[a[1]] != 0)) {
                                 None => -1,
                                 Some(l) => {
                                     heap.listeners.push(l);

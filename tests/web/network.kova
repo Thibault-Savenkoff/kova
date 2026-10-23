@@ -1,0 +1,16 @@
+// The server that tests/kova.rs (`server`) asks on the computer's own network address: its port is
+// the program's first word; with a second word, it stays on this computer (`serve`).
+fn main {
+    let port: Int? := args[0].to_int
+    if port = none {
+        return
+    }
+    if args.length > 1 {
+        serve(port) { q: Request =>
+            Answer.text("here")
+        }
+    }
+    serve_network(port) { q: Request =>
+        Answer.text("everyone")
+    }
+}
