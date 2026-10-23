@@ -14,6 +14,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.systems) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable

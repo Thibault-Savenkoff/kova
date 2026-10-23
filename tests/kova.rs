@@ -857,7 +857,11 @@ fn server() {
             }
             if rounds == 1 {
                 // The port is taken: a second server stops at once.
-                let second = kova(LANG).arg("run").arg(source).arg(port.to_string()).output().unwrap();
+                let mut second = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
+                if mode == "run" {
+                    second.arg("run").arg(source);
+                }
+                let second = second.arg(port.to_string()).output().unwrap();
                 if second.status.code() != Some(101) || !text(&second.stderr).contains("cannot serve on this port") {
                     failures.push(format!("{mode}: a second server on the same port: {second:?}"));
                 }
