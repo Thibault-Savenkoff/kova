@@ -35,7 +35,7 @@ struct Heap {
     broken: std::cell::Cell<bool>,
     nothing: (usize, Vec<i64>),
     /// `serve`'s sockets: a listener's number is its place here, a connection's too.
-    listeners: Vec<std::net::TcpListener>,
+    listeners: Vec<crate::http::Server<crate::web::System>>,
     links: Vec<Option<std::net::TcpStream>>,
 }
 
@@ -504,7 +504,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p, locals[a[1]] != 0)) {
                                 None => -1,
                                 Some(l) => {
-                                    heap.listeners.push(l);
+                                    heap.listeners.push(crate::http::Server::new(l));
                                     heap.listeners.len() as i64 - 1
                                 }
                             }

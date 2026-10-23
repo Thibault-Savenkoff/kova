@@ -235,6 +235,15 @@ unsafe extern "system" {
     fn bind(s: usize, address: *const u8, n: i32) -> i32;
     fn listen(s: usize, backlog: i32) -> i32;
     fn accept(s: usize, address: *mut u8, n: *mut i32) -> usize;
+    fn WSAPoll(fds: *mut Poll, n: u32, ms: i32) -> i32;
+}
+
+/// `WSAPOLLFD`: the socket, then what to wait for and what came.
+#[repr(C)]
+struct Poll {
+    fd: usize,
+    events: i16,
+    revents: i16,
 }
 
 #[repr(C)]
@@ -358,6 +367,15 @@ impl Serve for Net {
             unsafe { setsockopt(s, 0xFFFF, option, &(ms.min(u32::MAX as u64) as u32), 4) };
         }
         Some(s)
+    }
+
+    /// `WSAPoll` without a time limit, POLLRDNORM (it refuses POLLIN's other half).
+    fn ready(&mut self, listener: &usize, links: &[usize]) -> Vec<bool> {
+        let mut fds: Vec<Poll> = links.iter().chain([listener]).map(|&fd| Poll { fd, events: 0x100, revents: 0 }).collect();
+        if unsafe { WSAPoll(fds.as_mut_ptr(), fds.len() as u32, -1) } <= 0 {
+            return alloc::vec![false; fds.len()];
+        }
+        fds.iter().map(|p| p.revents != 0).collect()
     }
 }
 

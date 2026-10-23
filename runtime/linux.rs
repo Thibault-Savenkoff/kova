@@ -57,6 +57,7 @@ mod numbers {
     pub const BIND: usize = 49;
     pub const LISTEN: usize = 50;
     pub const ACCEPT4: usize = 288;
+    pub const PPOLL: usize = 271;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -87,6 +88,7 @@ mod numbers {
     pub const BIND: usize = 200;
     pub const LISTEN: usize = 201;
     pub const ACCEPT4: usize = 242;
+    pub const PPOLL: usize = 73;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -352,6 +354,16 @@ impl Serve for Net {
             unsafe { call(SETSOCKOPT, fd as usize, 1, option, limit.as_ptr() as usize, 16, 0) };
         }
         Some(fd as usize)
+    }
+
+    /// `ppoll` (arm64 has no `poll`), without a time limit: `struct pollfd`, POLLIN.
+    fn ready(&mut self, listener: &usize, links: &[usize]) -> Vec<bool> {
+        let mut fds: Vec<[i32; 2]> = links.iter().chain([listener]).map(|&fd| [fd as i32, 1]).collect();
+        if unsafe { call(PPOLL, fds.as_mut_ptr() as usize, fds.len(), 0, 0, 8, 0) } <= 0 {
+            return alloc::vec![false; fds.len()];
+        }
+        // `revents` is the upper half of the second number.
+        fds.iter().map(|p| p[1] >> 16 != 0).collect()
     }
 }
 

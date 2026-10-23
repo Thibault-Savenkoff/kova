@@ -79,6 +79,65 @@ impl Serve for System {
         s.set_read_timeout(limit).and_then(|()| s.set_write_timeout(limit)).ok()?;
         Some(s)
     }
+
+    fn ready(&mut self, listener: &TcpListener, links: &[TcpStream]) -> Vec<bool> {
+        let mut fds: Vec<Poll> = links.iter().map(raw).chain([raw(listener)]).map(|fd| Poll { fd, events: READ, revents: 0 }).collect();
+        if unsafe { poll(fds.as_mut_ptr(), fds.len() as _, -1) } <= 0 {
+            return vec![false; fds.len()];
+        }
+        // Whatever it says (data, closed, failed), `receive` tells which.
+        fds.iter().map(|p| p.revents != 0).collect()
+    }
+}
+
+// `poll` as each system has it: std links its library already.
+#[cfg(unix)]
+#[repr(C)]
+struct Poll {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct Poll {
+    fd: usize,
+    events: i16,
+    revents: i16,
+}
+
+#[cfg(unix)]
+const READ: i16 = 1;
+/// POLLRDNORM: Windows refuses POLLIN's other half.
+#[cfg(windows)]
+const READ: i16 = 0x100;
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn poll(fds: *mut Poll, n: u64, ms: i32) -> i32;
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn poll(fds: *mut Poll, n: u32, ms: i32) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "ws2_32")]
+unsafe extern "system" {
+    #[link_name = "WSAPoll"]
+    fn poll(fds: *mut Poll, n: u32, ms: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn raw(s: &impl std::os::fd::AsRawFd) -> i32 {
+    s.as_raw_fd()
+}
+
+#[cfg(windows)]
+fn raw(s: &impl std::os::windows::io::AsRawSocket) -> usize {
+    s.as_raw_socket() as usize
 }
 
 fn cut(e: std::io::Error) -> Fail {

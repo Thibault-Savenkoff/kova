@@ -332,7 +332,9 @@ fn resolve(from: &str, to: &str) -> Option<String> {
 }
 
 // ---- The server (PLAN Part 4 "The web server"): plain HTTP on 127.0.0.1 (every address for
-// `serve_network`), one question at a time, each connection closed after its answer.
+// `serve_network`). Several connections are read at once (a browser opens some in advance and says
+// nothing on them), but the program answers one question at a time; each connection is closed
+// after its answer.
 
 /// What a system gives to wait for questions: its plain sockets (never encrypted).
 pub trait Serve: Network {
@@ -342,14 +344,32 @@ pub trait Serve: Network {
     fn listen(&mut self, port: u16, everyone: bool) -> Option<Self::Listener>;
     /// The next connection, each `send` and `receive` limited to `ms` milliseconds.
     fn accept(&mut self, listener: &mut Self::Listener, ms: u64) -> Option<Self::Link>;
+    /// Waits until `links` or the listener can be read (`poll`): one flag per link, then the
+    /// listener's. All false if the wait was cut short.
+    fn ready(&mut self, listener: &Self::Listener, links: &[Self::Link]) -> Vec<bool>;
 }
 
-/// How long a question may take to come, and its answer to leave: a silent connection (browsers
-/// open some in advance) must not stop the server for long.
+/// How long an answer may take to leave: a program that does not read must not stop the server.
 pub const SERVER_MS: u64 = 10_000;
 /// The largest head of a question (431 beyond) and the largest body (413 beyond).
 const HEAD_LIMIT: usize = 65536;
 const BODY_LIMIT: usize = 16 << 20;
+/// ponytail: past this many connections not yet asking, the oldest is closed; a time limit per
+/// connection if servers open to the network need one.
+const WAITING: usize = 64;
+
+/// A listening server, and the connections whose question is still coming.
+pub struct Server<S: Serve> {
+    listener: S::Listener,
+    links: Vec<S::Link>,
+    got: Vec<Vec<u8>>,
+}
+
+impl<S: Serve> Server<S> {
+    pub fn new(listener: S::Listener) -> Self {
+        Server { listener, links: Vec::new(), got: Vec::new() }
+    }
+}
 
 /// A question received: a `Request` in Kova (its headers' names in small letters).
 #[derive(Debug, PartialEq)]
@@ -361,43 +381,54 @@ pub struct Question {
     pub body: String,
 }
 
-/// Waits for the next question that can be read. The others are answered here (400, 413…) and
-/// closed: the program never sees them.
-pub fn next_question<S: Serve>(net: &mut S, listener: &mut S::Listener) -> (S::Link, Question) {
+/// Waits for the next question that can be read, from whichever connection sends it first. The
+/// others are answered here (400, 413…) and closed: the program never sees them.
+pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link, Question) {
+    let mut buffer = alloc::vec![0u8; 16384];
     loop {
-        let Some(mut link) = net.accept(listener, SERVER_MS) else { continue };
-        match read_question(net, &mut link) {
-            Ok(q) => return (link, q),
-            Err(status) => {
-                if let Some(status) = status {
+        let ready = net.ready(&server.listener, &server.links);
+        // From the end, so that removing one leaves the others' numbers as they were.
+        for i in (0..server.links.len()).rev().filter(|&i| ready[i]) {
+            let parsed = match net.receive(&mut server.links[i], &mut buffer) {
+                Ok(n) if n > 0 => {
+                    server.got[i].extend_from_slice(&buffer[..n]);
+                    parse_question(&server.got[i])
+                }
+                _ => Err(None),
+            };
+            if let Ok(None) = parsed {
+                continue;
+            }
+            let mut link = server.links.remove(i);
+            server.got.remove(i);
+            match parsed {
+                Ok(Some(q)) => return (link, q),
+                Err(Some(status)) => {
                     let text = status_text(status);
                     let _ = net.send(&mut link, &answer_bytes(status, &[("content-type", "text/plain; charset=utf-8")], text.as_bytes()));
                 }
-                net.close(link);
+                _ => {}
+            }
+            net.close(link);
+        }
+        if ready.last() == Some(&true) {
+            if let Some(link) = net.accept(&mut server.listener, SERVER_MS) {
+                if server.links.len() == WAITING {
+                    net.close(server.links.remove(0));
+                    server.got.remove(0);
+                }
+                server.links.push(link);
+                server.got.push(Vec::new());
             }
         }
     }
 }
 
-/// A question, or the status that refuses it (`None`: the connection broke or stayed silent).
-fn read_question<N: Network>(net: &mut N, link: &mut N::Link) -> Result<Question, Option<i64>> {
-    let mut got = Vec::new();
-    let mut buffer = [0u8; 16384];
-    let more = |net: &mut N, link: &mut N::Link, got: &mut Vec<u8>, buffer: &mut [u8]| match net.receive(link, buffer) {
-        Ok(n) if n > 0 => {
-            got.extend_from_slice(&buffer[..n]);
-            Ok(())
-        }
-        _ => Err(None),
-    };
-    let end = loop {
-        if let Some(end) = find(&got, b"\r\n\r\n") {
-            break end;
-        }
-        if got.len() > HEAD_LIMIT {
-            return Err(Some(431));
-        }
-        more(net, link, &mut got, &mut buffer)?;
+/// The question in the bytes received so far: `Ok(None)` while it is not whole, or the status
+/// that refuses it (`None`: the connection broke).
+fn parse_question(got: &[u8]) -> Result<Option<Question>, Option<i64>> {
+    let Some(end) = find(got, b"\r\n\r\n") else {
+        return if got.len() > HEAD_LIMIT { Err(Some(431)) } else { Ok(None) };
     };
     if end > HEAD_LIMIT {
         return Err(Some(431));
@@ -436,12 +467,11 @@ fn read_question<N: Network>(net: &mut N, link: &mut N::Link) -> Result<Question
     if length > BODY_LIMIT {
         return Err(Some(413));
     }
-    let (method, url) = (method.to_string(), url.to_string());
-    while got.len() < end + 4 + length {
-        more(net, link, &mut got, &mut buffer)?;
+    if got.len() < end + 4 + length {
+        return Ok(None);
     }
     let body = core::str::from_utf8(&got[end + 4..end + 4 + length]).map_err(|_| Some(400))?.to_string();
-    Ok(Question { method, url, headers, body })
+    Ok(Some(Question { method: method.to_string(), url: url.to_string(), headers, body }))
 }
 
 /// The bytes of an answer. Kova writes its length and `Connection: close` itself (the program's
@@ -698,12 +728,16 @@ mod tests {
     }
     #[test]
     fn questions() {
-        let read = |text: &'static str| read_question(&mut fake(&[]), &mut (text.as_bytes().to_vec(), 0));
-        let q = read("POST /books?a=1 HTTP/1.1\r\nHost: x\r\nX-A: 1\r\nx-a: 2\r\nContent-Length: 5\r\n\r\nhello").unwrap();
+        let read = |text: &'static str| parse_question(text.as_bytes());
+        let q = read("POST /books?a=1 HTTP/1.1\r\nHost: x\r\nX-A: 1\r\nx-a: 2\r\nContent-Length: 5\r\n\r\nhello").unwrap().unwrap();
         assert_eq!(q, Question { method: "POST".into(), url: "/books?a=1".into(), headers: vec![("host".into(), "x".into()), ("x-a".into(), "1, 2".into()), ("content-length".into(), "5".into())], body: "hello".into() });
-        assert_eq!(read("GET / HTTP/1.1\r\n\r\n").unwrap().body, "");
-        for (text, status) in [("GET http://x/ HTTP/1.1\r\n\r\n", Some(400)), ("GET / HTTP/1.1\r\nBad Name: 1\r\n\r\n", Some(400)), ("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", Some(501)), ("POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n", Some(413)), ("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhi", None), ("GET /", None)] {
-            assert_eq!(read(text), Err(status), "{text:?}");
+        assert_eq!(read("GET / HTTP/1.1\r\n\r\n").unwrap().unwrap().body, "");
+        for (text, status) in [("GET http://x/ HTTP/1.1\r\n\r\n", 400), ("GET / HTTP/1.1\r\nBad Name: 1\r\n\r\n", 400), ("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", 501), ("POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n", 413)] {
+            assert_eq!(read(text), Err(Some(status)), "{text:?}");
+        }
+        // Not whole yet.
+        for text in ["POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhi", "GET /", ""] {
+            assert_eq!(read(text), Ok(None), "{text:?}");
         }
     }
 

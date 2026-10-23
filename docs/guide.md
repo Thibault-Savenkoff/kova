@@ -640,8 +640,9 @@ with `.header("Cache-Control") is("no-store")`. `serve_files("public") at(8080)`
 `index.html` for a folder's own address.
 
 A port another program has stops the program (code 101). Kova itself answers a question it cannot read
-(`400`), too long (`431`, `413` past 16 MB of body) or sent in pieces (`501`), and gives up on a
-connection silent for 10 seconds.
+(`400`), too long (`431`, `413` past 16 MB of body) or sent in pieces (`501`). It listens to every
+connection at once and gives the block whichever question is whole first, so a browser's spare
+connection that says nothing keeps no one waiting; the block itself answers one question at a time.
 
 ## 19. The tools
 

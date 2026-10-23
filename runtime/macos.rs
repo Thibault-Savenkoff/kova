@@ -46,6 +46,7 @@ mod c {
         pub fn bind(fd: i32, address: *const u8, n: u32) -> i32;
         pub fn listen(fd: i32, backlog: i32) -> i32;
         pub fn accept(fd: i32, address: *mut u8, n: *mut u32) -> i32;
+        pub fn poll(fds: *mut [i32; 2], n: u32, ms: i32) -> i32;
     }
 }
 
@@ -254,6 +255,15 @@ impl Serve for Net {
             unsafe { c::setsockopt(fd, 0xFFFF, option, limit.as_ptr() as *const i32, 16) };
         }
         Some(fd)
+    }
+
+    /// `poll` without a time limit, as runtime/linux.rs: `struct pollfd`, POLLIN.
+    fn ready(&mut self, listener: &i32, links: &[i32]) -> Vec<bool> {
+        let mut fds: Vec<[i32; 2]> = links.iter().chain([listener]).map(|&fd| [fd, 1]).collect();
+        if unsafe { c::poll(fds.as_mut_ptr(), fds.len() as u32, -1) } <= 0 {
+            return alloc::vec![false; fds.len()];
+        }
+        fds.iter().map(|p| p[1] >> 16 != 0).collect()
     }
 }
 

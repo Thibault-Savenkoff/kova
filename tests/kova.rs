@@ -805,6 +805,8 @@ fn server() {
         // The server may still be starting.
         for _ in 0..400 {
             if let Ok(mut link) = TcpStream::connect(("127.0.0.1", port)) {
+                // A server stuck on another connection fails here instead of answering late.
+                link.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
                 link.write_all(request).unwrap();
                 let mut got = vec![];
                 let _ = link.read_to_end(&mut got);
@@ -856,6 +858,23 @@ fn server() {
                 }
             }
             if rounds == 1 {
+                // A connection that says nothing (browsers open some in advance) and one that
+                // stops halfway do not keep the others waiting.
+                let silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let mut half = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                half.write_all(b"GET / HTTP/1.1\r\nHo").unwrap();
+                let got = ask(port, &get("/html"));
+                if got != round[5].1 {
+                    failures.push(format!("{mode}: behind a silent connection: {got:?}"));
+                }
+                half.write_all(b"st: x\r\n\r\n").unwrap();
+                half.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+                let mut got = vec![];
+                let _ = half.read_to_end(&mut got);
+                if !String::from_utf8_lossy(&got).ends_with("Hello from Kova") {
+                    failures.push(format!("{mode}: a question sent in two parts: {:?}", String::from_utf8_lossy(&got)));
+                }
+                drop(silent);
                 // The port is taken: a second server stops at once.
                 let mut second = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
                 if mode == "run" {

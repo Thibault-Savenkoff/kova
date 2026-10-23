@@ -842,16 +842,16 @@ type Socket = usize;
 pub extern "C" fn kova_listen(port: i64, everyone: i64) -> i64 {
     use http::Serve;
     match u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p, everyone != 0)) {
-        Some(l) => l as i64,
+        Some(l) => alloc::boxed::Box::into_raw(alloc::boxed::Box::new(http::Server::<sys::Net>::new(l))) as i64,
         None => -1,
     }
 }
 
 /// Like src/interp.rs.
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_accept(listener: i64) -> i64 {
-    let mut l = listener as Socket;
-    let (link, q) = http::next_question(&mut sys::Net, &mut l);
+pub extern "C" fn kova_accept(server: i64) -> i64 {
+    let server = unsafe { &mut *(server as *mut http::Server<sys::Net>) };
+    let (link, q) = http::next_question(&mut sys::Net, server);
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
     let headers = new_list(List { length, width: 2, slots, index: 0 });
