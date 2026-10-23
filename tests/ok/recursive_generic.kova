@@ -1,0 +1,33 @@
+// A generic struct holding others of its kind, and two structs holding each other through a List and an optional.
+struct Tree<T> {
+    value: T
+    kids: List<Tree<T>>
+
+    fn total(self) -> Int {
+        var n: Int := 1
+        for k in self.kids {
+            n += k.total
+        }
+        return n
+    }
+}
+
+struct A {
+    b: List<B>
+}
+
+struct B {
+    a: A?
+    n: Int
+}
+
+fn main {
+    let t := Tree<String> { value := "a", kids := [Tree<String> { value := "b", kids := [] }] }
+    print(t)
+    print(t.total)
+    let x := A { b := [B { a := none, n := 1 }] }
+    print(x)
+}
+// expect: Tree<String> { value: "a", kids: [Tree<String> { value: "b", kids: [] }] }
+// expect: 2
+// expect: A { b: [B { a: none, n: 1 }] }

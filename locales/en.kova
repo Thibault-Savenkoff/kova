@@ -229,7 +229,7 @@ lang en {
     type_exists := "the type `{name}` already exists (line {line})"
     field_exists := "the field `{name}` already exists (line {line})"
     struct_contains_itself := "`{name}` contains itself: its size would be infinite"
-    struct_contains_itself_help := "a type cannot contain itself yet, not even through a `List<{name}>`"
+    struct_contains_itself_help := "to hold others of its kind, use a `List<{name}>`; `{name}?` comes next"
     copy_struct_field := "`{type}` is a `copy struct`: its field `{name}` (`{field_type}`) cannot be copied"
     copy_struct_field_help := "remove `copy`: `{type}` will then be moved, like a `String`"
     no_member := "`{type}` has no field or method `{name}`"
@@ -271,7 +271,6 @@ lang en {
 
     // ---- Lists (J3) ----
     list_one_type := "`List` takes one type, not {count}: `List<Int>`"
-    list_of_itself := "a struct cannot contain a List of `{name}` yet"
     empty_list_type := "an empty list needs its type"
     empty_list_type_help := "put it where its type is written (`let l: List<Int> := []`), or write `List<Int>()`"
     new_not_generic := "`()` only makes an empty `List<T>`: `{type}` is made with its fields"

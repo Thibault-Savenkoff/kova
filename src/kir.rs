@@ -56,7 +56,7 @@ pub enum Scalar {
 fn members(t: &Type) -> Vec<Type> {
     match t {
         Type::Tuple(ts) => ts.clone(),
-        Type::Struct(d) => d.fields.iter().map(|(_, t)| t.clone()).collect(),
+        Type::Struct(d) => d.fields().iter().map(|(_, t)| t.clone()).collect(),
         _ => unreachable!("tuple or struct checked by the type checker"),
     }
 }
@@ -88,13 +88,13 @@ fn field_index(t: &Type, name: &str) -> usize {
 /// Slot 0 holds the variant's number; then come the fields of every variant, side by side.
 fn variant_slice(d: &EnumDef, i: usize) -> (usize, usize) {
     let size = |fs: &[(String, Type)]| fs.iter().map(|(_, t)| scalars(t).len()).sum::<usize>();
-    let start = 1 + d.variants[..i].iter().map(|(_, fs)| size(fs)).sum::<usize>();
-    (start, size(&d.variants[i].1))
+    let start = 1 + d.variants()[..i].iter().map(|(_, fs)| size(fs)).sum::<usize>();
+    (start, size(&d.variants()[i].1))
 }
 
 /// The fields of an enum's variants, all of them, in the order of their slots.
 fn variant_fields(d: &EnumDef) -> impl Iterator<Item = &Type> {
-    d.variants.iter().flat_map(|(_, fs)| fs.iter().map(|(_, t)| t))
+    d.variants().iter().flat_map(|(_, fs)| fs.iter().map(|(_, t)| t))
 }
 
 /// The slots needed for a value of this type, in order.
@@ -1006,7 +1006,7 @@ impl<'a> Translator<'a> {
     fn show_enum(&mut self, v: &[Local], d: &EnumDef, ty: &Type) -> Local {
         let text = self.int_local();
         let after = self.new_block();
-        for (i, (name, fields)) in d.variants.iter().enumerate() {
+        for (i, (name, fields)) in d.variants().iter().enumerate() {
             let (yes, no) = (self.new_block(), self.new_block());
             let (number, test) = (self.constant(i as i64), self.int_local());
             self.emit(Inst::Binary(test, Op::Eq, v[0], number, NOWHERE));
@@ -1077,7 +1077,7 @@ impl<'a> Translator<'a> {
         // Variant = failure − 1 = −r − 1.
         let minus_one = self.constant(-1);
         self.emit(Inst::Binary(v[1], Op::Minus, minus_one, r, NOWHERE));
-        for i in 0..d.variants.len() {
+        for i in 0..d.variants().len() {
             let (yes, no) = (self.new_block(), self.new_block());
             let (number, test) = (self.constant(i as i64), self.int_local());
             self.emit(Inst::Binary(test, Op::Eq, v[1], number, NOWHERE));
@@ -1178,7 +1178,7 @@ impl<'a> Translator<'a> {
         let after = self.new_block();
         let compare = self.new_block();
         self.go(End::Branch(same, compare, after), compare);
-        for (i, (_, fields)) in d.variants.iter().enumerate() {
+        for (i, (_, fields)) in d.variants().iter().enumerate() {
             let (yes, no) = (self.new_block(), self.new_block());
             let (number, test) = (self.constant(i as i64), self.int_local());
             self.emit(Inst::Binary(test, Op::Eq, a[0], number, NOWHERE));
@@ -2116,10 +2116,10 @@ impl<'a> Translator<'a> {
                 let text = self.call(&method_name(&ty.text(), "to_string"), v.to_vec(), vec![], Span::new(0, 0), &Type::String);
                 m.push(Piece::Value(text[0], Show::String));
             }
-            Type::Struct(d) if d.fields.is_empty() => m.push(Piece::Text(format!("{} {{}}", ty.text()))),
+            Type::Struct(d) if d.fields().is_empty() => m.push(Piece::Text(format!("{} {{}}", ty.text()))),
             Type::Struct(d) => {
                 m.push(Piece::Text(format!("{} {{ ", ty.text())));
-                for (i, (name, t)) in d.fields.iter().enumerate() {
+                for (i, (name, t)) in d.fields().iter().enumerate() {
                     let sep = if i > 0 { ", " } else { "" };
                     m.push(Piece::Text(format!("{sep}{name}: ")));
                     let (start, n) = slice_of(ty, i);

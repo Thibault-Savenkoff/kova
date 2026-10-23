@@ -7,6 +7,7 @@
 //
 // The result: the type of each expression (indexed by `Expr::id`).
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -126,14 +127,35 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Map(k, v) => Type::Map(sub(k), sub(v)),
         Type::Set(t) => Type::Set(sub(t)),
         Type::Block(ps, r) => Type::Block(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
-        // `Stack<T>` → `Stack<Int>`: its fields change with it.
-        Type::Struct(d) if !d.args.is_empty() => Type::Struct(Rc::new(StructDef {
-            name: d.name.clone(),
-            args: d.args.iter().map(|t| substitute(t, s)).collect(),
-            fields: d.fields.iter().map(|(n, t)| (n.clone(), substitute(t, s))).collect(),
-            copy: d.copy,
-        })),
+        // `Stack<T>` → `Stack<Int>`: its fields change with it (when they are asked for).
+        Type::Struct(d) if !d.args.is_empty() => {
+            let template = d.from.as_ref().map_or(d, |(t, _)| t);
+            Type::Struct(StructDef::instance(template, d.args.iter().map(|t| substitute(t, s)).collect()))
+        }
         _ => t.clone(),
+    }
+}
+
+/// Does a value of `t` hold a `name` in its own slots? Not through a List, a Map or a Set,
+/// which are one slot each (the address of their elements).
+fn holds(t: &Type, name: &str, seen: &mut Vec<String>) -> bool {
+    let look = |n: &String, inside: Vec<&Type>, seen: &mut Vec<String>| {
+        if n == name {
+            return true;
+        }
+        if seen.contains(n) {
+            return false;
+        }
+        seen.push(n.clone());
+        inside.into_iter().any(|t| holds(t, name, seen))
+    };
+    match t {
+        Type::Struct(d) => look(&d.name, d.fields().iter().map(|(_, t)| t).collect(), seen),
+        Type::Enum(d) => look(&d.name, d.variants().iter().flat_map(|(_, fs)| fs.iter().map(|(_, t)| t)).collect(), seen),
+        Type::Optional(t) => holds(t, name, seen),
+        Type::Result(t, e) => holds(t, name, seen) || holds(e, name, seen),
+        Type::Tuple(ts) => ts.iter().any(|t| holds(t, name, seen)),
+        _ => false,
     }
 }
 
@@ -145,45 +167,121 @@ fn is_template(t: &Type, name: &str) -> bool {
 /// `Stack<Int>` from the struct `Stack<T>` as declared (`None` if it has no type parameters).
 pub fn instance(template: &Type, types: &[Type]) -> Option<Type> {
     let Type::Struct(d) = template else { return None };
-    let names = d.args.iter().map(|a| match a {
-        Type::Param(p) => p.name.clone(),
-        _ => unreachable!("a declared struct has its parameters as arguments"),
-    });
-    (!d.args.is_empty() && d.args.len() == types.len()).then(|| substitute(template, &names.zip(types.iter().cloned()).collect::<Vec<_>>()))
+    (!d.args.is_empty() && d.args.len() == types.len()).then(|| Type::Struct(StructDef::instance(d, types.to_vec())))
 }
 
-#[derive(PartialEq, Debug)]
+/// A struct's type. Its fields are given once it exists, so that one of them may refer to it
+/// (`kids: List<Node>`, PLAN Part 4 "Recursive types"); two are the same type when they have the
+/// same name and type arguments.
 pub struct StructDef {
     pub name: String,
     /// `Stack<Int>`: the types given for its type parameters (`Stack<T>` itself: `T`).
     pub args: Vec<Type>,
-    pub fields: Vec<(String, Type)>,
+    fields: OnceCell<Vec<(String, Type)>>,
     pub copy: bool,
+    /// `Stack<Int>`: the struct as declared, `Stack<T>`, whose fields it takes with `T` = `Int`.
+    /// Made when first asked for: `Tree<Int>` may be named while `Tree<T>` is still being read.
+    from: Option<(Rc<StructDef>, Vec<(String, Type)>)>,
 }
 
 impl StructDef {
+    pub fn new(name: String, args: Vec<Type>, copy: bool) -> Rc<StructDef> {
+        Rc::new(StructDef { name, args, fields: OnceCell::new(), copy, from: None })
+    }
+
+    /// `Stack<Int>` from `Stack<T>` as declared.
+    fn instance(template: &Rc<StructDef>, args: Vec<Type>) -> Rc<StructDef> {
+        if args == template.args {
+            return template.clone();
+        }
+        let names = template.args.iter().map(|a| match a {
+            Type::Param(p) => p.name.clone(),
+            _ => unreachable!("a declared struct has its parameters as arguments"),
+        });
+        let s = names.zip(args.iter().cloned()).collect();
+        Rc::new(StructDef { name: template.name.clone(), args, fields: OnceCell::new(), copy: template.copy, from: Some((template.clone(), s)) })
+    }
+
+    fn set_fields(&self, fields: Vec<(String, Type)>) {
+        self.fields.set(fields).expect("a struct's fields are given once");
+    }
+
+    /// Its fields (none while they are being read).
+    pub fn fields(&self) -> &[(String, Type)] {
+        if let Some((template, s)) = &self.from
+            && self.fields.get().is_none()
+            && template.fields.get().is_some()
+        {
+            let _ = self.fields.set(template.fields().iter().map(|(n, t)| (n.clone(), substitute(t, s))).collect());
+        }
+        self.fields.get().map_or(&[], |f| f)
+    }
+
     /// The number and type of a field.
     pub fn field(&self, name: &str) -> Option<(usize, &Type)> {
-        self.fields.iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, t))| (i, t))
+        self.fields().iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, t))| (i, t))
     }
 }
 
-#[derive(PartialEq, Debug)]
+impl PartialEq for StructDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.args == other.args
+    }
+}
+
+impl std::fmt::Debug for StructDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}{:?}", self.name, self.args)
+    }
+}
+
+/// An enum's type, its variants given once it exists (like `StructDef`'s fields).
 pub struct EnumDef {
     pub name: String,
     /// Each variant: its name and its fields.
-    pub variants: Vec<(String, Vec<(String, Type)>)>,
+    variants: OnceCell<Vec<(String, Vec<(String, Type)>)>>,
 }
 
 impl EnumDef {
+    pub fn new(name: String) -> Rc<EnumDef> {
+        Rc::new(EnumDef { name, variants: OnceCell::new() })
+    }
+
+    pub fn with_variants(name: String, variants: Vec<(String, Vec<(String, Type)>)>) -> Rc<EnumDef> {
+        let d = EnumDef::new(name);
+        d.set_variants(variants);
+        d
+    }
+
+    fn set_variants(&self, variants: Vec<(String, Vec<(String, Type)>)>) {
+        self.variants.set(variants).expect("an enum's variants are given once");
+    }
+
+    pub fn variants(&self) -> &[(String, Vec<(String, Type)>)] {
+        self.variants.get().map_or(&[], |v| v)
+    }
+
     /// The number and fields of a variant.
     pub fn variant(&self, name: &str) -> Option<(usize, &[(String, Type)])> {
-        self.variants.iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, f))| (i, &f[..]))
+        self.variants().iter().enumerate().find(|(_, (n, _))| n == name).map(|(i, (_, f))| (i, &f[..]))
     }
 
     /// `Circle`, `Square`: for messages.
     fn names(&self) -> String {
-        self.variants.iter().map(|(n, _)| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+        self.variants().iter().map(|(n, _)| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// The name of an optional's or a result's view is its whole type (`Int?`), so the name is enough.
+impl PartialEq for EnumDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl std::fmt::Debug for EnumDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
@@ -192,19 +290,18 @@ impl EnumDef {
 pub fn enum_view(t: &Type) -> Option<Rc<EnumDef>> {
     match t {
         Type::Enum(d) => Some(d.clone()),
-        Type::Optional(inner) => Some(Rc::new(EnumDef {
-            name: t.text(),
-            variants: vec![("none".into(), vec![]), ("some".into(), vec![("value".into(), (**inner).clone())])],
-        })),
+        Type::Optional(inner) => {
+            Some(EnumDef::with_variants(t.text(), vec![("none".into(), vec![]), ("some".into(), vec![("value".into(), (**inner).clone())])]))
+        }
         // `err` first: as for an optional, slot 0 is 1 when there is a value.
         // `Nothing or IoError`: `ok` alone, without a value.
-        Type::Result(ok, err) => Some(Rc::new(EnumDef {
-            name: t.text(),
-            variants: vec![
+        Type::Result(ok, err) => Some(EnumDef::with_variants(
+            t.text(),
+            vec![
                 ("err".into(), vec![("error".into(), (**err).clone())]),
                 ("ok".into(), if **ok == Type::Unit { vec![] } else { vec![("value".into(), (**ok).clone())] }),
             ],
-        })),
+        )),
         _ => None,
     }
 }
@@ -265,13 +362,13 @@ pub const LIBRARY: &[(&str, &str)] =
 pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
     let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
-    Type::Enum(Rc::new(EnumDef { name: "IoError".into(), variants: names.iter().map(|n| (n.to_string(), path())).collect() }))
+    Type::Enum(EnumDef::with_variants("IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
 }
 
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
 pub fn weekday() -> Type {
     let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    Type::Enum(Rc::new(EnumDef { name: "Weekday".into(), variants: names.iter().map(|n| (n.to_string(), vec![])).collect() }))
+    Type::Enum(EnumDef::with_variants("Weekday".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
 }
 
 /// Built-in methods: (receiver type, name, result, true if the result is optional: `Int?`).
@@ -412,7 +509,7 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Tuple(ts) => ts.iter().all(is_copy),
         Type::Struct(d) => d.copy,
         // An enum is a value like an `Int` when nothing in it is owned: `Light.Red`, `Shape.Circle(2.0)`.
-        Type::Enum(d) => d.variants.iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
+        Type::Enum(d) => d.variants().iter().all(|(_, fs)| fs.iter().all(|(_, t)| is_copy(t))),
         Type::Optional(t) => is_copy(t),
         Type::Result(t, e) => is_copy(t) && is_copy(e),
         // Checked once for every real type: as if it were owned.
@@ -1467,8 +1564,15 @@ impl Checker<'_> {
         open.push(i);
         let args: Vec<Type> = self.params(&s.generics, &|n| decls.contains_key(n)).into_iter().map(Type::Param).collect();
         let saved = self.open_struct(&args);
+        // Known before its fields are read: a field may refer to it (`kids: List<Node>`).
         let ty = match &s.variants {
-            None => {
+            None => Type::Struct(StructDef::new(s.name.text.clone(), args, s.copy)),
+            Some(_) => Type::Enum(EnumDef::new(s.name.text.clone())),
+        };
+        self.structs.insert(s.name.text.clone(), ty.clone());
+        // Each field's place in the code and its type.
+        let held: Vec<(Span, Type)> = match (&s.variants, &ty) {
+            (None, Type::Struct(d)) => {
                 let fields = self.fields(f, decls, &s.fields, open);
                 for (name, ty) in &fields {
                     if s.copy && !is_copy(ty) && *ty != Type::Error {
@@ -1477,9 +1581,12 @@ impl Checker<'_> {
                         self.diags.push(Diag::new(span, msg).help(t!("copy_struct_field_help", type = s.name.text)));
                     }
                 }
-                Type::Struct(Rc::new(StructDef { name: s.name.text.clone(), args, fields, copy: s.copy }))
+                let spans = fields.iter().map(|(name, _)| s.fields.iter().find(|p| p.name.text == *name).unwrap().name.span);
+                let held = spans.zip(fields.iter().map(|(_, t)| t.clone())).collect();
+                d.set_fields(fields);
+                held
             }
-            Some(variants) => {
+            (Some(variants), Type::Enum(d)) => {
                 let mut seen: HashMap<&str, Span> = HashMap::new();
                 let mut defs = vec![];
                 for v in variants {
@@ -1491,12 +1598,27 @@ impl Checker<'_> {
                         defs.push((v.name.text.clone(), fields));
                     }
                 }
-                Type::Enum(Rc::new(EnumDef { name: s.name.text.clone(), variants: defs }))
+                let mut held = vec![];
+                for (name, fields) in &defs {
+                    let v = variants.iter().find(|v| v.name.text == *name).unwrap();
+                    for (field, t) in fields {
+                        held.push((v.fields.iter().find(|p| p.name.text == *field).unwrap().name.span, t.clone()));
+                    }
+                }
+                d.set_variants(defs);
+                held
             }
+            _ => unreachable!("made just above"),
         };
+        // `struct Cell { next: Cell }`: no value could ever be made, it would need one already.
+        // ponytail: `next: Cell?` and an enum's variant too, until they hold it through a box (PLAN Part 4 "Recursive types").
+        for (span, t) in held {
+            if holds(&t, &s.name.text, &mut vec![]) {
+                self.contains_itself(&Name { text: s.name.text.clone(), span });
+            }
+        }
         self.close_struct(saved);
         open.pop();
-        self.structs.insert(s.name.text.clone(), ty.clone());
         Some(ty)
     }
 
@@ -1540,13 +1662,6 @@ impl Checker<'_> {
                 if ts.contains(&Type::Error) { Type::Error } else { Type::Tuple(ts) }
             }
             TypeAst::Generic(n, ts) => {
-                // ponytail: `struct Node { kids: List<Node> }` would need a type that refers to itself.
-                if let [TypeAst::Name(e)] = &ts[..]
-                    && decls.get(e.text.as_str()).is_some_and(|j| open.contains(j))
-                {
-                    self.error(e.span, t!("list_of_itself", name = e.text));
-                    return Type::Error;
-                }
                 let inner: Vec<Type> = ts.iter().map(|t| self.field_type(f, decls, t, open)).collect();
                 let template = match decls.get(n.text.as_str()) {
                     Some(&j) => match self.define(f, decls, j, open) {
@@ -2706,7 +2821,7 @@ impl Checker<'_> {
         let mut methods: Vec<&str> = self.functions.keys().filter_map(|k| k.strip_prefix(&prefix)).collect();
         methods.sort();
         let own: Vec<&str> = match t {
-            Type::Struct(d) => d.fields.iter().map(|(n, _)| n.as_str()).collect(),
+            Type::Struct(d) => d.fields().iter().map(|(n, _)| n.as_str()).collect(),
             _ => vec![],
         };
         let fields: Vec<String> = own.into_iter().chain(methods).map(|n| format!("`{n}`")).collect();
@@ -3338,7 +3453,7 @@ impl Checker<'_> {
         let owner = Type::Struct(d.clone()).owner();
         if !self.hidden(&owner, ty.span) {
             // Only its own file builds a value whose fields it hides (PLAN 2.5).
-            let hides = d.fields.iter().find(|(n, _)| {
+            let hides = d.fields().iter().find(|(n, _)| {
                 self.private.get(&method_name(&owner, n)).is_some_and(|s| file_number(self.src, s.start) != file_number(self.src, ty.span.start))
             });
             if let Some((field, _)) = hides {
@@ -3364,7 +3479,7 @@ impl Checker<'_> {
             self.expect(value, t);
         }
         let missing: Vec<String> =
-            d.fields.iter().filter(|(n, _)| !given.contains(&n.as_str())).map(|(n, _)| format!("`{n}`")).collect();
+            d.fields().iter().filter(|(n, _)| !given.contains(&n.as_str())).map(|(n, _)| format!("`{n}`")).collect();
         if !missing.is_empty() {
             self.error(ty.span, t!("fields_missing", type = d.name, fields = missing.join(", ")));
         }
@@ -3464,7 +3579,7 @@ impl Checker<'_> {
             self.scopes.push(HashMap::new());
             match (arm.case.variant(), &d) {
                 (None, Some(d)) => {
-                    if any.is_none() && seen.len() == d.variants.len() {
+                    if any.is_none() && seen.len() == d.variants().len() {
                         self.error(span, t!("case_any_useless", type = d.name));
                     }
                     any = Some(span);
@@ -3561,20 +3676,20 @@ impl Checker<'_> {
         }
         if let Some(d) = &d {
             // `Circle(radius)`: the variant and its fields' names; the value of an optional: `value`.
-            let written = |i: usize| match &d.variants[i] {
+            let written = |i: usize| match &d.variants()[i] {
                 (_, fs) if optional && i == 1 => fs[0].0.clone(),
                 (n, fs) if fs.is_empty() => n.clone(),
                 (n, fs) => format!("{n}({})", fs.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>().join(", ")),
             };
-            let todo = if any.is_some() { vec![] } else { (0..d.variants.len()).filter(|i| !seen.contains_key(i)).map(written).collect() };
+            let todo = if any.is_some() { vec![] } else { (0..d.variants().len()).filter(|i| !seen.contains_key(i)).map(written).collect() };
             self.matches.push((m.subject.span.to(m.close), todo));
         }
         if let Some(d) = &d
             && any.is_none()
         {
-            let missing: Vec<String> = (0..d.variants.len())
+            let missing: Vec<String> = (0..d.variants().len())
                 .filter(|i| !seen.contains_key(i))
-                .map(|i| match &d.variants[i].0 {
+                .map(|i| match &d.variants()[i].0 {
                     _ if optional && i == 1 => t!("case_value"),
                     n if outcome => format!("`{n}(…)`"),
                     n => format!("`{n}`"),

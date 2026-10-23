@@ -609,7 +609,7 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     let hidden = |name: &str| (file.private.iter()).any(|(n, s)| *n == types::method_name(&owner, name) && s.start > root);
     let mut items = vec![];
     if let Type::Struct(d) = t {
-        let fields = d.fields.iter().filter(|(n, _)| !hidden(n));
+        let fields = d.fields().iter().filter(|(n, _)| !hidden(n));
         items.extend(fields.map(|(n, ft)| item(n, CompletionItemKind::FIELD, format!("{n}: {}", ft.text()))));
     }
     if let Type::Tuple(ts) = t {

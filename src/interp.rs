@@ -286,8 +286,8 @@ enum Stop {
     Exit(i32),
 }
 
-// ponytail: Rust recursion = the interpreter's stack; infinite recursion
-// crashes without a nice message (same in native). To handle with stack errors.
+// ponytail: Rust recursion = the interpreter's stack (1 GB, src/main.rs); an infinite recursion
+// crashes without a nice message, as in native (code 134 here, 139 there). To handle with stack errors.
 fn call(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Outcome {
     let Some(d) = &mut heap.debugger else { return execute(p, num, args, out, files, heap) };
     d.enter(&p.functions[num].name);

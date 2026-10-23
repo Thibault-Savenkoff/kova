@@ -110,7 +110,13 @@ fn main() {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
             let given: Vec<String> = args[skip..].iter().map(|a| a.to_string()).collect();
-            exit(interp::run(&program, &files, &given))
+            // Each Kova call is a call of the interpreter: a stack as deep as a built program's
+            // (a 100,000-deep recursion) needs more than the 8 MB the system gives.
+            let code = std::thread::scope(|s| {
+                let run = std::thread::Builder::new().stack_size(1 << 30).spawn_scoped(s, || interp::run(&program, &files, &given));
+                run.expect("a thread for the interpreter").join().unwrap_or(101)
+            });
+            exit(code)
         }
         Command::Build { output, target, .. } => {
             let suffix = target.or(codegen::Target::host()).map_or(std::env::consts::EXE_SUFFIX, |t| t.suffix());

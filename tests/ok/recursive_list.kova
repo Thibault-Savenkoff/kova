@@ -1,0 +1,63 @@
+// A struct holding others of its kind through a List (PLAN Part 4, "Recursive types").
+struct Node {
+    name: String
+    kids: List<Node>
+
+    fn size(self) -> Int {
+        var n: Int := 1
+        for k in self.kids {
+            n += k.size
+        }
+        return n
+    }
+
+    fn add(var self, kid: move Node) {
+        self.kids.add(move kid)
+    }
+}
+
+fn show(n: Node, depth: Int) {
+    print("{"  ".repeat(depth)}{n.name}")
+    for k in n.kids {
+        show(k, depth + 1)
+    }
+}
+
+fn deep(n: Int) -> Node {
+    var top := Node { name := "0", kids := [] }
+    var i: Int := 1
+    while i < n {
+        top := Node { name := "{i}", kids := [top] }
+        i += 1
+    }
+    return top
+}
+
+fn main {
+    var root := Node { name := "root", kids := [] }
+    root.add(Node { name := "a", kids := [Node { name := "a1", kids := [] }] })
+    root.add(Node { name := "b", kids := [] })
+    show(root, 0)
+    print(root.size)
+    let twin: Node := root.clone
+    root.kids[0].name := "changed"
+    print(twin.kids[0].name)
+    print(root.kids[0].name)
+    print(root)
+    var named: Map<String, Node> := ["r" := twin]
+    for n in named.values {
+        print(n.size)
+    }
+    let chain: Node := deep(10000)
+    print(chain.size)
+}
+// expect: root
+// expect:   a
+// expect:     a1
+// expect:   b
+// expect: 4
+// expect: a
+// expect: changed
+// expect: Node { name: "root", kids: [Node { name: "changed", kids: [Node { name: "a1", kids: [] }] }, Node { name: "b", kids: [] }] }
+// expect: 4
+// expect: 10000
