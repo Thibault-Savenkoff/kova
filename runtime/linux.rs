@@ -344,8 +344,9 @@ impl Serve for Net {
         Some(fd as usize)
     }
 
-    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<usize> {
-        let fd = unsafe { call(ACCEPT4, *listener, 0, 0, 0o2000000, 0, 0) };
+    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<(usize, [u8; 4])> {
+        let (mut from, mut n) = ([0u8; 16], 16u32);
+        let fd = unsafe { call(ACCEPT4, *listener, from.as_mut_ptr() as usize, &mut n as *mut u32 as usize, 0o2000000, 0, 0) };
         if fd < 0 {
             return None;
         }
@@ -353,7 +354,26 @@ impl Serve for Net {
         for option in [20, 21] {
             unsafe { call(SETSOCKOPT, fd as usize, 1, option, limit.as_ptr() as usize, 16, 0) };
         }
-        Some(fd as usize)
+        Some((fd as usize, [from[4], from[5], from[6], from[7]]))
+    }
+
+    /// SIOCGIFCONF, so that a server needs no C library: `struct ifconf` (its length, then where
+    /// the `struct ifreq`s go, 40 bytes each: the name, then a `sockaddr_in`).
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])> {
+        let fd = unsafe { call(SOCKET, 2, 2 | 0o2000000, 0, 0, 0, 0) };
+        if fd < 0 {
+            return Vec::new();
+        }
+        let mut found = alloc::vec![0u8; 40 * 64];
+        let mut conf = [found.len(), found.as_mut_ptr() as usize];
+        let asked = unsafe { call(IOCTL, fd as usize, 0x8912, conf.as_mut_ptr() as usize, 0, 0, 0) };
+        close(fd as usize);
+        if asked != 0 {
+            return Vec::new();
+        }
+        let n = (conf[0] as u32 as usize / 40).min(64);
+        let named = |r: &[u8]| String::from_utf8_lossy(&r[..r[..16].iter().position(|&b| b == 0).unwrap_or(16)]).into_owned();
+        found.chunks(40).take(n).map(|r| (named(r), [r[20], r[21], r[22], r[23]])).collect()
     }
 
     /// `ppoll` (arm64 has no `poll`), without a time limit: `struct pollfd`, POLLIN.

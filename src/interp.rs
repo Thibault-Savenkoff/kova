@@ -36,7 +36,9 @@ struct Heap {
     nothing: (usize, Vec<i64>),
     /// `serve`'s sockets: a listener's number is its place here, a connection's too.
     listeners: Vec<crate::http::Server<crate::web::System>>,
-    links: Vec<Option<std::net::TcpStream>>,
+    /// Each question being answered: its connection, then who asked, its method and its URL if
+    /// it is written when answered.
+    links: Vec<Option<(std::net::TcpStream, Option<([u8; 4], String, String)>)>>,
 }
 
 impl Heap {
@@ -501,18 +503,32 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         },
                         StrOp::Listen => {
                             use crate::http::Serve;
-                            match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p, locals[a[1]] != 0)) {
+                            let (everyone, log) = (locals[a[1]] != 0, locals[a[3]]);
+                            match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p, everyone).map(|l| (p, l))) {
                                 None => -1,
-                                Some(l) => {
-                                    heap.listeners.push(crate::http::Server::new(l));
+                                Some((port, l)) => {
+                                    heap.listeners.push(crate::http::Server::new(l, log == 0));
+                                    let title = match locals[a[2]] {
+                                        0 => t!("serving", port = port),
+                                        f => t!("serving_files", folder = crate::http::shown_folder(heap.get(f)), port = port),
+                                    };
+                                    let (computer, network, stop) = (if everyone { t!("this_computer") } else { t!("this_computer_only") }, t!("this_network"), t!("stop_with_ctrl_c"));
+                                    let said = crate::http::Said { title: &title, this_computer: &computer, this_network: &network, stop: &stop };
+                                    let addresses = if everyone { crate::web::System.addresses() } else { vec![] };
+                                    if log < 2 {
+                                        out.flush().unwrap();
+                                        eprint!("{}", crate::http::banner(port, everyone, &addresses, &said));
+                                    }
                                     heap.listeners.len() as i64 - 1
                                 }
                             }
                         }
                         StrOp::Accept => {
                             out.flush().unwrap();
-                            let (link, q) = crate::http::next_question(&mut crate::web::System, &mut heap.listeners[locals[a[0]] as usize]);
-                            heap.links.push(Some(link));
+                            let server = &mut heap.listeners[locals[a[0]] as usize];
+                            let (link, q, from) = crate::http::next_question(&mut crate::web::System, server);
+                            let asked = server.logs.then(|| (from, q.method.clone(), q.url.clone()));
+                            heap.links.push(Some((link, asked)));
                             let conn = heap.links.len() as i64 - 1;
                             let mut headers = vec![];
                             for (n, v) in q.headers {
@@ -528,9 +544,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let slots = heap.list(locals[a[2]]).2.clone();
                             let headers: Vec<(String, String)> = slots.chunks(2).map(|p| (heap.get(p[0]).to_string(), heap.get(p[1]).to_string())).collect();
                             let headers: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-                            let link = heap.links[locals[a[0]] as usize].take().expect("answered once");
+                            let (link, asked) = heap.links[locals[a[0]] as usize].take().expect("answered once");
                             let (body, file) = (heap.get(locals[a[3]]), heap.get(locals[a[4]]));
-                            crate::http::reply(&mut crate::web::System, link, locals[a[1]], &headers, body, file, |p| std::fs::read(p).ok());
+                            let status = crate::http::reply(&mut crate::web::System, link, locals[a[1]], &headers, body, file, |p| std::fs::read(p).ok());
+                            if let Some((from, method, url)) = asked {
+                                out.flush().unwrap();
+                                eprint!("{}", crate::http::logged(local_now(), from, &method, &url, status));
+                            }
                             0
                         }
                         StrOp::UrlPath => {

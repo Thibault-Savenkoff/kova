@@ -630,7 +630,12 @@ fn main {
 `serve(port)` answers each question with what its block gives back, one question at a time, until the
 program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` to see it: only this
 computer can ask (127.0.0.1). `serve_network(8080) { … }` and `serve_files_network("public") at(8080)`
-let the other computers of the network ask too (the system may first ask you to allow it). The block receives a `Request`: `q.method`, `q.path` (decoded, without
+let the other computers of the network ask too (the system may first ask you to allow it).
+
+When it starts, the server writes where to open it, then a line for each question it answers
+(`14:30:01  192.168.1.20  GET /books  200`), as Python's `http.server` does; they go to the error
+output, apart from what the program prints. `serve(8080) log(Log.Start) { … }` writes only where to
+open it, `log(Log.Off)` nothing (also after `serve_files(…) at(…)`). The block receives a `Request`: `q.method`, `q.path` (decoded, without
 the `?…`), `q.query(name)` and `q.header(name)` (both `String?`), `q.body`, `q.headers`.
 
 An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct, a List or a Map, as `to_json`

@@ -248,6 +248,12 @@ const ERROR_PREFIX: usize = 0;
 const LEAK_ALLOCATED: usize = 7;
 const LEAK_LIVE: usize = 8;
 const FAULT_INDEX: i64 = 9;
+const SERVING: usize = 18;
+const SERVING_FILES: usize = 19;
+const THIS_COMPUTER: usize = 20;
+const THIS_COMPUTER_ONLY: usize = 21;
+const THIS_NETWORK: usize = 22;
+const STOP_WITH_CTRL_C: usize = 23;
 
 /// `fault` = the number of its text.
 #[unsafe(no_mangle)]
@@ -839,19 +845,36 @@ type Socket = i32;
 type Socket = usize;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_listen(port: i64, everyone: i64) -> i64 {
+pub extern "C" fn kova_listen(port: i64, everyone: i64, folder: i64, log: i64) -> i64 {
     use http::Serve;
-    match u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p, everyone != 0)) {
-        Some(l) => alloc::boxed::Box::into_raw(alloc::boxed::Box::new(http::Server::<sys::Net>::new(l))) as i64,
-        None => -1,
+    let everyone = everyone != 0;
+    let Some((port, l)) = u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p, everyone).map(|l| (p, l))) else {
+        return -1;
+    };
+    // `{port}`, `{folder}`: the holes `locale::RUNTIME_HOLES` leaves in these texts.
+    let fill = |i: usize| String::from_utf8_lossy(text(i)).replace("{port}", &alloc::format!("{port}"));
+    let title = if folder == 0 { fill(SERVING) } else { fill(SERVING_FILES).replace("{folder}", &http::shown_folder(text_of(folder))) };
+    let words = |i: usize| String::from_utf8_lossy(text(i)).into_owned();
+    let (computer, network, stop) = (words(if everyone { THIS_COMPUTER } else { THIS_COMPUTER_ONLY }), words(THIS_NETWORK), words(STOP_WITH_CTRL_C));
+    let said = http::Said { title: &title, this_computer: &computer, this_network: &network, stop: &stop };
+    let addresses = if everyone { sys::Net.addresses() } else { Vec::new() };
+    if log < 2 {
+        error(http::banner(port, everyone, &addresses, &said).as_bytes());
     }
+    alloc::boxed::Box::into_raw(alloc::boxed::Box::new(http::Server::<sys::Net>::new(l, log == 0))) as i64
 }
+
+/// A question being answered: its connection, then who asked, its method and its URL if it is
+/// written when answered.
+type Asked = (Socket, Option<([u8; 4], String, String)>);
 
 /// Like src/interp.rs.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_accept(server: i64) -> i64 {
     let server = unsafe { &mut *(server as *mut http::Server<sys::Net>) };
-    let (link, q) = http::next_question(&mut sys::Net, server);
+    let (link, q, from) = http::next_question(&mut sys::Net, server);
+    let asked: Asked = (link, server.logs.then(|| (from, q.method.clone(), q.url.clone())));
+    let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
     let headers = new_list(List { length, width: 2, slots, index: 0 });
@@ -862,7 +885,11 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_reply(link: i64, status: i64, headers: i64, body: i64, file: i64) -> i64 {
     let headers: Vec<(&str, &str)> = list(headers).slots.chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect();
-    http::reply(&mut sys::Net, link as Socket, status, &headers, text_of(body), text_of(file), |p| sys::read_file(p).ok());
+    let (link, asked) = *unsafe { alloc::boxed::Box::from_raw(link as *mut Asked) };
+    let sent = http::reply(&mut sys::Net, link, status, &headers, text_of(body), text_of(file), |p| sys::read_file(p).ok());
+    if let Some((from, method, url)) = asked {
+        error(http::logged(kova_local_now(), from, &method, &url, sent).as_bytes());
+    }
     0
 }
 

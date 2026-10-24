@@ -510,6 +510,9 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
         return Some(made.collect());
     }
+    if name == "Log" {
+        return Some(["All", "Start", "Off"].iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, format!("Log.{v}"))).collect());
+    }
     if name == "Answer" {
         let mut made: Vec<CompletionItem> = types::ANSWER_MAKERS.iter().map(|(f, p)| item(f, CompletionItemKind::FUNCTION, format!("Answer.{f}({}) -> Answer", p.text()))).collect();
         made.push(item("json", CompletionItemKind::FUNCTION, "Answer.json(value) -> Answer".into()));
@@ -1365,6 +1368,7 @@ mod tests {
         assert!(point.contains(&"origin".to_string()) && point.contains(&"from_json".to_string()), "{point:?}");
         // The web server's names.
         assert_eq!(at("/none/main.kova", "fn main {\n  Answer."), ["text", "status", "file", "json"]);
+        assert_eq!(at("/none/main.kova", "fn main {\n  Log."), ["All", "Start", "Off"]);
         let src = "fn main {\n  serve(80) { q: Request =>\n    print(q.)\n    Answer.status(404)\n  }\n}";
         let asked = labels(members("/none/main.kova", src, src.find("q.)").unwrap() + 2));
         for name in ["path", "query", "header", "body"] {

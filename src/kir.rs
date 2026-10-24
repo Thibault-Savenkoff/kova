@@ -385,7 +385,8 @@ pub enum StrOp {
     JsonQuote,
     /// `serve(port)` (PLAN Part 4 "The web server", src/http.rs): what listens on 127.0.0.1 (on
     /// every address if the second argument is 1: `serve_network`), or -1 if the port is taken or
-    /// not allowed.
+    /// not allowed. The third is the folder of `serve_files`, or 0: what it writes when it starts
+    /// names it. The fourth is what it writes (`types::log_mode`: 0 all, 1 the start, 2 nothing).
     Listen,
     /// The next question that can be read: a List of one element, a `Request`'s 6 slots then the
     /// connection.
@@ -1002,11 +1003,11 @@ impl<'a> Translator<'a> {
     /// question with the block, one after the other, until the program stops (`exit`). Without a
     /// block, `serve_files(folder) at(port)`: each answer is `Answer.file(folder + q.path)`. With
     /// `everyone`, the other computers can ask too (`serve_network`).
-    fn serve(&mut self, port: Local, everyone: bool, block: Option<&Expr>, folder: Option<Local>, loc: Loc) -> Slots {
+    fn serve(&mut self, port: Local, log: Local, everyone: bool, block: Option<&Expr>, folder: Option<Local>, loc: Loc) -> Slots {
         let given = block.filter(|b| !matches!(b.kind, ExprKind::Block { .. })).map(|b| self.expr(b));
         let (listener, zero, taken) = (self.int_local(), self.constant(0), self.int_local());
-        let open = self.constant(everyone as i64);
-        self.emit(Inst::Str(listener, StrOp::Listen, vec![port, open]));
+        let (open, named) = (self.constant(everyone as i64), folder.unwrap_or(zero));
+        self.emit(Inst::Str(listener, StrOp::Listen, vec![port, open, named, log]));
         self.emit(Inst::Binary(taken, Op::Lt, listener, zero, NOWHERE));
         self.emit(Inst::FaultIf(taken, Fault::CannotServe, loc));
         let (request, answer) = (crate::types::request(), crate::types::answer());
@@ -4003,15 +4004,23 @@ impl<'a> Translator<'a> {
                     }
                     return v;
                 }
-                if let "serve" | "serve_network" = name.text.as_str() {
+                // `… log(Log.Off)`: the last value before the block (PLAN "The web server, what it says").
+                let (base, logged) = match name.text.strip_suffix(" log(…)") {
+                    // `serve(…)` → `serve`; `serve_files(…) at(…)` stays.
+                    Some(base) => (base.strip_suffix("(…)").filter(|b| !b.contains(' ')).unwrap_or(base), true),
+                    None => (name.text.as_str(), false),
+                };
+                if let "serve" | "serve_network" = base {
                     let port = self.expr1(&args[0]);
+                    let log = if logged { self.expr1(&args[1]) } else { self.constant(0) };
                     let loc = self.loc(name.span);
-                    return self.serve(port, name.text == "serve_network", Some(&args[1]), None, loc);
+                    return self.serve(port, log, base == "serve_network", Some(&args[args.len() - 1]), None, loc);
                 }
-                if let "serve_files(…) at(…)" | "serve_files_network(…) at(…)" = name.text.as_str() {
+                if let "serve_files(…) at(…)" | "serve_files_network(…) at(…)" = base {
                     let (folder, port) = (self.expr1(&args[0]), self.expr1(&args[1]));
+                    let log = if logged { self.expr1(&args[2]) } else { self.constant(0) };
                     let loc = self.loc(name.span);
-                    return self.serve(port, name.text != "serve_files(…) at(…)", None, Some(folder), loc);
+                    return self.serve(port, log, base.starts_with("serve_files_network"), None, Some(folder), loc);
                 }
                 // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
                 if name.text == "send" {

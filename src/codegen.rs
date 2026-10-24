@@ -263,7 +263,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Web => (46, "kova_web", 6),
         StrOp::JsonParse => (47, "kova_json_parse", 1),
         StrOp::JsonQuote => (48, "kova_json_quote", 1),
-        StrOp::Listen => (49, "kova_listen", 2),
+        StrOp::Listen => (49, "kova_listen", 4),
         StrOp::Accept => (50, "kova_accept", 1),
         StrOp::Reply => (51, "kova_reply", 5),
         StrOp::UrlPath => (52, "kova_url_path", 1),
@@ -429,7 +429,17 @@ fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[Stri
         Ok(module.define_data(id, &d)?)
     };
     let langs = locale::LANGUAGES.len();
-    let texts = (0..langs).flat_map(|l| locale::RUNTIME.iter().map(move |k| locale::text_in(l, k, &[]))).collect();
+    // The holes the runtime fills stay written `{name}`.
+    let kept = |k: &str| locale::RUNTIME_HOLES.iter().find(|(key, _)| *key == k).map_or(vec![], |(_, h)| h.iter().map(|h| (*h, format!("{{{h}}}"))).collect());
+    let texts = (0..langs)
+        .flat_map(|l| {
+            locale::RUNTIME.iter().map(move |k| {
+                let holes = kept(k);
+                let args: Vec<(&str, &dyn std::fmt::Display)> = holes.iter().map(|(h, v)| (*h, v as &dyn std::fmt::Display)).collect();
+                locale::text_in(l, k, &args)
+            })
+        })
+        .collect();
     table(module, "kova_texts", texts)?;
     table(module, "kova_langs", locale::LANGUAGES.iter().map(|(code, _)| code.to_string()).collect())?;
     table(module, "kova_files", files.to_vec())?;

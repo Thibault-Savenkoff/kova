@@ -427,6 +427,10 @@ pub const LIBRARY: &[(&str, &str)] =
         ("serve_files(…) at(…)", "fn serve_files(folder: String) at(port: Int)"),
         ("serve_network", "fn serve_network(port: Int) { q: Request => Answer }"),
         ("serve_files_network(…) at(…)", "fn serve_files_network(folder: String) at(port: Int)"),
+        ("serve(…) log(…)", "fn serve(port: Int) log(what: Log) { q: Request => Answer }"),
+        ("serve_network(…) log(…)", "fn serve_network(port: Int) log(what: Log) { q: Request => Answer }"),
+        ("serve_files(…) at(…) log(…)", "fn serve_files(folder: String) at(port: Int) log(what: Log)"),
+        ("serve_files_network(…) at(…) log(…)", "fn serve_files_network(folder: String) at(port: Int) log(what: Log)"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -506,6 +510,14 @@ pub const REQUEST_STARTS: [&str; 6] = ["get", "post", "put", "patch", "delete", 
 /// The methods giving a changed copy of a request: name, parameters.
 pub fn request_methods() -> [(&'static str, Vec<Type>); 4] {
     [("header(…) is(…)", vec![Type::String, Type::String]), ("body", vec![Type::String]), ("seconds", vec![Type::Float]), ("no_redirections", vec![])]
+}
+
+/// `serve(8080) log(Log.Off)`: what the server writes (PLAN Part 4 "The web server, what it
+/// says"): everything (the addresses when it starts, then a line per question), the addresses
+/// only, or nothing. Numbered 0 to 2 (`kir.rs` `serve`).
+pub fn log_mode() -> Type {
+    let names = ["All", "Start", "Off"];
+    Type::Enum(EnumDef::with_variants("Log".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
 }
 
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
@@ -1021,6 +1033,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     // 1. The structs, then the signatures: what is written further down can be used.
     c.structs.insert("IoError".into(), io_error());
     c.structs.insert("Weekday".into(), weekday());
+    c.structs.insert("Log".into(), log_mode());
     c.structs.insert("WebError".into(), web_error());
     c.structs.insert("JsonError".into(), json_error());
     c.structs.insert("Response".into(), response());
@@ -1044,11 +1057,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert(method_name("Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
     let block = Type::Block(vec![request()], Box::new(answer()));
     // `serve_network` and `serve_files_network`: the same, open to the other computers.
+    // Each with a `log(…)` part too, before the block.
     for name in ["serve", "serve_network"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block.clone())], Type::Unit));
+        c.functions.insert(format!("{name}(…) log(…)"), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, log_mode()), (Mode::Read, block.clone())], Type::Unit));
     }
     for name in ["serve_files(…) at(…)", "serve_files_network(…) at(…)"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));
+        c.functions.insert(format!("{name} log(…)"), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int), (Mode::Read, log_mode())], Type::Unit));
     }
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));

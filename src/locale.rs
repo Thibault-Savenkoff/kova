@@ -31,7 +31,8 @@ pub(crate) use t;
 pub const LANGUAGES: &[(&str, &str)] =
     &[("en", include_str!("../locales/en.kova")), ("fr", include_str!("../locales/fr.kova"))];
 
-/// The texts the runtime needs (`runtime/kova.rs`), in this order. No `{name}` in them.
+/// The texts the runtime needs (`runtime/kova.rs`), in this order. No `{name}` in them, but in
+/// `RUNTIME_HOLES`: the runtime fills those itself.
 pub const RUNTIME: &[&str] = &[
     "error_prefix",
     "fault_overflow",
@@ -53,7 +54,17 @@ pub const RUNTIME: &[&str] = &[
     "fault_bad_date",
     "fault_bad_time",
     "fault_cannot_serve",
+    // What `serve` writes when it starts (runtime/kova.rs `kova_listen`).
+    "serving",
+    "serving_files",
+    "this_computer",
+    "this_computer_only",
+    "this_network",
+    "stop_with_ctrl_c",
 ];
+
+/// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.
+pub const RUNTIME_HOLES: &[(&str, &[&str])] = &[("serving", &["port"]), ("serving_files", &["folder", "port"])];
 
 /// A piece of a translated text.
 #[derive(Clone, Debug, PartialEq)]
@@ -255,7 +266,8 @@ mod tests {
             assert_eq!(cats[i].len(), cats[0].len(), "{code}.kova has extra keys");
         }
         for key in RUNTIME {
-            assert!(holes(&cats[0][*key]).is_empty(), "`{key}` is used by the C runtime: no holes");
+            let allowed = RUNTIME_HOLES.iter().find(|(k, _)| k == key).map_or(&[][..], |(_, h)| *h);
+            assert!(holes(&cats[0][*key]).iter().all(|h| allowed.contains(h)), "`{key}` is used by the runtime: no holes but {allowed:?}");
         }
         assert_eq!(RUNTIME[0], "error_prefix", "the runtime reads the prefix at index 0");
         assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "the runtime reads them at 7 and 8");

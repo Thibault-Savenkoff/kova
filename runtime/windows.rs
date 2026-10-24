@@ -236,6 +236,7 @@ unsafe extern "system" {
     fn listen(s: usize, backlog: i32) -> i32;
     fn accept(s: usize, address: *mut u8, n: *mut i32) -> usize;
     fn WSAPoll(fds: *mut Poll, n: u32, ms: i32) -> i32;
+    fn gethostname(name: *mut u8, n: i32) -> i32;
 }
 
 /// `WSAPOLLFD`: the socket, then what to wait for and what came.
@@ -358,15 +359,39 @@ impl Serve for Net {
         Some(s)
     }
 
-    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<usize> {
-        let s = unsafe { accept(*listener, null_mut(), null_mut()) };
+    fn accept(&mut self, listener: &mut usize, ms: u64) -> Option<(usize, [u8; 4])> {
+        let (mut from, mut n) = ([0u8; 16], 16i32);
+        let s = unsafe { accept(*listener, from.as_mut_ptr(), &mut n) };
         if s == usize::MAX {
             return None;
         }
         for option in [0x1006, 0x1005] {
             unsafe { setsockopt(s, 0xFFFF, option, &(ms.min(u32::MAX as u64) as u32), 4) };
         }
-        Some(s)
+        Some((s, [from[4], from[5], from[6], from[7]]))
+    }
+
+    /// The IPv4 addresses of this computer's own name: Windows gives every adapter's, without
+    /// their names.
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])> {
+        let mut name = [0u8; 256];
+        let mut found = Vec::new();
+        if unsafe { gethostname(name.as_mut_ptr(), 256) } != 0 {
+            return found;
+        }
+        let hints = AddrInfo { flags: 0, family: 2, socktype: SOCK_STREAM, protocol: 0, addrlen: 0, canonname: null(), addr: null(), next: null_mut() };
+        let mut list = null_mut();
+        if unsafe { getaddrinfo(name.as_ptr(), null(), &hints, &mut list) } != 0 {
+            return found;
+        }
+        let mut at = list;
+        while let Some(i) = unsafe { at.as_ref() } {
+            let ip = unsafe { core::slice::from_raw_parts(i.addr.add(4), 4) };
+            found.push((String::new(), [ip[0], ip[1], ip[2], ip[3]]));
+            at = i.next;
+        }
+        unsafe { freeaddrinfo(list) };
+        found
     }
 
     /// `WSAPoll` without a time limit, POLLRDNORM (it refuses POLLIN's other half).

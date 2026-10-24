@@ -1,0 +1,15 @@
+// `log(…)` (tests/kova.rs `server_log`): the port, then `off` (nothing written; the first question
+// stops it) or `start` (only the addresses).
+fn main {
+    let port: Int? := args[0].to_int
+    if port = none {
+        return
+    }
+    if args[1] = "off" {
+        serve(port) log(Log.Off) { q: Request =>
+            exit(0)
+            Answer.status(500)
+        }
+    }
+    serve_files("tests/web/site") at(port) log(Log.Start)
+}

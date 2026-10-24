@@ -890,7 +890,17 @@ fn server() {
             if end.status.code() != Some(0) {
                 failures.push(format!("{mode}: ended with {:?}: {}", end.status, text(&end.stderr)));
             }
-            alive.push(text(&end.stderr));
+            // What it said: the address when it started, a line per question, then what is alive.
+            let said = text(&end.stderr);
+            let start = format!("\u{2713} Serving on port {port}\n  http://localhost:{port}/    this computer only\n  Stop with Ctrl+C\n");
+            if !said.starts_with(&start) {
+                failures.push(format!("{mode}: when it starts: {said:?}"));
+            }
+            let book = said.lines().find(|l| l.ends_with("  127.0.0.1  GET /book  200"));
+            if book.is_none_or(|l| l.len() != "12:00:00  127.0.0.1  GET /book  200".len()) || !said.contains("  GET /../Cargo.toml  404\n") {
+                failures.push(format!("{mode}: the questions written: {said:?}"));
+            }
+            alive.push(said.lines().last().unwrap_or("").to_string());
         }
         if alive[0] != alive[1] || !alive[0].starts_with("alive: ") {
             failures.push(format!("{mode}: what is alive grows with the questions: {alive:?}"));
@@ -898,6 +908,52 @@ fn server() {
     }
     let _ = std::fs::remove_file(&exe);
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
+/// `log(Log.Off)` writes nothing, `log(Log.Start)` only the addresses (PLAN Part 4 "The web
+/// server, what it says"), in run and in build.
+#[test]
+fn server_log() {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    let source = "tests/web/quiet.kova";
+    let exe = std::env::temp_dir().join(format!("kova-quiet-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let mut failures = vec![];
+    for mode in ["run", "build"] {
+        for log in ["off", "start"] {
+            let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+            let mut c = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
+            if mode == "run" {
+                c.arg("run").arg(source);
+            }
+            let mut child = c.arg(port.to_string()).arg(log).stderr(std::process::Stdio::piped()).spawn().unwrap();
+            let mut answered = false;
+            for _ in 0..400 {
+                if let Ok(mut link) = TcpStream::connect(("127.0.0.1", port)) {
+                    link.write_all(b"GET /style.css HTTP/1.1\r\n\r\n").unwrap();
+                    let _ = link.read_to_end(&mut vec![]);
+                    answered = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            if log == "start" {
+                let _ = child.kill();
+            }
+            let end = child.wait_with_output().unwrap();
+            let want = match log {
+                "off" => String::new(),
+                _ => format!("\u{2713} Serving tests/web/site/ on port {port}\n  http://localhost:{port}/    this computer only\n  Stop with Ctrl+C\n"),
+            };
+            if !answered || text(&end.stderr) != want {
+                failures.push(format!("{mode}, {log}: {:?}", text(&end.stderr)));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&exe);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
 }
 
 /// `serve_network` answers on the computer's own network address, `serve` does not (PLAN Part 4

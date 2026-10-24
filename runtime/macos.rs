@@ -47,6 +47,8 @@ mod c {
         pub fn listen(fd: i32, backlog: i32) -> i32;
         pub fn accept(fd: i32, address: *mut u8, n: *mut u32) -> i32;
         pub fn poll(fds: *mut [i32; 2], n: u32, ms: i32) -> i32;
+        pub fn getifaddrs(list: *mut *mut super::IfAddrs) -> i32;
+        pub fn freeifaddrs(list: *mut super::IfAddrs);
     }
 }
 
@@ -243,8 +245,9 @@ impl Serve for Net {
         Some(fd)
     }
 
-    fn accept(&mut self, listener: &mut i32, ms: u64) -> Option<i32> {
-        let fd = unsafe { c::accept(*listener, core::ptr::null_mut(), core::ptr::null_mut()) };
+    fn accept(&mut self, listener: &mut i32, ms: u64) -> Option<(i32, [u8; 4])> {
+        let (mut from, mut n) = ([0u8; 16], 16u32);
+        let fd = unsafe { c::accept(*listener, from.as_mut_ptr(), &mut n) };
         if fd < 0 {
             return None;
         }
@@ -254,7 +257,28 @@ impl Serve for Net {
         for option in [0x1006, 0x1005] {
             unsafe { c::setsockopt(fd, 0xFFFF, option, limit.as_ptr() as *const i32, 16) };
         }
-        Some(fd)
+        Some((fd, [from[4], from[5], from[6], from[7]]))
+    }
+
+    /// `getifaddrs`: each address with its interface's name; a BSD `sockaddr` starts with its
+    /// length, then its family (2 = IPv4).
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])> {
+        let mut list = core::ptr::null_mut();
+        let mut found = Vec::new();
+        if unsafe { c::getifaddrs(&mut list) } != 0 {
+            return found;
+        }
+        let mut at = list;
+        while let Some(i) = unsafe { at.as_ref() } {
+            if !i.addr.is_null() && unsafe { *i.addr.add(1) } == 2 {
+                let ip = unsafe { core::slice::from_raw_parts(i.addr.add(4), 4) };
+                let name = unsafe { core::ffi::CStr::from_ptr(i.name) }.to_string_lossy().into_owned();
+                found.push((name, [ip[0], ip[1], ip[2], ip[3]]));
+            }
+            at = i.next;
+        }
+        unsafe { c::freeifaddrs(list) };
+        found
     }
 
     /// `poll` without a time limit, as runtime/linux.rs: `struct pollfd`, POLLIN.
@@ -265,6 +289,15 @@ impl Serve for Net {
         }
         fds.iter().map(|p| p[1] >> 16 != 0).collect()
     }
+}
+
+/// The first fields of `struct ifaddrs`.
+#[repr(C)]
+pub struct IfAddrs {
+    next: *mut IfAddrs,
+    name: *const core::ffi::c_char,
+    flags: u32,
+    addr: *const u8,
 }
 
 /// Like `cut` in src/web.rs.

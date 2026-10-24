@@ -342,11 +342,15 @@ pub trait Serve: Network {
     /// Listens on `port` of 127.0.0.1, or of every address (0.0.0.0) for `everyone`; `None` if the
     /// port is taken or not allowed.
     fn listen(&mut self, port: u16, everyone: bool) -> Option<Self::Listener>;
-    /// The next connection, each `send` and `receive` limited to `ms` milliseconds.
-    fn accept(&mut self, listener: &mut Self::Listener, ms: u64) -> Option<Self::Link>;
+    /// The next connection and the address it comes from, each `send` and `receive` limited to
+    /// `ms` milliseconds.
+    fn accept(&mut self, listener: &mut Self::Listener, ms: u64) -> Option<(Self::Link, [u8; 4])>;
     /// Waits until `links` or the listener can be read (`poll`): one flag per link, then the
     /// listener's. All false if the wait was cut short.
     fn ready(&mut self, listener: &Self::Listener, links: &[Self::Link]) -> Vec<bool>;
+    /// This computer's IPv4 addresses, each with its interface's name ("" if the system does not
+    /// say).
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])>;
 }
 
 /// How long an answer may take to leave: a program that does not read must not stop the server.
@@ -363,11 +367,14 @@ pub struct Server<S: Serve> {
     listener: S::Listener,
     links: Vec<S::Link>,
     got: Vec<Vec<u8>>,
+    from: Vec<[u8; 4]>,
+    /// A line is written for each question answered (`Log.All`).
+    pub logs: bool,
 }
 
 impl<S: Serve> Server<S> {
-    pub fn new(listener: S::Listener) -> Self {
-        Server { listener, links: Vec::new(), got: Vec::new() }
+    pub fn new(listener: S::Listener, logs: bool) -> Self {
+        Server { listener, links: Vec::new(), got: Vec::new(), from: Vec::new(), logs }
     }
 }
 
@@ -383,7 +390,7 @@ pub struct Question {
 
 /// Waits for the next question that can be read, from whichever connection sends it first. The
 /// others are answered here (400, 413…) and closed: the program never sees them.
-pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link, Question) {
+pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link, Question, [u8; 4]) {
     let mut buffer = alloc::vec![0u8; 16384];
     loop {
         let ready = net.ready(&server.listener, &server.links);
@@ -401,8 +408,9 @@ pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link,
             }
             let mut link = server.links.remove(i);
             server.got.remove(i);
+            let from = server.from.remove(i);
             match parsed {
-                Ok(Some(q)) => return (link, q),
+                Ok(Some(q)) => return (link, q, from),
                 Err(Some(status)) => {
                     let text = status_text(status);
                     let _ = net.send(&mut link, &answer_bytes(status, &[("content-type", "text/plain; charset=utf-8")], text.as_bytes()));
@@ -412,13 +420,15 @@ pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link,
             net.close(link);
         }
         if ready.last() == Some(&true) {
-            if let Some(link) = net.accept(&mut server.listener, SERVER_MS) {
+            if let Some((link, from)) = net.accept(&mut server.listener, SERVER_MS) {
                 if server.links.len() == WAITING {
                     net.close(server.links.remove(0));
                     server.got.remove(0);
+                    server.from.remove(0);
                 }
                 server.links.push(link);
                 server.got.push(Vec::new());
+                server.from.push(from);
             }
         }
     }
@@ -492,7 +502,8 @@ pub fn answer_bytes(status: i64, headers: &[(&str, &str)], body: &[u8]) -> Vec<u
 
 /// Sends `serve`'s answer on `link`, then closes it. A file (`Answer.file`) is read now, its
 /// `content-type` found by its extension unless the program gave one; `read` reads it.
-pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &[(&str, &str)], body: &str, file: &str, read: impl Fn(&str) -> Option<Vec<u8>>) {
+/// Returns the status sent (a 500 if the answer could not be sent as it was).
+pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &[(&str, &str)], body: &str, file: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> i64 {
     let bytes = if file.is_empty() {
         answer_bytes(status, headers, body.as_bytes())
     } else if let Some(content) = read(file) {
@@ -506,6 +517,49 @@ pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &
     };
     let _ = net.send(&mut link, &bytes);
     net.close(link);
+    // `HTTP/1.1 200 …`: always three digits (`answer_bytes`).
+    core::str::from_utf8(&bytes[9..12]).ok().and_then(|s| s.parse().ok()).unwrap_or(500)
+}
+
+/// `public` → `public/`: a folder, as `serve_files` names it when it starts.
+pub fn shown_folder(folder: &str) -> String {
+    if folder.ends_with('/') || folder.ends_with('\\') { folder.to_string() } else { format!("{folder}/") }
+}
+
+/// The words of the lines `serve` writes when it starts, in the language of whoever runs it.
+pub struct Said<'a> {
+    /// `Serving on port 8080`, or `Serving public/ on port 8080`.
+    pub title: &'a str,
+    pub this_computer: &'a str,
+    pub this_network: &'a str,
+    pub stop: &'a str,
+}
+
+/// What `serve` writes when it starts (PLAN Part 4 "The web server, what it says"): the addresses
+/// to open, each with who can use it. `addresses` is `Serve::addresses`, read only for `everyone`.
+pub fn banner(port: u16, everyone: bool, addresses: &[(String, [u8; 4])], said: &Said) -> String {
+    let mut rows = alloc::vec![(format!("http://localhost:{port}/"), said.this_computer.to_string())];
+    // ponytail: interfaces only this computer reaches are known by their names (Docker, VMs); on
+    // Windows, which gives no names, they are shown.
+    let inside = ["docker", "br-", "veth", "virbr", "lxc", "podman", "cni", "vmnet", "bridge", "vboxnet"];
+    for (_, ip) in addresses.iter().filter(|(name, ip)| everyone && ip[0] != 127 && !inside.iter().any(|i| name.starts_with(i))) {
+        // 100.64.0.0/10: the addresses Tailscale gives.
+        let who = if ip[0] == 100 && ip[1] & 0xC0 == 64 { "Tailscale" } else { said.this_network };
+        rows.push((format!("http://{}.{}.{}.{}:{port}/", ip[0], ip[1], ip[2], ip[3]), who.to_string()));
+    }
+    let width = rows.iter().map(|(url, _)| url.len()).max().unwrap_or(0) + 4;
+    let mut out = format!("\u{2713} {}\n", said.title);
+    for (url, who) in rows {
+        out += &format!("  {url:width$}{who}\n");
+    }
+    out + "  " + said.stop + "\n"
+}
+
+/// The line `serve` writes for each question answered: its local time (seconds since 1970, wall
+/// clock), who asked, what, and the status sent.
+pub fn logged(now: i64, from: [u8; 4], method: &str, url: &str, status: i64) -> String {
+    let t = now.rem_euclid(86400);
+    format!("{:02}:{:02}:{:02}  {}.{}.{}.{}  {method} {url}  {status}\n", t / 3600, t / 60 % 60, t % 60, from[0], from[1], from[2], from[3])
 }
 
 /// What `Answer.status(404)` says: `404 Not Found`.

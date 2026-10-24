@@ -73,11 +73,66 @@ impl Serve for System {
         TcpListener::bind((if everyone { "0.0.0.0" } else { "127.0.0.1" }, port)).ok()
     }
 
-    fn accept(&mut self, listener: &mut TcpListener, ms: u64) -> Option<TcpStream> {
-        let (s, _) = listener.accept().ok()?;
+    fn accept(&mut self, listener: &mut TcpListener, ms: u64) -> Option<(TcpStream, [u8; 4])> {
+        let (s, from) = listener.accept().ok()?;
         let limit = Some(std::time::Duration::from_millis(ms));
         s.set_read_timeout(limit).and_then(|()| s.set_write_timeout(limit)).ok()?;
-        Some(s)
+        let from = match from.ip() {
+            std::net::IpAddr::V4(ip) => ip.octets(),
+            std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or([0; 4], |ip| ip.octets()),
+        };
+        Some((s, from))
+    }
+
+    /// As the runtime finds them: `getifaddrs` on Linux and macOS (the runtime asks Linux
+    /// directly), the addresses of this computer's name on Windows.
+    #[cfg(unix)]
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])> {
+        #[repr(C)]
+        struct IfAddrs {
+            next: *mut IfAddrs,
+            name: *const std::ffi::c_char,
+            flags: u32,
+            addr: *const u8,
+        }
+        unsafe extern "C" {
+            fn getifaddrs(list: *mut *mut IfAddrs) -> i32;
+            fn freeifaddrs(list: *mut IfAddrs);
+        }
+        // Where a `sockaddr` says its family (2 = IPv4): Linux's is 2 bytes first, BSD's comes
+        // after a length byte.
+        let family = if cfg!(target_os = "macos") { 1 } else { 0 };
+        let mut list = std::ptr::null_mut();
+        let mut found = vec![];
+        if unsafe { getifaddrs(&mut list) } != 0 {
+            return found;
+        }
+        let mut at = list;
+        while let Some(i) = unsafe { at.as_ref() } {
+            if !i.addr.is_null() && unsafe { *i.addr.add(family) } == 2 {
+                let ip = unsafe { std::slice::from_raw_parts(i.addr.add(4), 4) };
+                let name = unsafe { std::ffi::CStr::from_ptr(i.name) }.to_string_lossy().into_owned();
+                found.push((name, [ip[0], ip[1], ip[2], ip[3]]));
+            }
+            at = i.next;
+        }
+        unsafe { freeifaddrs(list) };
+        found
+    }
+
+    #[cfg(windows)]
+    fn addresses(&mut self) -> Vec<(String, [u8; 4])> {
+        #[link(name = "ws2_32")]
+        unsafe extern "system" {
+            fn gethostname(name: *mut u8, n: i32) -> i32;
+        }
+        let mut name = [0u8; 256];
+        if unsafe { gethostname(name.as_mut_ptr(), 256) } != 0 {
+            return vec![];
+        }
+        let name = String::from_utf8_lossy(&name[..name.iter().position(|&b| b == 0).unwrap_or(0)]).into_owned();
+        let found = (name.as_str(), 0).to_socket_addrs().map(|a| a.collect::<Vec<_>>()).unwrap_or_default();
+        found.into_iter().filter_map(|a| if let std::net::IpAddr::V4(ip) = a.ip() { Some((String::new(), ip.octets())) } else { None }).collect()
     }
 
     fn ready(&mut self, listener: &TcpListener, links: &[TcpStream]) -> Vec<bool> {

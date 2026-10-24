@@ -56,6 +56,12 @@ lang en {
     fault_bad_date := "this date does not exist: year 1 to 9999, month 1 to 12, a day of that month (February 29 only in a leap year)"
     fault_bad_time := "this time does not exist: hour 0 to 23, minute and second 0 to 59"
     fault_cannot_serve := "cannot serve on this port: another program has it, or it is not allowed (below 1024 on Linux and macOS)"
+    serving := "Serving on port {port}"
+    serving_files := "Serving {folder} on port {port}"
+    this_computer := "this computer"
+    this_computer_only := "this computer only"
+    this_network := "this network"
+    stop_with_ctrl_c := "Stop with Ctrl+C"
 
     // ---- Lexer ----
     comment_unclosed := "`/*` comment never closed"
