@@ -926,6 +926,14 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
     for word in ["true", "false", "none", "break", "continue", "else"] {
         items.push(CompletionItem { label: word.into(), kind: Some(CompletionItemKind::KEYWORD), ..Default::default() });
     }
+    // `import ` then opens the list of modules and files at once, instead of a placeholder to type over.
+    items.push(CompletionItem {
+        label: "import".into(),
+        kind: Some(CompletionItemKind::KEYWORD),
+        insert_text: Some("import ".into()),
+        command: Some(Command::new(String::new(), "editor.action.triggerSuggest".into(), None)),
+        ..Default::default()
+    });
     for f in &file.functions {
         items.push(CompletionItem {
             label: f.name.text.clone(),
@@ -1428,6 +1436,9 @@ mod tests {
         let src = "import geometry\nimport ";
         assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
+        // Tab on `import` writes `import ` and opens the list again.
+        let item = complete("imp", 3).into_iter().find(|i| i.label == "import").unwrap();
+        assert_eq!((item.insert_text.as_deref(), item.command.map(|c| c.command)), (Some("import "), Some("editor.action.triggerSuggest".into())));
     }
 
     const SHAPES: &str = "enum S { C(radius: Float), D, E }\nfn main {\n    let s := S.D\n    match s {\n        D => {}\n    }\n}\n";

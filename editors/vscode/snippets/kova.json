@@ -109,11 +109,6 @@
     "body": ["print(\"${1}\")"],
     "description": "Afficher (avec retour à la ligne)"
   },
-  "import": {
-    "prefix": "import",
-    "body": ["import ${1:module}"],
-    "description": "Utiliser un autre fichier .kova"
-  },
   "return": {
     "prefix": "return",
     "body": ["return ${0}"],
