@@ -427,6 +427,8 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// `[12, 5, 18]`: a new List.
     List(Vec<Expr>),
+    /// `Set["a", "b"]`: a new Set (`Set[]` is typed by where it goes).
+    SetLit(Vec<Expr>),
     /// `["Rex" := 3, "Fido" := 5]`: a new Map (`[]` is an empty one, typed by where it goes).
     MapLit(Vec<(Expr, Expr)>),
     /// `List<Int>()`: a new empty List of this type.

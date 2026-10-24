@@ -821,7 +821,7 @@ impl Owner<'_> {
                 }
             }
             // A new List owns its elements; a new Map, its keys and values.
-            ExprKind::List(elems) => elems.iter().for_each(|x| self.give(x)),
+            ExprKind::List(elems) | ExprKind::SetLit(elems) => elems.iter().for_each(|x| self.give(x)),
             ExprKind::MapLit(pairs) => pairs.iter().for_each(|(k, v)| {
                 self.give(k);
                 self.give(v);

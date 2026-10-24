@@ -6,7 +6,7 @@ fn main {
     let waited: Float := now - start
     print(waited >= 0.04 && waited < 5.0)
     sleep(-1.0)
-    var seen: Set<Int> := []
+    var seen: Set<Int> := Set[]
     var inside: Bool := true
     for i in 0..2000 {
         let d: Int := random(1..=6)

@@ -34,7 +34,7 @@ fn main {
     print(Tree<Int>.Node(2, leaf, leaf) = Tree<Int>.Node(2, leaf, Tree<Int>.Node(1, leaf, leaf)))
     print(Pair<Int> { a := 1, b := 2 } = Pair<Int> { a := 2, b := 1 })
     print(Pair<Int> { a := 1, b := 2 } = Pair<Int> { a := 2, b := 2 })
-    let seen: Set<Verdict<Int>> := [a, b]
+    let seen: Set<Verdict<Int>> := Set[a, b]
     print(seen.length)
     let m: Map<Pair<String>, Int> := [Pair<String> { a := "x", b := "y" } := 7]
     print(m[Pair<String> { a := "y", b := "x" }])

@@ -35,7 +35,7 @@ fn main {
     print(squares.length)
     print(squares[-5])
     // Keys far from each other: spread out by `hash` too.
-    var far: Set<Int> := []
+    var far: Set<Int> := Set[]
     for i in 0..3000 {
         far.add(i * 1024)
     }
@@ -53,12 +53,12 @@ fn main {
     print(words)
     var ages: Map<Dog, Int> := [Dog { name := "Rex", age := 2 } := 2]
     print(ages[Dog { name := "Rex", age := 1 }])
-    var pets: Set<Pet?> := [Pet.Cat("Tom"), none, Pet.Fish, Pet.Cat("Tom")]
+    var pets: Set<Pet?> := Set[Pet.Cat("Tom"), none, Pet.Fish, Pet.Cat("Tom")]
     print(pets.length)
     print(pets.contains(Pet.Cat("Tom")))
     print(pets.contains(Pet.Cat("Felix")))
     print(pets.contains(none))
-    var seen: Set<(Int, String)> := []
+    var seen: Set<(Int, String)> := Set[]
     for i in 0..2000 {
         seen.add((i % 700, "n"))
     }

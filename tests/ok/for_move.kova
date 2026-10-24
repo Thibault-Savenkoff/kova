@@ -63,7 +63,7 @@ fn main {
         pack.add(move d)
     }
     print(pack.length)
-    let seen: Set<String> := ["x", "y"]
+    let seen: Set<String> := Set["x", "y"]
     var all: List<String> := []
     for s in move seen {
         all.add(move s)

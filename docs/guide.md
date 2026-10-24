@@ -231,8 +231,8 @@ fn main {
         print("{name}: {age}")
     }
 
-    let seen: Set<String> := ["red", "blue", "red"]
-    print(seen.length)
+    let seen: Set<String> := Set["red", "blue", "red"]
+    print(seen)
 }
 ```
 
@@ -245,9 +245,10 @@ none
 Ana: 31
 Bo: 25
 Cy: 40
-2
+Set["red", "blue"]
 ```
 
+- `[…]` is a List, `[k := v]` a Map, `Set[…]` a Set (each value once, in the order added).
 - `for s in var scores` changes each element; `for s in move scores` takes them (the List is used up).
 - `ages["Zed"]` is an `Int?`: there may be no value (see section 10).
 

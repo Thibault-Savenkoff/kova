@@ -1091,7 +1091,7 @@ fn in_expr(e: &Expr, cursor: usize, vars: &mut Vec<(String, String)>) {
                 visible(&arm.body, cursor, vars);
             }
         }
-        ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } | ExprKind::Tuple(args) | ExprKind::List(args) => {
+        ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } | ExprKind::Tuple(args) | ExprKind::List(args) | ExprKind::SetLit(args) => {
             each(&mut args.iter())
         }
         ExprKind::Method { receiver, args, .. } => each(&mut std::iter::once(&**receiver).chain(args)),

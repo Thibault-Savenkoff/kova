@@ -51,7 +51,7 @@ fn main {
     print(a)
     let m: Map<A, Int> := [a.clone := 1]
     print(m[a])
-    let set: Set<A> := [a.clone, a.clone]
+    let set: Set<A> := Set[a.clone, a.clone]
     print(set.length)
 }
 // expect: [1, 2, 3, 4, 5, 6, 7, 8, 9]

@@ -2385,9 +2385,16 @@ impl Checker<'_> {
             self.types[e.id] = expected.clone();
             return;
         }
-        // `["a", "b"]` where a `Set<String>` is expected.
+        // `Set["a", "b"]` where a `Set<String>` is expected.
+        if let (ExprKind::SetLit(elems), Type::Set(t)) = (&e.kind, expected) {
+            elems.iter().for_each(|x| self.expect(x, t));
+            self.types[e.id] = expected.clone();
+            return;
+        }
+        // `["a", "b"]` makes a List, even where a Set is expected: the reader sees which it is.
         if let (ExprKind::List(elems), Type::Set(t)) = (&e.kind, expected) {
             elems.iter().for_each(|x| self.expect(x, t));
+            self.diags.push(Diag::new(e.span, t!("set_written")).help(t!("set_written_help")));
             self.types[e.id] = expected.clone();
             return;
         }
@@ -2438,7 +2445,7 @@ impl Checker<'_> {
                 return;
             }
             // Typed by where they go: `[]`, `2` as a Float.
-            if matches!(e.kind, ExprKind::List(_) | ExprKind::MapLit(_) | ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
+            if matches!(e.kind, ExprKind::List(_) | ExprKind::SetLit(_) | ExprKind::MapLit(_) | ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
                 self.expect(e, inner);
                 self.wraps[e.id] = true;
                 return;
@@ -3596,6 +3603,15 @@ impl Checker<'_> {
                 }
                 others.iter().for_each(|x| self.expect(x, &t));
                 if t == Type::Error { Type::Error } else { Type::List(Box::new(t)) }
+            }
+            ExprKind::SetLit(elems) => {
+                let Some((first, others)) = elems.split_first() else {
+                    self.diags.push(Diag::new(e.span, t!("empty_set_type")).help(t!("empty_set_type_help")));
+                    return Type::Error;
+                };
+                let t = self.expr(first);
+                others.iter().for_each(|x| self.expect(x, &t));
+                if t == Type::Error { Type::Error } else { Type::Set(Box::new(t)) }
             }
             ExprKind::MapLit(pairs) => {
                 let (k, v) = (self.expr(&pairs[0].0), self.expr(&pairs[0].1));

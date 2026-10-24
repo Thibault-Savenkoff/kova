@@ -1,12 +1,12 @@
 fn main {
-    let a: Set<Float> := []
-    let b: Set<Int, Int> := []
-    let s: Set<Int> := [1, 2]
+    let a: Set<Float> := Set[]
+    let b: Set<Int, Int> := Set[]
+    let s: Set<Int> := Set[1, 2]
     print(s = s)
     s.push(3)
     s.add(3)
     let c: Set<Int> := Set.make
-    let d: Set<Int> := [true]
+    let d: Set<Int> := Set[true]
 }
 // error: `Float` cannot be in a Set: a Set finds its values with `=`
 // error: `Set` takes one type, not 2: `Set<String>`

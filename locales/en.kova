@@ -306,6 +306,10 @@ lang en {
 
     // ---- Lists (J3) ----
     list_one_type := "`List` takes one type, not {count}: `List<Int>`"
+    set_written := "`[…]` makes a List: a Set is written `Set[…]`"
+    set_written_help := "for example `Set[\"a\", \"b\"]`, or `Set[]` for an empty one"
+    empty_set_type := "`Set[]` needs a type to receive it"
+    empty_set_type_help := "for example `let seen: Set<String> := Set[]`"
     empty_list_type := "an empty list needs its type"
     empty_list_type_help := "put it where its type is written (`let l: List<Int> := []`), or write `List<Int>()`"
     new_not_generic := "`()` only makes an empty `List<T>`: `{type}` is made with its fields"

@@ -1,0 +1,6 @@
+fn main {
+    let s: Set<Int> := [1, 2]
+    print(Set[])
+}
+// error: `[…]` makes a List: a Set is written `Set[…]`
+// error: `Set[]` needs a type to receive it

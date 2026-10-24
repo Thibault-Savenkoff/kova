@@ -991,7 +991,8 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Str(joined, StrOp::Join, vec![parts, sep]));
                 self.emit(Inst::Free(sep));
                 self.free_value(&[parts], &Type::List(Box::new(Type::String)));
-                let text = self.text("[");
+                // A Set is shown as it is written: `Set["a", "b"]`.
+                let text = self.text(if matches!(ty, Type::Set(_)) { "Set[" } else { "[" });
                 self.append(text, joined);
                 let close = self.text("]");
                 self.append(text, close);
@@ -4114,13 +4115,13 @@ impl<'a> Translator<'a> {
                 self.track(&[l], &ty);
                 vec![l]
             }
-            // `["a", "b"]` or `Set<String>()`: added one after the other, a value given twice is kept once.
-            ExprKind::List(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Set(_)) => {
+            // `Set["a", "b"]` or `Set<String>()`: added one after the other, a value given twice is kept once.
+            ExprKind::SetLit(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Set(_)) => {
                 let ty = self.ty(e);
                 let Type::Set(elem) = &ty else { unreachable!() };
                 let l = self.int_local();
                 self.emit(Inst::ListNew(l, scalars(elem).len()));
-                if let ExprKind::List(elems) = &e.kind {
+                if let ExprKind::SetLit(elems) = &e.kind {
                     for x in elems {
                         let v = self.owned(x);
                         self.set_add(l, &v, elem);
@@ -4129,6 +4130,7 @@ impl<'a> Translator<'a> {
                 self.track(&[l], &ty);
                 vec![l]
             }
+            ExprKind::SetLit(_) => unreachable!("a Set, checked by the type checker"),
             // Written one after the other: a key given twice keeps its last value.
             ExprKind::MapLit(pairs) => {
                 let ty = self.ty(e);
@@ -5001,7 +5003,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names));
         }
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => names_in(x, names),
-        ExprKind::List(elems) => elems.iter().for_each(|a| names_in(a, names)),
+        ExprKind::List(elems) | ExprKind::SetLit(elems) => elems.iter().for_each(|a| names_in(a, names)),
         ExprKind::MapLit(pairs) => pairs.iter().for_each(|(k, v)| {
             names_in(k, names);
             names_in(v, names);

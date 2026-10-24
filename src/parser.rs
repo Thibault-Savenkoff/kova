@@ -1802,6 +1802,20 @@ impl Parser<'_> {
 
     /// An expression starting with a type name: `Dog { name := "Rex" }`.
     fn type_atom(&mut self) -> R<Expr> {
+        // `Set["a", "b"]`: written apart from a List (PLAN Part 4 "Sets written `Set[…]`").
+        if self.text(self.token().span) == "Set" && self.kind_at(1) == Kind::Sym("[") {
+            let start = self.advance().span;
+            self.advance(); // [
+            let mut elems = vec![];
+            while !self.is_sym("]") {
+                elems.push(self.inner_expr()?);
+                if !self.is_sym("]") {
+                    self.expect(",")?;
+                }
+            }
+            let end = self.advance().span;
+            return Ok(self.expr(start.to(end), ExprKind::SetLit(elems)));
+        }
         let ty = self.type_name()?;
         // `Stack<Int>`: the type arguments, before `{`, `.` or the `()` of `List<Int>()`.
         let mut types = vec![];
