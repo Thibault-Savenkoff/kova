@@ -27,6 +27,8 @@ pub enum Fail {
     /// The site's certificate cannot be trusted: expired, self-signed, made for another name.
     BadCertificate,
     /// This system cannot encrypt (a Linux without OpenSSL).
+    // macOS always has Network.framework.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     NoHttps,
     /// A header Kova cannot send: a line break in it, or one Kova writes itself (`Host`…).
     BadHeader,

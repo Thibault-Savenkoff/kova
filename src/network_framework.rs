@@ -15,7 +15,10 @@ use crate::http::{Fail, Network};
 
 type P = *mut c_void;
 
+// A `Block` holds a pointer to `Shared`, which the framework never reads: it only gives the
+// block back to its `invoke`.
 #[link(name = "Network", kind = "framework")]
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn nw_endpoint_create_host(host: *const u8, port: *const u8) -> P;
     fn nw_parameters_create_secure_tcp(tls: *const Block, tcp: *const Block) -> P;
@@ -34,6 +37,7 @@ unsafe extern "C" {
 }
 
 // libSystem
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     static _NSConcreteStackBlock: u8;
     fn dispatch_queue_create(label: *const u8, attributes: P) -> P;
@@ -67,7 +71,7 @@ struct Descriptor {
 static DESCRIPTOR: Descriptor = Descriptor { reserved: 0, size: core::mem::size_of::<Block>() };
 
 fn block(invoke: *const c_void, shared: *const Shared) -> Block {
-    Block { isa: unsafe { &raw const _NSConcreteStackBlock }, flags: 0, reserved: 0, invoke, descriptor: &DESCRIPTOR, shared }
+    Block { isa: &raw const _NSConcreteStackBlock, flags: 0, reserved: 0, invoke, descriptor: &DESCRIPTOR, shared }
 }
 
 /// What the blocks write, from the framework's queue, for this thread.
