@@ -134,6 +134,16 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
         for c in &func.contracts {
             o.contract(c);
         }
+        match func.only.as_ref().map(|m| &m.otherwise) {
+            Some(Otherwise::Stop(parts)) => o.parts(parts.iter()),
+            // The value the call gives in the other mode; the body still has every parameter.
+            Some(Otherwise::Return(e)) => {
+                let before = o.state.clone();
+                o.give(e);
+                o.state = before;
+            }
+            _ => {}
+        }
         o.ensures = func.contracts.iter().filter(|c| c.kind == ContractKind::Ensure).collect();
         o.block(&func.body);
         if o.state.is_some() {

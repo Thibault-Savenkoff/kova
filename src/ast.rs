@@ -162,7 +162,28 @@ pub struct Function {
     pub breaks: Vec<usize>,
     pub ret: Option<TypeAst>,
     pub contracts: Vec<Contract>,
+    /// `mode build else skip` under the signature (PLAN 2.14).
+    pub only: Option<OnlyIn>,
     pub body: Block,
+}
+
+/// `mode build` or `mode run` under a function's signature: what the call does in the other mode.
+pub struct OnlyIn {
+    pub build: bool,
+    /// `mode build`, for the line of the message that stops the program.
+    pub span: Span,
+    pub otherwise: Otherwise,
+}
+
+pub enum Otherwise {
+    /// No `else`: the function runs in both modes, the user notices nothing.
+    Discreet,
+    /// `else "message"`: the program stops at the call.
+    Stop(Vec<Part>),
+    /// `else skip`: the call does nothing.
+    Skip,
+    /// `else return 0`: the call gives this value.
+    Return(Expr),
 }
 
 impl Function {

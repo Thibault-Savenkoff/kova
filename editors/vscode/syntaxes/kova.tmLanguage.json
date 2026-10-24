@@ -119,6 +119,19 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.contract.kova", "match": "\\b(require|ensure|check)\\b" },
+        {
+          "comment": "`mode build else skip` under a signature, `if mode = build`: `mode` is not a reserved word, only these forms count.",
+          "match": "\\b(mode)\\s*(?:(=|!=)\\s*)?(run|build)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.contract.kova" },
+            "2": { "name": "keyword.operator.comparison.kova" },
+            "3": { "name": "constant.language.mode.kova" }
+          }
+        },
+        {
+          "match": "\\b(else)\\s+(skip)\\b",
+          "captures": { "1": { "name": "keyword.control.kova" }, "2": { "name": "keyword.control.kova" } }
+        },
         { "name": "keyword.control.kova", "match": "\\b(if|else|while|for|in|from|to|match|return|break|continue)\\b" },
         {
           "match": "\\b(import)\\s+(\\w+)\\s+(as)\\b",

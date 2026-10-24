@@ -1,0 +1,33 @@
+// What a `mode build else …` gives in the other mode must fit the function.
+fn total -> Int
+    mode build else skip
+{
+    return 1
+}
+
+fn shown
+    mode run else return 3
+{
+    print("x")
+}
+
+fn named -> String
+    mode build else return 4
+{
+    return "x"
+}
+
+interface Animal {
+    fn sound(self) -> String
+        mode build
+}
+
+fn main {
+    print(total)
+    shown
+    print(named)
+}
+// error: `total` returns a value (`Int`): the call cannot be skipped without one
+// error: `shown` returns nothing
+// error: different types: `String` expected, `Int` given
+// error: `mode` on interface methods (`sound`) comes later

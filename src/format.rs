@@ -53,7 +53,11 @@ pub fn format(src: &str) -> Option<String> {
         // `public:` and `private:` stand out, like the `}`; the contracts under a function's
         // heading go one step further.
         let label = matches!(t.kind, Kind::Keyword("public" | "private"));
-        let contract = matches!(t.kind, Kind::Keyword("require" | "ensure"));
+        // (`mode build` too: `mode` followed by `run` or `build`).
+        let only = t.kind == Kind::Ident
+            && text(t) == "mode"
+            && tokens.get(k + 1).is_some_and(|n| n.kind == Kind::Ident && matches!(text(n), "run" | "build"));
+        let contract = matches!(t.kind, Kind::Keyword("require" | "ensure")) || only;
         let indent = match () {
             _ if closer || label => open.last().copied().unwrap_or(0),
             _ if continues => statement + 1,

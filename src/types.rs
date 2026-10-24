@@ -1223,6 +1223,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             if !m.contracts.is_empty() {
                 c.error(m.name.span, t!("interface_contract", name = name));
             }
+            if m.only.is_some() {
+                c.error(m.name.span, t!("interface_mode", name = name));
+            }
             if let Some(first) = seen.insert(name, m.name.span) {
                 let (line, _) = line_col(src, first.start);
                 c.error(m.name.span, t!("method_exists", name = name, type = it.name.text, line = line));
@@ -1818,6 +1821,9 @@ impl Checker<'_> {
             self.contract(k);
         }
         self.result = None;
+        if let Some(only) = &func.only {
+            self.only_in(&func.name.text, only);
+        }
         self.block(&func.body, vec![]);
         if self.ret != Type::Unit && !always_returns(&func.body) {
             self.diags.push(
@@ -2147,6 +2153,27 @@ impl Checker<'_> {
         self.expect(&k.cond, &Type::Bool);
         if let Some(m) = &k.message {
             self.parts(m);
+        }
+        self.in_contract = false;
+    }
+
+    /// `mode build else …`: what the call does in the other mode must fit the function.
+    fn only_in(&mut self, name: &str, only: &OnlyIn) {
+        self.in_contract = true;
+        let ret = self.ret.clone();
+        match &only.otherwise {
+            Otherwise::Discreet => {}
+            Otherwise::Stop(parts) => self.parts(parts),
+            Otherwise::Skip if !matches!(ret, Type::Unit | Type::Error) => {
+                let msg = t!("mode_skip_value", name = name, type = ret.text());
+                self.diags.push(Diag::new(only.span, msg).help(t!("mode_skip_value_help")));
+            }
+            Otherwise::Skip => {}
+            Otherwise::Return(e) if ret == Type::Unit => {
+                self.expr(e);
+                self.diags.push(Diag::new(e.span, t!("mode_return_nothing", name = name)).help(t!("mode_return_nothing_help")));
+            }
+            Otherwise::Return(e) => self.expect(e, &ret),
         }
         self.in_contract = false;
     }

@@ -84,6 +84,11 @@
     "body": ["ensure ${1:condition} else \"${2:message}\""],
     "description": "Contrat vérifié à la sortie (result = valeur renvoyée)"
   },
+  "mode build": {
+    "prefix": "mode",
+    "body": ["mode ${1|build,run|} else ${2|skip,\"message\",return value|}"],
+    "description": "Sous la signature : ce que fait l'appel dans l'autre mode (kova run / kova build)"
+  },
   "check": {
     "prefix": "check",
     "body": ["check ${1:condition} else \"${2:message}\""],

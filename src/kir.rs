@@ -33,7 +33,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKind, Match, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
+use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKind, Match, OnlyIn, Otherwise, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
@@ -619,10 +619,19 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     // (a test = a function without parameters, result or contracts).
     // The last element: what the `Type::Param`s stand for (`Self` in a struct's methods and in the
     // default methods it takes; `T` in a copy of a generic function).
-    type Source<'f> =
-        (String, Option<(Mode, Type)>, &'f [ast::Param], Option<&'f ast::TypeAst>, &'f [Contract], &'f Block, Vec<(String, Type)>);
+    // Then `mode build else …` (PLAN 2.14).
+    type Source<'f> = (
+        String,
+        Option<(Mode, Type)>,
+        &'f [ast::Param],
+        Option<&'f ast::TypeAst>,
+        &'f [Contract],
+        &'f Block,
+        Vec<(String, Type)>,
+        Option<&'f OnlyIn>,
+    );
     let free = |g: &'f ast::Function| -> Source<'f> {
-        (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, vec![])
+        (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, vec![], g.only.as_ref())
     };
     let mut all: Vec<Source> = f.functions.iter().filter(|g| g.generics.is_empty()).map(free).collect();
     // A generic function is translated once for each list of types it is called with
@@ -634,7 +643,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let method = |ty: &Type, owner: &str, m: &'f ast::Function| -> Source<'f> {
         let name = method_name(owner, &m.name.text);
         let me = vec![("Self".to_string(), ty.clone())];
-        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me)
+        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me, m.only.as_ref())
     };
     let mut generic = generic;
     for s in &f.structs {
@@ -669,10 +678,17 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         }
     }
     let n = all.len();
-    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![])));
+    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![], None)));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
+    // A `mode build` function under `kova run`: its `else` replaces its body and its contracts.
+    fn away(only: Option<&OnlyIn>, built: bool) -> Option<&OnlyIn> {
+        only.filter(|m| m.build != built)
+    }
     // The functions that receive the call location (`main` is called by the runtime).
-    let site = |g: &Source| contracts && !g.4.is_empty() && g.0 != "main";
+    let site = |g: &Source| {
+        let stops = matches!(away(g.7, built), Some(OnlyIn { otherwise: Otherwise::Stop(_), .. }));
+        g.0 != "main" && (stops || contracts && !g.4.is_empty() && away(g.7, built).is_none())
+    };
     let sites: Vec<bool> = all.iter().map(site).collect();
     let generic_sites: HashMap<&str, bool> = generic.iter().map(|(n, (g, _))| (n.as_str(), site(g))).collect();
     let helpers = RefCell::new(vec![]);
@@ -709,12 +725,13 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         envs: vec![],
         env_marks: vec![],
     };
-    let make = |(name, receiver, params, ret, written_contracts, body, subst): &Source<'f>, with_site: bool| {
+    let make = |(name, receiver, params, ret, written_contracts, body, subst, only): &Source<'f>, with_site: bool| {
             let mut structs = info.structs.clone();
             let subst = subst.clone();
             structs.extend(subst.iter().cloned());
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &structs));
-            let kept = |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && c.kind == k);
+            let away = away(*only, built);
+            let kept = move |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && away.is_none() && c.kind == k);
             let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect(), subst);
             t.owner = name.clone();
             let mut returns = scalars(&ret);
@@ -733,7 +750,15 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
             for c in kept(ContractKind::Require) {
                 t.check(c, t.site);
             }
-            t.block(body);
+            match away.map(|m| (m.span, &m.otherwise)) {
+                Some((span, Otherwise::Stop(parts))) => t.stop(span, parts, t.site),
+                Some((_, Otherwise::Skip)) => {}
+                Some((_, Otherwise::Return(e))) => {
+                    let v = t.owned(e);
+                    t.exit(v);
+                }
+                None | Some((_, Otherwise::Discreet)) => t.block(body),
+            }
             if ret == Type::Unit {
                 t.exit(vec![]);
             } else {
@@ -754,7 +779,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
                 subst.extend(g.6.iter().map(|(n, t)| (n.clone(), substitute(t, &subst))).collect::<Vec<_>>());
                 let receiver = g.1.as_ref().map(|(r, t)| (*r, substitute(t, &subst)));
                 let shown = format!("{name}<{}>", types.iter().map(Type::text).collect::<Vec<_>>().join(", "));
-                make(&(shown, receiver, g.2, g.3, g.4, g.5, subst), generic_sites[name.as_str()])
+                make(&(shown, receiver, g.2, g.3, g.4, g.5, subst, g.7), generic_sites[name.as_str()])
             }
             Helper::Block(k) => made.borrow_mut()[*k].take().expect("each block is made once"),
             h => translator(Type::Unit, vec![], vec![]).helper_function(h),
@@ -2793,6 +2818,33 @@ impl<'a> Translator<'a> {
         if !values.is_empty() {
             m.push(Piece::Text("\n".into()));
         }
+        self.called_from(site, &mut m);
+        // The program stops: the temporaries of the message are never freed.
+        self.temps.truncate(mark);
+        self.emit(Inst::Fail(m));
+        self.go(End::Unreachable, next);
+    }
+
+    /// `mode build else "message"` in the other mode: the call stops the program, like a
+    /// `require` that fails, with the clause shown under the message.
+    fn stop(&mut self, span: Span, parts: &[Part], site: Option<(Local, Local)>) {
+        let mark = self.temps.len();
+        let mut m = vec![Piece::Label("error_prefix")];
+        for p in parts {
+            self.part_pieces(p, &mut m);
+        }
+        let l = self.loc(span);
+        let clause = format!(":{}:{}\n  {}\n", l.line, l.col, &self.src[span.start..span.end]);
+        m.extend([Piece::Text("\n  --> ".into()), Piece::File(l.file), Piece::Text(clause)]);
+        self.called_from(site, &mut m);
+        self.temps.truncate(mark);
+        self.emit(Inst::Fail(m));
+        let dead = self.new_block();
+        self.go(End::Unreachable, dead);
+    }
+
+    /// `  called from main.kova:10:11`, for a function that receives its call's location.
+    fn called_from(&self, site: Option<(Local, Local)>, m: &mut Vec<Piece>) {
         if let Some((line, col)) = site {
             m.extend([
                 Piece::Text("  ".into()),
@@ -2803,10 +2855,6 @@ impl<'a> Translator<'a> {
                 Piece::Text("\n".into()),
             ]);
         }
-        // The program stops: the temporaries of the message are never freed.
-        self.temps.truncate(mark);
-        self.emit(Inst::Fail(m));
-        self.go(End::Unreachable, next);
     }
 
     /// A value the way it would be written in Kova: `3`, `2.5`, `'a'`, `(1, true)`,

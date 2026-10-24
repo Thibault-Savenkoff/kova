@@ -1,0 +1,6 @@
+// `fn main` itself may need `kova build`: under `kova run`, the program stops at once.
+fn main
+    mode build else "this program needs kova build"
+{
+    print("built")
+}

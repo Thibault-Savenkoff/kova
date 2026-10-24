@@ -1,0 +1,11 @@
+fn total -> Int
+    mode build
+    mode run else return 0
+{
+    return 1
+}
+
+fn main {
+    print(total)
+}
+// error: a function has one `mode` line

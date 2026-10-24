@@ -1049,12 +1049,22 @@ impl Parser<'_> {
         } else {
             None
         };
-        let mut contracts = vec![];
+        let (mut contracts, mut only) = (vec![], None);
         loop {
             self.skip_newlines();
             let kind = match self.kind() {
                 Kind::Keyword("require") => ContractKind::Require,
                 Kind::Keyword("ensure") => ContractKind::Ensure,
+                // `mode build` / `mode run`: `mode` is not a keyword (a variable may be called so).
+                Kind::Ident if self.text(self.token().span) == "mode" && self.kind_at(1) == Kind::Ident => {
+                    let span = self.token().span;
+                    let clause = self.only_in()?;
+                    if only.is_some() {
+                        self.diags.push(Diag::new(span.to(clause.span), t!("mode_twice")));
+                    }
+                    only = Some(clause);
+                    continue;
+                }
                 _ => break,
             };
             contracts.push(self.contract(kind)?);
@@ -1064,10 +1074,59 @@ impl Parser<'_> {
             self.bodiless = true;
             let at = self.token().span;
             let body = Block { open: at, stmts: vec![], close: at };
-            return Ok(Function { name, generics, receiver, params, breaks, ret, contracts, body });
+            return Ok(Function { name, generics, receiver, params, breaks, ret, contracts, only, body });
         }
         let body = self.block()?;
-        Ok(Function { name, generics, receiver, params, breaks, ret, contracts, body })
+        Ok(Function { name, generics, receiver, params, breaks, ret, contracts, only, body })
+    }
+
+    /// `mode build`, then `else "message"`, `else skip` or `else return value` (PLAN 2.14).
+    fn only_in(&mut self) -> R<OnlyIn> {
+        let start = self.advance().span; // mode
+        let t = self.token();
+        let build = match self.text(t.span).as_str() {
+            "build" => true,
+            "run" => false,
+            _ => {
+                let msg = t!("setting_bad_value", key = "mode", allowed = format!("`run` {} `build`", t!("word_or")), value = self.text(t.span));
+                return self.error(t.span, msg);
+            }
+        };
+        self.advance();
+        let span = start.to(t.span);
+        // `else` may be on the next line.
+        let before = self.pos;
+        self.skip_newlines();
+        if !self.is_keyword("else") {
+            self.pos = before;
+            return Ok(OnlyIn { build, span, otherwise: Otherwise::Discreet });
+        }
+        let at = self.advance().span; // else
+        let t = self.token();
+        let otherwise = match t.kind {
+            Kind::Str => {
+                self.advance();
+                Otherwise::Stop(self.text_parts(t))
+            }
+            Kind::Ident if self.text(t.span) == "skip" => {
+                self.advance();
+                Otherwise::Skip
+            }
+            Kind::Keyword("return") => {
+                self.advance();
+                if matches!(self.kind(), Kind::Newline | Kind::Sym("{") | Kind::Eof) {
+                    self.diags.push(Diag::new(at.to(t.span), t!("mode_bare_return")).help(t!("mode_bare_return_help")));
+                    return Err(());
+                }
+                Otherwise::Return(self.heading_expr()?)
+            }
+            _ => {
+                let msg = t!("mode_else_expected", found = self.describe());
+                self.diags.push(Diag::new(t.span, msg).help(t!("mode_else_help")));
+                return Err(());
+            }
+        };
+        Ok(OnlyIn { build, span, otherwise })
     }
 
     /// `require cond`, `ensure cond` or `check cond`, with an optional `else "message"`.

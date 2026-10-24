@@ -1,0 +1,10 @@
+fn total -> Int
+    mode build else return
+{
+    return 1
+}
+
+fn main {
+    print(total)
+}
+// error: `else return` needs the value the call gives

@@ -1,0 +1,48 @@
+// `mode build` / `mode run` under a signature (PLAN 2.14): in the other mode, the `else` acts.
+// Checked by `modes()` in tests/kova.rs: run and build print different lines.
+
+fn heavy(n: Int) -> Int
+    mode build
+{
+    return if mode = build { n * 2 } else { n * 2 + 1 }
+}
+
+fn fancy(s: move String)
+    mode build else skip
+{
+    print("built: {s}")
+}
+
+// Under `kova build`, the call gives 0 and the `ensure` is not checked.
+fn score(l: var List<Int>) -> Int
+    ensure result > 0
+    mode run else return 0
+{
+    l.add(4)
+    return l.length
+}
+
+fn label(n: Int) -> String?
+    mode build else return none
+{
+    return "build {n}"
+}
+
+fn native_only(n: Int) -> Int
+    require n > 0
+    mode build else "needs kova build, n = {n}"
+{
+    return n
+}
+
+fn main {
+    print(heavy(21))
+    let s: String := "rex"
+    fancy(move s)
+    var l: List<Int> := [1, 2, 3]
+    print(score(var l))
+    print(l)
+    print(label(7))
+    print(native_only(5))
+    print("end")
+}

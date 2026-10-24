@@ -6,6 +6,21 @@ import geometry as geo
 import shapes
 // <-- keyword.control.import.kova
 
+fn fancy(n: Int)
+    mode build else skip
+//  ^^^^ keyword.control.contract.kova
+//       ^^^^^ constant.language.mode.kova
+//                  ^^^^ keyword.control.kova
+{
+    if mode != run {
+//     ^^^^ keyword.control.contract.kova
+//          ^^ keyword.operator.comparison.kova
+//             ^^^ constant.language.mode.kova
+        let mode: Int := n
+//          ^^^^ - keyword.control.contract.kova
+    }
+}
+
 fn carré(x: Int) -> Int {
 // <-- storage.type.function.kova
 // ^^^^^ entity.name.function.kova
