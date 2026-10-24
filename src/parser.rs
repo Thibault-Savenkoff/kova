@@ -611,6 +611,10 @@ impl Parser<'_> {
 
     /// The parts of a `Str` token: `"a{x}b"` → the text `a`, the expression `x`, the text `b`.
     fn text_parts(&mut self, t: Token) -> Vec<Part> {
+        // `"""…"""`: as written, its errors already reported by the lexer.
+        if self.src[t.span.start..t.span.end].starts_with("\"\"\"") {
+            return vec![Part::Text(crate::lexer::raw_content(&self.src[t.span.start..t.span.end]).unwrap_or_default())];
+        }
         let start = t.span.start + 1;
         let end = if t.span.end > start && self.src[..t.span.end].ends_with('"') { t.span.end - 1 } else { t.span.end };
         let inner = &self.src[start..end.max(start)];

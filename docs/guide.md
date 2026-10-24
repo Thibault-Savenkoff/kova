@@ -132,7 +132,9 @@ a + b + c
 2026-10-23
 ```
 
-`{…}` inside a text puts a value in it.
+`{…}` inside a text puts a value in it. A raw text, between `"""`, keeps everything as written:
+quotes, braces and `\` (`"""{"title": "Dune"}"""`). On several lines, it starts on the line after
+its `"""`, and the closing `"""`, alone on its line, gives the indentation taken off every line.
 
 ## 6. Structs and methods
 
@@ -602,7 +604,8 @@ missing or `null` is `none`. A failure says where: `NotJson(line)`, `Missing(fie
 `WrongKind(field)`, the field written as a path (`author.name`, `tags[2]`). A text whose root is an
 array is read by `List<Book>.from_json(text)` and written by `books.to_json`; an object whose keys are
 not known before, by `Map<String, Book>.from_json(text)` and `shelf.to_json`. With the web:
-`Book.from_json(page.body)`. In a Kova text, a brace is written `\{`.
+`Book.from_json(page.body)`. In a Kova text, a brace is written `\{`, or the text is raw:
+`"""{"title": "Dune"}"""`.
 
 ## 18. A web server
 

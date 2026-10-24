@@ -121,3 +121,8 @@ fn grand(f: BigInt) -> BigInt {
 
 let vus: Set<String> := ["a"]
 //       ^^^ support.type.kova
+
+fn brut {
+    let j: String := """{"a": "{x}" \n}"""
+//                   ^^^^^^^^^^^^^^^^^^^^^ string.quoted.triple.kova
+}

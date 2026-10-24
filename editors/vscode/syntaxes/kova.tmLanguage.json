@@ -35,10 +35,15 @@
     },
 
     "strings": {
-      "name": "string.quoted.double.kova",
-      "begin": "\"",
-      "end": "\"",
-      "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
+      "patterns": [
+        { "name": "string.quoted.triple.kova", "begin": "\"\"\"", "end": "\"\"\"(?!\")" },
+        {
+          "name": "string.quoted.double.kova",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
+        }
+      ]
     },
     "escapes": {
       "patterns": [

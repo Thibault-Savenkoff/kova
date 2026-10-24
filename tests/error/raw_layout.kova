@@ -1,0 +1,9 @@
+fn main {
+    print("""
+  a
+    """)
+    print("""x
+    """)
+}
+// error: this line is less indented than the closing `"""`
+// error: a raw text on several lines starts on the line after its `"""`

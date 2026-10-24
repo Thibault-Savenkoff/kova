@@ -1,0 +1,4 @@
+fn main {
+    print("""never
+}
+// error: raw text never closed

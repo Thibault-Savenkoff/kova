@@ -146,7 +146,7 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
                 }
             }
         } else if c == '"' {
-            let (n, errors) = read_string(rest);
+            let (n, errors) = if rest.starts_with("\"\"\"") { read_raw(rest) } else { read_string(rest) };
             for (k, msg) in errors {
                 diags.push(Diag::new(Span::new(start + k, start + k + 1), msg));
             }
@@ -291,6 +291,48 @@ fn read_string(s: &str) -> (usize, Vec<(usize, String)>) {
     (n, errors)
 }
 
+/// `"""..."""` at the start of `s` (PLAN Part 4 "Raw texts"): its length, and the errors. It may
+/// hold quotes and line breaks; it ends at the last quote of the first run of three or more.
+fn read_raw(s: &str) -> (usize, Vec<(usize, String)>) {
+    let Some(mut end) = s[3..].find("\"\"\"").map(|k| k + 3) else {
+        return (s.len(), vec![(0, t!("raw_unclosed"))]);
+    };
+    while s[end + 3..].starts_with('"') {
+        end += 1;
+    }
+    let mut errors = vec![];
+    if let Err((k, msg)) = raw_content(&s[..end + 3]) {
+        errors.push((k, msg));
+    }
+    (end + 3, errors)
+}
+
+/// What a `"""..."""` token holds, kept as written but for its layout: on several lines, the
+/// line of the opening `"""` must be empty and is left out, and the closing `"""` sits alone on
+/// its line, whose indentation is taken off every line. An error: its position in the token.
+pub fn raw_content(token: &str) -> Result<String, (usize, String)> {
+    let inner = &token[3..token.len().saturating_sub(3).max(3)];
+    if !inner.contains('\n') {
+        return Ok(inner.to_string());
+    }
+    let lines: Vec<&str> = inner.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+    let (first, last) = (lines[0], lines[lines.len() - 1]);
+    if !first.trim().is_empty() || !last.trim().is_empty() {
+        return Err((0, t!("raw_layout")));
+    }
+    let mut out = vec![];
+    let mut at = 3 + lines[0].len() + 1;
+    for line in &lines[1..lines.len() - 1] {
+        match line.strip_prefix(last) {
+            Some(rest) => out.push(rest),
+            None if line.trim().is_empty() => out.push(""),
+            None => return Err((at, t!("raw_indent"))),
+        }
+        at += line.len() + 1;
+    }
+    Ok(out.join("\n"))
+}
+
 /// The end of the code of a `{code}` in a text: `code` starts `s`; returns the position of
 /// the closing `}` (`None` if the line ends first). Texts and characters inside are skipped.
 pub fn code_end(s: &str) -> Option<usize> {
@@ -317,8 +359,12 @@ pub fn code_end(s: &str) -> Option<usize> {
     None
 }
 
-/// The position of the first `{` or `}` of a `Str` token (a test name has no interpolation).
+/// The position of the first `{` or `}` of a `Str` token (a test name has no interpolation);
+/// none in a raw text.
 pub fn interpolation(token: &str) -> Option<usize> {
+    if token.starts_with("\"\"\"") {
+        return None;
+    }
     let mut it = token.char_indices();
     while let Some((k, c)) = it.next() {
         match c {
@@ -337,6 +383,9 @@ pub fn interpolation(token: &str) -> Option<usize> {
 
 /// The content of a `Str` token (`"a\nb"` → `a`, line break, `b`), already checked by the lexer.
 pub fn string_content(token: &str) -> String {
+    if token.starts_with("\"\"\"") {
+        return raw_content(token).unwrap_or_default();
+    }
     let inner = token.strip_prefix('"').unwrap_or(token);
     let inner = inner.strip_suffix('"').unwrap_or(inner);
     let mut text = String::new();

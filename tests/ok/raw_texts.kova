@@ -1,0 +1,23 @@
+// `"""…"""` (PLAN Part 4 "Raw texts"): kept as written, quotes, braces and `\` included.
+fn main {
+    let json: String := """{"title": "Dune", "tags": ["sf"]}"""
+    print(json)
+    let page: String := """
+        <html>
+          <p class="x">{not replaced} \n</p>
+
+        </html>
+        """
+    print(page)
+    print("""say "hi"""")
+    print("""""".length)
+    print("""a""" + "{1 + 1}")
+}
+// expect: {"title": "Dune", "tags": ["sf"]}
+// expect: <html>
+// expect:   <p class="x">{not replaced} \n</p>
+// expect:
+// expect: </html>
+// expect: say "hi"
+// expect: 0
+// expect: a2
