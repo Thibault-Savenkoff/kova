@@ -1,0 +1,9 @@
+// tests/kova.rs `parallel_lists`: built, the four seconds of sleep take about one.
+fn main {
+    let l: List<Int> := [1, 2, 3, 4]
+    let r: List<Int> := l.map workers(4) { x: Int =>
+        sleep(1.0)
+        x * 10
+    }
+    print(r)
+}

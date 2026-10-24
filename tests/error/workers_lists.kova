@@ -1,0 +1,22 @@
+// `l.map workers(…)` and `l.each workers(…)`: their block runs on several threads at once. It may
+// read what is around it, never change it.
+fn apply(l: List<Int>, f: {Int -> Int}) -> List<Int> {
+    return l.map workers(2, f)
+}
+
+fn main {
+    var count: Int := 0
+    var seen: List<Int> := []
+    let l: List<Int> := [1, 2, 3]
+    let doubled: List<Int> := l.map workers(2) { x: Int =>
+        count += 1
+        x * 2
+    }
+    l.each workers(2) { x: Int =>
+        seen.add(x)
+    }
+    print(doubled)
+}
+// error: `workers(…)` needs its block written here
+// error: `count` cannot change inside `workers(…)`
+// error: `seen` cannot change inside `workers(…)`

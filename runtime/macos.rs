@@ -54,6 +54,7 @@ mod c {
         pub fn pthread_attr_init(attributes: *mut [u64; 8]) -> i32;
         pub fn pthread_attr_setstacksize(attributes: *mut [u64; 8], n: usize) -> i32;
         pub fn pthread_create(thread: *mut usize, attributes: *const [u64; 8], start: extern "C" fn(*mut u8) -> *mut u8, arg: *mut u8) -> i32;
+        pub fn pthread_join(thread: usize, result: *mut *mut u8) -> i32;
     }
 }
 
@@ -440,8 +441,11 @@ impl Lock {
     }
 }
 
-/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
-pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+/// A thread `spawn` started.
+pub struct Thread(usize);
+
+/// `f(arg)` on a new thread. None if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     extern "C" fn begin(p: *mut u8) -> *mut u8 {
         let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
         f(arg);
@@ -452,6 +456,12 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
         c::pthread_attr_init(&mut attributes);
         // As big as the main thread's: a thread has 512 KB otherwise.
         c::pthread_attr_setstacksize(&mut attributes, 8 << 20);
-        c::pthread_create(&mut thread, &attributes, begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0
+        let started = c::pthread_create(&mut thread, &attributes, begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0;
+        started.then_some(Thread(thread))
     }
+}
+
+/// Waits for the end of `t`.
+pub fn join(t: Thread) {
+    unsafe { c::pthread_join(t.0, core::ptr::null_mut()) };
 }

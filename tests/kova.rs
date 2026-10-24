@@ -988,6 +988,21 @@ fn server_workers() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// `l.map workers(4) { … }` (PLAN Part 4 "Several things at once"), built: four elements that
+/// each sleep a second take about one second, and come back in order.
+#[test]
+fn parallel_lists() {
+    let exe = std::env::temp_dir().join(format!("kova-sleepy-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg("tests/parallel/sleepy.kova").arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let start = std::time::Instant::now();
+    let out = program(&exe, LANG).output().unwrap();
+    let took = start.elapsed();
+    let _ = std::fs::remove_file(&exe);
+    assert_eq!(text(&out.stdout), "[10, 20, 30, 40]\n", "{}", text(&out.stderr));
+    assert!(took.as_secs_f64() < 3.0, "4 seconds of sleep on 4 threads took {took:?}");
+}
+
 /// `log(Log.Off)` writes nothing, `log(Log.Start)` only the addresses (PLAN Part 4 "The web
 /// server, what it says"), in run and in build.
 #[test]

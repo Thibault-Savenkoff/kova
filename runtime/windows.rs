@@ -47,6 +47,7 @@ unsafe extern "system" {
     fn AcquireSRWLockExclusive(lock: *mut usize);
     fn ReleaseSRWLockExclusive(lock: *mut usize);
     fn CreateThread(security: *const u8, stack: usize, start: extern "system" fn(*mut u8) -> u32, arg: *mut u8, flags: u32, id: *mut u32) -> Handle;
+    fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
 }
 
 /// The program starts here.
@@ -552,8 +553,11 @@ impl Lock {
     }
 }
 
-/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
-pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+/// A thread `spawn` started.
+pub struct Thread(Handle);
+
+/// `f(arg)` on a new thread. None if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     extern "system" fn begin(p: *mut u8) -> u32 {
         let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
         f(arg);
@@ -562,5 +566,13 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
     let arg = alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8;
     // STACK_SIZE_PARAM_IS_A_RESERVATION: 8 MB kept for its stack, taken as it grows.
     let h = unsafe { CreateThread(core::ptr::null(), 8 << 20, begin, arg, 0x10000, core::ptr::null_mut()) };
-    h != 0 && unsafe { CloseHandle(h) } != 0
+    (h != 0).then_some(Thread(h))
+}
+
+/// Waits for the end of `t`.
+pub fn join(t: Thread) {
+    unsafe {
+        WaitForSingleObject(t.0, u32::MAX);
+        CloseHandle(t.0);
+    }
 }

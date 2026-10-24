@@ -597,7 +597,7 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "join", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "join", "clone", "each workers(…)", "map workers(…)"];
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
@@ -2722,7 +2722,7 @@ impl Checker<'_> {
                 }
                 return Some(Type::List(Box::new(elem.clone())));
             }
-            "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" => return Some(self.block_method(elem, name, args)),
+            "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" | "each workers(…)" | "map workers(…)" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
             "to_json" => {
                 let list = Type::List(Box::new(elem.clone()));
@@ -2764,10 +2764,13 @@ impl Checker<'_> {
         Some(result)
     }
 
-    /// `l.each { x: Int => … }`, `l.filter`, `l.map`, `l.any`, `l.all`, `l.fold(start) { acc: A, x: T => … }`.
+    /// `l.each { x: Int => … }`, `l.filter`, `l.map`, `l.any`, `l.all`, `l.fold(start) { acc: A, x: T => … }`;
+    /// `l.map workers(8) { … }` and `l.each workers(8) { … }` (PLAN Part 4 "Several things at once").
     fn block_method(&mut self, elem: &Type, name: &Name, args: &[Expr]) -> Type {
-        let fold = name.text == "fold";
-        let expected = if fold { 2 } else { 1 };
+        let workers = name.text.strip_suffix(" workers(…)").is_some();
+        let base = name.text.strip_suffix(" workers(…)").unwrap_or(&name.text);
+        let fold = base == "fold";
+        let expected = if fold || workers { 2 } else { 1 };
         let block = args.last().filter(|b| {
             args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
         });
@@ -2784,7 +2787,13 @@ impl Checker<'_> {
             return Type::Error;
         };
         let acc = if fold { self.expr(&args[0]) } else { Type::Unit };
-        let (params_wanted, result) = match name.text.as_str() {
+        if workers {
+            let n = self.expr(&args[0]);
+            if !matches!(n, Type::Int | Type::Error) {
+                self.mismatch(&args[0], n, &Type::Int);
+            }
+        }
+        let (params_wanted, result) = match base {
             "each" => (vec![elem.clone()], Some(Type::Unit)),
             "filter" | "any" | "all" => (vec![elem.clone()], Some(Type::Bool)),
             "map" => (vec![elem.clone()], None),
@@ -2814,7 +2823,7 @@ impl Checker<'_> {
                 t
             }
         };
-        match (name.text.as_str(), t) {
+        match (base, t) {
             ("each", _) => Type::Unit,
             ("filter" | "sorted", _) => Type::List(Box::new(elem.clone())),
             ("any" | "all", _) => Type::Bool,
@@ -3403,7 +3412,7 @@ impl Checker<'_> {
                     ExprKind::Var(_) => self.invoked.contains(&called.id),
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
-                        Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
+                        Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each" | "each workers(…)"),
                         Type::Map(..) => name.text == "remove",
                         Type::Set(_) => matches!(name.text.as_str(), "add" | "remove"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),

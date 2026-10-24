@@ -925,14 +925,40 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_workers(n: i64, worker: i64, env: i64) -> i64 {
     let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
-    // A thread the system cannot start (no memory left): the others answer.
+    // A thread the system cannot start (no memory left): the others answer. They never end.
     for _ in 1..n {
-        if !sys::spawn(worker, env) {
+        if sys::spawn(worker, env).is_none() {
             break;
         }
     }
     worker(env);
     0
+}
+
+/// `l.map workers(n) { … }`, `l.each workers(n) { … }` (src/kir.rs `StrOp::Parallel`):
+/// `worker(env, next)` on up to `n` threads, this one included, then waits for them. Each takes
+/// the next element to do from `next` (`kova_next`) until there is none left: a slow element
+/// keeps one thread only.
+// ponytail: threads are made at each call; a pool kept between calls if it runs in a hot loop.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_parallel(n: i64, length: i64, worker: i64, env: i64) -> i64 {
+    let worker: extern "C" fn(i64, i64) = unsafe { core::mem::transmute(worker as usize) };
+    let next = AtomicI64::new(0);
+    let job = (worker, env, &next as *const AtomicI64 as i64);
+    extern "C" fn member(job: i64) {
+        let &(worker, env, next) = unsafe { &*(job as *const (extern "C" fn(i64, i64), i64, i64)) };
+        worker(env, next);
+    }
+    let threads: Vec<sys::Thread> = (1..n.min(length)).map_while(|_| sys::spawn(member, &job as *const _ as i64)).collect();
+    worker(env, job.2);
+    threads.into_iter().for_each(sys::join);
+    0
+}
+
+/// The next element a `kova_parallel` worker does.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_next(next: i64) -> i64 {
+    unsafe { &*(next as *const AtomicI64) }.fetch_add(1, Relaxed)
 }
 
 #[unsafe(no_mangle)]

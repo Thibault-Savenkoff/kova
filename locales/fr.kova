@@ -229,7 +229,7 @@ lang fr {
     field_move_help := "prends une copie : `{place}.clone`"
     loop_move := "`{name}` est déplacé dans une boucle : il le serait encore au tour suivant"
     loop_move_help := "utilise `{name}.clone`, ou redonne une valeur à `{name}` avant la fin de la boucle"
-    workers_block := "`workers(…)` veut son bloc écrit ici : `\{ q: Request => … \}`"
+    workers_block := "`workers(…)` veut son bloc écrit ici, pas donné par son nom"
     workers_change := "`{name}` ne peut pas changer dans `workers(…)`"
     workers_change_help := "plusieurs questions passent dans ce bloc en même temps"
     block_move := "`{name}` est déplacé dans un bloc : le bloc peut tourner plusieurs fois, ou jamais"

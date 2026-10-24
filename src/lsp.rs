@@ -732,6 +732,11 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         detail: Some(detail),
         ..Default::default()
     };
+    // `l.map workers(4) { … }`: the number first, then the block's body.
+    let workers = |name: &str, detail: String| CompletionItem {
+        insert_text: Some(format!("{name} workers(${{1:4}}) {{ x: {elem} => $0 }}")),
+        ..block(&format!("{name} workers(…)"), detail, "")
+    };
     let mut fold = block("fold", format!("(start: A) {{A, {elem} -> A}} -> A"), "");
     fold.insert_text = Some(format!("fold(${{1:0}}) {{ acc: ${{2:Int}}, x: {elem} => $0 }}"));
     vec![
@@ -741,6 +746,8 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         block("each", format!("{{{elem}}}"), ""),
         block("filter", format!("{{{elem} -> Bool}} -> List<{elem}>"), ""),
         block("map", format!("{{{elem} -> U}} -> List<U>"), ""),
+        workers("each", format!("(n: Int) {{{elem}}}")),
+        workers("map", format!("(n: Int) {{{elem} -> U}} -> List<U>")),
         block("any", format!("{{{elem} -> Bool}} -> Bool"), ""),
         block("all", format!("{{{elem} -> Bool}} -> Bool"), ""),
         fold,
@@ -1326,7 +1333,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "to_json", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "to_json", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

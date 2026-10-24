@@ -403,6 +403,12 @@ pub enum StrOp {
     /// function taking one box, the box) runs the function on `n` threads, this one included.
     /// Never ends.
     Workers,
+    /// `l.map workers(n) { … }`, built only (PLAN Part 4 "Several things at once"): (n, the
+    /// List's length, a function taking a box and a counter, the box) runs the function on up to
+    /// `n` threads, this one included, then waits for them.
+    Parallel,
+    /// In that function: the next element to do (counted from 0), from the counter.
+    Next,
     /// `args`: a new `List<String>`, the words given after the program's name.
     Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
@@ -3326,6 +3332,99 @@ impl<'a> Translator<'a> {
         vec![fun, env]
     }
 
+    /// `l.map workers(n) { … }`, `l.each workers(n) { … }` (PLAN Part 4 "Several things at once"):
+    /// built, `n` threads share the elements (`StrOp::Parallel`), each with its own copy of what
+    /// the block reads (as `workers`); `map` writes each result at its element's place, in a List
+    /// made that long first. `kova run` does them one after the other, like `map` and `each`.
+    fn parallel(&mut self, e: &Expr, list: Local, elem: &Type, name: &str, args: &[Expr]) -> Slots {
+        let n = self.expr1(&args[0]);
+        let (one, bad, loc) = (self.constant(1), self.int_local(), self.loc(e.span));
+        self.emit(Inst::Binary(bad, Op::Lt, n, one, NOWHERE));
+        self.emit(Inst::FaultIf(bad, Fault::BadWorkers, loc));
+        let base = name.trim_end_matches(" workers(…)");
+        if !self.built {
+            return self.block_method(e, list, elem, base, &args[1..]);
+        }
+        let (block, ty) = (&args[1], self.ty(e));
+        let made = match &ty {
+            Type::List(t) => Some((**t).clone()),
+            _ => None,
+        };
+        let length = self.int_local();
+        self.emit(Inst::ListLength(length, list));
+        let out = match &made {
+            Some(t) => {
+                let out = self.int_local();
+                self.emit(Inst::ListNew(out, scalars(t).len()));
+                self.times(length, |t, _| {
+                    let i = t.int_local();
+                    t.emit(Inst::ListGrow(i, out));
+                });
+                out
+            }
+            None => self.constant(0),
+        };
+        let held = self.held(block);
+        let slots: Slots = [list, out].into_iter().chain(held.iter().flat_map(|(_, v, _)| v.clone())).collect();
+        let env = self.int_local();
+        self.emit(Inst::ListNew(env, slots.len()));
+        self.push(env, &slots);
+
+        let mut t = self.inner(Type::Unit);
+        let (inner_env, next) = (t.int_local(), t.int_local());
+        t.current = t.new_block();
+        let (zero, l, o) = (t.constant(0), t.int_local(), t.int_local());
+        t.emit(Inst::ListLoad(l, inner_env, zero, 0));
+        t.emit(Inst::ListLoad(o, inner_env, zero, 1));
+        let mut k = 2;
+        for (name, _, ty) in &held {
+            let v = t.new_slots(ty);
+            for &x in &v {
+                t.emit(Inst::ListLoad(x, inner_env, zero, k));
+                k += 1;
+            }
+            // Its own: freed when the thread has no element left.
+            let own = t.clone_value(&v, ty);
+            t.names[1].vars.insert(name.clone(), (own, ty.clone()));
+        }
+        let (count, i, more) = (t.int_local(), t.int_local(), t.int_local());
+        t.emit(Inst::ListLength(count, l));
+        let (head, body, exit) = (t.new_block(), t.new_block(), t.new_block());
+        t.go(End::Jump(head), head);
+        t.emit(Inst::Str(i, StrOp::Next, vec![next]));
+        t.emit(Inst::Binary(more, Op::Lt, i, count, NOWHERE));
+        t.go(End::Branch(more, body, exit), body);
+        let v = t.load(l, i, elem);
+        match &made {
+            Some(r) => {
+                let x = t.run(block, &None, vec![(v, elem.clone())], Some(r));
+                for (k, &s) in x.iter().enumerate() {
+                    t.emit(Inst::ListStore(o, i, k, s));
+                }
+            }
+            None => {
+                t.run(block, &None, vec![(v, elem.clone())], None);
+            }
+        }
+        t.go(End::Jump(head), exit);
+        t.free_scopes(1);
+        t.finish(End::Return(vec![]));
+        let name = format!("workers in {}", t.owner.trim_start_matches("block in "));
+        let f = t.function(name, 2, vec![]);
+        let num = self.made_function(f);
+        let (fun, done) = (self.int_local(), self.int_local());
+        self.emit(Inst::FuncRef(fun, num));
+        self.emit(Inst::Str(done, StrOp::Parallel, vec![n, length, fun, env]));
+        self.emit(Inst::ListFree(env));
+        match made {
+            Some(_) => {
+                self.track(&[out], &ty);
+                vec![out]
+            }
+            None => vec![],
+        }
+    }
+
     /// The variables block `e` uses around it (`Info::captures`): names, slots and types.
     fn held(&self, e: &Expr) -> Vec<(String, Slots, Type)> {
         (self.info.captures.get(&e.id).into_iter().flatten())
@@ -4666,6 +4765,7 @@ impl<'a> Translator<'a> {
                 let list = self.expr1(receiver);
                 match name.text.as_str() {
                     "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, list, &elem, &name.text, args),
+                    "each workers(…)" | "map workers(…)" => self.parallel(e, list, &elem, &name.text, args),
                     "sorted" => self.sorted(list, &elem, args.last(), e.span),
                     "join" => {
                         let (sep, text) = (self.expr1(&args[0]), self.int_local());

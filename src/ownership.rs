@@ -778,16 +778,26 @@ impl Owner<'_> {
                 if name.text == "fold" {
                     self.give(&args[0]);
                 }
+                // `l.map workers(8) { … }`: the number of threads.
+                if name.text.ends_with(" workers(…)") {
+                    self.borrow(&args[0]);
+                }
                 let frozen = place_root(receiver, &self.info.types).map(|(root, _)| self.lookup(root).id);
                 self.looped.extend(frozen.map(|id| (id, "block_frozen")));
                 self.borrow(args.last().unwrap());
                 if frozen.is_some() {
                     self.looped.pop();
                 }
+                if name.text.ends_with(" workers(…)") {
+                    self.workers(args.last().unwrap());
+                }
             }
-            ExprKind::Method { receiver, args, .. } => {
+            ExprKind::Method { receiver, name, args } => {
                 self.borrow(receiver);
                 args.iter().for_each(|a| self.borrow(a));
+                if name.text.ends_with(" workers(…)") {
+                    self.workers(args.last().expect("a block checked by the type checker"));
+                }
             }
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => self.borrow(x),
             ExprKind::Index(x, i) => {

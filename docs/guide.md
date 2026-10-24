@@ -431,6 +431,25 @@ true
 
 A block is a piece of code given to a function, which runs it. It can read and change the variables around it.
 
+```kova
+fn main {
+    let names: List<String> := ["ada", "alan", "grace"]
+    let shout: String := "!"
+    print(names.map workers(4) { name: String => name.to_upper + shout })
+}
+```
+
+```text
+["ADA!", "ALAN!", "GRACE!"]
+```
+
+`map workers(4) { … }` and `each workers(4) { … }` share the elements between 4 threads, so slow work
+(waiting for a site, a long computation) is done several at a time. `map` still gives its results in
+the List's order; `each` runs its elements in an order that changes from one run to the next (two
+`print`s may come out swapped), and `random` draws differently. As with a server's `workers(…)`
+(section 18), the block may read the values around it but not change them. `kova run` takes one
+element at a time: only the built program uses threads.
+
 ## 13. Contracts and tests
 
 ```kova

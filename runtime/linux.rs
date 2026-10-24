@@ -173,12 +173,19 @@ unsafe extern "C" fn libc_main(_argc: i32, argv: *const usize) -> ! {
             f = dlsym(dlopen(c"libpthread.so.0".as_ptr() as *const u8, 2), c"pthread_create".as_ptr() as *const u8);
         }
         *PTHREAD_CREATE.get() = f as usize;
+        let mut join = dlsym(null_mut(), c"pthread_join".as_ptr() as *const u8);
+        if join.is_null() {
+            join = dlsym(dlopen(c"libpthread.so.0".as_ptr() as *const u8, 2), c"pthread_join".as_ptr() as *const u8);
+        }
+        *PTHREAD_JOIN.get() = join as usize;
         start(argv.sub(1))
     }
 }
 
-/// The C library's `pthread_create`, when it started the program (`libc_main`), or 0.
+/// The C library's `pthread_create` and `pthread_join`, when it started the program
+/// (`libc_main`), or 0.
 static PTHREAD_CREATE: Global<usize> = Global::new(0);
+static PTHREAD_JOIN: Global<usize> = Global::new(0);
 
 /// The environment's `NAME=value` texts.
 static ENVIRONMENT: Global<&[*const u8]> = Global::new(&[]);
@@ -687,8 +694,15 @@ impl Lock {
 /// The stack of each thread, as big as the main thread's usually is (`ulimit -s`).
 const STACK: usize = 8 << 20;
 
-/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
-pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+/// A thread `spawn` started: made by `clone` (the word Linux clears when it ends, and its
+/// stack), or by the C library.
+pub enum Thread {
+    Own(alloc::boxed::Box<AtomicU32>, usize),
+    Libc(usize),
+}
+
+/// `f(arg)` on a new thread. None if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     let create = *PTHREAD_CREATE.get();
     if create != 0 {
         type Start = extern "C" fn(*mut u8) -> *mut u8;
@@ -699,11 +713,12 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
         }
         let create: extern "C" fn(*mut usize, *const u8, Start, *mut u8) -> i32 = unsafe { core::mem::transmute(create) };
         let mut thread = 0;
-        return create(&mut thread, null(), begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0;
+        let started = create(&mut thread, null(), begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0;
+        return started.then_some(Thread::Libc(thread));
     }
     // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK.
     let base = match unsafe { call(MMAP, 0, STACK, 3, 0x22 | 0x4000 | 0x20000, usize::MAX, 0) } {
-        p if p < 0 => return false,
+        p if p < 0 => return None,
         p => p as usize,
     };
     // Its lowest page cannot be reached: going past the stack stops the program instead of
@@ -711,21 +726,50 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
     unsafe { call(MPROTECT, base, 4096, 0, 0, 0, 0) };
     // The new thread starts on its stack, where it finds `f` then `arg`.
     let top = (base + STACK - 16) as *mut usize;
+    // Linux writes the thread's number there before `clone` returns, and 0 when it ends.
+    let word = alloc::boxed::Box::new(AtomicU32::new(0));
     unsafe {
         top.write(f as usize);
         top.add(1).write(arg as usize);
-        start_thread(top as usize) >= 0
+        if start_thread(top as usize, word.as_ptr() as usize) < 0 {
+            call(MUNMAP, base, STACK, 0, 0, 0, 0);
+            return None;
+        }
+    }
+    Some(Thread::Own(word, base))
+}
+
+/// Waits for the end of `t`.
+pub fn join(t: Thread) {
+    match t {
+        Thread::Own(word, base) => {
+            loop {
+                let n = word.load(Acquire);
+                if n == 0 {
+                    break;
+                }
+                // FUTEX_WAIT, not private: Linux wakes the word it clears so.
+                unsafe { call(FUTEX, word.as_ptr() as usize, 0, n as usize, 0, 0, 0) };
+            }
+            unsafe { call(MUNMAP, base, STACK, 0, 0, 0, 0) };
+        }
+        Thread::Libc(t) => {
+            let join: extern "C" fn(usize, *mut usize) -> i32 = unsafe { core::mem::transmute(*PTHREAD_JOIN.get()) };
+            join(t, null_mut());
+        }
     }
 }
 
-/// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM: a thread
-/// sharing everything.
-const THREAD: usize = 0x50f00;
+/// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM |
+/// CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID: a thread sharing everything, whose number is
+/// written in a word that Linux clears (and wakes) when it ends.
+const THREAD: usize = 0x50f00 | 0x0010_0000 | 0x0020_0000;
 
 /// A new thread on the stack `sp` (holding the function, then its argument), which calls the
-/// function then stops: it never comes back here, whose stack it does not have.
+/// function then stops: it never comes back here, whose stack it does not have. `word`: see
+/// `THREAD`.
 #[cfg(target_arch = "x86_64")]
-unsafe fn start_thread(sp: usize) -> isize {
+unsafe fn start_thread(sp: usize, word: usize) -> isize {
     let r;
     unsafe {
         asm!(
@@ -742,7 +786,8 @@ unsafe fn start_thread(sp: usize) -> isize {
             "ud2",
             "2:",
             exit = const EXIT,
-            inlateout("rax") CLONE as isize => r, in("rdi") THREAD, in("rsi") sp, in("rdx") 0usize, in("r10") 0usize, in("r8") 0usize,
+            // flags, stack, parent's word, child's word, TLS.
+            inlateout("rax") CLONE as isize => r, in("rdi") THREAD, in("rsi") sp, in("rdx") word, in("r10") word, in("r8") 0usize,
             lateout("rcx") _, lateout("r11") _,
         )
     };
@@ -750,7 +795,7 @@ unsafe fn start_thread(sp: usize) -> isize {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn start_thread(sp: usize) -> isize {
+unsafe fn start_thread(sp: usize, word: usize) -> isize {
     let r;
     unsafe {
         asm!(
@@ -766,7 +811,8 @@ unsafe fn start_thread(sp: usize) -> isize {
             "brk #0",
             "2:",
             exit = const EXIT,
-            in("x8") CLONE, inlateout("x0") THREAD as isize => r, in("x1") sp, in("x2") 0usize, in("x3") 0usize, in("x4") 0usize,
+            // flags, stack, parent's word, TLS, child's word: not x86-64's order.
+            in("x8") CLONE, inlateout("x0") THREAD as isize => r, in("x1") sp, in("x2") word, in("x3") 0usize, in("x4") word,
         )
     };
     r

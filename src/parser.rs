@@ -1508,6 +1508,11 @@ impl Parser<'_> {
                 end = self.advance().span;
                 self.empty_parens(&args, open, end, &name.text);
                 self.more_parts(&mut name, &mut args, &mut end)?;
+            } else if self.kind() == Kind::Ident && self.kind_at(1) == Kind::Sym("(") && !self.src[end.end..self.token().span.start].contains('\n') {
+                // `l.map workers(8) { … }`: a part after a method without arguments, named
+                // `map workers(…)`.
+                self.more_parts(&mut name, &mut args, &mut end)?;
+                name.text = name.text.replacen("(…) ", " ", 1);
             }
             end = self.trailing_block(&mut args)?.unwrap_or(end);
             e = self.expr(e.span.to(end), ExprKind::Method { receiver: Box::new(e), name, args });

@@ -1,0 +1,27 @@
+// `l.map workers(n) { … }` and `l.each workers(n) { … }`: built, several threads share the
+// elements; the results come back in the List's order. Nothing is printed inside the blocks: built,
+// their order changes from run to run.
+fn main {
+    let ages: Map<String, Int> := ["ada" := 36, "alan" := 41, "grace" := 85]
+    let suffix: String := " years"
+    let names: List<String> := ["grace", "ada", "nobody", "alan", "ada"]
+    let said: List<String> := names.map workers(3) { n: String =>
+        match ages[n] {
+            none => "{n}: ?"
+            age => "{n}: {age}{suffix}"
+        }
+    }
+    print(said)
+    let numbers: List<Int> := [3, 1, 4, 1, 5, 9, 2, 6]
+    print(numbers.map workers(8) { x: Int => x * x })
+    let none_yet: List<Int> := []
+    print(none_yet.map workers(4) { x: Int => x + 1 })
+    numbers.each workers(2) { x: Int =>
+        check x > 0
+    }
+    print("done")
+}
+// expect: ["grace: 85 years", "ada: 36 years", "nobody: ?", "alan: 41 years", "ada: 36 years"]
+// expect: [9, 1, 16, 1, 25, 81, 4, 36]
+// expect: []
+// expect: done
