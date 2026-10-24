@@ -926,12 +926,12 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
     for word in ["true", "false", "none", "break", "continue", "else"] {
         items.push(CompletionItem { label: word.into(), kind: Some(CompletionItemKind::KEYWORD), ..Default::default() });
     }
-    // `import ` then opens the list of modules and files at once, instead of a placeholder to type over.
+    // `import` then types a space, which opens the list of modules and files at once. Typed, not asked:
+    // asking for suggestions would bring every snippet and word with them.
     items.push(CompletionItem {
         label: "import".into(),
         kind: Some(CompletionItemKind::KEYWORD),
-        insert_text: Some("import ".into()),
-        command: Some(Command::new(String::new(), "editor.action.triggerSuggest".into(), None)),
+        command: Some(Command::new(String::new(), "type".into(), Some(vec![serde_json::json!({ "text": " " })]))),
         ..Default::default()
     });
     for f in &file.functions {
@@ -1436,9 +1436,9 @@ mod tests {
         let src = "import geometry\nimport ";
         assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
-        // Tab on `import` writes `import ` and opens the list again.
+        // Tab on `import` writes `import` and types the space that opens the list.
         let item = complete("imp", 3).into_iter().find(|i| i.label == "import").unwrap();
-        assert_eq!((item.insert_text.as_deref(), item.command.map(|c| c.command)), (Some("import "), Some("editor.action.triggerSuggest".into())));
+        assert_eq!(item.command.map(|c| (c.command, c.arguments)), Some(("type".into(), Some(vec![serde_json::json!({ "text": " " })]))));
     }
 
     const SHAPES: &str = "enum S { C(radius: Float), D, E }\nfn main {\n    let s := S.D\n    match s {\n        D => {}\n    }\n}\n";
