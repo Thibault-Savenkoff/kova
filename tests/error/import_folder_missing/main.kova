@@ -1,0 +1,8 @@
+// `import shapes.square` looks for `shapes/square.kova` in the program's folder.
+import shapes.square
+
+fn main {
+}
+// error: file not found: `
+// error: shapes
+// error: square.kova`

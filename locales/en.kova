@@ -476,7 +476,6 @@ lang en {
     what_module := "module"
     module_as_value := "`{name}` is an imported module, not a value"
     module_as_value_help := "use what it contains: `{name}.Point`, `{name}.distance(a, b)`"
-    import_folder_later := "importing from a folder is not possible yet: put the file next to this one and write `import name`"
     import_not_found := "file not found: `{file}`"
     import_cycle := "these files import each other: {cycle}"
     import_twice := "`{name}` is already imported on line {line}"

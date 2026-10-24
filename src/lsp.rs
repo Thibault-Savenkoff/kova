@@ -558,32 +558,43 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
 fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
     let line = src[..cursor].rsplit('\n').next().unwrap_or("");
     let typed = line.trim_start().strip_prefix("import ")?.trim_start();
-    if !typed.chars().all(is_word) {
+    if !typed.chars().all(|c| is_word(c) || c == '.') {
         return None;
     }
+    // `import shapes.ci|`: the files of `shapes/`, from the program's folder.
+    let file = tree(src);
+    let (folders, _) = typed.rsplit_once('.').unwrap_or(("", typed));
+    let prefix = if folders.is_empty() { String::new() } else { format!("{folders}.") };
+    let dir = folders.split('.').filter(|f| !f.is_empty()).fold(crate::program_folder(path, &file.imports), |d, f| d.join(f));
     let me = std::path::Path::new(path);
-    let taken: Vec<String> = tree(src).imports.into_iter().map(|i| i.module.text).filter(|m| m != typed).collect();
-    let files = std::fs::read_dir(me.parent()?).ok()?.flatten().map(|e| e.path());
-    let mut names: Vec<String> = files
-        .filter(|p| p.extension().is_some_and(|x| x == "kova") && p != me)
-        .filter_map(|p| Some(p.file_stem()?.to_str()?.to_string()))
-        .filter(|n| !taken.contains(n))
-        .collect();
-    names.sort();
-    let own = types::MODULES.iter().filter(|m| !taken.iter().any(|t| t == *m)).map(|m| CompletionItem {
-        label: m.to_string(),
-        kind: Some(CompletionItemKind::MODULE),
-        detail: Some(t!("module_detail")),
-        ..Default::default()
-    });
+    let taken: Vec<String> = file.imports.into_iter().map(|i| i.module.text).filter(|m| m != typed).collect();
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|e| e.path()).collect();
+    entries.sort();
+    let name = |p: &std::path::Path| Some(p.file_stem()?.to_str()?.to_string());
+    let kova = |p: &std::path::Path| p.extension().is_some_and(|x| x == "kova");
+    let mut items: Vec<CompletionItem> = if folders.is_empty() {
+        (types::MODULES.iter().filter(|m| !taken.iter().any(|t| t == *m)))
+            .map(|m| CompletionItem { label: m.to_string(), kind: Some(CompletionItemKind::MODULE), detail: Some(t!("module_detail")), ..Default::default() })
+            .collect()
+    } else {
+        vec![]
+    };
     // A file next to this one is a module too: same icon, its own detail.
-    let near = names.into_iter().map(|n| CompletionItem {
-        detail: Some(t!("file_module_detail", name = n)),
-        label: n,
-        kind: Some(CompletionItemKind::MODULE),
-        ..Default::default()
-    });
-    Some(own.chain(near).collect())
+    for n in entries.iter().filter(|p| kova(p) && p.as_path() != me).filter_map(|p| name(p)).filter(|n| !taken.contains(&format!("{prefix}{n}"))) {
+        let shown = format!("{}{n}", prefix.replace('.', "/"));
+        items.push(CompletionItem { detail: Some(t!("file_module_detail", name = shown)), label: n, kind: Some(CompletionItemKind::MODULE), ..Default::default() });
+    }
+    // A folder holding `.kova` files: `shapes`, then `.` opens its files.
+    let holds = |d: &std::path::Path| std::fs::read_dir(d).is_ok_and(|r| r.flatten().any(|e| kova(&e.path())));
+    for n in entries.iter().filter(|p| p.is_dir() && holds(p)).filter_map(|p| Some(p.file_name()?.to_str()?.to_string())) {
+        items.push(CompletionItem {
+            label: n,
+            kind: Some(CompletionItemKind::FOLDER),
+            command: Some(Command::new(String::new(), "type".into(), Some(vec![serde_json::json!({ "text": "." })]))),
+            ..Default::default()
+        });
+    }
+    Some(items)
 }
 
 /// In `match shape {`, where a case goes: the cases not handled yet.
@@ -1443,6 +1454,11 @@ mod tests {
         let src = "import geometry\nimport ";
         assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
+        // A folder, then its files.
+        let folders = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/folders/main.kova");
+        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "shapes"]);
+        assert_eq!(labels(import_files(folders, "import shapes.", 14)), ["circle", "point", "flat"]);
+        assert_eq!(labels(import_files(folders, "import shapes.circle\nimport shapes.flat.", 40)), ["square"]);
         // Tab on `import` writes `import` and types the space that opens the list.
         let item = complete("imp", 3).into_iter().find(|i| i.label == "import").unwrap();
         assert_eq!(item.command.map(|c| (c.command, c.arguments)), Some(("type".into(), Some(vec![serde_json::json!({ "text": " " })]))));

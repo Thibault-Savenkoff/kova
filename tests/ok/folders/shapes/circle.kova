@@ -1,0 +1,18 @@
+// Another file of the folder: also written from the program's folder.
+import shapes.point
+
+public:
+
+fn at(x: Float, y: Float) radius(r: Float) -> Circle {
+    return Circle { center := point.Point { x := x, y := y }, radius := r }
+}
+
+struct Circle {
+public:
+    center: point.Point
+    radius: Float
+
+    fn area(self) -> Float {
+        return Float.pi * self.radius * self.radius
+    }
+}

@@ -18,6 +18,9 @@ pub struct File {
     /// types (`geometry.helper`), the fields and methods of its types (`geometry.Point.x`),
     /// with where they are declared.
     pub private: Vec<(String, Span)>,
+    /// The modules the program reads, as written after `import` (`geometry`, `shapes.circle`):
+    /// filled in the root file once they are all read.
+    pub modules: Vec<String>,
 }
 
 /// `import geometry` or `import geometry as geo` (PLAN 2.9).

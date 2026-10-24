@@ -1,0 +1,11 @@
+import shapes.point
+
+public:
+
+fn side(a: Float) -> Float {
+    return a * a
+}
+
+fn corner -> point.Point {
+    return point.Point { x := 0.0, y := 0.0 }
+}

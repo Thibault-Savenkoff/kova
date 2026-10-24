@@ -104,12 +104,20 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
     let text = |t: &Token| source[t.span.start..t.span.end].to_string();
     let at_top = |i: usize| i == 0 || outside[i - 1];
     // `import geometry as geo`: `geo.Point` means `geometry.Point` in this file.
+    // `import shapes.circle`: `circle.Circle` means `shapes.circle.Circle`.
     let mut imports = HashMap::new();
-    for (i, w) in tokens.windows(4).enumerate() {
-        if at_top(i) && w[0].kind == Kind::Keyword("import") && w[1].kind == Kind::Ident {
-            let alias = if w[2].kind == Kind::Ident && text(&w[2]) == "as" && w[3].kind == Kind::Ident { &w[3] } else { &w[1] };
-            imports.insert(text(alias), text(&w[1]));
+    let kind = |i: usize| tokens.get(i).map(|t| t.kind);
+    for i in 0..tokens.len() {
+        if !(at_top(i) && tokens[i].kind == Kind::Keyword("import") && kind(i + 1) == Some(Kind::Ident)) {
+            continue;
         }
+        let (mut module, mut last) = (text(&tokens[i + 1]), i + 1);
+        while kind(last + 1) == Some(Kind::Sym(".")) && kind(last + 2) == Some(Kind::Ident) {
+            last += 2;
+            module = format!("{module}.{}", text(&tokens[last]));
+        }
+        let renamed = kind(last + 1) == Some(Kind::Ident) && text(&tokens[last + 1]) == "as" && kind(last + 2) == Some(Kind::Ident);
+        imports.insert(text(&tokens[if renamed { last + 2 } else { last }]), module);
     }
     // The names this file declares at its top: `fn distance`, `struct Point`, `copy struct`, `enum`, `interface`.
     let own = (0..tokens.len().saturating_sub(1))
@@ -526,22 +534,25 @@ impl Parser<'_> {
             }
         }
         let private = std::mem::take(&mut self.private);
-        File { header, imports, functions, structs, interfaces, tests, langs, private }
+        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![] }
     }
 
     /// `import geometry` or `import geometry as geo`.
     fn import(&mut self) -> R<Import> {
         self.advance(); // import
-        let module = self.value_name("what_module")?;
-        if self.is_sym(".") {
-            let span = self.token().span;
-            return self.error(module.span.to(span), t!("import_folder_later"));
+        let mut module = self.value_name("what_module")?;
+        // `import shapes.circle`: the file `shapes/circle.kova`, called `circle` here.
+        let mut last = module.clone();
+        while self.is_sym(".") {
+            self.advance();
+            last = self.value_name("what_module")?;
+            module = Name { text: format!("{}.{}", module.text, last.text), span: module.span.to(last.span) };
         }
         let alias = if self.kind() == Kind::Ident && self.text(self.token().span) == "as" {
             self.advance();
             self.value_name("what_module")?
         } else {
-            module.clone()
+            last
         };
         Ok(Import { module, alias })
     }

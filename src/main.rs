@@ -299,13 +299,30 @@ fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<dia
 /// Reads the file `path` (its text: `source`) and the files it imports, one after the other in
 /// one text (`diag::Sources`), into a single tree: the imported files' names come qualified
 /// (`geometry.Point`). Their `main`, `test`s and `header` are not used (PLAN 2.9).
+/// The folder `import shapes.circle` starts from: the file's own, or the nearest folder above it
+/// where every file it imports exists (`shapes/circle.kova` opened alone, importing `shapes.point`).
+pub fn program_folder(path: &str, imports: &[ast::Import]) -> std::path::PathBuf {
+    let own = std::path::Path::new(path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let files: Vec<String> = (imports.iter().map(|i| &i.module.text))
+        .filter(|m| !types::MODULES.contains(&m.as_str()))
+        .map(|m| format!("{}.kova", m.replace('.', std::path::MAIN_SEPARATOR_STR)))
+        .collect();
+    let finds = |d: &std::path::Path| files.iter().all(|f| d.join(f).is_file());
+    if files.is_empty() || finds(&own) {
+        return own;
+    }
+    let here = if own.as_os_str().is_empty() { std::path::Path::new(".") } else { &own };
+    let above = here.canonicalize().ok().and_then(|o| o.ancestors().skip(1).find(|d| finds(d)).map(|d| d.to_path_buf()));
+    above.unwrap_or(own)
+}
+
 fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::Sources) {
     let mut sources = diag::Sources::new();
     sources.add(path, source);
     let (tokens, mut diags) = lexer::lex(source);
     let (mut root, mut ids, d) = parser::parse(tokens, source);
     diags.extend(d);
-    let dir = std::path::Path::new(path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let dir = program_folder(path, &root.imports);
     let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let mut loaded: Vec<ast::File> = vec![];
     let mut done = std::collections::HashSet::new();
@@ -345,7 +362,9 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             // so that run and build show the same path everywhere.
             let dir_text = dir.to_string_lossy();
             let sep = dir_text.chars().rev().find(|c| matches!(c, '/' | '\\')).unwrap_or('/');
-            let shown = if dir_text.is_empty() { format!("{m}.kova") } else { format!("{dir_text}{sep}{m}.kova") };
+            // `shapes.circle` = `shapes/circle.kova`, from the program's folder.
+            let path = m.replace('.', &sep.to_string());
+            let shown = if dir_text.is_empty() { format!("{path}.kova") } else { format!("{dir_text}{sep}{path}.kova") };
             let file = std::path::PathBuf::from(&shown);
             let Ok(text) = std::fs::read_to_string(&file) else {
                 diags.push(diag::Diag::new(imp.module.span, t!("import_not_found", file = shown)));
@@ -374,6 +393,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
     let imports = std::mem::take(&mut root.imports);
     visit(&imports, None, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
     root.imports = imports;
+    root.modules = done.into_iter().collect();
     for m in loaded {
         root.functions.extend(m.functions);
         root.structs.extend(m.structs);

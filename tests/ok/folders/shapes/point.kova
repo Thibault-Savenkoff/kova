@@ -1,0 +1,6 @@
+public:
+struct Point {
+public:
+    x: Float
+    y: Float
+}

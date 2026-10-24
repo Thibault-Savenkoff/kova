@@ -1,0 +1,15 @@
+// `import shapes.circle` reads `shapes/circle.kova`, from the program's folder, and calls it `circle`.
+import shapes.circle
+import shapes.flat.square as sq
+
+fn main {
+    let c: circle.Circle := circle.at(1.0, 2.0) radius(2.0)
+    print(c.area > 12.0)
+    print(c)
+    print(sq.side(3.0))
+    print(sq.corner)
+}
+// expect: true
+// expect: shapes.circle.Circle { center: shapes.point.Point { x: 1.0, y: 2.0 }, radius: 2.0 }
+// expect: 9.0
+// expect: shapes.point.Point { x: 0.0, y: 0.0 }

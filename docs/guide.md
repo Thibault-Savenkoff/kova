@@ -585,6 +585,10 @@ fn length(p: Point) -> Float {
 `kova run main.kova` reads `geometry.kova` too. What a file holds is private to it unless written under
 `public:` (and a struct's fields too, inside it); `private:` hides again what follows.
 
+A file in a folder is written with dots: `import shapes.circle` reads `shapes/circle.kova` and calls
+it `circle` (`circle.Circle`). Every `import` starts from the program's folder, even in
+`shapes/circle.kova` (`import shapes.point`).
+
 ## 15. Files, time and chance
 
 ```kova

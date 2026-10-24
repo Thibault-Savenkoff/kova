@@ -1,5 +1,7 @@
+// A file in a folder: its private names are named with their file.
 import shapes.circle
 
 fn main {
+    print(circle.hidden)
 }
-// error: importing from a folder is not possible yet
+// error: `shapes.circle.hidden` is private in shapes/circle.kova

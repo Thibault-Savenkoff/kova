@@ -966,6 +966,8 @@ struct Checker<'a> {
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
     private: HashMap<String, Span>,
+    /// The modules read (`shapes.circle`), to name the file a name comes from.
+    modules: Vec<String>,
     /// The `ages["Rex"]` targets met (`target`), to refuse `ages["Rex"] += 1`.
     map_entries: Vec<Span>,
     /// Name → where it is declared and what hovering it shows (`places`).
@@ -1032,6 +1034,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
+        modules: f.modules.clone(),
         map_entries: vec![],
         places: places(f),
         spans: vec![Span::new(0, 0); nb_exprs],
@@ -3215,7 +3218,7 @@ impl Checker<'_> {
                     let path = if path.is_empty() { name.clone() } else { format!("{path}.{name}") };
                     match self.private.get(&method_name(&t.owner(), name)) {
                         Some(decl) if file_number(self.src, decl.start) != file_number(self.src, span.start) => {
-                            Some((path, Err(format!("{}.kova", t.owner().split('.').next().unwrap_or_default()))))
+                            Some((path, Err(self.file_of(&t.owner()))))
                         }
                         _ => self.no_json(f, &path, span, seen),
                     }
@@ -3270,9 +3273,18 @@ impl Checker<'_> {
         if file_number(self.src, decl.start) == file_number(self.src, span.start) {
             return false;
         }
-        let file = format!("{}.kova", name.split('.').next().unwrap_or(name));
+        let file = self.file_of(name);
         self.diags.push(Diag::new(span, t!("private_name", name = name, file = file)).help(t!("private_name_help", file = file)));
         true
+    }
+
+    /// The file a module's name comes from: `shapes.circle.Circle` → `shapes/circle.kova`.
+    fn file_of(&self, name: &str) -> String {
+        let module = (self.modules.iter())
+            .filter(|m| name.strip_prefix(m.as_str()).is_some_and(|rest| rest.starts_with('.')))
+            .max_by_key(|m| m.len())
+            .map_or_else(|| name.split('.').next().unwrap_or(name).to_string(), |m| m.clone());
+        format!("{}.kova", module.replace('.', "/"))
     }
 
     /// Notes for the editor that `name` (`geometry.Point.x`) is written at `span`.
@@ -4036,7 +4048,7 @@ impl Checker<'_> {
                 self.private.get(&method_name(&owner, n)).is_some_and(|s| file_number(self.src, s.start) != file_number(self.src, ty.span.start))
             });
             if let Some((field, _)) = hides {
-                let file = format!("{}.kova", owner.split('.').next().unwrap_or(&owner));
+                let file = self.file_of(&owner);
                 self.diags.push(
                     Diag::new(ty.span, t!("private_literal", type = ty.text, field = field, file = file))
                         .help(t!("private_literal_help", type = ty.text)),
