@@ -1,0 +1,37 @@
+// `mode run else "…"` reached by every kind of call, built with `--boost` by `modes()` in
+// tests/kova.rs: each stop still says where it was called from. `args[0]` picks the call.
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Dog : Animal {
+    name: String
+
+    fn sound(self) -> String
+        mode run else "no sound when built"
+    {
+        return "woof"
+    }
+
+    fn age(self) -> Int
+        mode run else "no age when built"
+    {
+        return 3
+    }
+}
+
+fn first<T>(l: List<T>) -> Int
+    mode run else "no first when built"
+{
+    return l.length
+}
+
+fn main {
+    let rex := Dog { name := "Rex" }
+    let pet: any Animal := Dog { name := "Pet" }
+    match args[0] {
+        "any" => print(pet.sound),
+        "generic" => print(first([1, 2])),
+        _ => print(rex.age),
+    }
+}

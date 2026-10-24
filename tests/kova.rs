@@ -419,6 +419,19 @@ fn modes() {
     let out = kova(LANG).args(["build", "tests/modes/main_only.kova", "-o"]).arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&program(&exe, LANG).output().unwrap().stdout), "built\n");
+
+    // Built with `--boost` (no contracts), a stop still says where each kind of call came from.
+    let out = kova(LANG).args(["build", "tests/modes/boosted.kova", "--boost", "-o"]).arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    for (call, message, clause, site) in [("any", "sound", "11:9", "33:28"), ("generic", "first", "24:5", "34:28"), ("method", "age", "17:9", "35:24")] {
+        let out = program(&exe, LANG).arg(call).output().unwrap();
+        let stop = text(&out.stderr);
+        assert_eq!(out.status.code(), Some(101), "{stop}");
+        assert!(stop.starts_with(&format!("error: no {message} when built\n")), "{stop}");
+        assert!(stop.contains(&format!("boosted.kova:{clause}\n  mode run\n  called from ")) && stop.ends_with(&format!("boosted.kova:{site}\n")), "{stop}");
+    }
+    let out = kova(LANG).args(["run", "tests/modes/boosted.kova", "any"]).output().unwrap();
+    assert_eq!(text(&out.stdout), "woof\n");
     let _ = std::fs::remove_file(&exe);
 }
 

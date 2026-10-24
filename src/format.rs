@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_programs() {
         let mut changed = vec![];
-        for dir in ["tests/ok", "tests/error", "tests/web", "locales", "editors/vscode"] {
+        for dir in ["tests/ok", "tests/error", "tests/web", "tests/modes", "tests/parallel", "locales", "editors/vscode"] {
             // The colors' test: its comments point at columns.
             for f in walk(std::path::Path::new(dir)).into_iter().filter(|f| !f.ends_with("colors.kova")) {
                 let src = std::fs::read_to_string(&f).unwrap();
