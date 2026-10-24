@@ -526,7 +526,8 @@ fn language_server() {
     let uri = "file:///tmp/sample.kova";
 
     send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}));
-    assert!(receive()["result"]["capabilities"]["completionProvider"].is_object());
+    let capabilities = receive()["result"]["capabilities"].clone();
+    assert_eq!(capabilities["completionProvider"]["triggerCharacters"], serde_json::json!([".", " "]));
     send(serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
 
     let text = "fn main {\n    let a: Int := 1\n    a := 2\n}\n";
@@ -543,6 +544,20 @@ fn language_server() {
     let response = receive();
     let labels: Vec<&str> = response["result"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap()).collect();
     assert!(labels.contains(&"a") && labels.contains(&"main") && labels.contains(&"print"), "{labels:?}");
+
+    // A space asks for completion: after `import ` it offers the modules, elsewhere nothing.
+    let spaced = |id: u32, line: u32, character: u32| serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/completion",
+        "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": character},
+            "context": {"triggerKind": 2, "triggerCharacter": " "}}});
+    send(spaced(3, 1, 8));
+    assert!(receive()["result"].is_null());
+    send(serde_json::json!({"jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": format!("import \n{text}")}]}}));
+    receive();
+    send(spaced(4, 0, 7));
+    let modules = receive()["result"].clone();
+    let labels: Vec<&str> = modules.as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap()).collect();
+    assert!(labels.starts_with(&["web", "files"]), "{labels:?}");
 
     // An error in an imported file: shown on the `import` line, with its real place.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/error/import_error");

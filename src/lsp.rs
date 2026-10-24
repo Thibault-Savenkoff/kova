@@ -24,7 +24,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
-        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into()]), ..Default::default() }),
+        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into(), " ".into()]), ..Default::default() }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
@@ -55,7 +55,12 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
                         let path = file_path(&doc.text_document.uri);
-                        let items = docs.get(&doc.text_document.uri).map(|src| completion(&path, src, offset(src, doc.position)));
+                        // A space only asks for the files after `import `; anywhere else it offers nothing.
+                        let spaced = p.context.as_ref().and_then(|c| c.trigger_character.as_deref()) == Some(" ");
+                        let items = docs.get(&doc.text_document.uri).and_then(|src| {
+                            let cursor = offset(src, doc.position);
+                            if spaced { import_files(&path, src, cursor) } else { Some(completion(&path, src, cursor)) }
+                        });
                         Response::new_ok(req.id, items)
                     }
                     "textDocument/hover" => {
