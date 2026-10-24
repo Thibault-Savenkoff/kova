@@ -43,9 +43,9 @@ fn main {
         Answer.text("{count}")
     }
 }
-// error: `count` cannot change here: this block answers several questions at once
-// error: `names` cannot change here
-// error: `a` cannot change here
-// error: `b` cannot change here
-// error: `shape` cannot change here
-// error: `c` cannot change here
+// error: `count` cannot change inside `workers(…)`
+// error: `names` cannot change inside `workers(…)`
+// error: `a` cannot change inside `workers(…)`
+// error: `b` cannot change inside `workers(…)`
+// error: `shape` cannot change inside `workers(…)`
+// error: `c` cannot change inside `workers(…)`
