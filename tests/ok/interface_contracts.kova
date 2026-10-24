@@ -1,0 +1,46 @@
+// An interface's `require` and `ensure` run in every type following it: called directly, on an
+// `any`, through a generic, with the method's own names for the parameters.
+interface Account {
+    fn balance(self) -> Int
+    fn take(var self, amount: Int) -> Int
+        require amount > 0 else "take a positive amount"
+        ensure result <= amount
+        ensure self.balance >= 0 else "an account never goes below zero"
+
+    fn twice(self, n: Int) -> Int
+        require n < 100
+    {
+        return n * 2
+    }
+}
+
+struct Bank : Account {
+    money: Int
+    fn balance(self) -> Int { return self.money }
+    fn take(var self, wanted: Int) -> Int
+        ensure result >= 0
+    {
+        let amount: Int := if wanted > self.money { self.money } else { wanted }
+        self.money -= amount
+        return amount
+    }
+}
+
+fn empty<T: Account>(a: var T) -> Int {
+    return a.take(1000)
+}
+
+fn main {
+    var b := Bank { money := 10 }
+    print(b.take(3))
+    print(b.twice(4))
+    var a: any Account := Bank { money := 5 }
+    print(a.take(2))
+    print(empty(var b))
+    print(b.balance)
+}
+// expect: 3
+// expect: 8
+// expect: 2
+// expect: 7
+// expect: 0

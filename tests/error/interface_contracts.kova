@@ -1,0 +1,24 @@
+// An interface's contracts: no second `require` in a type following it, no `ensure` reading a
+// parameter the method was given (`move`).
+interface Account {
+    fn take(var self, amount: Int) -> Int
+        require amount > 0
+    fn keep(var self, note: move String)
+        ensure note != ""
+}
+
+struct Bank : Account {
+    money: Int
+    fn take(var self, amount: Int) -> Int
+        require amount < 1000
+    {
+        return amount
+    }
+    fn keep(var self, note: move String) {
+    }
+}
+
+fn main {
+}
+// error: `take` already has the `require` of `Account`: a caller knowing only `Account` could not follow another one
+// error: this `ensure` reads `note`, given to the method (`move`): it may be gone once the method ends

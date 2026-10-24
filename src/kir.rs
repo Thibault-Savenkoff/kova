@@ -619,7 +619,8 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     // (a test = a function without parameters, result or contracts).
     // The last element: what the `Type::Param`s stand for (`Self` in a struct's methods and in the
     // default methods it takes; `T` in a copy of a generic function).
-    // Then `mode build else …` (PLAN 2.14).
+    // Then `mode build else …` (PLAN 2.14), then the contracts a method takes from its
+    // interfaces, with the names of the interface's parameters → the method's.
     type Source<'f> = (
         String,
         Option<(Mode, Type)>,
@@ -629,9 +630,20 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         &'f Block,
         Vec<(String, Type)>,
         Option<&'f OnlyIn>,
+        Vec<(&'f [Contract], Vec<(String, String)>)>,
     );
     let free = |g: &'f ast::Function| -> Source<'f> {
-        (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, vec![], g.only.as_ref())
+        (g.name.text.clone(), None, &g.params[..], g.ret.as_ref(), &g.contracts[..], &g.body, vec![], g.only.as_ref(), vec![])
+    };
+    // `struct Bank : Account` writing `take`: the `require`s and `ensure`s of `Account.take` too.
+    let inherited = |owner: &str, m: &'f ast::Function| -> Vec<(&'f [Contract], Vec<(String, String)>)> {
+        let Some(s) = f.structs.iter().find(|s| s.name.text == owner) else { return vec![] };
+        (s.interfaces.iter())
+            .filter_map(|n| f.interfaces.iter().find(|i| i.name.text == n.text))
+            .flat_map(|i| i.methods.iter().map(|(w, _)| w))
+            .filter(|w| w.name.text == m.name.text && !w.contracts.is_empty() && !std::ptr::eq(*w, m))
+            .map(|w| (&w.contracts[..], w.params.iter().zip(&m.params).map(|(a, b)| (a.name.text.clone(), b.name.text.clone())).collect()))
+            .collect()
     };
     let mut all: Vec<Source> = f.functions.iter().filter(|g| g.generics.is_empty()).map(free).collect();
     // A generic function is translated once for each list of types it is called with
@@ -643,7 +655,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     let method = |ty: &Type, owner: &str, m: &'f ast::Function| -> Source<'f> {
         let name = method_name(owner, &m.name.text);
         let me = vec![("Self".to_string(), ty.clone())];
-        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me, m.only.as_ref())
+        (name, m.receiver.map(|r| (r, ty.clone())), &m.params, m.ret.as_ref(), &m.contracts, &m.body, me, m.only.as_ref(), inherited(owner, m))
     };
     let mut generic = generic;
     for s in &f.structs {
@@ -678,7 +690,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         }
     }
     let n = all.len();
-    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![], None)));
+    all.extend(f.tests.iter().filter(|_| tests).map(|t| (t.name.clone(), None, &[][..], None, &[][..], &t.body, vec![], None, vec![])));
     let numbers: HashMap<&str, usize> = all[..n].iter().enumerate().map(|(i, g)| (g.0.as_str(), i)).collect();
     // A `mode build` function under `kova run`: its `else` replaces its body and its contracts.
     fn away(only: Option<&OnlyIn>, built: bool) -> Option<&OnlyIn> {
@@ -687,13 +699,14 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     // The functions that receive the call location (`main` is called by the runtime).
     let site = |g: &Source| {
         let stops = matches!(away(g.7, built), Some(OnlyIn { otherwise: Otherwise::Stop(_), .. }));
-        g.0 != "main" && (stops || contracts && !g.4.is_empty() && away(g.7, built).is_none())
+        let any = !g.4.is_empty() || g.8.iter().any(|(c, _)| !c.is_empty());
+        g.0 != "main" && (stops || contracts && any && away(g.7, built).is_none())
     };
     let sites: Vec<bool> = all.iter().map(site).collect();
     let generic_sites: HashMap<&str, bool> = generic.iter().map(|(n, (g, _))| (n.as_str(), site(g))).collect();
     let helpers = RefCell::new(vec![]);
     let made = RefCell::new(vec![]);
-    let translator = |ret: Type, ensures: Vec<&'f Contract>, subst: Vec<(String, Type)>| Translator {
+    let translator = |ret: Type, ensures: Vec<(&'f Contract, Option<Vars>)>, subst: Vec<(String, Type)>| Translator {
         src,
         info,
         subst,
@@ -725,14 +738,14 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         envs: vec![],
         env_marks: vec![],
     };
-    let make = |(name, receiver, params, ret, written_contracts, body, subst, only): &Source<'f>, with_site: bool| {
+    let make = |(name, receiver, params, ret, written_contracts, body, subst, only, from): &Source<'f>, with_site: bool| {
             let mut structs = info.structs.clone();
             let subst = subst.clone();
             structs.extend(subst.iter().cloned());
             let ret = ret.map_or(Type::Unit, |t| type_of(t, &structs));
             let away = away(*only, built);
             let kept = move |k: ContractKind| written_contracts.iter().filter(move |c: &&Contract| contracts && away.is_none() && c.kind == k);
-            let mut t = translator(ret.clone(), kept(ContractKind::Ensure).collect(), subst);
+            let mut t = translator(ret.clone(), kept(ContractKind::Ensure).map(|c| (c, None)).collect(), subst);
             t.owner = name.clone();
             let mut returns = scalars(&ret);
             if let Some((r, ty)) = receiver {
@@ -749,6 +762,24 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
             t.current = t.new_block();
             for c in kept(ContractKind::Require) {
                 t.check(c, t.site);
+            }
+            // An interface's contracts read its own parameter names: those names, on top of every
+            // other, give the method's parameters.
+            for (written, names) in from.iter().filter(|_| contracts && away.is_none()) {
+                let mut vars: Vars = names.iter().map(|(i, m)| (i.clone(), t.variable(m))).collect();
+                if receiver.is_some() {
+                    vars.insert("self".into(), t.variable("self"));
+                }
+                for c in written.iter() {
+                    match c.kind {
+                        ContractKind::Require => {
+                            t.names.push(Scope { borrowed: true, vars: vars.clone() });
+                            t.check(c, t.site);
+                            t.names.pop();
+                        }
+                        _ => t.ensures.push((c, Some(vars.clone()))),
+                    }
+                }
             }
             match away.map(|m| (m.span, &m.otherwise)) {
                 Some((span, Otherwise::Stop(parts))) => t.stop(span, parts, t.site),
@@ -779,7 +810,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
                 subst.extend(g.6.iter().map(|(n, t)| (n.clone(), substitute(t, &subst))).collect::<Vec<_>>());
                 let receiver = g.1.as_ref().map(|(r, t)| (*r, substitute(t, &subst)));
                 let shown = format!("{name}<{}>", types.iter().map(Type::text).collect::<Vec<_>>().join(", "));
-                make(&(shown, receiver, g.2, g.3, g.4, g.5, subst, g.7), generic_sites[name.as_str()])
+                make(&(shown, receiver, g.2, g.3, g.4, g.5, subst, g.7, g.8.clone()), generic_sites[name.as_str()])
             }
             Helper::Block(k) => made.borrow_mut()[*k].take().expect("each block is made once"),
             h => translator(Type::Unit, vec![], vec![]).helper_function(h),
@@ -818,7 +849,8 @@ struct Translator<'a> {
     built: bool,
     /// For the debugger: an `Inst::Line` before each statement.
     watching: bool,
-    ensures: Vec<&'a Contract>,
+    /// With the names an interface's contract reads (`None`: the function's own).
+    ensures: Vec<(&'a Contract, Option<Vars>)>,
     ret: Type,
     /// The value of `result` while checking an `ensure`.
     result: Option<(Slots, Type)>,
@@ -853,8 +885,10 @@ struct Translator<'a> {
 struct Scope {
     /// Names that borrow their slots (borrowed parameters, `for` elements…): never freed.
     borrowed: bool,
-    vars: HashMap<String, (Slots, Type)>,
+    vars: Vars,
 }
+
+type Vars = HashMap<String, (Slots, Type)>;
 
 impl Scope {
     fn borrowed() -> Scope {
@@ -2758,9 +2792,13 @@ impl<'a> Translator<'a> {
             self.free_slot(l, &kind);
         }
         // The `ensure`s may read a `move` parameter: checked before it is freed.
-        for c in self.ensures.clone() {
+        for (c, vars) in self.ensures.clone() {
             self.result = Some((v.clone(), self.ret.clone()));
+            let named = vars.map(|vars| self.names.push(Scope { borrowed: true, vars })).is_some();
             self.check(c, self.site);
+            if named {
+                self.names.pop();
+            }
         }
         self.result = None;
         self.free_scopes(1);
@@ -5081,7 +5119,7 @@ fn big_literal(e: &Expr) -> Option<String> {
 }
 
 /// The variables of a condition, in order, without duplicates (`result` included).
-fn names_in(e: &Expr, names: &mut Vec<String>) {
+pub fn names_in(e: &Expr, names: &mut Vec<String>) {
     let mut add = |n: &str| {
         if !names.iter().any(|m| m == n) {
             names.push(n.to_string());

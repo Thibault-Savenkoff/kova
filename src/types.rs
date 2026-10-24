@@ -1262,9 +1262,6 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             if m.receiver.is_none() {
                 c.diags.push(Diag::new(m.name.span, t!("interface_static", name = name)).help(t!("interface_static_help", name = name)));
             }
-            if !m.contracts.is_empty() {
-                c.error(m.name.span, t!("interface_contract", name = name));
-            }
             if m.only.is_some() {
                 c.error(m.name.span, t!("interface_mode", name = name));
             }
@@ -1363,8 +1360,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         if c.interfaces.get(it.name.text.as_str()) == Some(&i) {
             let me = self_param(&it.name.text);
             c.structs.insert("Self".into(), me.clone());
-            for (m, _) in it.methods.iter().filter(|(_, body)| *body) {
-                c.body(m, Some(&me));
+            for (m, body) in &it.methods {
+                if *body {
+                    c.body(m, Some(&me));
+                } else {
+                    // Written only to be followed: its contracts, which every type following it runs.
+                    c.signature(m, Some(&me));
+                    c.ensure_moved(m);
+                }
             }
             c.structs.remove("Self");
         }
@@ -1654,6 +1657,14 @@ impl Checker<'_> {
                 let mine = method_name(&s.name.text, &m.name.text);
                 let heading = heading_text(m);
                 if let Some(w) = s.methods.iter().find(|w| w.name.text == m.name.text) {
+                    // The interface's `require` is what every caller follows: another one could not be.
+                    let own = w.contracts.iter().find(|k| k.kind == ContractKind::Require);
+                    if let Some(k) = own.filter(|_| m.contracts.iter().any(|k| k.kind == ContractKind::Require)) {
+                        self.diags.push(
+                            Diag::new(k.cond.span, t!("interface_require", name = m.name.text, interface = it.name.text))
+                                .help(t!("interface_require_help", interface = it.name.text)),
+                        );
+                    }
                     // A generic struct's methods carry its type parameters: not the interface's.
                     if self.functions.get(&mine).is_some_and(|g| (&g.receiver, &g.params, &g.ret) != (&want.receiver, &want.params, &want.ret)) {
                         self.diags.push(
@@ -1850,6 +1861,33 @@ impl Checker<'_> {
     }
 
     fn body_inner(&mut self, func: &Function, owner: Option<&Type>) {
+        self.signature(func, owner);
+        if let Some(only) = &func.only {
+            self.only_in(&func.name.text, only);
+        }
+        self.block(&func.body, vec![]);
+        if self.ret != Type::Unit && !always_returns(&func.body) {
+            self.diags.push(
+                Diag::new(func.body.close, t!("missing_return", name = func.name.text))
+                    .help(t!("missing_return_help", type = self.ret.text())),
+            );
+        }
+    }
+
+    /// An interface's `ensure` runs after the body of every type's method: one of them may have
+    /// given a `move` parameter away by then.
+    fn ensure_moved(&mut self, m: &Function) {
+        for k in m.contracts.iter().filter(|k| k.kind == ContractKind::Ensure) {
+            let mut names = vec![];
+            crate::kir::names_in(&k.cond, &mut names);
+            if let Some(p) = m.params.iter().find(|p| p.mode == Mode::Move && names.contains(&p.name.text)) {
+                self.error(k.cond.span, t!("interface_ensure_move", name = p.name.text));
+            }
+        }
+    }
+
+    /// The parameters of `func`, then its contracts (they only see them, and `result`).
+    fn signature(&mut self, func: &Function, owner: Option<&Type>) {
         self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
         let mut params = HashMap::new();
         if let (Some(ty), Some(r)) = (owner, func.receiver) {
@@ -1876,16 +1914,6 @@ impl Checker<'_> {
             self.contract(k);
         }
         self.result = None;
-        if let Some(only) = &func.only {
-            self.only_in(&func.name.text, only);
-        }
-        self.block(&func.body, vec![]);
-        if self.ret != Type::Unit && !always_returns(&func.body) {
-            self.diags.push(
-                Diag::new(func.body.close, t!("missing_return", name = func.name.text))
-                    .help(t!("missing_return_help", type = self.ret.text())),
-            );
-        }
     }
 
     /// Builds the type of `f.structs[i]` (a struct or an enum) after those of its fields' types.

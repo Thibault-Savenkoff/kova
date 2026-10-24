@@ -1,0 +1,24 @@
+// A type breaking its interface's `ensure`: the message comes from the interface, the values
+// under the interface's names.
+interface Account {
+    fn take(var self, amount: Int) -> Int
+        ensure result <= amount else "never more than asked"
+}
+
+struct Broken : Account {
+    money: Int
+    fn take(var self, wanted: Int) -> Int {
+        let amount: Int := wanted + 1
+        return amount
+    }
+}
+
+fn main {
+    var a: any Account := Broken { money := 5 }
+    print(a.take(2))
+}
+// code: 101
+// stderr: error: never more than asked
+// stderr: interface_ensure.kova:5:16
+// stderr: values: result = 3, amount = 2
+// stderr: called from

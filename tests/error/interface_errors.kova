@@ -41,7 +41,6 @@ fn f(a: Animal, b: Self) {}
 fn main {}
 // error: `make` has no `self`: an interface lists methods called on a value
 // error: the method `sound` already exists in `Animal` (line 2)
-// error: contracts on interface methods (`require` / `ensure` on `checked`) come later
 // error: `Self` has no method `fly`
 // error: help: methods of `Self`: `bad`, `checked`, `equal`, `hello`, `make`, `sound`, `clone`
 // error: `=` on a `Self` needs `Self` to follow `Equal`

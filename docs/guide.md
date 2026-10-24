@@ -512,6 +512,34 @@ fn main {
   the program stops with a message showing the values involved and where it was called from.
 - `kova test file.kova` runs the `test` blocks; `kova run` and `kova build` leave them out.
 - `kova build --boost` leaves the contracts out of the executable, for speed.
+- An interface's contracts bind every type following it, whatever its parameters are called. A type
+  may promise more (its own `ensure`), never ask for more (no `require` of its own when the interface
+  has one):
+
+```kova
+interface Account {
+    fn take(var self, amount: Int) -> Int
+        require amount > 0 else "take a positive amount"
+        ensure result <= amount
+}
+
+struct Bank : Account {
+    money: Int
+    fn take(var self, wanted: Int) -> Int {
+        self.money -= wanted
+        return wanted
+    }
+}
+
+fn main {
+    var b := Bank { money := 10 }
+    print(b.take(3))
+}
+```
+
+```text
+3
+```
 
 ### Run or build
 
