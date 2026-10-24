@@ -1,0 +1,31 @@
+// A merge sort: many elements at once, equal ones keep their order, empty and single Lists.
+fn main {
+    var l: List<Int> := []
+    var x: Int := 7
+    for i in 1..=20000 {
+        x := (x * 1103515245 + 12345) % 2147483648
+        l.add(x % 1000000)
+    }
+    let s: List<Int> := l.sorted
+    var good: Bool := true
+    for i in 1..s.length {
+        if s[i] < s[i - 1] {
+            good := false
+        }
+    }
+    print("{good} {s.length} {s[0]} {s[19999]}")
+    let words: List<String> := ["pear", "apple", "fig", "apple", "kiwi", "banana"]
+    print(words.sorted)
+    print(words.sorted { a: String, b: String => a.length < b.length })
+    let n: List<Int> := [1, 3, 2, 3]
+    print(n.sorted { a: Int, b: Int => a > b })
+    let e: List<Int> := []
+    print(e.sorted)
+    print([5].sorted)
+}
+// expect: true 20000 53 999939
+// expect: ["apple", "apple", "banana", "fig", "kiwi", "pear"]
+// expect: ["fig", "pear", "kiwi", "apple", "apple", "banana"]
+// expect: [3, 3, 2, 1]
+// expect: []
+// expect: [5]

@@ -3760,41 +3760,119 @@ impl<'a> Translator<'a> {
     /// comes before the previous one, so equal elements keep their order.
     /// ponytail: insertion sort, O(n²); a merge sort when Lists of thousands are sorted.
     fn sorted(&mut self, list: Local, elem: &Type, block: Option<&Expr>, span: Span) -> Slots {
+        // A merge sort from the bottom up, stable: runs of 1, 2, 4… elements merged from `src` into
+        // `dst`, then the two Lists change roles. Elements are moved, never copied: `dst` starts with
+        // `n` empty elements, and the List left over at the end is freed without its elements.
         let ty = Type::List(Box::new(elem.clone()));
-        let out = self.clone_value(&[list], &ty)[0];
+        let width = scalars(elem).len();
+        let src = self.clone_value(&[list], &ty)[0];
         let given = block.filter(|b| !matches!(b.kind, ExprKind::Block { .. })).map(|b| self.expr(b));
-        let n = self.int_local();
-        self.emit(Inst::ListLength(n, out));
-        let (i, j, one, zero) = (self.constant(1), self.int_local(), self.constant(1), self.constant(0));
-        let (outer, start, inner, test, swap, next, done) =
-            (self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block(), self.new_block());
-        self.go(End::Jump(outer), outer);
-        let more = self.int_local();
-        self.emit(Inst::Binary(more, Op::Lt, i, n, NOWHERE));
-        self.go(End::Branch(more, start, done), start);
-        self.emit(Inst::Copy(j, i));
-        self.go(End::Jump(inner), inner);
-        let left = self.int_local();
-        self.emit(Inst::Binary(left, Op::Gt, j, zero, NOWHERE));
-        self.go(End::Branch(left, test, next), test);
-        let before = self.int_local();
-        self.emit(Inst::Binary(before, Op::Minus, j, one, NOWHERE));
-        let (a, b) = (self.load(out, j, elem), self.load(out, before, elem));
-        let first = match block {
-            Some(block) => self.run(block, &given, vec![(a.clone(), elem.clone()), (b.clone(), elem.clone())], Some(&Type::Bool))[0],
-            None => self.less(&a, &b, elem, span),
-        };
-        self.go(End::Branch(first, swap, next), swap);
-        for (k, (&x, &y)) in a.iter().zip(&b).enumerate() {
-            self.emit(Inst::ListStore(out, j, k, y));
-            self.emit(Inst::ListStore(out, before, k, x));
+        let (n, dst, zero, one, two) = (self.int_local(), self.int_local(), self.constant(0), self.constant(1), self.constant(2));
+        self.emit(Inst::ListLength(n, src));
+        self.emit(Inst::ListNew(dst, width));
+        let k = self.int_local();
+        self.emit(Inst::Copy(k, n));
+        self.repeat(
+            |t| t.compare(Op::Gt, k, zero),
+            |t| {
+                let i = t.int_local();
+                t.emit(Inst::ListGrow(i, dst));
+                t.emit(Inst::Binary(k, Op::Minus, k, one, NOWHERE));
+            },
+        );
+        let run = self.int_local();
+        self.emit(Inst::Copy(run, one));
+        self.repeat(
+            |t| t.compare(Op::Lt, run, n),
+            |t| {
+                let lo = t.int_local();
+                t.emit(Inst::Copy(lo, zero));
+                t.repeat(
+                    |t| t.compare(Op::Lt, lo, n),
+                    |t| {
+                        let (mid, hi, i, j, k) = (t.int_local(), t.int_local(), t.int_local(), t.int_local(), t.int_local());
+                        t.emit(Inst::Binary(mid, Op::Plus, lo, run, NOWHERE));
+                        t.at_most(mid, n);
+                        t.emit(Inst::Binary(hi, Op::Plus, mid, run, NOWHERE));
+                        t.at_most(hi, n);
+                        t.emit(Inst::Copy(i, lo));
+                        t.emit(Inst::Copy(j, mid));
+                        t.emit(Inst::Copy(k, lo));
+                        t.repeat(
+                            |t| t.compare(Op::Lt, k, hi),
+                            |t| {
+                                // The right element goes first only when it is strictly before the
+                                // left one: equal elements keep their order.
+                                let (left, right, test, take_left, done) = (t.new_block(), t.new_block(), t.new_block(), t.new_block(), t.new_block());
+                                let more_left = t.compare(Op::Lt, i, mid);
+                                t.go(End::Branch(more_left, test, right), test);
+                                let more_right = t.compare(Op::Lt, j, hi);
+                                let compare = t.new_block();
+                                t.go(End::Branch(more_right, compare, take_left), compare);
+                                let (a, b) = (t.load(src, j, elem), t.load(src, i, elem));
+                                let first = match block {
+                                    Some(block) => t.run(block, &given, vec![(a, elem.clone()), (b, elem.clone())], Some(&Type::Bool))[0],
+                                    None => t.less(&a, &b, elem, span),
+                                };
+                                t.go(End::Branch(first, right, take_left), take_left);
+                                t.go(End::Jump(left), left);
+                                t.move_element(src, i, dst, k, width);
+                                t.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
+                                t.go(End::Jump(done), right);
+                                t.move_element(src, j, dst, k, width);
+                                t.emit(Inst::Binary(j, Op::Plus, j, one, NOWHERE));
+                                t.go(End::Jump(done), done);
+                                t.emit(Inst::Binary(k, Op::Plus, k, one, NOWHERE));
+                            },
+                        );
+                        t.emit(Inst::Copy(lo, hi));
+                    },
+                );
+                let swap = t.int_local();
+                t.emit(Inst::Copy(swap, src));
+                t.emit(Inst::Copy(src, dst));
+                t.emit(Inst::Copy(dst, swap));
+                t.emit(Inst::Binary(run, Op::Times, run, two, NOWHERE));
+            },
+        );
+        self.emit(Inst::ListFree(dst));
+        self.track(&[src], &ty);
+        vec![src]
+    }
+
+    /// `dst := a op b`, a new Bool local.
+    fn compare(&mut self, op: Op, a: Local, b: Local) -> Local {
+        let dst = self.int_local();
+        self.emit(Inst::Binary(dst, op, a, b, NOWHERE));
+        dst
+    }
+
+    /// `while test { body }`, with the test made again at each turn.
+    fn repeat(&mut self, test: impl FnOnce(&mut Self) -> Local, body: impl FnOnce(&mut Self)) {
+        let (top, inside, out) = (self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(top), top);
+        let more = test(self);
+        self.go(End::Branch(more, inside, out), inside);
+        body(self);
+        self.go(End::Jump(top), out);
+    }
+
+    /// `x := n` when `x > n`.
+    fn at_most(&mut self, x: Local, n: Local) {
+        let (lower, past) = (self.new_block(), self.new_block());
+        let over = self.compare(Op::Gt, x, n);
+        self.go(End::Branch(over, lower, past), lower);
+        self.emit(Inst::Copy(x, n));
+        self.go(End::Jump(past), past);
+    }
+
+    /// Element `i` of `from` becomes element `k` of `to` (its slots copied, `from`'s left as they were).
+    fn move_element(&mut self, from: Local, i: Local, to: Local, k: Local, width: usize) {
+        for slot in 0..width {
+            let v = self.int_local();
+            self.emit(Inst::ListLoad(v, from, i, slot));
+            self.emit(Inst::ListStore(to, k, slot, v));
         }
-        self.emit(Inst::Copy(j, before));
-        self.go(End::Jump(inner), next);
-        self.emit(Inst::Binary(i, Op::Plus, i, one, NOWHERE));
-        self.go(End::Jump(outer), done);
-        self.track(&[out], &ty);
-        vec![out]
     }
 
     /// Runs `block` on `vals`: its body copied here, or a call of the block `given`.
