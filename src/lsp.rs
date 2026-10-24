@@ -568,7 +568,8 @@ fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIt
     let dir = folders.split('.').filter(|f| !f.is_empty()).fold(crate::program_folder(path, &file.imports), |d, f| d.join(f));
     let me = std::path::Path::new(path);
     let taken: Vec<String> = file.imports.into_iter().map(|i| i.module.text).filter(|m| m != typed).collect();
-    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|e| e.path()).collect();
+    // A folder that cannot be read (a file not saved yet): Kova's own modules all the same.
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).map(|r| r.flatten().map(|e| e.path()).collect()).unwrap_or_default();
     entries.sort();
     let name = |p: &std::path::Path| Some(p.file_stem()?.to_str()?.to_string());
     let kova = |p: &std::path::Path| p.extension().is_some_and(|x| x == "kova");
@@ -1454,6 +1455,7 @@ mod tests {
         let src = "import geometry\nimport ";
         assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
+        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files"]);
         // A folder, then its files.
         let folders = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/folders/main.kova");
         assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "shapes"]);
