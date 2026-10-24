@@ -261,9 +261,21 @@ impl<'a> Inputs<'a> {
                         64 => i64::from_le_bytes(out[at..at + 8].try_into().unwrap()),
                         n => return Err(format!("relocation of {n} bits")),
                     };
-                    // x86-64 Mach-O: a distance to a section was measured from the place in the object.
-                    if let (RelocationFlags::MachO { r_pcrel: true, .. }, RelocationTarget::Section(_)) = (r.flags(), r.target()) {
-                        a += (section.address() + in_section) as i64 - r.addend();
+                    match (r.flags(), r.target()) {
+                        // x86-64 Mach-O: a distance to a section was measured from the place in the object.
+                        (RelocationFlags::MachO { r_pcrel: true, .. }, RelocationTarget::Section(_)) => a += (section.address() + in_section) as i64 - r.addend(),
+                        // `cmp byte [rip + x], 0`: the number written already counts the bytes after
+                        // it (1, 2 or 4), which `object` takes off its addend too.
+                        (RelocationFlags::MachO { r_type, r_pcrel: true, .. }, RelocationTarget::Symbol(_)) if !arm => {
+                            use object::macho::*;
+                            a += match r_type {
+                                X86_64_RELOC_SIGNED_1 => 1,
+                                X86_64_RELOC_SIGNED_2 => 2,
+                                X86_64_RELOC_SIGNED_4 => 4,
+                                _ => 0,
+                            };
+                        }
+                        _ => {}
                     }
                 }
                 let mut value = (address_of(&t)? as i64).wrapping_add(a);

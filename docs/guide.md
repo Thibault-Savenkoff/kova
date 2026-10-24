@@ -656,8 +656,8 @@ connection that says nothing keeps no one waiting; the block itself answers one 
 thread, so a slow answer keeps no one else waiting (also with `log(…)`, before or after). The block may
 read the values around it but not change them: `count += 1` inside is refused, since two questions
 answered at once would change the same `count`. Each thread starts with its own copy of what the block
-reads. `kova run` still answers one question at a time, with the same answers: only the built program
-answers several at once.
+reads. `kova run` still answers one question at a time: only the built program answers several at once
+(so a block that waits for another question of the same server only gets its answer when built).
 
 ## 19. The tools
 
