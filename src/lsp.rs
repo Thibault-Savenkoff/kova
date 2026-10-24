@@ -576,7 +576,14 @@ fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIt
         detail: Some(t!("module_detail")),
         ..Default::default()
     });
-    Some(own.chain(names.into_iter().map(|n| CompletionItem { label: n, kind: Some(CompletionItemKind::FILE), ..Default::default() })).collect())
+    // A file next to this one is a module too: same icon, its own detail.
+    let near = names.into_iter().map(|n| CompletionItem {
+        detail: Some(t!("file_module_detail", name = n)),
+        label: n,
+        kind: Some(CompletionItemKind::MODULE),
+        ..Default::default()
+    });
+    Some(own.chain(near).collect())
 }
 
 /// In `match shape {`, where a case goes: the cases not handled yet.
