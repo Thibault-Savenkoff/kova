@@ -49,6 +49,11 @@ mod c {
         pub fn poll(fds: *mut [i32; 2], n: u32, ms: i32) -> i32;
         pub fn getifaddrs(list: *mut *mut super::IfAddrs) -> i32;
         pub fn freeifaddrs(list: *mut super::IfAddrs);
+        pub fn os_unfair_lock_lock(lock: *mut u32);
+        pub fn os_unfair_lock_unlock(lock: *mut u32);
+        pub fn pthread_attr_init(attributes: *mut [u64; 8]) -> i32;
+        pub fn pthread_attr_setstacksize(attributes: *mut [u64; 8], n: usize) -> i32;
+        pub fn pthread_create(thread: *mut usize, attributes: *const [u64; 8], start: extern "C" fn(*mut u8) -> *mut u8, arg: *mut u8) -> i32;
     }
 }
 
@@ -413,5 +418,40 @@ unsafe impl GlobalAlloc for Memory {
     }
     unsafe fn realloc(&self, p: *mut u8, _: Layout, n: usize) -> *mut u8 {
         unsafe { c::realloc(p, n) }
+    }
+}
+
+// ---- Threads (`serve(…) workers(…)`) ----
+
+/// What one thread at a time may do (`crate::Locked`).
+pub struct Lock(core::cell::UnsafeCell<u32>);
+
+unsafe impl Sync for Lock {}
+
+impl Lock {
+    pub const fn new() -> Lock {
+        Lock(core::cell::UnsafeCell::new(0))
+    }
+    pub fn lock(&self) {
+        unsafe { c::os_unfair_lock_lock(self.0.get()) }
+    }
+    pub fn unlock(&self) {
+        unsafe { c::os_unfair_lock_unlock(self.0.get()) }
+    }
+}
+
+/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+    extern "C" fn begin(p: *mut u8) -> *mut u8 {
+        let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
+        f(arg);
+        core::ptr::null_mut()
+    }
+    let (mut attributes, mut thread) = ([0u64; 8], 0);
+    unsafe {
+        c::pthread_attr_init(&mut attributes);
+        // As big as the main thread's: a thread has 512 KB otherwise.
+        c::pthread_attr_setstacksize(&mut attributes, 8 << 20);
+        c::pthread_create(&mut thread, &attributes, begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0
     }
 }

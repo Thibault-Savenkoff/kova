@@ -652,6 +652,13 @@ A port another program has stops the program (code 101). Kova itself answers a q
 connection at once and gives the block whichever question is whole first, so a browser's spare
 connection that says nothing keeps no one waiting; the block itself answers one question at a time.
 
+`serve(8080) workers(8) { q: Request => … }` answers up to 8 questions at the same time, each on its own
+thread, so a slow answer keeps no one else waiting (also with `log(…)`, before or after). The block may
+read the values around it but not change them: `count += 1` inside is refused, since two questions
+answered at once would change the same `count`. Each thread starts with its own copy of what the block
+reads. `kova run` still answers one question at a time, with the same answers: only the built program
+answers several at once.
+
 ## 19. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.

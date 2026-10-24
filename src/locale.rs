@@ -61,6 +61,8 @@ pub const RUNTIME: &[&str] = &[
     "this_computer_only",
     "this_network",
     "stop_with_ctrl_c",
+    // `serve(…) workers(0)`.
+    "fault_workers",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.

@@ -46,8 +46,9 @@ static MEMORY: sys::Memory = sys::Memory;
 fn panic(info: &core::panic::PanicInfo) -> ! {
     let mut message = Vec::from(&b"Kova runtime: "[..]);
     let _ = core::fmt::write(&mut Sink(&mut message), format_args!("{}\n", info.message()));
-    error(&message);
-    exit(101)
+    // Directly: the thread may hold the lock of `OUT`.
+    sys::write(2, &message);
+    sys::exit(101)
 }
 
 struct Sink<'a>(&'a mut Vec<u8>);
@@ -59,7 +60,8 @@ impl core::fmt::Write for Sink<'_> {
     }
 }
 
-/// A global value: a Kova program has only one thread.
+/// A global value that only one thread reaches: set before `serve(…) workers(…)` starts others
+/// (`ARGS`, the language), or only reached by the main thread.
 struct Global<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for Global<T> {}
@@ -71,6 +73,27 @@ impl<T> Global<T> {
     #[allow(clippy::mut_from_ref)]
     fn get(&self) -> &mut T {
         unsafe { &mut *self.0.get() }
+    }
+}
+
+/// A global value several threads may reach (`serve(…) workers(…)`): one at a time.
+struct Locked<T> {
+    lock: sys::Lock,
+    value: UnsafeCell<T>,
+}
+
+unsafe impl<T> Sync for Locked<T> {}
+
+impl<T> Locked<T> {
+    const fn new(value: T) -> Self {
+        Locked { lock: sys::Lock::new(), value: UnsafeCell::new(value) }
+    }
+    /// `f` must not reach this value again (it would wait for itself).
+    fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        self.lock.lock();
+        let r = f(unsafe { &mut *self.value.get() });
+        self.lock.unlock();
+        r
     }
 }
 
@@ -120,12 +143,15 @@ fn exit(code: i32) -> ! {
 
 /// What `print` wrote and the system has not been given yet: one call to the system for many
 /// `print`s (`flush` gives it).
-static OUT: Global<Vec<u8>> = Global::new(Vec::new());
-/// On a terminal, each `print` is shown at once.
+static OUT: Locked<Vec<u8>> = Locked::new(Vec::new());
+/// On a terminal, each `print` is shown at once. Reached with `OUT` only.
 static TERMINAL: Global<Option<bool>> = Global::new(None);
 
 fn flush() {
-    let out = OUT.get();
+    OUT.with(write_out);
+}
+
+fn write_out(out: &mut Vec<u8>) {
     if !out.is_empty() {
         sys::write(1, out);
         out.clear();
@@ -134,8 +160,10 @@ fn flush() {
 
 /// Every text written on stderr goes through here: after what `print` wrote before it.
 fn error(text: &[u8]) {
-    flush();
-    sys::write(2, text);
+    OUT.with(|out| {
+        write_out(out);
+        sys::write(2, text);
+    })
 }
 
 fn put_int(o: &mut Vec<u8>, v: i64) {
@@ -198,14 +226,15 @@ pub extern "C" fn kova_show_site(o: &mut Vec<u8>, value: i64) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_print(value: i64, show: i64, newline: i64) {
-    let out = OUT.get();
-    writer(show)(out, value);
-    if newline != 0 {
-        out.push(b'\n');
-    }
-    if out.len() >= 1 << 13 || *TERMINAL.get().get_or_insert_with(|| sys::is_terminal(1)) {
-        flush();
-    }
+    OUT.with(|out| {
+        writer(show)(out, value);
+        if newline != 0 {
+            out.push(b'\n');
+        }
+        if out.len() >= 1 << 13 || *TERMINAL.get().get_or_insert_with(|| sys::is_terminal(1)) {
+            write_out(out);
+        }
+    })
 }
 
 /// The text of a value, as `print` writes it (`"{x}"`).
@@ -767,14 +796,17 @@ pub extern "C" fn kova_remove_file(p: i64) -> i64 {
 }
 
 /// What was read from the input and not given to `read_line` yet, from `.1` on.
-static INPUT: Global<(Vec<u8>, usize)> = Global::new((Vec::new(), 0));
+static INPUT: Locked<(Vec<u8>, usize)> = Locked::new((Vec::new(), 0));
 
 /// `read_line`: the next line of the input without its end (`\n` or `\r\n`),
 /// 0 at the end of the input, -1 if the line is not UTF-8 (src/kir.rs stops the program).
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_read_line() -> i64 {
     flush();
-    let (input, at) = INPUT.get();
+    INPUT.with(|(input, at)| read_line(input, at))
+}
+
+fn read_line(input: &mut Vec<u8>, at: &mut usize) -> i64 {
     let mut line = Vec::new();
     let mut read = false;
     loop {
@@ -871,15 +903,36 @@ type Asked = (Socket, Option<([u8; 4], String, String)>);
 /// Like src/interp.rs.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_accept(server: i64) -> i64 {
-    let server = unsafe { &mut *(server as *mut http::Server<sys::Net>) };
-    let (link, q, from) = http::next_question(&mut sys::Net, server);
-    let asked: Asked = (link, server.logs.then(|| (from, q.method.clone(), q.url.clone())));
+    // With `workers(…)`, the thread that has it reads every connection until one question is
+    // whole, then lets the next one read (the others are answering, or wait here).
+    static READING: Locked<()> = Locked::new(());
+    let (link, q, from, logs) = READING.with(|_| {
+        let server = unsafe { &mut *(server as *mut http::Server<sys::Net>) };
+        let (link, q, from) = http::next_question(&mut sys::Net, server);
+        (link, q, from, server.logs)
+    });
+    let asked: Asked = (link, logs.then(|| (from, q.method.clone(), q.url.clone())));
     let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
     let headers = new_list(List { length, width: 2, slots, index: 0 });
     let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, link as i64];
     new_list(List { length: 1, width: 7, slots, index: 0 })
+}
+
+/// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
+/// included. A worker never returns: an `exit` or an error on any thread stops the program.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_workers(n: i64, worker: i64, env: i64) -> i64 {
+    let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
+    // A thread the system cannot start (no memory left): the others answer.
+    for _ in 1..n {
+        if !sys::spawn(worker, env) {
+            break;
+        }
+    }
+    worker(env);
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -1000,11 +1053,11 @@ pub extern "C" fn kova_sleep(bits: i64) -> i64 {
 /// `random(from..to)`: the state is started at the first call.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_random(from: i64, to: i64) -> i64 {
-    static CHANCE: Global<Option<u64>> = Global::new(None);
-    let state = CHANCE.get().get_or_insert_with(|| {
-        shared::seed(sys::var("KOVA_SEED").as_deref()).unwrap_or_else(|| sys::now() ^ sys::pid() << 32)
-    });
-    shared::random(state, from, to)
+    static CHANCE: Locked<Option<u64>> = Locked::new(None);
+    CHANCE.with(|chance| {
+        let state = chance.get_or_insert_with(|| shared::seed(sys::var("KOVA_SEED").as_deref()).unwrap_or_else(|| sys::now() ^ sys::pid() << 32));
+        shared::random(state, from, to)
+    })
 }
 
 // ---- What the generated code and Rust's own code ask the C library for, which a Kova

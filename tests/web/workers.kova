@@ -1,0 +1,26 @@
+// The server that tests/kova.rs (`server_workers`) asks: 4 threads answer once built. `/slow`
+// takes a second, `/stop` ends it; the others look into a Map read by every thread.
+fn main {
+    let port: Int? := args[0].to_int
+    if port = none {
+        return
+    }
+    let ages: Map<String, Int> := ["ada" := 36, "alan" := 41]
+    let greeting: String := "hello"
+    serve(port) workers(4) log(Log.Off) { q: Request =>
+        match q.path {
+            "/slow" => {
+                sleep(1.0)
+                Answer.text("slow")
+            }
+            "/stop" => {
+                exit(0)
+                Answer.status(500)
+            }
+            _ => match ages[q.path.replace("/", "")] {
+                none => Answer.status(404)
+                age => Answer.text("{greeting} {age}")
+            }
+        }
+    }
+}

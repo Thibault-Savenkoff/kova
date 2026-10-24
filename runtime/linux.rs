@@ -8,10 +8,12 @@ use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use core::arch::{asm, global_asm};
 use core::ptr::{null, null_mut};
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use crate::http::{Fail, Network, Serve};
 
-use crate::{Global, c_text};
+use crate::{Global, Locked, c_text};
 
 pub const SLASH: char = '/';
 
@@ -58,6 +60,10 @@ mod numbers {
     pub const LISTEN: usize = 50;
     pub const ACCEPT4: usize = 288;
     pub const PPOLL: usize = 271;
+    pub const MPROTECT: usize = 10;
+    pub const CLONE: usize = 56;
+    pub const EXIT: usize = 60;
+    pub const FUTEX: usize = 202;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -89,6 +95,10 @@ mod numbers {
     pub const LISTEN: usize = 201;
     pub const ACCEPT4: usize = 242;
     pub const PPOLL: usize = 73;
+    pub const MPROTECT: usize = 226;
+    pub const CLONE: usize = 220;
+    pub const EXIT: usize = 93;
+    pub const FUTEX: usize = 98;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -151,8 +161,24 @@ global_asm!(
 
 /// Called by the C library, with the words the system put on the stack: `argc` just before them.
 unsafe extern "C" fn libc_main(_argc: i32, argv: *const usize) -> ! {
-    unsafe { start(argv.sub(1)) }
+    unsafe extern "C" {
+        fn dlopen(name: *const u8, flags: i32) -> *mut u8;
+        fn dlsym(library: *mut u8, name: *const u8) -> *mut u8;
+    }
+    // Its threads are made by it (`spawn`): it keeps a state for each (`errno`, its memory).
+    // In `libc.so.6` since glibc 2.34, in `libpthread.so.0` before. 0 = everything loaded.
+    unsafe {
+        let mut f = dlsym(null_mut(), c"pthread_create".as_ptr() as *const u8);
+        if f.is_null() {
+            f = dlsym(dlopen(c"libpthread.so.0".as_ptr() as *const u8, 2), c"pthread_create".as_ptr() as *const u8);
+        }
+        *PTHREAD_CREATE.get() = f as usize;
+        start(argv.sub(1))
+    }
 }
+
+/// The C library's `pthread_create`, when it started the program (`libc_main`), or 0.
+static PTHREAD_CREATE: Global<usize> = Global::new(0);
 
 /// The environment's `NAME=value` texts.
 static ENVIRONMENT: Global<&[*const u8]> = Global::new(&[]);
@@ -550,7 +576,7 @@ struct Blocks {
     end: usize,
 }
 
-static BLOCKS: Global<Blocks> = Global::new(Blocks { freed: [core::ptr::null_mut(); SIZES], next: 0, end: 0 });
+static BLOCKS: Locked<Blocks> = Locked::new(Blocks { freed: [core::ptr::null_mut(); SIZES], next: 0, end: 0 });
 
 /// The number of the size of a block holding `n` bytes.
 fn size_of(n: usize) -> usize {
@@ -577,23 +603,24 @@ unsafe impl GlobalAlloc for Memory {
         if l.size() > LARGEST {
             return system_memory(pages(l.size()));
         }
-        let b = BLOCKS.get();
         let k = size_of(l.size());
-        let block = b.freed[k];
-        if !block.is_null() {
-            b.freed[k] = unsafe { *(block as *mut *mut u8) };
-            return block;
-        }
-        if b.next + (16 << k) > b.end {
-            let piece = system_memory(PIECE);
-            if piece.is_null() {
-                return piece;
+        BLOCKS.with(|b| {
+            let block = b.freed[k];
+            if !block.is_null() {
+                b.freed[k] = unsafe { *(block as *mut *mut u8) };
+                return block;
             }
-            b.next = piece as usize;
-            b.end = b.next + PIECE;
-        }
-        b.next += 16 << k;
-        (b.next - (16 << k)) as *mut u8
+            if b.next + (16 << k) > b.end {
+                let piece = system_memory(PIECE);
+                if piece.is_null() {
+                    return piece;
+                }
+                b.next = piece as usize;
+                b.end = b.next + PIECE;
+            }
+            b.next += 16 << k;
+            (b.next - (16 << k)) as *mut u8
+        })
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
@@ -601,10 +628,11 @@ unsafe impl GlobalAlloc for Memory {
             unsafe { call(MUNMAP, p as usize, pages(l.size()), 0, 0, 0, 0) };
             return;
         }
-        let b = BLOCKS.get();
         let k = size_of(l.size());
-        unsafe { *(p as *mut *mut u8) = b.freed[k] };
-        b.freed[k] = p;
+        BLOCKS.with(|b| {
+            unsafe { *(p as *mut *mut u8) = b.freed[k] };
+            b.freed[k] = p;
+        })
     }
 
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
@@ -628,4 +656,118 @@ unsafe impl GlobalAlloc for Memory {
             q
         }
     }
+}
+
+// ---- Threads (`serve(…) workers(…)`) ----
+
+/// What one thread at a time may do (`crate::Locked`): 0 free, 1 taken, 2 taken and a thread
+/// sleeps waiting for it (Drepper, "Futexes are tricky").
+pub struct Lock(AtomicU32);
+
+impl Lock {
+    pub const fn new() -> Lock {
+        Lock(AtomicU32::new(0))
+    }
+    pub fn lock(&self) {
+        if self.0.compare_exchange(0, 1, Acquire, Relaxed).is_err() {
+            while self.0.swap(2, Acquire) != 0 {
+                // FUTEX_WAIT_PRIVATE: sleeps while it is still 2.
+                unsafe { call(FUTEX, self.0.as_ptr() as usize, 128, 2, 0, 0, 0) };
+            }
+        }
+    }
+    pub fn unlock(&self) {
+        if self.0.swap(0, Release) == 2 {
+            // FUTEX_WAKE_PRIVATE: one of them.
+            unsafe { call(FUTEX, self.0.as_ptr() as usize, 129, 1, 0, 0, 0) };
+        }
+    }
+}
+
+/// The stack of each thread, as big as the main thread's usually is (`ulimit -s`).
+const STACK: usize = 8 << 20;
+
+/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+    let create = *PTHREAD_CREATE.get();
+    if create != 0 {
+        type Start = extern "C" fn(*mut u8) -> *mut u8;
+        extern "C" fn begin(p: *mut u8) -> *mut u8 {
+            let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
+            f(arg);
+            null_mut()
+        }
+        let create: extern "C" fn(*mut usize, *const u8, Start, *mut u8) -> i32 = unsafe { core::mem::transmute(create) };
+        let mut thread = 0;
+        return create(&mut thread, null(), begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0;
+    }
+    // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK.
+    let base = match unsafe { call(MMAP, 0, STACK, 3, 0x22 | 0x4000 | 0x20000, usize::MAX, 0) } {
+        p if p < 0 => return false,
+        p => p as usize,
+    };
+    // Its lowest page cannot be reached: going past the stack stops the program instead of
+    // writing over other memory.
+    unsafe { call(MPROTECT, base, 4096, 0, 0, 0, 0) };
+    // The new thread starts on its stack, where it finds `f` then `arg`.
+    let top = (base + STACK - 16) as *mut usize;
+    unsafe {
+        top.write(f as usize);
+        top.add(1).write(arg as usize);
+        start_thread(top as usize) >= 0
+    }
+}
+
+/// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM: a thread
+/// sharing everything.
+const THREAD: usize = 0x50f00;
+
+/// A new thread on the stack `sp` (holding the function, then its argument), which calls the
+/// function then stops: it never comes back here, whose stack it does not have.
+#[cfg(target_arch = "x86_64")]
+unsafe fn start_thread(sp: usize) -> isize {
+    let r;
+    unsafe {
+        asm!(
+            "syscall",
+            "test rax, rax",
+            "jnz 2f",
+            "xor ebp, ebp",
+            "pop rax",
+            "pop rdi",
+            "call rax",
+            "mov eax, {exit}",
+            "xor edi, edi",
+            "syscall",
+            "ud2",
+            "2:",
+            exit = const EXIT,
+            inlateout("rax") CLONE as isize => r, in("rdi") THREAD, in("rsi") sp, in("rdx") 0usize, in("r10") 0usize, in("r8") 0usize,
+            lateout("rcx") _, lateout("r11") _,
+        )
+    };
+    r
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn start_thread(sp: usize) -> isize {
+    let r;
+    unsafe {
+        asm!(
+            "svc 0",
+            "cbnz x0, 2f",
+            "ldp x1, x0, [sp], #16",
+            "mov x29, xzr",
+            "mov x30, xzr",
+            "blr x1",
+            "mov x8, {exit}",
+            "mov x0, xzr",
+            "svc 0",
+            "brk #0",
+            "2:",
+            exit = const EXIT,
+            in("x8") CLONE, inlateout("x0") THREAD as isize => r, in("x1") sp, in("x2") 0usize, in("x3") 0usize, in("x4") 0usize,
+        )
+    };
+    r
 }

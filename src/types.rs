@@ -431,6 +431,12 @@ pub const LIBRARY: &[(&str, &str)] =
         ("serve_network(…) log(…)", "fn serve_network(port: Int) log(what: Log) { q: Request => Answer }"),
         ("serve_files(…) at(…) log(…)", "fn serve_files(folder: String) at(port: Int) log(what: Log)"),
         ("serve_files_network(…) at(…) log(…)", "fn serve_files_network(folder: String) at(port: Int) log(what: Log)"),
+        ("serve(…) workers(…)", "fn serve(port: Int) workers(n: Int) { q: Request => Answer }"),
+        ("serve(…) workers(…) log(…)", "fn serve(port: Int) workers(n: Int) log(what: Log) { q: Request => Answer }"),
+        ("serve(…) log(…) workers(…)", "fn serve(port: Int) log(what: Log) workers(n: Int) { q: Request => Answer }"),
+        ("serve_network(…) workers(…)", "fn serve_network(port: Int) workers(n: Int) { q: Request => Answer }"),
+        ("serve_network(…) workers(…) log(…)", "fn serve_network(port: Int) workers(n: Int) log(what: Log) { q: Request => Answer }"),
+        ("serve_network(…) log(…) workers(…)", "fn serve_network(port: Int) log(what: Log) workers(n: Int) { q: Request => Answer }"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -1061,6 +1067,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for name in ["serve", "serve_network"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block.clone())], Type::Unit));
         c.functions.insert(format!("{name}(…) log(…)"), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, log_mode()), (Mode::Read, block.clone())], Type::Unit));
+        // `workers(8)`: several questions at once (PLAN Part 4 "Several questions at once").
+        let (int, log) = (|| (Mode::Read, Type::Int), || (Mode::Read, log_mode()));
+        for (parts, params) in [("workers(…)", vec![int()]), ("workers(…) log(…)", vec![int(), log()]), ("log(…) workers(…)", vec![log(), int()])] {
+            let params = [vec![int()], params, vec![(Mode::Read, block.clone())]].concat();
+            c.functions.insert(format!("{name}(…) {parts}"), Signature::new(None, params, Type::Unit));
+        }
     }
     for name in ["serve_files(…) at(…)", "serve_files_network(…) at(…)"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));

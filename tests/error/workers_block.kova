@@ -1,0 +1,10 @@
+// `workers(…)` wants its block written there: a block received from elsewhere may change what is
+// around where it was written.
+fn start(answer: {Request -> Answer}) {
+    serve(8080) workers(2, answer)
+}
+
+fn main {
+    start { q: Request => Answer.text("hi") }
+}
+// error: `workers(…)` needs its block written here

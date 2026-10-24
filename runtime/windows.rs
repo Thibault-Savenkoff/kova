@@ -44,6 +44,9 @@ unsafe extern "system" {
     fn FileTimeToLocalFileTime(utc: *const u64, local: *mut u64) -> i32;
     fn Sleep(ms: u32);
     fn GetCurrentProcessId() -> u32;
+    fn AcquireSRWLockExclusive(lock: *mut usize);
+    fn ReleaseSRWLockExclusive(lock: *mut usize);
+    fn CreateThread(security: *const u8, stack: usize, start: extern "system" fn(*mut u8) -> u32, arg: *mut u8, flags: u32, id: *mut u32) -> Handle;
 }
 
 /// The program starts here.
@@ -528,4 +531,36 @@ unsafe impl GlobalAlloc for Memory {
     unsafe fn realloc(&self, p: *mut u8, _: Layout, n: usize) -> *mut u8 {
         unsafe { HeapReAlloc(heap(), 0, p, n) }
     }
+}
+
+// ---- Threads (`serve(…) workers(…)`) ----
+
+/// What one thread at a time may do (`crate::Locked`).
+pub struct Lock(core::cell::UnsafeCell<usize>);
+
+unsafe impl Sync for Lock {}
+
+impl Lock {
+    pub const fn new() -> Lock {
+        Lock(core::cell::UnsafeCell::new(0))
+    }
+    pub fn lock(&self) {
+        unsafe { AcquireSRWLockExclusive(self.0.get()) }
+    }
+    pub fn unlock(&self) {
+        unsafe { ReleaseSRWLockExclusive(self.0.get()) }
+    }
+}
+
+/// `f(arg)` on a new thread, which never returns. False if the system cannot start it.
+pub fn spawn(f: extern "C" fn(i64), arg: i64) -> bool {
+    extern "system" fn begin(p: *mut u8) -> u32 {
+        let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
+        f(arg);
+        0
+    }
+    let arg = alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8;
+    // STACK_SIZE_PARAM_IS_A_RESERVATION: 8 MB kept for its stack, taken as it grows.
+    let h = unsafe { CreateThread(core::ptr::null(), 8 << 20, begin, arg, 0x10000, core::ptr::null_mut()) };
+    h != 0 && unsafe { CloseHandle(h) } != 0
 }

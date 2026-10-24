@@ -1,0 +1,9 @@
+// `workers(0)`: stops before listening.
+fn main {
+    serve(8080) workers(0) { q: Request =>
+        Answer.text("hi")
+    }
+}
+// code: 101
+// stderr: error: `workers` needs a number of at least 1
+// stderr: workers_zero.kova:3:5

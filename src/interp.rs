@@ -566,6 +566,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             None => 0,
                             Some(t) => heap.make(t),
                         },
+                        StrOp::Workers => unreachable!("built only: `kova run` answers one question at a time"),
                         StrOp::JsonQuote => {
                             let t = crate::json::quote(s(0));
                             heap.make(t)

@@ -1,0 +1,51 @@
+// `serve(…) workers(…)`: the block answers several questions at once, on several threads. It may
+// read what is around it, never change it.
+struct Counter {
+    n: Int
+
+    fn bump(var self) {
+        self.n += 1
+    }
+}
+
+enum Shape {
+    Circle(radius: Int)
+    Dot
+}
+
+fn grow(c: var Counter) {
+    c.n += 1
+}
+
+fn main {
+    var count: Int := 0
+    var names: List<String> := []
+    var a := Counter { n := 0 }
+    var b := Counter { n := 0 }
+    var c := Counter { n := 0 }
+    var shape: Shape := Shape.Dot
+    var label: String := ""
+    serve(8080) workers(4) { q: Request =>
+        count += 1
+        for n in var names {
+            n := "y"
+        }
+        grow(var a)
+        b.bump
+        match var shape {
+            Circle(radius) => radius := 2
+            Dot => {}
+        }
+        [1, 2].each { x: Int =>
+            c.n := x
+        }
+        print(label)
+        Answer.text("{count}")
+    }
+}
+// error: `count` cannot change here: this block answers several questions at once
+// error: `names` cannot change here
+// error: `a` cannot change here
+// error: `b` cannot change here
+// error: `shape` cannot change here
+// error: `c` cannot change here

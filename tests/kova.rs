@@ -910,6 +910,82 @@ fn server() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// `serve(port) workers(4)` (PLAN Part 4 "Several questions at once"): built, a quick question is
+/// answered while a slow one is still running; many at once get the right answers; what is alive
+/// does not grow with them. `kova run` answers the same, one at a time.
+#[test]
+fn server_workers() {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Instant;
+    let source = "tests/web/workers.kova";
+    let ask = |port: u16, path: &str| -> String {
+        for _ in 0..400 {
+            if let Ok(mut link) = TcpStream::connect(("127.0.0.1", port)) {
+                link.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+                link.write_all(format!("GET {path} HTTP/1.1\r\n\r\n").as_bytes()).unwrap();
+                let mut got = vec![];
+                let _ = link.read_to_end(&mut got);
+                let got = String::from_utf8_lossy(&got).into_owned();
+                return got.split("\r\n\r\n").nth(1).unwrap_or(&got).to_string();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("no server on port {port}");
+    };
+    let exe = std::env::temp_dir().join(format!("kova-workers-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let mut failures = vec![];
+    for mode in ["run", "build"] {
+        let mut alive = vec![];
+        for many in [8, 32] {
+            let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+            let mut c = if mode == "run" { kova(LANG) } else { program(&exe, LANG) };
+            if mode == "run" {
+                c.arg("run").arg(source);
+            }
+            let child = c.arg(port.to_string()).env("KOVA_LEAKS", "live").stderr(std::process::Stdio::piped()).spawn().unwrap();
+            assert_eq!(ask(port, "/ada"), "hello 36");
+            // The slow one first: built, the quick one is answered before it.
+            let slow = std::thread::spawn(move || (ask(port, "/slow"), Instant::now()));
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let (quick, quick_at) = (ask(port, "/alan"), Instant::now());
+            let (slow, slow_at) = slow.join().unwrap();
+            if quick != "hello 41" || slow != "slow" {
+                failures.push(format!("{mode}: {quick:?} {slow:?}"));
+            }
+            if mode == "build" && quick_at > slow_at {
+                failures.push("build: the quick question waited for the slow one".into());
+            }
+            let askers: Vec<_> = (0..many)
+                .map(|k| std::thread::spawn(move || (0..10).map(|_| ask(port, if k % 2 == 0 { "/ada" } else { "/nobody" })).collect::<Vec<_>>()))
+                .collect();
+            for (k, a) in askers.into_iter().enumerate() {
+                let want = if k % 2 == 0 { "hello 36" } else { "404 Not Found" };
+                if let Some(got) = a.join().unwrap().into_iter().find(|g| g != want) {
+                    failures.push(format!("{mode}: {got:?} instead of {want:?}"));
+                }
+            }
+            ask(port, "/stop");
+            let end = child.wait_with_output().unwrap();
+            let said = text(&end.stderr);
+            if end.status.code() != Some(0) {
+                failures.push(format!("{mode}: ended with {:?}: {said}", end.status));
+            }
+            let n: Option<i64> = said.lines().last().and_then(|l| l.strip_prefix("alive: ")?.parse().ok());
+            alive.push(n);
+        }
+        // Each thread may have made its own Map's index meanwhile (4 threads: 3 more at most).
+        match (alive[0], alive[1]) {
+            (Some(a), Some(b)) if (b - a).abs() <= 3 => {}
+            _ => failures.push(format!("{mode}: what is alive grows with the questions: {alive:?}")),
+        }
+    }
+    let _ = std::fs::remove_file(&exe);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
 /// `log(Log.Off)` writes nothing, `log(Log.Start)` only the addresses (PLAN Part 4 "The web
 /// server, what it says"), in run and in build.
 #[test]

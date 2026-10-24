@@ -399,6 +399,10 @@ pub enum StrOp {
     StatusText,
     /// `Answer.file(path)`: the file to send (a new String), or 0 for a 404 (`http::file_to_serve`).
     FileToServe,
+    /// `serve(…) workers(n)`, built only (PLAN Part 4 "Several questions at once"): (n, a
+    /// function taking one box, the box) runs the function on `n` threads, this one included.
+    /// Never ends.
+    Workers,
     /// `args`: a new `List<String>`, the words given after the program's name.
     Args,
     /// `s.trim`: a new String without the spaces, tabs and line ends at both ends.
@@ -568,6 +572,8 @@ pub enum Fault {
     BadTime,
     /// `serve(8080)` on a port taken, or not allowed.
     CannotServe,
+    /// `serve(8080) workers(0)`.
+    BadWorkers,
 }
 
 impl Fault {
@@ -586,6 +592,7 @@ impl Fault {
             Fault::BadDate => "fault_bad_date",
             Fault::BadTime => "fault_bad_time",
             Fault::CannotServe => "fault_cannot_serve",
+            Fault::BadWorkers => "fault_workers",
         }
     }
 }
@@ -1002,14 +1009,33 @@ impl<'a> Translator<'a> {
     /// `serve(port) { q: Request => … }` (PLAN Part 4 "The web server"): listens, then answers each
     /// question with the block, one after the other, until the program stops (`exit`). Without a
     /// block, `serve_files(folder) at(port)`: each answer is `Answer.file(folder + q.path)`. With
-    /// `everyone`, the other computers can ask too (`serve_network`).
-    fn serve(&mut self, port: Local, log: Local, everyone: bool, block: Option<&Expr>, folder: Option<Local>, loc: Loc) -> Slots {
+    /// `everyone`, the other computers can ask too (`serve_network`). With `workers`, built, `n`
+    /// threads answer (`workers`); `kova run` still answers one question at a time: the same
+    /// answers, since the block cannot change what is around it (`ownership.rs` `workers`).
+    #[allow(clippy::too_many_arguments)]
+    fn serve(&mut self, port: Local, log: Local, everyone: bool, block: Option<&Expr>, folder: Option<Local>, workers: Option<Local>, loc: Loc) -> Slots {
+        if let Some(n) = workers {
+            let (one, bad) = (self.constant(1), self.int_local());
+            self.emit(Inst::Binary(bad, Op::Lt, n, one, NOWHERE));
+            self.emit(Inst::FaultIf(bad, Fault::BadWorkers, loc));
+        }
         let given = block.filter(|b| !matches!(b.kind, ExprKind::Block { .. })).map(|b| self.expr(b));
         let (listener, zero, taken) = (self.int_local(), self.constant(0), self.int_local());
         let (open, named) = (self.constant(everyone as i64), folder.unwrap_or(zero));
         self.emit(Inst::Str(listener, StrOp::Listen, vec![port, open, named, log]));
         self.emit(Inst::Binary(taken, Op::Lt, listener, zero, NOWHERE));
         self.emit(Inst::FaultIf(taken, Fault::CannotServe, loc));
+        match (workers, block) {
+            (Some(n), Some(block)) if self.built => self.workers(listener, n, block),
+            _ => self.answer_loop(listener, block, &given, folder),
+        }
+        vec![]
+    }
+
+    /// Answers each question that `listener` receives with the block (or the folder's file),
+    /// forever.
+    fn answer_loop(&mut self, listener: Local, block: Option<&Expr>, given: &Option<Slots>, folder: Option<Local>) {
+        let zero = self.constant(0);
         let (request, answer) = (crate::types::request(), crate::types::answer());
         let head = self.new_block();
         self.go(End::Jump(head), head);
@@ -1019,7 +1045,7 @@ impl<'a> Translator<'a> {
         let link = self.node(got, zero, 6);
         self.emit(Inst::ListFree(got));
         let a = match (block, folder) {
-            (Some(block), _) => self.run(block, &given, vec![(q.clone(), request.clone())], Some(&answer)),
+            (Some(block), _) => self.run(block, given, vec![(q.clone(), request.clone())], Some(&answer)),
             (None, folder) => {
                 let (path, whole) = (self.int_local(), self.int_local());
                 self.emit(Inst::Str(path, StrOp::UrlPath, vec![q[1]]));
@@ -1036,7 +1062,43 @@ impl<'a> Translator<'a> {
         self.free_value(&q, &request);
         let after = self.new_block();
         self.go(End::Jump(head), after);
-        vec![]
+    }
+
+    /// `serve(…) workers(n) { q: Request => … }`, built: `answer_loop` in a function of its own,
+    /// run by `n` threads (`StrOp::Workers`). It receives a box holding the listener and the
+    /// variables the block reads around it; each thread first copies them, so that none reads
+    /// what another one changes (a Map makes its index the first time it is looked into).
+    // ponytail: each thread has its own copy of what the block reads (n times its memory); shared
+    // values that never change would avoid it.
+    fn workers(&mut self, listener: Local, n: Local, block: &Expr) {
+        let held = self.held(block);
+        let slots: Slots = std::iter::once(listener).chain(held.iter().flat_map(|(_, v, _)| v.clone())).collect();
+        let env = self.int_local();
+        self.emit(Inst::ListNew(env, slots.len()));
+        self.push(env, &slots);
+        let mut t = self.inner(Type::Unit);
+        let inner_env = t.int_local();
+        t.current = t.new_block();
+        let (zero, l) = (t.constant(0), t.int_local());
+        t.emit(Inst::ListLoad(l, inner_env, zero, 0));
+        let mut k = 1;
+        for (name, _, ty) in &held {
+            let v = t.new_slots(ty);
+            for &x in &v {
+                t.emit(Inst::ListLoad(x, inner_env, zero, k));
+                k += 1;
+            }
+            let own = t.clone_value(&v, ty);
+            t.names[0].vars.insert(name.clone(), (own, ty.clone()));
+        }
+        t.answer_loop(l, Some(block), &None, None);
+        t.finish(End::Return(vec![]));
+        let name = format!("workers in {}", t.owner.trim_start_matches("block in "));
+        let f = t.function(name, 1, vec![]);
+        let num = self.made_function(f);
+        let (fun, done) = (self.int_local(), self.int_local());
+        self.emit(Inst::FuncRef(fun, num));
+        self.emit(Inst::Str(done, StrOp::Workers, vec![n, fun, env]));
     }
 
     /// The JSON text of a value (PLAN Part 4 "JSON"): a new String, not tracked.
@@ -3217,12 +3279,7 @@ impl<'a> Translator<'a> {
     /// them back before returning; `give_back` copies them into the variables after the call.
     fn block_value_of(&mut self, e: &Expr, params: &[ast::Param], body: &Block) -> Slots {
         let Type::Block(ps, r) = self.ty(e) else { unreachable!("block checked by the type checker") };
-        let held: Vec<(String, Slots, Type)> = (self.info.captures.get(&e.id).into_iter().flatten())
-            .map(|n| {
-                let (v, t) = self.variable(n);
-                (n.clone(), v, t)
-            })
-            .collect();
+        let held = self.held(e);
         let slots: Slots = held.iter().flat_map(|(_, v, _)| v.clone()).collect();
         let env = if slots.is_empty() { self.constant(0) } else {
             let env = self.int_local();
@@ -3231,37 +3288,7 @@ impl<'a> Translator<'a> {
             env
         };
         self.envs.push((env, held.iter().map(|(_, v, _)| v.clone()).collect()));
-        let mut t = Translator {
-            src: self.src,
-            info: self.info,
-            subst: self.subst.clone(),
-            debug: false,
-            numbers: self.numbers,
-            signatures: self.signatures,
-            sites: self.sites,
-            generic_sites: self.generic_sites,
-            helpers: self.helpers,
-            made: self.made,
-            owner: format!("block in {}", self.owner.trim_start_matches("block in ")),
-            first_helper: self.first_helper,
-            contracts: self.contracts,
-            built: self.built,
-            watching: self.watching,
-            ensures: vec![],
-            ret: (*r).clone(),
-            result: None,
-            site: None,
-            outs: vec![],
-            names: vec![Scope::borrowed(), Scope::default()],
-            locals: vec![],
-            blocks: vec![],
-            current: 0,
-            loops: vec![],
-            writes: vec![],
-            temps: vec![],
-            envs: vec![],
-            env_marks: vec![],
-        };
+        let mut t = self.inner((*r).clone());
         let inner_env = t.int_local();
         for (p, ty) in params.iter().zip(&ps) {
             let v = t.new_slots(ty);
@@ -3293,15 +3320,65 @@ impl<'a> Translator<'a> {
         t.finish(End::Return(v));
         let name = t.owner.clone();
         let f = t.function(name, nb_params, scalars(&r));
+        let num = self.made_function(f);
+        let fun = self.int_local();
+        self.emit(Inst::FuncRef(fun, num));
+        vec![fun, env]
+    }
+
+    /// The variables block `e` uses around it (`Info::captures`): names, slots and types.
+    fn held(&self, e: &Expr) -> Vec<(String, Slots, Type)> {
+        (self.info.captures.get(&e.id).into_iter().flatten())
+            .map(|n| {
+                let (v, t) = self.variable(n);
+                (n.clone(), v, t)
+            })
+            .collect()
+    }
+
+    /// A translator for a function made from this one's code (a block's), giving `ret`.
+    fn inner(&self, ret: Type) -> Translator<'a> {
+        Translator {
+            src: self.src,
+            info: self.info,
+            subst: self.subst.clone(),
+            debug: false,
+            numbers: self.numbers,
+            signatures: self.signatures,
+            sites: self.sites,
+            generic_sites: self.generic_sites,
+            helpers: self.helpers,
+            made: self.made,
+            owner: format!("block in {}", self.owner.trim_start_matches("block in ")),
+            first_helper: self.first_helper,
+            contracts: self.contracts,
+            built: self.built,
+            watching: self.watching,
+            ensures: vec![],
+            ret,
+            result: None,
+            site: None,
+            outs: vec![],
+            names: vec![Scope::borrowed(), Scope::default()],
+            locals: vec![],
+            blocks: vec![],
+            current: 0,
+            loops: vec![],
+            writes: vec![],
+            temps: vec![],
+            envs: vec![],
+            env_marks: vec![],
+        }
+    }
+
+    /// The number of `f`, a function made from this one's code (`Helper::Block`).
+    fn made_function(&self, f: Function) -> usize {
         let k = {
             let mut made = self.made.borrow_mut();
             made.push(Some(f));
             made.len() - 1
         };
-        let num = self.helper(Helper::Block(k));
-        let fun = self.int_local();
-        self.emit(Inst::FuncRef(fun, num));
-        vec![fun, env]
+        self.helper(Helper::Block(k))
     }
 
     /// Calls the block `b` (its function and its box) with `vals`.
@@ -4004,23 +4081,26 @@ impl<'a> Translator<'a> {
                     }
                     return v;
                 }
-                // `… log(Log.Off)`: the last value before the block (PLAN "The web server, what it says").
-                let (base, logged) = match name.text.strip_suffix(" log(…)") {
-                    // `serve(…)` → `serve`; `serve_files(…) at(…)` stays.
-                    Some(base) => (base.strip_suffix("(…)").filter(|b| !b.contains(' ')).unwrap_or(base), true),
-                    None => (name.text.as_str(), false),
-                };
-                if let "serve" | "serve_network" = base {
-                    let port = self.expr1(&args[0]);
-                    let log = if logged { self.expr1(&args[1]) } else { self.constant(0) };
+                // `serve(…)`, `serve_files(…) at(…)`, then `log(…)` and `workers(…)` parts in any
+                // order (PLAN "The web server, what it says", "Several questions at once").
+                let parts: Vec<&str> = name.text.split(' ').collect();
+                let base = parts[0].trim_end_matches("(…)");
+                if let "serve" | "serve_network" | "serve_files" | "serve_files_network" = base {
+                    let files = base.starts_with("serve_files");
+                    let firsts = if files { 2 } else { 1 };
+                    let given: Vec<Local> = args[..firsts].iter().map(|a| self.expr1(a)).collect();
+                    let (mut log, mut workers) = (None, None);
+                    for (part, a) in parts.iter().zip(args).skip(firsts) {
+                        let v = Some(self.expr1(a));
+                        if *part == "log(…)" { log = v } else { workers = v }
+                    }
+                    let log = log.unwrap_or_else(|| self.constant(0));
                     let loc = self.loc(name.span);
-                    return self.serve(port, log, base == "serve_network", Some(&args[args.len() - 1]), None, loc);
-                }
-                if let "serve_files(…) at(…)" | "serve_files_network(…) at(…)" = base {
-                    let (folder, port) = (self.expr1(&args[0]), self.expr1(&args[1]));
-                    let log = if logged { self.expr1(&args[2]) } else { self.constant(0) };
-                    let loc = self.loc(name.span);
-                    return self.serve(port, log, base.starts_with("serve_files_network"), None, Some(folder), loc);
+                    let everyone = base.ends_with("_network");
+                    return match files {
+                        true => self.serve(given[1], log, everyone, None, Some(given[0]), None, loc),
+                        false => self.serve(given[0], log, everyone, args.last(), None, workers, loc),
+                    };
                 }
                 // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
                 if name.text == "send" {

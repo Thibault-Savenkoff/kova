@@ -69,10 +69,10 @@ struct Owner<'a> {
     /// by name (`f`, `Dog.sound`).
     signatures: HashMap<String, (Option<Mode>, Vec<Mode>)>,
     /// The blocks being walked, from outside to inside: their `Expr::id`, the number of scopes
-    /// around them, and the variables from there they use (true if they change it).
-    blocks: RefCell<Vec<(usize, usize, Vec<(String, bool)>)>>,
+    /// around them, and the variables from there they use (with where it first changes them).
+    blocks: RefCell<Vec<(usize, usize, Vec<(String, Option<Span>)>)>>,
     /// By the `Expr::id` of a block: what it uses around it (see `blocks`), for rule 2.7.5.
-    uses: HashMap<usize, Vec<(String, bool)>>,
+    uses: HashMap<usize, Vec<(String, Option<Span>)>>,
     diags: Vec<Diag>,
 }
 
@@ -157,17 +157,17 @@ impl Owner<'_> {
     }
 
     fn lookup(&self, name: &str) -> Var {
-        self.used(name, false);
+        self.used(name, None);
         self.scopes.iter().rev().find_map(|s| s.get(name)).expect("variable checked by the type checker").clone()
     }
 
-    /// `name` is used (`changed`: changed) by the code being walked: each open block declared
-    /// inside its scope uses it from around it.
-    fn used(&self, name: &str, changed: bool) {
+    /// `name` is used (`changed`: changed there) by the code being walked: each open block
+    /// declared inside its scope uses it from around it.
+    fn used(&self, name: &str, changed: Option<Span>) {
         let Some(at) = self.scopes.iter().rposition(|s| s.contains_key(name)) else { return };
         for (_, _, names) in self.blocks.borrow_mut().iter_mut().filter(|b| at < b.1) {
             match names.iter_mut().find(|(n, _)| n == name) {
-                Some((_, c)) => *c |= changed,
+                Some((_, c)) => *c = c.or(changed),
                 None => names.push((name.to_string(), changed)),
             }
         }
@@ -242,6 +242,7 @@ impl Owner<'_> {
         // others cannot even reach it (the checker lends it to them).
         if m.mode == Mode::Var {
             self.pending.truncate(mark);
+            self.changes(&m.subject);
         }
         let ty = self.info.types[m.subject.id].clone();
         // `None` for a `match` on values (`match n { 0 => … }`): no field to bind.
@@ -310,7 +311,7 @@ impl Owner<'_> {
         match t {
             Target::Tuple(ts, _) => ts.iter().for_each(|t| self.target_free(t)),
             Target::Place { name, span, .. } => {
-                self.used(&name.text, true);
+                self.used(&name.text, Some(*span));
                 if self.pending.contains(&self.lookup(&name.text).id) {
                     let msg = self.busy(&name.text, t!("read_then_changed", name = name.text));
                     self.error_at(*span, msg);
@@ -431,8 +432,11 @@ impl Owner<'_> {
                 let names: Vec<&Name> = std::iter::once(name).chain(value).collect();
                 self.body_of_loop(body, &names, false);
             }
-            Stmt::Each { name, value, list, body, .. } => {
+            Stmt::Each { name, value, list, body, mode } => {
                 self.borrow(list);
+                if *mode == Mode::Var {
+                    self.changes(list);
+                }
                 let names: Vec<&Name> = std::iter::once(name).chain(value).collect();
                 if let Some((root, _)) = place_root(list, &self.info.types) {
                     let id = self.lookup(root).id;
@@ -626,6 +630,23 @@ impl Owner<'_> {
         }
         self.exclusive(shown, &uses);
         self.exclusive_blocks(shown, &uses);
+        if callee.contains(" workers(…)") {
+            self.workers(args.last().expect("a block checked by the type checker"));
+        }
+    }
+
+    /// `serve(8080) workers(8) { q: Request => … }`: the block answers several questions at once,
+    /// each worker with its own copy of what the block reads around it. It cannot change them
+    /// (PLAN Part 4 "Several questions at once").
+    fn workers(&mut self, block: &Expr) {
+        if !matches!(block.kind, ExprKind::Block { .. }) {
+            self.diags.push(Diag::new(block.span, t!("workers_block")));
+            return;
+        }
+        let changed: Vec<(String, Span)> = (self.uses.get(&block.id).into_iter().flatten()).filter_map(|(n, c)| Some((n.clone(), (*c)?))).collect();
+        for (name, span) in changed {
+            self.diags.push(Diag::new(span, t!("workers_change", name = name)).help(t!("workers_change_help")));
+        }
     }
 
     /// Rule 2.7.5 with blocks: what a block uses around it counts as used by the call.
@@ -635,7 +656,7 @@ impl Owner<'_> {
         // What each argument uses: its root (changed unless read), or a block's variables.
         let roots = |o: &Self, (mode, e): (Mode, &Expr)| -> Vec<(String, bool, bool)> {
             match &e.kind {
-                ExprKind::Block { .. } => o.uses.get(&e.id).into_iter().flatten().map(|(n, c)| (n.clone(), *c, true)).collect(),
+                ExprKind::Block { .. } => o.uses.get(&e.id).into_iter().flatten().map(|(n, c)| (n.clone(), c.is_some(), true)).collect(),
                 _ => place_root(e, types).map(|(n, _)| (n.to_string(), mode != Mode::Read, is_copy(&types[e.id]))).into_iter().collect(),
             }
         };
@@ -659,10 +680,17 @@ impl Owner<'_> {
         }
     }
 
+    /// `e` (a place) may change: `for x in var l`, `match var self.left`.
+    fn changes(&self, e: &Expr) {
+        if let Some((root, span)) = place_root(e, &self.info.types) {
+            self.used(root, Some(span));
+        }
+    }
+
     /// `e` (a place) is about to change: an error if an operation not finished yet still reads it.
     fn not_pending(&mut self, e: &Expr) {
         let Some((root, span)) = place_root(e, &self.info.types) else { return };
-        self.used(root, true);
+        self.used(root, Some(span));
         if self.pending.contains(&self.lookup(root).id) {
             let msg = self.busy(root, t!("read_then_changed", name = root));
             self.error_at(span, msg);
