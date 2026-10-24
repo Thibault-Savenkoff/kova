@@ -1,0 +1,29 @@
+// `is`: only on an `any`, only for a type following its interface; what it gives cannot change.
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+}
+
+struct Rock {
+    weight: Int
+}
+
+fn play(a: any Animal, d: Dog) {
+    if a is Dog {
+        a.name := "Rex"
+    }
+    if a is Rock {
+    }
+    if d is Dog {
+    }
+}
+
+fn main {
+}
+// error: `a` was tested with `is`: here it is the value inside the `any`, which cannot change
+// error: a `Rock` does not follow `Animal`: this `any Animal` can never hold one
+// error: `is` tests what an `any` holds; this is a `Dog`, its type is already known

@@ -67,6 +67,9 @@ fn carré(x: Int) -> Int {
 //                   ^^^^^^^ entity.name.type.kova
 //                              ^^ support.function.result.kova
 //                                     ^ keyword.operator.propagation.kova
+    let chien: Bool := bete is Chien
+//                          ^^ keyword.operator.word.kova
+//                             ^^^^^ entity.name.type.kova
     garder(move notes) && !fini
 //  ^^^^^^ entity.name.function.call.kova
 //         ^^^^ storage.modifier.kova

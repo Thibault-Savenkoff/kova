@@ -1115,7 +1115,7 @@ fn in_expr(e: &Expr, cursor: usize, vars: &mut Vec<(String, String)>) {
             each(&mut args.iter())
         }
         ExprKind::Method { receiver, args, .. } => each(&mut std::iter::once(&**receiver).chain(args)),
-        ExprKind::Mark(_, x) | ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } => {
+        ExprKind::Mark(_, x) | ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } | ExprKind::Is(x, _) => {
             in_expr(x, cursor, vars)
         }
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => each(&mut [&**a, &**b].into_iter()),

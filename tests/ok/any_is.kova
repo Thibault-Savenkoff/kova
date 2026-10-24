@@ -1,0 +1,54 @@
+// `a is Dog`: what an `any` holds; inside the `if`, `a` is that type (borrowed from the box).
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+    fn fetch(self) -> String { return "{self.name} fetches" }
+}
+
+struct Cat : Animal {
+    lives: Int
+    fn sound(self) -> String { return "meow" }
+}
+
+struct Fish : Animal {
+    fn sound(self) -> String { return "..." }
+}
+
+fn play(a: any Animal) {
+    if a is Dog {
+        print(a.fetch)
+    } else {
+        print(a.sound)
+    }
+    if a is Cat && a.lives > 3 {
+        print("{a.lives} lives")
+    }
+    print(a is Fish)
+}
+
+fn main {
+    let pets: List<any Animal> := [Dog { name := "Rex" }, Cat { lives := 9 }]
+    for p in pets {
+        play(p)
+    }
+    let d: Dog := Dog { name := "Rio" }
+    play(d)
+    let e: any Animal := Dog { name := "Max" }
+    if e is Dog {
+        var c: Dog := e.clone
+        c.name := "Leo"
+        print("{e.name} {c.name}")
+    }
+}
+// expect: Rex fetches
+// expect: false
+// expect: meow
+// expect: 9 lives
+// expect: false
+// expect: Rio fetches
+// expect: false
+// expect: Max Leo

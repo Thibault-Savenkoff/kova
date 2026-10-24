@@ -369,12 +369,17 @@ pub fn enum_view(t: &Type) -> Option<Rc<EnumDef>> {
     }
 }
 
-/// The variables an `if` condition proves present: `x != none`, on each side of `&&`.
+/// The variables an `if` condition proves present (`x != none`) or of a type (`a is Dog`, with the
+/// `Expr::id` of the test, the type in `Info::tested`), on each side of `&&`.
 /// `then` false: for the `else` branch, `x = none`.
-pub fn narrowed(cond: &Expr, then: bool) -> Vec<&str> {
+pub fn narrowed(cond: &Expr, then: bool) -> Vec<(&str, Option<usize>)> {
     match &cond.kind {
         ExprKind::Binary(op @ (BinOp::Ne | BinOp::Eq), a, b) if (*op == BinOp::Ne) == then => match (&a.kind, &b.kind) {
-            (ExprKind::Var(n), ExprKind::None) | (ExprKind::None, ExprKind::Var(n)) => vec![n.as_str()],
+            (ExprKind::Var(n), ExprKind::None) | (ExprKind::None, ExprKind::Var(n)) => vec![(n.as_str(), None)],
+            _ => vec![],
+        },
+        ExprKind::Is(a, _) if then => match &a.kind {
+            ExprKind::Var(n) => vec![(n.as_str(), Some(cond.id))],
             _ => vec![],
         },
         ExprKind::Binary(BinOp::And, a, b) if then => [narrowed(a, true), narrowed(b, true)].concat(),
@@ -748,6 +753,8 @@ pub struct Info {
     /// By the `Expr::id` of a `?` whose error is not the function's: the case of the function's
     /// error enum it goes into (`files.read(p)?` in `… or AppError` → `AppError.Io`).
     pub converts: HashMap<usize, usize>,
+    /// By the `Expr::id` of `a is Dog`: the type tested (`Dog`).
+    pub tested: HashMap<usize, Type>,
     /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
     pub invoked: HashSet<usize>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
@@ -792,6 +799,8 @@ enum VarKind {
     Matched,
     /// `x` inside `if x != none { … }`: the value of the optional `x`, borrowed.
     Narrowed,
+    /// `a` inside `if a is Dog { … }`: the value in the `any`'s box, borrowed.
+    Tested,
     /// `self` in a method.
     Receiver(Mode),
     /// `l` inside `for x in var l`: lent to the loop, used only through `x` (the span of `x`);
@@ -967,6 +976,7 @@ struct Checker<'a> {
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
     converts: HashMap<usize, usize>,
+    tested: HashMap<usize, Type>,
     diags: Vec<Diag>,
 }
 
@@ -1030,6 +1040,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         matches: vec![],
         guards: HashMap::new(),
         converts: HashMap::new(),
+        tested: HashMap::new(),
         diags: vec![],
     };
     // Hovering a declaration shows it too.
@@ -1435,6 +1446,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         matches,
         guards: c.guards,
         converts: c.converts,
+        tested: c.tested,
         invoked,
         captures: HashMap::new(),
     };
@@ -1571,12 +1583,14 @@ fn leaves(b: &Block) -> bool {
 /// `if x = none { return }` (or `if x != none { … } else { return }`): the names known present
 /// after it, until the end of the block (PLAN Part 4, "Narrowing after a guard"). The checker
 /// keeps those that cannot change (`Info::guards`); the KIR reads them there.
+/// Only `none` tests: after `a is Dog`, `a` stays an `any` (its value stays in the box).
 fn guarded(s: &Stmt) -> Vec<&str> {
-    match s {
+    let names = match s {
         Stmt::If { cond, then, otherwise } if leaves(then) && !otherwise.as_ref().is_some_and(leaves) => narrowed(cond, false),
         Stmt::If { cond, then, otherwise: Some(o) } if leaves(o) && !leaves(then) => narrowed(cond, true),
         _ => vec![],
-    }
+    };
+    names.into_iter().filter(|(_, is)| is.is_none()).map(|(n, _)| n).collect()
 }
 
 /// Does the block always end with a `return`?
@@ -2218,13 +2232,18 @@ impl Checker<'_> {
 
     /// Opens a scope where each of `names`, an optional variable, is its value:
     /// `x` is an `Int` inside `if x != none { … }` (PLAN 2.5, like Eiffel's object test).
-    fn narrow(&mut self, names: &[&str]) {
+    fn narrow(&mut self, names: &[(&str, Option<usize>)]) {
         let mut scope = HashMap::new();
-        for n in names {
-            if let Some(v) = self.lookup(n)
-                && let Type::Optional(t) = &v.ty
-            {
-                scope.insert(n.to_string(), Variable { ty: (**t).clone(), kind: VarKind::Narrowed, span: v.span });
+        for &(n, is) in names {
+            let Some(v) = self.lookup(n) else { continue };
+            match (&v.ty, is.and_then(|id| self.tested.get(&id))) {
+                (Type::Optional(t), None) => {
+                    scope.insert(n.to_string(), Variable { ty: (**t).clone(), kind: VarKind::Narrowed, span: v.span });
+                }
+                (Type::Any(_), Some(t)) => {
+                    scope.insert(n.to_string(), Variable { ty: t.clone(), kind: VarKind::Tested, span: v.span });
+                }
+                _ => {}
             }
         }
         self.scopes.push(scope);
@@ -2341,7 +2360,7 @@ impl Checker<'_> {
             let Stmt::If { cond, .. } = s else { continue };
             let names: Vec<&str> = guarded(s).into_iter().filter(|n| self.lookup(n).is_some_and(|v| v.kind != VarKind::Var)).collect();
             if !names.is_empty() {
-                self.narrow(&names);
+                self.narrow(&names.iter().map(|&n| (n, None)).collect::<Vec<_>>());
                 self.guards.insert(cond.id, names.iter().map(|n| n.to_string()).collect());
             }
         }
@@ -2668,6 +2687,9 @@ impl Checker<'_> {
             VarKind::Matched => self.diags.push(Diag::new(span, t!("matched_immutable", name = n)).help(t!("matched_immutable_help", name = n))),
             VarKind::Narrowed => self.diags.push(
                 Diag::new(span, t!("narrowed_immutable", name = n)).help(t!("narrowed_immutable_help", name = n)),
+            ),
+            VarKind::Tested => self.diags.push(
+                Diag::new(span, t!("tested_immutable", name = n)).help(t!("tested_immutable_help", name = n)),
             ),
             VarKind::Receiver(r) => {
                 self.diags.push(Diag::new(span, t!("self_immutable", receiver = r.text())).help(t!("self_immutable_help")))
@@ -3680,6 +3702,22 @@ impl Checker<'_> {
                 let word = if *ok { "ok" } else { "err" };
                 self.diags.push(Diag::new(e.span, t!("outcome_needs_type", word = word)).help(t!("outcome_needs_type_help")));
                 Type::Error
+            }
+            ExprKind::Is(x, written) => {
+                let t = self.written_type(written);
+                match self.expr(x) {
+                    Type::Any(i) if t != Type::Error && !self.has(&t, &i) => {
+                        self.diags.push(
+                            Diag::new(e.span, t!("is_never", ty = t.text(), interface = i)).help(t!("is_never_help", ty = t.text(), interface = i)),
+                        );
+                    }
+                    Type::Any(_) | Type::Error => {}
+                    other => {
+                        self.diags.push(Diag::new(x.span, t!("is_not_any", ty = other.text())).help(t!("is_not_any_help")));
+                    }
+                }
+                self.tested.insert(e.id, t);
+                Type::Bool
             }
             ExprKind::Try(x) if self.in_block > 0 => {
                 self.expr(x);

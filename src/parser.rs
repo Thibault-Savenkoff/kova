@@ -1490,6 +1490,14 @@ impl Parser<'_> {
             return self.unary();
         };
         let mut left = self.level(n + 1)?;
+        // `a is Dog`, as high as `=`: `a is Dog && a.age > 3`. `is` is contextual: `is(…)` stays a
+        // part of a keyword message (`.header("Host") is("x")`).
+        if ops[0].0 == "=" && self.kind() == Kind::Ident && self.text(self.token().span) == "is" && self.kind_at(1) == Kind::Type {
+            self.advance();
+            let ty = self.type_()?;
+            let span = left.span.to(self.t[self.pos - 1].span);
+            return Ok(self.expr(span, ExprKind::Is(Box::new(left), ty)));
+        }
         let mut seen = false;
         while let Some(&(s, op)) = ops.iter().find(|(s, _)| self.is_sym(s)) {
             if seen && !chainable {

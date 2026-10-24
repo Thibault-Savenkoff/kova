@@ -239,8 +239,14 @@ impl Owner<'_> {
     /// Opens a scope where each of `names` is the value of its optional: a borrow (PLAN 2.7.6).
     /// A narrowed name is still the optional's variable here: giving it away (`return found`)
     /// gives the optional away (the KIR empties its value's slots).
-    fn narrow(&mut self, _names: &[&str]) {
+    /// After `a is Dog`, `a` is a new name borrowing the value in the box: it cannot be given away.
+    fn narrow(&mut self, names: &[(&str, Option<usize>)]) {
         self.scopes.push(HashMap::new());
+        for &(n, is) in names {
+            if is.is_some() {
+                self.declare(n, true);
+            }
+        }
     }
 
     /// `match x { … }` (PLAN 2.7.6). On a place, the arms borrow its fields, and `x` stays frozen
@@ -845,6 +851,7 @@ impl Owner<'_> {
             ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
             ExprKind::Outcome { value, .. } => self.give(value),
+            ExprKind::Is(x, _) => self.borrow(x),
             // `x?` takes its value; on `none` it leaves the function, like a `return`.
             ExprKind::Try(x) => {
                 match &x.kind {

@@ -414,6 +414,9 @@ fn main {
     let zoo: List<any Animal> := [Dog {}, Cat {}]
     for a in zoo {
         print(a.twice)
+        if a is Cat {
+            print("a cat")
+        }
     }
     print(larger(3, 8))
     print(larger("pear", "apple"))
@@ -424,13 +427,15 @@ fn main {
 ```text
 woof woof
 meow meow
+a cat
 8
 pear
 true
 ```
 
 - An interface lists methods; a struct that follows it writes them, or takes the default ones.
-- `any Animal` holds any value that follows `Animal`.
+- `any Animal` holds any value that follows `Animal`. `a is Cat` tells if it holds a `Cat`;
+  inside `if a is Cat { … }`, `a` is that `Cat`.
 - `T: Comparable` says what a generic type must allow. The built-in interfaces: `Equal` (`=`),
   `Comparable` (`<`), `Display` (its text, for `print` and `{…}`).
 

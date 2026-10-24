@@ -140,7 +140,7 @@
         { "name": "keyword.other.header.kova", "match": "(?<!\\.)\\bheader\\b" },
         { "name": "storage.type.kova", "match": "\\b(let|var|fn|struct|enum|interface)\\b" },
         { "name": "storage.modifier.kova", "match": "(?<!\\.)\\b(move|copy|any|public|private)\\b" },
-        { "name": "keyword.operator.word.kova", "match": "\\b(or|and)\\b" }
+        { "name": "keyword.operator.word.kova", "match": "\\b(or|and)\\b|\\bis\\b(?=\\s+[A-Z])" }
       ]
     },
     "constants": {

@@ -2147,12 +2147,25 @@ impl<'a> Translator<'a> {
 
     /// Opens a scope where each of `names` is the value of its optional, borrowing its slots:
     /// inside `if x != none { … }`, `x` is a `T`.
-    fn narrow(&mut self, names: &[&str]) {
+    fn narrow(&mut self, names: &[(&str, Option<usize>)]) {
         let mut vars = HashMap::new();
-        for n in names {
+        for &(n, is) in names {
             let (v, ty) = self.variable(n);
-            let Type::Optional(inner) = ty else { unreachable!("optional checked by the type checker") };
-            vars.insert(n.to_string(), (v[1..].to_vec(), *inner));
+            match (ty, is) {
+                (Type::Optional(inner), None) => {
+                    vars.insert(n.to_string(), (v[1..].to_vec(), *inner));
+                }
+                // `a is Dog`: the Dog's slots, read from the box (they stay there).
+                (Type::Any(_), Some(id)) => {
+                    let ty = self.info.tested[&id].clone();
+                    let (zero, slots) = (self.constant(0), self.new_slots(&ty));
+                    for (j, &d) in slots.iter().enumerate() {
+                        self.emit(Inst::ListLoad(d, v[0], zero, j + 1));
+                    }
+                    vars.insert(n.to_string(), (slots, ty));
+                }
+                _ => unreachable!("narrowing checked by the type checker"),
+            }
         }
         self.names.push(Scope { borrowed: true, vars });
     }
@@ -2519,7 +2532,7 @@ impl<'a> Translator<'a> {
             if let Stmt::If { cond, .. } = s
                 && let Some(names) = self.info.guards.get(&cond.id)
             {
-                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                let names: Vec<(&str, Option<usize>)> = names.iter().map(|n| (n.as_str(), None)).collect();
                 self.narrow(&names);
                 self.names.push(Scope::default());
             }
@@ -4503,6 +4516,23 @@ impl<'a> Translator<'a> {
                 v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
                 v
             }
+            // The number of the real type, first in the box, compared with the number of the type tested.
+            ExprKind::Is(x, _) => {
+                let Type::Any(i) = self.ty(x) else { unreachable!("any checked by the type checker") };
+                let ty = &self.info.tested[&e.id];
+                let b = self.expr1(x);
+                let same = self.int_local();
+                match self.info.impls.get(&i).and_then(|ts| ts.iter().position(|t| t == ty)) {
+                    Some(k) => {
+                        let (zero, tag, number) = (self.constant(0), self.int_local(), self.constant(k as i64));
+                        self.emit(Inst::ListLoad(tag, b, zero, 0));
+                        self.emit(Inst::Binary(same, Op::Eq, tag, number, NOWHERE));
+                    }
+                    // Never put into an `any` of this interface anywhere in the program.
+                    None => self.emit(Inst::Const(same, 0)),
+                }
+                vec![same]
+            }
             // On `none` (or `err`), leaves the function with `none` (or the same `err`);
             // otherwise the value, owned by the expression.
             ExprKind::Try(x) => {
@@ -5064,7 +5094,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names))
         }
         ExprKind::Match(m) => names_in(&m.subject, names),
-        ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } => names_in(x, names),
+        ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } | ExprKind::Is(x, _) => names_in(x, names),
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));

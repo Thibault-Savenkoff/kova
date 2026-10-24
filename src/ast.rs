@@ -449,6 +449,8 @@ pub enum ExprKind {
     /// `x?`: the value of the optional `x`, or else the function returns `none` at once;
     /// on a result, its `ok` value, or else the function returns its `err` at once.
     Try(Box<Expr>),
+    /// `a is Dog`: true if the `any` value `a` holds a `Dog`; inside `if a is Dog { … }`, `a` is it.
+    Is(Box<Expr>, TypeAst),
     /// `ok(value)` or `err(error)`: a result; its type comes from where it goes.
     Outcome { ok: bool, value: Box<Expr> },
     /// `{ x: Int => x > 2 }`: a block, only written as a call's argument; its value is its last line.

@@ -1,0 +1,22 @@
+// What `a is Dog` gives stays in the box: it is lent, never given away.
+interface Animal {
+    fn sound(self) -> String
+}
+
+struct Dog : Animal {
+    name: String
+    fn sound(self) -> String { return "woof" }
+}
+
+fn keep(d: move Dog) {
+}
+
+fn play(a: any Animal) {
+    if a is Dog {
+        keep(move a)
+    }
+}
+
+fn main {
+}
+// error: `a` is borrowed here: it cannot be moved
