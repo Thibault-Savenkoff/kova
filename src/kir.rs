@@ -4512,11 +4512,24 @@ impl<'a> Translator<'a> {
                 let nothing = self.new_slots(&self.ret.clone());
                 nothing.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
                 // The error's slots come right after the tag in both results.
-                let skip = match &self.ty(x) {
-                    Type::Result(_, err) => {
+                let skip = match (&self.ty(x), self.info.converts.get(&e.id)) {
+                    (Type::Result(_, err), None) => {
                         let n = scalars(err).len();
                         for k in 1..=n {
                             self.emit(Inst::Copy(nothing[k], v[k]));
+                        }
+                        n
+                    }
+                    // Put into case `i` of the function's error enum: its tag, then the error in the case's slots.
+                    (Type::Result(_, err), Some(&i)) => {
+                        let n = scalars(err).len();
+                        let Type::Result(_, into) = self.ret.clone() else { unreachable!("result checked by the type checker") };
+                        let Type::Enum(d) = &*into else { unreachable!("enum checked by the type checker") };
+                        let held = self.boxing(v[1..=n].to_vec(), &laid_out(&d.name, &d.variants()[i].1[0].1));
+                        let (start, _) = variant_slice(d, i);
+                        self.emit(Inst::Const(nothing[1], i as i64));
+                        for (k, &l) in held.iter().enumerate() {
+                            self.emit(Inst::Copy(nothing[1 + start + k], l));
                         }
                         n
                     }

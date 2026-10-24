@@ -745,6 +745,9 @@ pub struct Info {
     /// By the `Expr::id` of a guard's condition (`if x = none { return }`): the names narrowed
     /// after it, until the end of the block.
     pub guards: HashMap<usize, Vec<String>>,
+    /// By the `Expr::id` of a `?` whose error is not the function's: the case of the function's
+    /// error enum it goes into (`files.read(p)?` in `… or AppError` → `AppError.Io`).
+    pub converts: HashMap<usize, usize>,
     /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
     pub invoked: HashSet<usize>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
@@ -963,6 +966,7 @@ struct Checker<'a> {
     hints: Vec<(Span, Type)>,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
+    converts: HashMap<usize, usize>,
     diags: Vec<Diag>,
 }
 
@@ -1025,6 +1029,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         hints: vec![],
         matches: vec![],
         guards: HashMap::new(),
+        converts: HashMap::new(),
         diags: vec![],
     };
     // Hovering a declaration shows it too.
@@ -1429,6 +1434,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         hints,
         matches,
         guards: c.guards,
+        converts: c.converts,
         invoked,
         captures: HashMap::new(),
     };
@@ -3683,14 +3689,22 @@ impl Checker<'_> {
             ExprKind::Try(x) => match self.expr(x) {
                 // The failure goes up as it is: the function's `or` side must be the same type.
                 Type::Result(t, er) => {
+                    let into = match &self.ret.clone() {
+                        Type::Result(_, r) if *r != er => self.converted(&er, r, e.span),
+                        _ => None,
+                    };
                     if self.in_contract {
                         self.error(e.span, t!("try_in_contract"));
+                    } else if let Some(k) = into {
+                        self.converts.insert(e.id, k);
                     } else if !matches!(&self.ret, Type::Result(_, r) if *r == er) && self.ret != Type::Error {
                         let ret = if self.ret == Type::Unit { self.ret.text() } else { format!("`{}`", self.ret.text()) };
-                        self.diags.push(
-                            Diag::new(e.span, t!("try_needs_result", error = er.text(), type = ret))
-                                .help(t!("try_needs_result_help", error = er.text())),
-                        );
+                        // Returning `… or AppError`: a case of `AppError` holding the error lets `?` put it there.
+                        let help = match &self.ret {
+                            Type::Result(_, r) if matches!(**r, Type::Enum(_)) => t!("try_add_case_help", error = er.text(), into = r.text()),
+                            _ => t!("try_needs_result_help", error = er.text()),
+                        };
+                        self.diags.push(Diag::new(e.span, t!("try_needs_result", error = er.text(), type = ret)).help(help));
                     }
                     *t
                 }
@@ -4032,6 +4046,24 @@ impl Checker<'_> {
     }
 
     /// `Shape.Circle(2.0)`, `Tree<Int>.Leaf(5)`: the fields in their declared order.
+    /// `?` on an `error` in a function returning `… or into`: the case of the enum `into` holding
+    /// just an `error`, where it goes. Two such cases: refused, nobody could tell which.
+    fn converted(&mut self, error: &Type, into: &Type, span: Span) -> Option<usize> {
+        let Type::Enum(d) = into else { return None };
+        let cases: Vec<usize> = (d.variants().iter().enumerate())
+            .filter(|(_, (_, fields))| matches!(&fields[..], [(_, t)] if t == error))
+            .map(|(k, _)| k)
+            .collect();
+        if let [_, _, ..] = cases[..] {
+            let names: Vec<String> = cases.iter().map(|&k| format!("`{}.{}`", d.name, d.variants()[k].0)).collect();
+            self.diags.push(
+                Diag::new(span, t!("try_two_cases", error = error.text(), into = d.name, cases = names.join(", ")))
+                    .help(t!("try_two_cases_help")),
+            );
+        }
+        cases.first().copied()
+    }
+
     fn variant(&mut self, ty: &Name, types: &[TypeAst], name: &Name, args: &[Expr]) -> Type {
         self.hidden(&ty.text, ty.span);
         self.mention(&method_name(&ty.text, &name.text), name.span);

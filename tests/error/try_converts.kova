@@ -1,0 +1,26 @@
+// `?` and an error the function does not return: two cases holding it, or none.
+import files
+
+enum Twice {
+    First(error: files.IoError)
+    Second(error: files.IoError)
+}
+
+enum Other {
+    Empty
+}
+
+fn both(p: String) -> String or Twice {
+    let text: String := files.read(p)?
+    return ok(text)
+}
+
+fn neither(p: String) -> String or Other {
+    let text: String := files.read(p)?
+    return ok(text)
+}
+
+fn main {
+}
+// error: `?` cannot choose where the `files.IoError` goes: `Twice.First`, `Twice.Second` of `Twice` both hold one
+// error: `?` gives the error (`files.IoError`) back to the caller

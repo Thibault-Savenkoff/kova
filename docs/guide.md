@@ -345,6 +345,35 @@ error: 3 is odd
 - Inside `if age != none`, `age` is an `Int`.
 - `?` gives the error back to the caller at once.
 - Reading a file gives a `String or files.IoError`: Kova never hides that something can go wrong.
+- When the function returns its own error enum, `?` puts the error into the case holding one:
+
+```kova
+import files
+
+enum AppError {
+    Empty
+    Io(error: files.IoError)
+}
+
+fn load(path: String) -> String or AppError {
+    let text: String := files.read(path)?
+    if text = "" {
+        return err(AppError.Empty)
+    }
+    return ok(text)
+}
+
+fn main {
+    match load("missing.txt") {
+        ok(text) => print(text)
+        err(e) => print(e)
+    }
+}
+```
+
+```text
+AppError.Io(error: NotFound("missing.txt"))
+```
 
 ## 11. Interfaces and generics
 

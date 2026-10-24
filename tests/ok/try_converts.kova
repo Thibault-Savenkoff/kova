@@ -1,0 +1,37 @@
+// `?` puts an error that is not the function's into the case of its error enum holding one.
+import files
+
+enum AppError {
+    Empty
+    Io(error: files.IoError)
+    Bad(why: String)
+}
+
+fn load(path: String) -> String or AppError {
+    let text: String := files.read(path)?
+    if text = "" {
+        return err(AppError.Empty)
+    }
+    return ok(text)
+}
+
+fn size(path: String) -> Int or AppError {
+    let text: String := load(path)?
+    return ok(text.length)
+}
+
+fn main {
+    match size("nowhere.txt") {
+        ok(n) => print(n)
+        err(e) => print(e)
+    }
+    match size("nowhere.txt") {
+        ok(n) => print(n)
+        err(e) => match e {
+            Io(error) => print("could not read: {error}")
+            Empty, Bad => print("other")
+        }
+    }
+}
+// expect: AppError.Io(error: NotFound("nowhere.txt"))
+// expect: could not read: NotFound("nowhere.txt")
