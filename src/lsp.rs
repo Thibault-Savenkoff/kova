@@ -490,6 +490,19 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         ..Default::default()
     };
     let mut items = vec![];
+    // `web.`: Kova's own module, nothing to read.
+    if parts.len() == 1 && types::MODULES.contains(&name.as_str()) {
+        let prefix = format!("{name}.");
+        // `serve(…) log(…)` is not offered: `serve` is, and its other parts can follow.
+        let optional = |n: &str| n.contains(" log(") || n.contains(" workers(");
+        for (n, text) in types::LIBRARY.iter().filter(|(n, _)| n.starts_with(&prefix) && !optional(n)) {
+            items.push(item(&n[prefix.len()..], CompletionItemKind::FUNCTION, text.to_string()));
+        }
+        for t in types::MODULE_TYPES.iter().filter(|t| t.starts_with(&prefix)) {
+            items.push(item(&t[prefix.len()..], CompletionItemKind::STRUCT, t.to_string()));
+        }
+        return Some(items);
+    }
     if parts.len() == 1 && module.is_some() {
         // Its own names: `geometry.distance`, not the methods `geometry.Point.length`.
         let prefix = format!("{name}.");
@@ -510,16 +523,17 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
         return Some(made.collect());
     }
-    if name == "Log" {
-        return Some(["All", "Start", "Off"].iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, format!("Log.{v}"))).collect());
+    if name == "web.Log" {
+        return Some(["All", "Start", "Off"].iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, format!("web.Log.{v}"))).collect());
     }
-    if name == "Answer" {
-        let mut made: Vec<CompletionItem> = types::ANSWER_MAKERS.iter().map(|(f, p)| item(f, CompletionItemKind::FUNCTION, format!("Answer.{f}({}) -> Answer", p.text()))).collect();
-        made.push(item("json", CompletionItemKind::FUNCTION, "Answer.json(value) -> Answer".into()));
+    if name == "web.Answer" {
+        let mut made: Vec<CompletionItem> =
+            types::ANSWER_MAKERS.iter().map(|(f, p)| item(f, CompletionItemKind::FUNCTION, format!("web.Answer.{f}({}) -> web.Answer", p.text()))).collect();
+        made.push(item("json", CompletionItemKind::FUNCTION, "web.Answer.json(value) -> web.Answer".into()));
         return Some(made);
     }
-    if name == "Request" {
-        return Some(types::REQUEST_STARTS.iter().map(|f| item(f, CompletionItemKind::FUNCTION, format!("Request.{f}(url: String) -> Request"))).collect());
+    if name == "web.Request" {
+        return Some(types::REQUEST_STARTS.iter().map(|f| item(f, CompletionItemKind::FUNCTION, format!("web.Request.{f}(url: String) -> web.Request"))).collect());
     }
     let s = file.structs.iter().find(|s| s.name.text == name)?;
     let statics = s.methods.iter().filter(|m| m.receiver.is_none() && !hidden(&types::method_name(&name, &m.name.text)));
@@ -551,7 +565,13 @@ fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIt
         .filter(|n| !taken.contains(n))
         .collect();
     names.sort();
-    Some(names.into_iter().map(|n| CompletionItem { label: n, kind: Some(CompletionItemKind::FILE), ..Default::default() }).collect())
+    let own = types::MODULES.iter().filter(|m| !taken.iter().any(|t| t == *m)).map(|m| CompletionItem {
+        label: m.to_string(),
+        kind: Some(CompletionItemKind::MODULE),
+        detail: Some(t!("module_detail")),
+        ..Default::default()
+    });
+    Some(own.chain(names.into_iter().map(|n| CompletionItem { label: n, kind: Some(CompletionItemKind::FILE), ..Default::default() })).collect())
 }
 
 /// In `match shape {`, where a case goes: the cases not handled yet.
@@ -1131,11 +1151,15 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
         commas += args;
     }
 
+    // `web.get(`: the name of Kova's module, whatever alias the file gives it.
+    let alias = k.checked_sub(2).filter(|&j| before[j + 1].kind == Kind::Sym(".")).map(|j| &src[before[j].span.start..before[j].span.end]);
+    let module = alias.and_then(|a| tree(src).imports.into_iter().find(|i| i.alias.text == a)).map(|i| i.module.text);
+    let in_module = module.map(|m| format!("{m}.{name}"));
     let (label, params) = if types::BUILTINS.contains(&name) {
         let label = format!("fn {name}(value)");
         let start = label.find('(').unwrap() as u32 + 1;
         (label, vec![[start, start + 5]])
-    } else if let Some((_, text)) = types::LIBRARY.iter().find(|(n, _)| *n == name) {
+    } else if let Some((_, text)) = types::LIBRARY.iter().find(|(n, _)| n.split(' ').next().unwrap_or(n).trim_end_matches("(…)") == in_module.as_deref().unwrap_or(name)) {
         // `fn read_file(path: String) -> …`: the parameter is between the parentheses.
         let (open, close) = (text.find('(').map_or(0, |i| i + 1), text.find(')').unwrap_or(0));
         (text.to_string(), if close > open { vec![[open as u32, close as u32]] } else { vec![] })
@@ -1374,9 +1398,15 @@ mod tests {
         let point = at(MODULES, "import geometry as geo\nfn main {\n  geo.Point.");
         assert!(point.contains(&"origin".to_string()) && point.contains(&"from_json".to_string()), "{point:?}");
         // The web server's names.
-        assert_eq!(at("/none/main.kova", "fn main {\n  Answer."), ["text", "status", "file", "json"]);
-        assert_eq!(at("/none/main.kova", "fn main {\n  Log."), ["All", "Start", "Off"]);
-        let src = "fn main {\n  serve(80) { q: Request =>\n    print(q.)\n    Answer.status(404)\n  }\n}";
+        assert_eq!(at("/none/main.kova", "import web\nfn main {\n  web.Answer."), ["text", "status", "file", "json"]);
+        assert_eq!(at("/none/main.kova", "import web as w\nfn main {\n  w.Log."), ["All", "Start", "Off"]);
+        let web = at("/none/main.kova", "import web\nfn main {\n  web.");
+        for name in ["get", "post(…) body(…)", "send", "serve", "serve_files(…) at(…)", "Request", "Answer", "WebError"] {
+            assert!(web.contains(&name.to_string()), "{name} in {web:?}");
+        }
+        assert_eq!(web.iter().filter(|n| *n == "serve").count(), 1, "{web:?}");
+        assert!(at("/none/main.kova", "import files\nfn main {\n  files.").contains(&"read".to_string()));
+        let src = "import web\nfn main {\n  web.serve(80) { q: web.Request =>\n    print(q.)\n    web.Answer.status(404)\n  }\n}";
         let asked = labels(members("/none/main.kova", src, src.find("q.)").unwrap() + 2));
         for name in ["path", "query", "header", "body"] {
             assert!(asked.contains(&name.to_string()), "{name} in {asked:?}");
@@ -1391,7 +1421,7 @@ mod tests {
     #[test]
     fn completion_of_imports() {
         let src = "import geometry\nimport ";
-        assert_eq!(labels(import_files(MODULES, src, src.len())), ["shapes"]);
+        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
     }
 
@@ -1491,6 +1521,8 @@ mod tests {
 
     #[test]
     fn parameter_help() {
+        let web = "import web as w\nfn main {\n  w.get(";
+        assert!(signature(web, web.len()).unwrap().signatures[0].label.starts_with("fn web.get(url: String)"));
         let src = "fn square(x: Int, y: Bool) -> Int { return x }\nfn main { print(square(1, ";
         let help = signature(src, src.len()).unwrap();
         assert_eq!(help.signatures[0].label, "fn square(x: Int, y: Bool) -> Int");

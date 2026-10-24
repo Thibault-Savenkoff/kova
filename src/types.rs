@@ -404,39 +404,62 @@ pub fn setting<'a>(f: &'a File, src: &str, key: &str) -> Option<(&'a str, usize)
 /// Built-in functions: `print(x)` ends the line, `write(x)` doesn't.
 pub const BUILTINS: &[&str] = &["print", "write"];
 
+/// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
+/// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
+pub const MODULES: &[&str] = &["web", "files"];
+/// Their types.
+pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError"];
+
+/// `web` written without `import web`, `get` or `Request` without `web.`, or a name from before
+/// the modules (`read_file`): what to write instead.
+fn module_help(name: &str) -> Option<String> {
+    if MODULES.contains(&name) {
+        return Some(t!("module_import", module = name));
+    }
+    const RENAMED: &[(&str, &str)] =
+        &[("read_file", "files.read"), ("write_file", "files.write"), ("append_file", "files.append"), ("list_dir", "files.list"), ("remove_file", "files.remove")];
+
+    let base = name.split(' ').next()?.trim_end_matches("(…)");
+    let last = |full: &&str| full.split_once('.').is_some_and(|(_, n)| n == base);
+    let functions = LIBRARY.iter().map(|(n, _)| n.split(' ').next().unwrap_or(n).trim_end_matches("(…)"));
+    let full = (RENAMED.iter().find(|(old, _)| *old == base).map(|(_, new)| *new)).or_else(|| functions.chain(MODULE_TYPES.iter().copied()).find(|f| last(f)))?;
+    let module = full.split('.').next()?;
+    Some(t!("module_name_help", module = module, full = full))
+}
+
 /// The library's functions (PLAN 2.10), with an ordinary signature: (name, its text for the editor).
 pub const LIBRARY: &[(&str, &str)] =
     &[
-        ("read_file", "fn read_file(path: String) -> String or IoError"),
-        ("write_file", "fn write_file(path: String, text: String) -> Nothing or IoError"),
-        ("append_file", "fn append_file(path: String, text: String) -> Nothing or IoError"),
-        ("exists", "fn exists(path: String) -> Bool"),
-        ("list_dir", "fn list_dir(path: String) -> List<String> or IoError"),
-        ("make_dir", "fn make_dir(path: String) -> Nothing or IoError"),
-        ("remove_file", "fn remove_file(path: String) -> Nothing or IoError"),
+        ("files.read", "fn files.read(path: String) -> String or files.IoError"),
+        ("files.write", "fn files.write(path: String, text: String) -> Nothing or files.IoError"),
+        ("files.append", "fn files.append(path: String, text: String) -> Nothing or files.IoError"),
+        ("files.exists", "fn files.exists(path: String) -> Bool"),
+        ("files.list", "fn files.list(path: String) -> List<String> or files.IoError"),
+        ("files.make_dir", "fn files.make_dir(path: String) -> Nothing or files.IoError"),
+        ("files.remove", "fn files.remove(path: String) -> Nothing or files.IoError"),
         ("now", "fn now -> Float"),
         ("sleep", "fn sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
-        ("get", "fn get(url: String) -> Response or WebError"),
-        ("post(…) body(…)", "fn post(url: String) body(text: String) -> Response or WebError"),
-        ("send", "fn send(request: Request) -> Response or WebError"),
-        ("serve", "fn serve(port: Int) { q: Request => Answer }"),
-        ("serve_files(…) at(…)", "fn serve_files(folder: String) at(port: Int)"),
-        ("serve_network", "fn serve_network(port: Int) { q: Request => Answer }"),
-        ("serve_files_network(…) at(…)", "fn serve_files_network(folder: String) at(port: Int)"),
-        ("serve(…) log(…)", "fn serve(port: Int) log(what: Log) { q: Request => Answer }"),
-        ("serve_network(…) log(…)", "fn serve_network(port: Int) log(what: Log) { q: Request => Answer }"),
-        ("serve_files(…) at(…) log(…)", "fn serve_files(folder: String) at(port: Int) log(what: Log)"),
-        ("serve_files_network(…) at(…) log(…)", "fn serve_files_network(folder: String) at(port: Int) log(what: Log)"),
-        ("serve(…) workers(…)", "fn serve(port: Int) workers(n: Int) { q: Request => Answer }"),
-        ("serve(…) workers(…) log(…)", "fn serve(port: Int) workers(n: Int) log(what: Log) { q: Request => Answer }"),
-        ("serve(…) log(…) workers(…)", "fn serve(port: Int) log(what: Log) workers(n: Int) { q: Request => Answer }"),
-        ("serve_network(…) workers(…)", "fn serve_network(port: Int) workers(n: Int) { q: Request => Answer }"),
-        ("serve_network(…) workers(…) log(…)", "fn serve_network(port: Int) workers(n: Int) log(what: Log) { q: Request => Answer }"),
-        ("serve_network(…) log(…) workers(…)", "fn serve_network(port: Int) log(what: Log) workers(n: Int) { q: Request => Answer }"),
+        ("web.get", "fn web.get(url: String) -> web.Response or web.WebError"),
+        ("web.post(…) body(…)", "fn web.post(url: String) body(text: String) -> web.Response or web.WebError"),
+        ("web.send", "fn web.send(request: web.Request) -> web.Response or web.WebError"),
+        ("web.serve", "fn web.serve(port: Int) { q: web.Request => web.Answer }"),
+        ("web.serve_files(…) at(…)", "fn web.serve_files(folder: String) at(port: Int)"),
+        ("web.serve_network", "fn web.serve_network(port: Int) { q: web.Request => web.Answer }"),
+        ("web.serve_files_network(…) at(…)", "fn web.serve_files_network(folder: String) at(port: Int)"),
+        ("web.serve(…) log(…)", "fn web.serve(port: Int) log(what: web.Log) { q: web.Request => web.Answer }"),
+        ("web.serve_network(…) log(…)", "fn web.serve_network(port: Int) log(what: web.Log) { q: web.Request => web.Answer }"),
+        ("web.serve_files(…) at(…) log(…)", "fn web.serve_files(folder: String) at(port: Int) log(what: web.Log)"),
+        ("web.serve_files_network(…) at(…) log(…)", "fn web.serve_files_network(folder: String) at(port: Int) log(what: web.Log)"),
+        ("web.serve(…) workers(…)", "fn web.serve(port: Int) workers(n: Int) { q: web.Request => web.Answer }"),
+        ("web.serve(…) workers(…) log(…)", "fn web.serve(port: Int) workers(n: Int) log(what: web.Log) { q: web.Request => web.Answer }"),
+        ("web.serve(…) log(…) workers(…)", "fn web.serve(port: Int) log(what: web.Log) workers(n: Int) { q: web.Request => web.Answer }"),
+        ("web.serve_network(…) workers(…)", "fn web.serve_network(port: Int) workers(n: Int) { q: web.Request => web.Answer }"),
+        ("web.serve_network(…) workers(…) log(…)", "fn web.serve_network(port: Int) workers(n: Int) log(what: web.Log) { q: web.Request => web.Answer }"),
+        ("web.serve_network(…) log(…) workers(…)", "fn web.serve_network(port: Int) log(what: web.Log) workers(n: Int) { q: web.Request => web.Answer }"),
     ];
 
 /// `IoError`, the failures of `read_file`. Its variants are numbered like the failures of
@@ -444,7 +467,7 @@ pub const LIBRARY: &[(&str, &str)] =
 pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
     let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
-    Type::Enum(EnumDef::with_variants("IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
+    Type::Enum(EnumDef::with_variants("files.IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
 }
 
 /// `WebError`, why `get` or `post` has no answer (PLAN Part 4 "The web"), each with the address
@@ -452,7 +475,7 @@ pub fn io_error() -> Type {
 pub fn web_error() -> Type {
     let url = || vec![("url".to_string(), Type::String)];
     let names = ["BadUrl", "NoHost", "Refused", "Timeout", "Broken", "BadAnswer", "TooManyRedirects", "BadCertificate", "NoHttps", "BadHeader"];
-    Type::Enum(EnumDef::with_variants("WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
+    Type::Enum(EnumDef::with_variants("web.WebError".into(), names.iter().map(|n| (n.to_string(), url())).collect()))
 }
 
 /// `JsonError`, why `T.from_json(text)` gives no `T` (PLAN Part 4 "JSON"): `field` is the path
@@ -466,7 +489,7 @@ pub fn json_error() -> Type {
 /// `Response`, a site's answer: its code, where it came from (after the redirections), its body
 /// and its headers (names in small letters; `r.header(name)` whatever the capitals).
 pub fn response() -> Type {
-    let d = StructDef::new("Response".into(), vec![], false);
+    let d = StructDef::new("web.Response".into(), vec![], false);
     let text = || Type::String;
     d.set_fields(vec![("status".into(), Type::Int), ("url".into(), text()), ("body".into(), text()), ("headers".into(), Type::Map(Box::new(text()), Box::new(text())))]);
     Type::Struct(d)
@@ -476,7 +499,7 @@ pub fn response() -> Type {
 /// `Request.put(url).header("Accept") is("text/plain").seconds(5)`, then `send(r)`. Its fields
 /// in this order are read by kir.rs (`request_made`, `request_method`, `send`).
 pub fn request() -> Type {
-    let d = StructDef::new("Request".into(), vec![], false);
+    let d = StructDef::new("web.Request".into(), vec![], false);
     let text = || Type::String;
     d.set_fields(vec![
         ("method".into(), text()),
@@ -493,7 +516,7 @@ pub fn request() -> Type {
 /// headers (names in small letters), its text, and the file sent instead of a text (`Answer.file`:
 /// a file's bytes need not be a text), empty if none. kir.rs reads the fields in this order.
 pub fn answer() -> Type {
-    let d = StructDef::new("Answer".into(), vec![], false);
+    let d = StructDef::new("web.Answer".into(), vec![], false);
     let text = || Type::String;
     d.set_fields(vec![("status".into(), Type::Int), ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))), ("body".into(), text()), ("file".into(), text())]);
     Type::Struct(d)
@@ -523,7 +546,7 @@ pub fn request_methods() -> [(&'static str, Vec<Type>); 4] {
 /// only, or nothing. Numbered 0 to 2 (`kir.rs` `serve`).
 pub fn log_mode() -> Type {
     let names = ["All", "Start", "Off"];
-    Type::Enum(EnumDef::with_variants("Log".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
+    Type::Enum(EnumDef::with_variants("web.Log".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
 }
 
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
@@ -1037,34 +1060,34 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     }
 
     // 1. The structs, then the signatures: what is written further down can be used.
-    c.structs.insert("IoError".into(), io_error());
+    c.structs.insert("files.IoError".into(), io_error());
     c.structs.insert("Weekday".into(), weekday());
-    c.structs.insert("Log".into(), log_mode());
-    c.structs.insert("WebError".into(), web_error());
+    c.structs.insert("web.Log".into(), log_mode());
+    c.structs.insert("web.WebError".into(), web_error());
     c.structs.insert("JsonError".into(), json_error());
-    c.structs.insert("Response".into(), response());
-    c.structs.insert("Request".into(), request());
+    c.structs.insert("web.Response".into(), response());
+    c.structs.insert("web.Request".into(), request());
     for start in REQUEST_STARTS {
-        c.functions.insert(method_name("Request", start), Signature::new(None, vec![(Mode::Read, Type::String)], request()));
+        c.functions.insert(method_name("web.Request", start), Signature::new(None, vec![(Mode::Read, Type::String)], request()));
     }
     for (name, params) in request_methods() {
         let params = params.into_iter().map(|p| (Mode::Read, p)).collect();
-        c.functions.insert(method_name("Request", name), Signature::new(Some(Mode::Read), params, request()));
+        c.functions.insert(method_name("web.Request", name), Signature::new(Some(Mode::Read), params, request()));
     }
     for (name, params, result) in request_questions() {
         let params = params.into_iter().map(|p| (Mode::Read, p)).collect();
-        c.functions.insert(method_name("Request", name), Signature::new(Some(Mode::Read), params, result));
+        c.functions.insert(method_name("web.Request", name), Signature::new(Some(Mode::Read), params, result));
     }
-    c.structs.insert("Answer".into(), answer());
+    c.structs.insert("web.Answer".into(), answer());
     for (name, param) in ANSWER_MAKERS {
-        c.functions.insert(method_name("Answer", name), Signature::new(None, vec![(Mode::Read, param)], answer()));
+        c.functions.insert(method_name("web.Answer", name), Signature::new(None, vec![(Mode::Read, param)], answer()));
     }
     let header = vec![(Mode::Read, Type::String), (Mode::Read, Type::String)];
-    c.functions.insert(method_name("Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
+    c.functions.insert(method_name("web.Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
     let block = Type::Block(vec![request()], Box::new(answer()));
     // `serve_network` and `serve_files_network`: the same, open to the other computers.
     // Each with a `log(…)` part too, before the block.
-    for name in ["serve", "serve_network"] {
+    for name in ["web.serve", "web.serve_network"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, block.clone())], Type::Unit));
         c.functions.insert(format!("{name}(…) log(…)"), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, log_mode()), (Mode::Read, block.clone())], Type::Unit));
         // `workers(8)`: several questions at once (PLAN Part 4 "Several questions at once").
@@ -1074,29 +1097,29 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.functions.insert(format!("{name}(…) {parts}"), Signature::new(None, params, Type::Unit));
         }
     }
-    for name in ["serve_files(…) at(…)", "serve_files_network(…) at(…)"] {
+    for name in ["web.serve_files(…) at(…)", "web.serve_files_network(…) at(…)"] {
         c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int)], Type::Unit));
         c.functions.insert(format!("{name} log(…)"), Signature::new(None, vec![(Mode::Read, Type::String), (Mode::Read, Type::Int), (Mode::Read, log_mode())], Type::Unit));
     }
     let string = || Type::String;
     let read_file = Signature::new(None, vec![(Mode::Read, string())], Type::Result(Box::new(string()), Box::new(io_error())));
-    c.functions.insert("read_file".into(), read_file);
+    c.functions.insert("files.read".into(), read_file);
     let io = |ok: Type| Type::Result(Box::new(ok), Box::new(io_error()));
     let paths = |n: usize| vec![(Mode::Read, string()); n];
     let web = || Type::Result(Box::new(response()), Box::new(web_error()));
     for (name, n, result) in [
-        ("get", 1, web()),
-        ("post(…) body(…)", 2, web()),
-        ("write_file", 2, io(Type::Unit)),
-        ("append_file", 2, io(Type::Unit)),
-        ("exists", 1, Type::Bool),
-        ("list_dir", 1, io(Type::List(Box::new(string())))),
-        ("make_dir", 1, io(Type::Unit)),
-        ("remove_file", 1, io(Type::Unit)),
+        ("web.get", 1, web()),
+        ("web.post(…) body(…)", 2, web()),
+        ("files.write", 2, io(Type::Unit)),
+        ("files.append", 2, io(Type::Unit)),
+        ("files.exists", 1, Type::Bool),
+        ("files.list", 1, io(Type::List(Box::new(string())))),
+        ("files.make_dir", 1, io(Type::Unit)),
+        ("files.remove", 1, io(Type::Unit)),
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
     }
-    c.functions.insert("send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
+    c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
@@ -1560,6 +1583,15 @@ impl Checker<'_> {
         self.diags.push(Diag::new(span, msg));
     }
 
+    /// An unknown name: when it is one of Kova's modules or in one, the help says what to write.
+    fn unknown(&mut self, span: Span, msg: String, name: &str) {
+        let d = Diag::new(span, msg);
+        self.diags.push(match module_help(name) {
+            Some(h) => d.help(h),
+            None => d,
+        });
+    }
+
     /// The body of a function; `owner` = the struct of a method.
     /// Checks that `s` has every method of the interfaces it follows, as they are written
     /// there (with `Self` = `s`), and gives it their default methods.
@@ -1977,7 +2009,7 @@ impl Checker<'_> {
                     return t.clone();
                 }
                 let Some(&j) = decls.get(n.text.as_str()) else {
-                    self.error(n.span, t!("type_unknown", name = n.text));
+                    self.unknown(n.span, t!("type_unknown", name = n.text), &n.text);
                     return Type::Error;
                 };
                 match self.define(f, decls, j, open) {
@@ -2010,7 +2042,7 @@ impl Checker<'_> {
             TypeAst::Name(n) if n.text == "Nothing" => {
                 self.diags.push(Diag::new(n.span, t!("nothing_only_in_result")).help(t!("nothing_only_in_result_help")));
             }
-            TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.error(n.span, t!("type_unknown", name = n.text)),
+            TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.unknown(n.span, t!("type_unknown", name = n.text), &n.text),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
             TypeAst::Generic(n, ts) => {
@@ -2075,7 +2107,7 @@ impl Checker<'_> {
         let d = match template {
             Some(t) if is_template(t, &n.text) => t.clone(),
             Some(Type::Param(_)) | None => {
-                self.error(n.span, t!("type_unknown", name = n.text));
+                self.unknown(n.span, t!("type_unknown", name = n.text), &n.text);
                 return Type::Error;
             }
             Some(_) => {
@@ -2565,7 +2597,7 @@ impl Checker<'_> {
                 }
                 seen.push((n.clone(), path));
                 let Some(var) = self.lookup(n) else {
-                    self.error(name.span, t!("variable_unknown", name = n));
+                    self.unknown(name.span, t!("variable_unknown", name = n), &n);
                     return Type::Error;
                 };
                 let (mut ty, kind) = (var.ty.clone(), var.kind);
@@ -3032,16 +3064,16 @@ impl Checker<'_> {
             return self.date_made(t, ty, name, args);
         }
         // `Answer.json(book)`: any value with a JSON form (PLAN Part 4 "The web server").
-        if (ty.text.as_str(), name.text.as_str()) == ("Answer", "json") && types.is_empty() {
+        if (ty.text.as_str(), name.text.as_str()) == ("web.Answer", "json") && types.is_empty() {
             let [value] = args else {
-                self.error(name.span, t!("argument_count", name = "Answer.json", expected = 1, given = args.len()));
+                self.error(name.span, t!("argument_count", name = "web.Answer.json", expected = 1, given = args.len()));
                 return self.unchecked(args);
             };
             let t = self.expr(value);
             if !matches!(t, Type::Struct(_) | Type::List(_) | Type::Map(..)) && t != Type::Error {
                 self.error(value.span, t!("json_answer", type = t.text()));
             } else {
-                self.json_form(&t, "Answer.json", name.span);
+                self.json_form(&t, "web.Answer.json", name.span);
             }
             return answer();
         }
@@ -3085,7 +3117,7 @@ impl Checker<'_> {
                 None
             }
             None => {
-                self.error(ty.span, t!("type_unknown", name = ty.text));
+                self.unknown(ty.span, t!("type_unknown", name = ty.text), &ty.text);
                 None
             }
             Some(t) => match self.functions.get(&method_name(&ty.text, &name.text)).cloned() {
@@ -3528,7 +3560,7 @@ impl Checker<'_> {
                     Type::Error
                 }
                 None => {
-                    self.error(e.span, t!("variable_unknown", name = name));
+                    self.unknown(e.span, t!("variable_unknown", name = name), &name);
                     Type::Error
                 }
             },
@@ -3922,7 +3954,7 @@ impl Checker<'_> {
                     Some(_) => self.diags.push(
                         Diag::new(ty.span, t!("enum_literal", name = ty.text)).help(t!("enum_literal_help", name = ty.text)),
                     ),
-                    None => self.error(ty.span, t!("type_unknown", name = ty.text)),
+                    None => self.unknown(ty.span, t!("type_unknown", name = ty.text), &ty.text),
                 }
                 fields.iter().for_each(|(_, v)| {
                     self.expr(v);
@@ -4003,7 +4035,7 @@ impl Checker<'_> {
                 None
             }
             None => {
-                self.error(ty.span, t!("type_unknown", name = ty.text));
+                self.unknown(ty.span, t!("type_unknown", name = ty.text), &ty.text);
                 None
             }
         };
@@ -4405,7 +4437,7 @@ impl Checker<'_> {
             return Type::Unit;
         }
         let Some(sig) = self.functions.get(name.text.as_str()) else {
-            self.error(name.span, t!("function_unknown", name = name.text));
+            self.unknown(name.span, t!("function_unknown", name = name.text), &name.text);
             args.iter().for_each(|a| {
                 self.expr(a);
             });

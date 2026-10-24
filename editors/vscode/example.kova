@@ -1,4 +1,7 @@
 // File using all of Kova's syntax, to check the colors.
+
+import files
+
 /* Block comment /* nested */ still a comment */
 
 header {
@@ -51,8 +54,8 @@ fn min_max(notes: List<Int>) -> (Int, Int) {
     return (petite, grande)
 }
 
-fn lire(chemin: String) -> String or IoError {
-    let texte: String := read_file(chemin)?
+fn lire(chemin: String) -> String or files.IoError {
+    let texte: String := files.read(chemin)?
     return ok(texte)
 }
 

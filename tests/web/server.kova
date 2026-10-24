@@ -1,16 +1,19 @@
 // The server that tests/kova.rs (`server`) asks: its port is the program's first word. `/stop`
 // ends it; `/count` says how many questions came before.
+
+import web
+
 struct Book {
     title: String
     pages: Int
 }
 
-fn echo(q: Request) -> Answer {
+fn echo(q: web.Request) -> web.Answer {
     let tag: String? := q.header("X-Kova")
     if tag = none {
-        return Answer.text("{q.method} {q.body} -")
+        return web.Answer.text("{q.method} {q.body} -")
     }
-    return Answer.text("{q.method} {q.body} {tag}")
+    return web.Answer.text("{q.method} {q.body} {tag}")
 }
 
 fn main {
@@ -19,24 +22,24 @@ fn main {
         return
     }
     var count: Int := 0
-    serve(port) { q: Request =>
+    web.serve(port) { q: web.Request =>
         count := count + 1
         match q.path {
-            "/" => Answer.text("Hello from Kova")
-            "/book" => Answer.json(Book { title := "Dune", pages := 412 })
-            "/books" => Answer.json([Book { title := "A", pages := 1 }])
+            "/" => web.Answer.text("Hello from Kova")
+            "/book" => web.Answer.json(Book { title := "Dune", pages := 412 })
+            "/books" => web.Answer.json([Book { title := "A", pages := 1 }])
             "/echo" => echo(q)
             "/search" => match q.query("author") {
-                none => Answer.status(400)
-                author => Answer.text("author: {author}")
+                none => web.Answer.status(400)
+                author => web.Answer.text("author: {author}")
             }
-            "/html" => Answer.text("<p>hi</p>").header("Content-Type") is("text/html")
-            "/count" => Answer.text("{count}")
+            "/html" => web.Answer.text("<p>hi</p>").header("Content-Type") is("text/html")
+            "/count" => web.Answer.text("{count}")
             "/stop" => {
                 exit(0)
-                Answer.status(500)
+                web.Answer.status(500)
             }
-            _ => Answer.file("tests/web/site" + q.path)
+            _ => web.Answer.file("tests/web/site" + q.path)
         }
     }
 }

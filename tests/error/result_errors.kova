@@ -1,6 +1,6 @@
-struct IoError { code: Int }
+struct Weekday { code: Int }
 
-fn read_file(path: String) {}
+fn sleep(seconds: Float) {}
 
 fn half(n: Int) -> Int or String {
     return ok(n / 2)
@@ -28,8 +28,8 @@ fn main {
     }
     print("{half(2)}")
 }
-// error: `IoError` is a built-in type: choose another name
-// error: `read_file` is a built-in function
+// error: `Weekday` is a built-in type: choose another name
+// error: `sleep` is a built-in function
 // error: the function must return `… or String`; it returns `Int?`
 // error: the function must return `… or String`; it returns `Int or Bool`
 // error: `ok(…)` needs a type

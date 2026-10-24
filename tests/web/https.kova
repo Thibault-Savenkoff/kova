@@ -1,7 +1,10 @@
 // HTTPS against real sites (tests/kova.rs `https`, in the GitHub workflow only): bad certificates
 // must be refused.
+
+import web
+
 fn try(url: String) {
-    match get(url) {
+    match web.get(url) {
         ok(r) => print("{r.status} {r.url}")
         err(e) => print(e)
     }

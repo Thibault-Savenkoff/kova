@@ -87,7 +87,8 @@ completion, types on hover, renaming, run / build / test buttons and a debugger.
 ## Status
 
 Kova is young (version 0.1): the language works and is tested on the three systems, but it still changes.
-Not yet there: threads, a web server (`get` and `post` are there, with `https://`).
+The web (`import web`: `web.get`, `web.post`, a server with `web.serve`, `https://`) and files
+(`import files`) are Kova's own modules.
 
 ## How Kova is made
 

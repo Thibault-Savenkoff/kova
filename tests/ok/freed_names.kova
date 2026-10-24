@@ -1,0 +1,22 @@
+// The web and the files are Kova's modules (`import web`, `import files`): without them,
+// `Answer`, `get` and `send` are ordinary names a program may take.
+import files as fs
+
+struct Answer {
+    n: Int
+}
+
+fn get(n: Int) -> Answer {
+    return Answer { n := n + 1 }
+}
+
+fn send(a: Answer) -> Int {
+    return a.n * 2
+}
+
+fn main {
+    print(send(get(1)))
+    print(fs.exists("tests/ok/freed_names.kova"))
+}
+// expect: 4
+// expect: true

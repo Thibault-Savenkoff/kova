@@ -1,5 +1,8 @@
 // `serve(…) workers(…)`: the block answers several questions at once, on several threads. It may
 // read what is around it, never change it.
+
+import web
+
 struct Counter {
     n: Int
 
@@ -25,7 +28,7 @@ fn main {
     var c := Counter { n := 0 }
     var shape: Shape := Shape.Dot
     var label: String := ""
-    serve(8080) workers(4) { q: Request =>
+    web.serve(8080) workers(4) { q: web.Request =>
         count += 1
         for n in var names {
             n := "y"
@@ -40,7 +43,7 @@ fn main {
             c.n := x
         }
         print(label)
-        Answer.text("{count}")
+        web.Answer.text("{count}")
     }
 }
 // error: `count` cannot change inside `workers(…)`

@@ -1,0 +1,7 @@
+fn main {
+    print(web.get("https://example.com"))
+    let t: String or IoError := read_file("x")
+}
+// error: unknown variable `web`
+// error: unknown type `IoError`
+// error: unknown function `read_file`

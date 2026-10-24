@@ -1,4 +1,7 @@
 // Grouped cases (PLAN Part 4): `Saturday, Sunday =>` takes either variant.
+
+import files
+
 enum Shape {
     Circle(radius: Float)
     Square(side: Float)
@@ -26,7 +29,7 @@ fn main {
         }
         print(flat)
     }
-    let r: Int or IoError := ok(3)
+    let r: Int or files.IoError := ok(3)
     match r {
         ok, err => print("either")
     }

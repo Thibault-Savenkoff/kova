@@ -1,6 +1,9 @@
 // `read_file` gives the text or an `IoError` that says what went wrong.
+
+import files
+
 fn show(path: String) {
-    match read_file(path) {
+    match files.read(path) {
         ok(text) => write("read {text.length} characters:\n{text}")
         err(e) => match e {
             NotFound(p) => print("no file {p}")
@@ -13,14 +16,14 @@ fn show(path: String) {
 }
 
 // `?` passes the `IoError` on.
-fn first_char(path: String) -> Int or IoError {
-    let text: String := read_file(path)?
+fn first_char(path: String) -> Int or files.IoError {
+    let text: String := files.read(path)?
     return ok(text.length)
 }
 
 // An `IoError` can be made by hand too.
-fn refuse -> Int or IoError {
-    return err(IoError.Other("boom"))
+fn refuse -> Int or files.IoError {
+    return err(files.IoError.Other("boom"))
 }
 
 fn main {

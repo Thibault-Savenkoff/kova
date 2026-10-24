@@ -329,6 +329,10 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
                 diags.push(diag::Diag::new(imp.alias.span, t!("import_twice", name = imp.alias.text, line = line)));
                 continue;
             }
+            // `import web`: Kova's own module, even from a file named `web.kova`.
+            if types::MODULES.contains(&m.as_str()) {
+                continue;
+            }
             if chain.contains(m) {
                 let cycle = [&chain[chain.iter().position(|c| c == m).unwrap()..], std::slice::from_ref(m)].concat();
                 diags.push(diag::Diag::new(imp.module.span, t!("import_cycle", cycle = cycle.join(" → "))));

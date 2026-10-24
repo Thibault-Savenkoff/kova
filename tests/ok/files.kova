@@ -1,35 +1,38 @@
 // Files and directories: each failure is an `IoError` that names the path.
-fn save(path: String, text: String) -> Nothing or IoError {
-    write_file(path, text)?
-    append_file(path, "second line\n")?
+
+import files
+
+fn save(path: String, text: String) -> Nothing or files.IoError {
+    files.write(path, text)?
+    files.append(path, "second line\n")?
     return ok
 }
 
 fn main {
     // run and build may run at the same time: each its own directory.
     let dir: String := if mode = build { "target/kova_files_build" } else { "target/kova_files_run" }
-    print(make_dir("{dir}/inside"))
-    print(make_dir(dir))
+    print(files.make_dir("{dir}/inside"))
+    print(files.make_dir(dir))
     let note: String := "{dir}/note.txt"
     print(save(note, "first line\n"))
-    match read_file(note) {
+    match files.read(note) {
         ok(text) => write(text)
         err(e) => print(e)
     }
-    print(exists(note))
-    print(write_file("{dir}/b.txt", ""))
-    match list_dir(dir) {
+    print(files.exists(note))
+    print(files.write("{dir}/b.txt", ""))
+    match files.list(dir) {
         ok(names) => print(names)
         err(e) => print(e)
     }
-    print(remove_file(note))
-    print(remove_file("{dir}/b.txt"))
-    print(exists(note))
-    print(remove_file("tests/data/missing.txt"))
-    print(remove_file("tests/data"))
-    print(write_file("tests/data/missing/x.txt", "x"))
-    print(list_dir("tests/data/nothing here"))
-    print(make_dir("tests/data/poem.txt"))
+    print(files.remove(note))
+    print(files.remove("{dir}/b.txt"))
+    print(files.exists(note))
+    print(files.remove("tests/data/missing.txt"))
+    print(files.remove("tests/data"))
+    print(files.write("tests/data/missing/x.txt", "x"))
+    print(files.list("tests/data/nothing here"))
+    print(files.make_dir("tests/data/poem.txt"))
 }
 // expect: ok
 // expect: ok

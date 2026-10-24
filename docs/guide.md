@@ -343,7 +343,7 @@ error: 3 is odd
 
 - Inside `if age != none`, `age` is an `Int`.
 - `?` gives the error back to the caller at once.
-- Reading a file gives a `String or IoError`: Kova never hides that something can go wrong.
+- Reading a file gives a `String or files.IoError`: Kova never hides that something can go wrong.
 
 ## 11. Interfaces and generics
 
@@ -560,13 +560,15 @@ fn length(p: Point) -> Float {
 ## 15. Files, time and chance
 
 ```kova
+import files
+
 fn main {
-    let saved: Nothing or IoError := write_file("note.txt", "hello\n")
-    match read_file("note.txt") {
+    let saved: Nothing or files.IoError := files.write("note.txt", "hello\n")
+    match files.read("note.txt") {
         ok(text) => write(text)
         err(e) => print("cannot read: {e}")
     }
-    let removed: Nothing or IoError := remove_file("note.txt")
+    let removed: Nothing or files.IoError := files.remove("note.txt")
     print(2.0.sqrt)
     print(Date.year(2024) month(1) day(31).plus_months(1))
     let n: Int := random(1..7)
@@ -581,13 +583,18 @@ hello
 true
 ```
 
-`kova run` and `kova build` print exactly the same digits on every system: Kova has its own maths.
+Files are in Kova's own module `files`, reached after `import files` (no file to add): `files.read`,
+`files.write`, `files.append`, `files.exists`, `files.list` (a folder's names, sorted), `files.make_dir` and
+`files.remove`. `import files as fs` gives it another name. `kova run` and `kova build` print exactly the
+same digits on every system: Kova has its own maths.
 
 ## 16. The web
 
 ```kova
+import web
+
 fn main {
-    match get("https://example.com/") {
+    match web.get("https://example.com/") {
         ok(page) => {
             print(page.status)
             print(page.header("Content-Type"))
@@ -595,32 +602,34 @@ fn main {
         }
         err(e) => print("no answer: {e}")
     }
-    let sent: Response or WebError := post("https://example.com/notes") body("hello")
+    let sent: web.Response or web.WebError := web.post("https://example.com/notes") body("hello")
 }
 ```
 
-A site's answer is always `ok(…)`, even a `404`: look at `status`. `err` means there was no answer at all:
+The web is Kova's module `web` (`import web`), like `files`. A site's answer is always `ok(…)`, even a `404`: look at `status`. `err` means there was no answer at all:
 `NoHost`, `Refused`, `Timeout`, `Broken`, `BadAnswer`, `TooManyRedirects` or `BadUrl`. Redirections are
-followed (`page.url` says where it ended). A `Response` has `status`, `url`, `body` and `headers` (a
+followed (`page.url` says where it ended). A `web.Response` has `status`, `url`, `body` and `headers` (a
 `Map<String, String>` with names in small letters); `header(name)` finds one whatever its capitals.
 
-For anything else, build a `Request` step by step, then `send` it:
+For anything else, build a `web.Request` step by step, then `web.send` it:
 
 ```kova
+import web
+
 fn main {
-    let asked: Request := Request.put("https://example.com/notes/1")
+    let asked: web.Request := web.Request.put("https://example.com/notes/1")
         .header("Accept") is("text/plain")
         .body("hello")
         .seconds(5)
         .no_redirections
-    match send(asked) {
+    match web.send(asked) {
         ok(page) => print(page.status)
         err(e) => print("no answer: {e}")
     }
 }
 ```
 
-A `Request` starts with `Request.get`, `post`, `put`, `patch`, `delete` or `head`; each step gives a
+A `web.Request` starts with `web.Request.get`, `post`, `put`, `patch`, `delete` or `head`; each step gives a
 changed copy. Without `seconds`, Kova waits 30 seconds at most for each step (connecting, each piece
 of the answer); `seconds(0)` waits forever. A header Kova writes itself (`Host`, `Content-Length`…)
 or holding a line break gives `BadHeader`.
@@ -674,41 +683,43 @@ not known before, by `Map<String, Book>.from_json(text)` and `shelf.to_json`. Wi
 ## 18. A web server
 
 ```kova
+import web
+
 struct Book {
     title: String
     pages: Int
 }
 
 fn main {
-    serve(8080) { q: Request =>
+    web.serve(8080) { q: web.Request =>
         match q.path {
-            "/" => Answer.text("Hello from Kova")
-            "/book" => Answer.json(Book { title := "Dune", pages := 412 })
+            "/" => web.Answer.text("Hello from Kova")
+            "/book" => web.Answer.json(Book { title := "Dune", pages := 412 })
             "/search" => match q.query("author") {
-                none => Answer.status(400)
-                author => Answer.text("books by {author}")
+                none => web.Answer.status(400)
+                author => web.Answer.text("books by {author}")
             }
-            _ => Answer.file("public" + q.path)
+            _ => web.Answer.file("public" + q.path)
         }
     }
 }
 ```
 
-`serve(port)` answers each question with what its block gives back, one question at a time, until the
+`web.serve(port)` answers each question with what its block gives back, one question at a time, until the
 program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` to see it: only this
-computer can ask (127.0.0.1). `serve_network(8080) { … }` and `serve_files_network("public") at(8080)`
+computer can ask (127.0.0.1). `web.serve_network(8080) { … }` and `web.serve_files_network("public") at(8080)`
 let the other computers of the network ask too (the system may first ask you to allow it).
 
 When it starts, the server writes where to open it, then a line for each question it answers
 (`14:30:01  192.168.1.20  GET /books  200`), as Python's `http.server` does; they go to the error
-output, apart from what the program prints. `serve(8080) log(Log.Start) { … }` writes only where to
-open it, `log(Log.Off)` nothing (also after `serve_files(…) at(…)`). The block receives a `Request`: `q.method`, `q.path` (decoded, without
+output, apart from what the program prints. `web.serve(8080) log(web.Log.Start) { … }` writes only where
+to open it, `log(web.Log.Off)` nothing (also after `serve_files(…) at(…)`). The block receives a `web.Request`: `q.method`, `q.path` (decoded, without
 the `?…`), `q.query(name)` and `q.header(name)` (both `String?`), `q.body`, `q.headers`.
 
-An `Answer` is made by `Answer.text(t)`, `Answer.json(value)` (a struct, a List or a Map, as `to_json`
-writes it), `Answer.status(404)` (the body says `404 Not Found`) or `Answer.file(path)` (its type from its
+A `web.Answer` is made by `web.Answer.text(t)`, `web.Answer.json(value)` (a struct, a List or a Map, as
+`to_json` writes it), `web.Answer.status(404)` (the body says `404 Not Found`) or `web.Answer.file(path)` (its type from its
 name: `.html`, `.css`, `.png`…; `404` if it does not exist or the path goes up with `..`). Add headers
-with `.header("Cache-Control") is("no-store")`. `serve_files("public") at(8080)` serves a folder alone,
+with `.header("Cache-Control") is("no-store")`. `web.serve_files("public") at(8080)` serves a folder alone,
 `index.html` for a folder's own address.
 
 A port another program has stops the program (code 101). Kova itself answers a question it cannot read
@@ -716,7 +727,7 @@ A port another program has stops the program (code 101). Kova itself answers a q
 connection at once and gives the block whichever question is whole first, so a browser's spare
 connection that says nothing keeps no one waiting; the block itself answers one question at a time.
 
-`serve(8080) workers(8) { q: Request => … }` answers up to 8 questions at the same time, each on its own
+`web.serve(8080) workers(8) { q: web.Request => … }` answers up to 8 questions at the same time, each on its own
 thread, so a slow answer keeps no one else waiting (also with `log(…)`, before or after). The block may
 read the values around it but not change them: `count += 1` inside is refused, since two questions
 answered at once would change the same `count`. Each thread starts with its own copy of what the block

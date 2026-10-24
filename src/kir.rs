@@ -4199,12 +4199,12 @@ impl<'a> Translator<'a> {
                     return vec![];
                 }
                 let io = match name.text.as_str() {
-                    "read_file" => Some(StrOp::ReadFile),
-                    "write_file" => Some(StrOp::WriteFile),
-                    "append_file" => Some(StrOp::AppendFile),
-                    "list_dir" => Some(StrOp::ListDir),
-                    "make_dir" => Some(StrOp::MakeDir),
-                    "remove_file" => Some(StrOp::RemoveFile),
+                    "files.read" => Some(StrOp::ReadFile),
+                    "files.write" => Some(StrOp::WriteFile),
+                    "files.append" => Some(StrOp::AppendFile),
+                    "files.list" => Some(StrOp::ListDir),
+                    "files.make_dir" => Some(StrOp::MakeDir),
+                    "files.remove" => Some(StrOp::RemoveFile),
                     _ => None,
                 };
                 if let Some(op) = io {
@@ -4213,7 +4213,7 @@ impl<'a> Translator<'a> {
                 }
                 // `get(url)`, `post(url) body(text)` (PLAN Part 4 "The web"): the address, the
                 // method, what is sent, and whether the redirections are followed.
-                if matches!(name.text.as_str(), "get" | "post(…) body(…)") {
+                if matches!(name.text.as_str(), "web.get" | "web.post(…) body(…)") {
                     let ty = self.ty(e);
                     let url = self.expr1(&args[0]);
                     let (method, body) = match args.get(1) {
@@ -4232,8 +4232,8 @@ impl<'a> Translator<'a> {
                 // order (PLAN "The web server, what it says", "Several questions at once").
                 let parts: Vec<&str> = name.text.split(' ').collect();
                 let base = parts[0].trim_end_matches("(…)");
-                if let "serve" | "serve_network" | "serve_files" | "serve_files_network" = base {
-                    let files = base.starts_with("serve_files");
+                if let "web.serve" | "web.serve_network" | "web.serve_files" | "web.serve_files_network" = base {
+                    let files = base.starts_with("web.serve_files");
                     let firsts = if files { 2 } else { 1 };
                     let given: Vec<Local> = args[..firsts].iter().map(|a| self.expr1(a)).collect();
                     let (mut log, mut workers) = (None, None);
@@ -4250,7 +4250,7 @@ impl<'a> Translator<'a> {
                     };
                 }
                 // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
-                if name.text == "send" {
+                if name.text == "web.send" {
                     let ty = self.ty(e);
                     let r = self.expr(&args[0]);
                     let seconds = self.int_local();
@@ -4288,7 +4288,7 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(n, StrOp::Random, vec![from, to]));
                     return vec![n];
                 }
-                if name.text == "exists" {
+                if name.text == "files.exists" {
                     let (p, d) = (self.expr1(&args[0]), self.int_local());
                     self.emit(Inst::Str(d, StrOp::Exists, vec![p]));
                     return vec![d];
@@ -4350,7 +4350,7 @@ impl<'a> Translator<'a> {
                 vec![self.with(Op::Minus, z, 719468)]
             }
             // `Answer.text("Hello")`, `Answer.json(book)`, `Answer.status(404)`, `Answer.file(path)`.
-            ExprKind::Static { ty, name, args, .. } if ty.text == "Answer" => {
+            ExprKind::Static { ty, name, args, .. } if ty.text == "web.Answer" => {
                 let (status, empty) = (self.int_local(), self.text(""));
                 self.emit(Inst::Const(status, 200));
                 let text = "text/plain; charset=utf-8";
@@ -4381,7 +4381,7 @@ impl<'a> Translator<'a> {
                 v
             }
             // `Request.put(url)`: no header, no body, `DEFAULT_SECONDS`, redirections followed.
-            ExprKind::Static { ty, name, args, .. } if ty.text == "Request" => {
+            ExprKind::Static { ty, name, args, .. } if ty.text == "web.Request" => {
                 let url = self.owned(&args[0]);
                 let (method, headers) = (self.text(&name.text.to_uppercase()), self.int_local());
                 self.emit(Inst::ListNew(headers, 2));

@@ -228,6 +228,9 @@ lang en {
     builtin_one_arg := "`{name}` takes exactly 1 argument"
     print_no_value := "`{name}`: this expression gives no value to print"
     function_unknown := "unknown function `{name}`"
+    module_detail := "one of Kova's modules"
+    module_import := "`{module}` is one of Kova's modules: write `import {module}` at the top of the file"
+    module_name_help := "it is in Kova's module `{module}`: write `import {module}` at the top of the file, then `{full}`"
     argument_count := "`{name}` takes {expected} argument(s), {given} given"
 
     // ---- Ownership ----
