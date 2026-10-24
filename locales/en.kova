@@ -107,6 +107,8 @@ lang en {
     statement_end_expected := "end of statement expected, found {found}"
     contract_place := "`{keyword}` goes between the function's signature and its `\{`"
     contract_place_help := "inside a function, use `check`"
+    mode_test_gone := "the mode is not tested inside a function: it is chosen under a signature"
+    mode_test_gone_help := "put this code in a function of its own, with `mode build else skip` (or `else return value`) under its signature"
     mode_twice := "a function has one `mode` line"
     mode_bare_return := "`else return` needs the value the call gives"
     mode_bare_return_help := "for a function that returns nothing, write `else skip`"

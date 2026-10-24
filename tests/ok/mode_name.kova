@@ -1,0 +1,8 @@
+// `mode` is an ordinary name: only `mode build` under a signature means the mode.
+fn main {
+    let mode: Int := 3
+    if mode = 3 {
+        print(mode)
+    }
+}
+// expect: 3

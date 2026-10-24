@@ -497,29 +497,22 @@ fn workers_count -> Int
 fn main {
     banner
     print(workers_count)
-    if mode = build {
-        print("native code")
-    } else {
-        print("interpreted")
-    }
 }
 ```
 
 ```text
 1
-interpreted
 ```
 
-Built, the same program prints `=== built ===`, `8` and `native code`. `if mode = build` picks a piece of
-code; `mode build` (or `mode run`) under a signature says what a call of the function does in the other
-mode:
+Built, the same program prints `=== built ===` and `8`. `mode build` (or `mode run`) under a signature
+says what a call of the function does in the other mode, where everyone reading the code sees it:
 
 - `else skip`: nothing, the program goes on (only for a function that returns nothing);
 - `else return value`: the call gives this value (`else return none` for a `T?`);
 - `else "message"`: the program stops at the call with this message, like a `require` that fails;
 - no `else`: the function runs in both modes, giving the same results. It is there for speed:
   `kova run` then compiles the whole program before running it (still the `kova run` version of it:
-  `mode = run`, the `else`s of `mode build`), which it does in a few milliseconds.
+  the `else`s of `mode build` act), which it does in a few milliseconds.
 
 In the other mode, the function's contracts are left out too, and its arguments are still computed
 (a `move` argument is given away all the same). `kova test` counts as `kova run`.

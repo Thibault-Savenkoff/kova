@@ -1600,27 +1600,19 @@ impl Parser<'_> {
         Ok(args)
     }
 
-    /// `mode = ` or `mode != `: the test of the mode (`kova run` or `kova build`).
-    /// ponytail: contextual, so `mode` alone is still an ordinary name.
+    /// `mode = build` or `mode != run`, which Kova no longer has (PLAN Part 4 "Three things
+    /// undone"): `mode` followed by anything else is an ordinary name.
     fn mode_test(&self) -> bool {
-        matches!(self.t[self.pos + 1].kind, Kind::Sym("=" | "!="))
+        let then = self.t[(self.pos + 2).min(self.t.len() - 1)];
+        matches!(self.t[self.pos + 1].kind, Kind::Sym("=" | "!=")) && then.kind == Kind::Ident && matches!(self.text(then.span).as_str(), "run" | "build")
     }
 
-    /// `mode = build`, `mode != run`.
     fn in_mode(&mut self) -> R<Expr> {
         let start = self.advance().span; // mode
-        let negated = self.advance().kind == Kind::Sym("!=");
-        let t = self.token();
-        let build = match (t.kind, self.text(t.span).as_str()) {
-            (Kind::Ident, "build") => true,
-            (Kind::Ident, "run") => false,
-            _ => {
-                let msg = t!("setting_bad_value", key = "mode", allowed = format!("`run` {} `build`", t!("word_or")), value = self.text(t.span));
-                return self.error(t.span, msg);
-            }
-        };
         self.advance();
-        Ok(self.expr(start.to(t.span), ExprKind::InMode { build, negated }))
+        let end = self.advance().span;
+        self.diags.push(Diag::new(start.to(end), t!("mode_test_gone")).help(t!("mode_test_gone_help")));
+        Err(())
     }
 
     /// After a function's name: its arguments, if any (`seven` alone calls `fn seven`).

@@ -1,12 +1,18 @@
 // A discreet `mode build` function: `kova run` runs the whole program as native code
-// (`modes()` in tests/kova.rs checks it is fast), translated for `kova run`.
+// (`modes()` in tests/kova.rs checks it is fast), translated for `kova run` (`which` says so).
 fn fib(n: Int) -> Int
     mode build
 {
     return if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
 
+fn which -> String
+    mode run else return "build"
+{
+    return "run"
+}
+
 fn main {
     print(fib(27))
-    print(if mode = build { "build" } else { "run" })
+    print(which)
 }

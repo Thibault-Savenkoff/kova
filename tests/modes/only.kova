@@ -4,7 +4,7 @@
 fn heavy(n: Int) -> Int
     mode build
 {
-    return if mode = build { n * 2 } else { n * 2 + 1 }
+    return n * 2
 }
 
 fn fancy(s: move String)

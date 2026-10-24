@@ -876,7 +876,6 @@ impl Owner<'_> {
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
             | ExprKind::BigInt(_)
-            | ExprKind::InMode { .. }
             | ExprKind::None
             | ExprKind::Result => {}
         }

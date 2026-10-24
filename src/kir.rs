@@ -2604,15 +2604,6 @@ impl<'a> Translator<'a> {
                 self.finish(End::Jump(next));
             }
             Stmt::If { cond, then, otherwise } => {
-                // `if mode = build`: only the branch of this mode is translated.
-                if let Some(yes) = self.known(cond) {
-                    match (yes, otherwise) {
-                        (true, _) => self.block(then),
-                        (false, Some(o)) => self.block(o),
-                        (false, None) => {}
-                    }
-                    return;
-                }
                 let c = self.cond1(cond);
                 let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
                 self.go(End::Branch(c, b_then, b_else), b_then);
@@ -3850,21 +3841,7 @@ impl<'a> Translator<'a> {
         Some((q, r))
     }
 
-    /// The value of a condition known before running: `mode = build`, `!(mode = run)`.
-    fn known(&self, e: &Expr) -> Option<bool> {
-        match &e.kind {
-            ExprKind::InMode { build, negated } => Some((*build == self.built) != *negated),
-            ExprKind::Unary(UnOp::Not, x) => self.known(x).map(|b| !b),
-            _ => None,
-        }
-    }
-
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, ty: &Type) -> Slots {
-        if let Some(yes) = self.known(cond) {
-            let v = self.block_value(if yes { then } else { otherwise }, ty);
-            self.track(&v, ty);
-            return v;
-        }
         let dst = self.new_slots(ty);
         let c = self.cond1(cond);
         let (b_then, b_else, b_after) = (self.new_block(), self.new_block(), self.new_block());
@@ -4087,7 +4064,6 @@ impl<'a> Translator<'a> {
                 self.track(&v, &ty);
                 v
             }
-            ExprKind::InMode { .. } => vec![self.constant(self.known(e).unwrap() as i64)],
             // `body` alone: calls the block without parameters.
             ExprKind::Var(name) if self.info.invoked.contains(&e.id) => {
                 let (b, ty) = (self.slots_of(name), self.ty(e));
@@ -5024,7 +5000,7 @@ fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(a, names);
             names_in(b, names);
         }
-        ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::InMode { .. } | ExprKind::None => {}
+        ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::None => {}
         // ponytail: what a block uses is not shown in a contract's `values:` line.
         ExprKind::Block { .. } => {}
     }

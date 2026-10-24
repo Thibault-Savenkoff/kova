@@ -3571,7 +3571,6 @@ impl Checker<'_> {
                     Type::Error
                 }
             },
-            ExprKind::InMode { .. } => Type::Bool,
             ExprKind::Str(_) => Type::String,
             ExprKind::Interp(parts) => {
                 self.parts(parts);

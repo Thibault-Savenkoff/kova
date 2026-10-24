@@ -8,9 +8,15 @@ fn save(path: String, text: String) -> Nothing or files.IoError {
     return ok
 }
 
+// run and build may run at the same time: each its own directory.
+fn folder -> String
+    mode build else return "target/kova_files_run"
+{
+    return "target/kova_files_build"
+}
+
 fn main {
-    // run and build may run at the same time: each its own directory.
-    let dir: String := if mode = build { "target/kova_files_build" } else { "target/kova_files_run" }
+    let dir: String := folder
     print(files.make_dir("{dir}/inside"))
     print(files.make_dir(dir))
     let note: String := "{dir}/note.txt"

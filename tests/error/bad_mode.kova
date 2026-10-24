@@ -1,6 +1,6 @@
 fn main {
-    if mode = fast {
+    if mode = build {
         print(1)
     }
 }
-// error: `mode` is `run` or `build`, not `fast`
+// error: the mode is not tested inside a function: it is chosen under a signature

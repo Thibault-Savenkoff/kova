@@ -12,13 +12,8 @@ fn fancy(n: Int)
 //       ^^^^^ constant.language.mode.kova
 //                  ^^^^ keyword.control.kova
 {
-    if mode != run {
-//     ^^^^ keyword.control.contract.kova
-//          ^^ keyword.operator.comparison.kova
-//             ^^^ constant.language.mode.kova
-        let mode: Int := n
-//          ^^^^ - keyword.control.contract.kova
-    }
+    let mode: Int := n
+//      ^^^^ - keyword.control.contract.kova
 }
 
 fn carré(x: Int) -> Int {

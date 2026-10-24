@@ -390,18 +390,12 @@ fn seeded() {
     let _ = std::fs::remove_file(&exe);
 }
 
-/// `if mode = build`: each mode translates only its own branch.
+/// `mode build else …` under a signature (PLAN 2.14): what a call does in each mode.
 fn modes() {
-    let out = kova(LANG).args(["run", "tests/modes/mode.kova"]).output().unwrap();
-    assert_eq!(text(&out.stdout), "11\n1\n3\n", "{}", text(&out.stderr));
     let exe = std::env::temp_dir().join(format!("kova-mode-{}", std::process::id()));
-    let out = kova(LANG).args(["build", "tests/modes/mode.kova", "-o"]).arg(&exe).output().unwrap();
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(text(&program(&exe, LANG).output().unwrap().stdout), "20\n2\n3\n");
-
     // `mode build else …` under a signature: in the other mode, the `else` acts, at the call.
     let out = kova(LANG).args(["run", "tests/modes/only.kova"]).env("KOVA_LEAKS", "1").output().unwrap();
-    assert_eq!(text(&out.stdout), "43\n4\n[1, 2, 3, 4]\nnone\n");
+    assert_eq!(text(&out.stdout), "42\n4\n[1, 2, 3, 4]\nnone\n");
     assert_eq!(out.status.code(), Some(101));
     let stop = text(&out.stderr);
     assert!(stop.starts_with("error: needs kova build, n = 5\n"), "{stop}");
