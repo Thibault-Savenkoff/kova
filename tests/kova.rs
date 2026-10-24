@@ -432,6 +432,20 @@ fn modes() {
     }
     let out = kova(LANG).args(["run", "tests/modes/boosted.kova", "any"]).output().unwrap();
     assert_eq!(text(&out.stdout), "woof\n");
+
+    // A discreet `mode build` function: `kova run` runs native code, translated for `kova run`;
+    // without the `mode build` line, the same program is interpreted, many times slower.
+    let timed = |file: &Path| {
+        let start = std::time::Instant::now();
+        let out = kova(LANG).arg("run").arg(file).output().unwrap();
+        assert_eq!(text(&out.stdout), "196418\nrun\n", "{}", text(&out.stderr));
+        start.elapsed()
+    };
+    let plain = std::env::temp_dir().join(format!("kova-plain-{}.kova", std::process::id()));
+    std::fs::write(&plain, std::fs::read_to_string("tests/modes/discreet.kova").unwrap().replace("    mode build\n", "")).unwrap();
+    let (native, interpreted) = (timed(Path::new("tests/modes/discreet.kova")), timed(&plain));
+    let _ = std::fs::remove_file(&plain);
+    assert!(native * 3 < interpreted, "native {native:?}, interpreted {interpreted:?}");
     let _ = std::fs::remove_file(&exe);
 }
 

@@ -510,6 +510,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// The year of a number of days since 1970-01-01.
+#[cfg_attr(windows, allow(dead_code))] // Windows asks the system for its local time
 fn year_of(days: i64) -> i64 {
     let z = days + 719468;
     let era = z.div_euclid(146097);
@@ -523,6 +524,7 @@ fn year_of(days: i64) -> i64 {
 /// `tz` is `$TZ`, `read` reads a file. A time zone file (`/etc/localtime`) ends with the rule of
 /// its present and future years, `CET-1CEST,M3.5.0,M10.5.0/3`, which is all `Date.today` needs;
 /// `$TZ` may also be such a rule itself. UTC when nothing is found.
+#[cfg_attr(windows, allow(dead_code))] // Windows asks the system for its local time
 pub fn local_offset(utc: i64, tz: Option<&str>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> i64 {
     // The last line of a file of version 2 or later.
     let rule_of = |f: Vec<u8>| -> Option<String> {
@@ -541,8 +543,10 @@ pub fn local_offset(utc: i64, tz: Option<&str>, read: &dyn Fn(&str) -> Option<Ve
 /// A POSIX time zone rule read from its start: `CET-1CEST,M3.5.0,M10.5.0/3` = "CET" one hour
 /// east of UTC (the sign is the other way round), "CEST" one more hour from March's last Sunday
 /// at 2:00 to October's last Sunday at 3:00.
+#[cfg_attr(windows, allow(dead_code))] // Windows asks the system for its local time
 struct Rule<'a>(&'a [u8]);
 
+#[cfg_attr(windows, allow(dead_code))] // Windows asks the system for its local time
 impl Rule<'_> {
     fn peek(&self) -> Option<u8> {
         self.0.first().copied()
@@ -616,6 +620,7 @@ impl Rule<'_> {
 }
 
 /// The offset `rule` gives at `utc` (see `Rule`); `None` if it cannot be read.
+#[cfg_attr(windows, allow(dead_code))] // Windows asks the system for its local time
 fn offset_by_rule(rule: &[u8], utc: i64) -> Option<i64> {
     let mut r = Rule(rule);
     r.name()?;

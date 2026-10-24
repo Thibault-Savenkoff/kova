@@ -58,6 +58,15 @@ impl Target {
         Target::NAMES.iter().find(|(_, t)| *t == self).unwrap().0
     }
 
+    /// This very machine: on a Mac, only its own half (`kova run` starts the program at once).
+    pub fn native() -> Option<Target> {
+        match Target::host()? {
+            Target::Mac if cfg!(target_arch = "aarch64") => Some(Target::MacArm),
+            Target::Mac => Some(Target::MacIntel),
+            t => Some(t),
+        }
+    }
+
     /// The machine `kova` runs on, if it is one of them; on a Mac, every Mac (user, 2026-10-23: the
     /// executable can be given to anyone).
     pub fn host() -> Option<Target> {

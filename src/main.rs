@@ -112,6 +112,8 @@ fn main() {
         eprintln!("{}", diag::render(&diag::Diag::new(diag::Span::new(0, 0), t!("main_missing")), &sources));
         exit(1);
     }
+    // The `header`'s language, written into an executable.
+    let lang = || types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
     let contracts = !matches!(command, Command::Build { boost: true, .. });
     let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
 
@@ -119,6 +121,9 @@ fn main() {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
             let given: Vec<String> = args[skip..].iter().map(|a| a.to_string()).collect();
+            if let Some(code) = discreet(&tree).then(|| native_run(&program, &files, lang(), &given)).flatten() {
+                exit(code)
+            }
             // Each Kova call is a call of the interpreter: a stack as deep as a built program's
             // (a 100,000-deep recursion) needs more than the 8 MB the system gives.
             let code = std::thread::scope(|s| {
@@ -133,8 +138,7 @@ fn main() {
             if output == file {
                 fail(t!("output_overwrites", file = file));
             }
-            let lang = types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
-            if let Err(e) = codegen::build(&program, &files, &output, lang, target) {
+            if let Err(e) = codegen::build(&program, &files, &output, lang(), target) {
                 fail(e);
             }
             // One line on stderr, never mixed with what the program prints: `✓ hello.exe
@@ -146,6 +150,99 @@ fn main() {
             eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));
         }
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
+    }
+}
+
+/// A `mode build` function without `else` (PLAN 2.14): the program has parts that want native code.
+fn discreet(tree: &ast::File) -> bool {
+    let methods = tree.structs.iter().flat_map(|s| &s.methods);
+    (tree.functions.iter().chain(methods)).any(|f| matches!(&f.only, Some(ast::OnlyIn { build: true, otherwise: ast::Otherwise::Discreet, .. })))
+}
+
+/// `kova run` of a program with a discreet `mode build` function: the whole program, translated
+/// for `kova run` (its `mode = run` branches, its `else`s), runs as native code, which prints the
+/// same as the interpreter (PLAN Part 4 "Run or build, discreet functions"). `None` when it
+/// cannot be built or started here: the interpreter runs it.
+fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, given: &[String]) -> Option<i32> {
+    let target = codegen::Target::native()?;
+    let dir = std::env::temp_dir();
+    let exe = dir.join(format!("kova-run-{}{}", std::process::id(), target.suffix()));
+    codegen::build(program, files, exe.to_str()?, lang, Some(target)).ok()?;
+    let mut command = std::process::Command::new(&exe);
+    command.args(given);
+    // Linux, macOS: `kova` becomes the program (same process: stopping one stops the other). Its
+    // file stays until the next such run removes it (a running program keeps its file).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let old = |name: &str| name.starts_with("kova-run-") && !exe.ends_with(name);
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let a_while = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 10));
+            if old(&e.file_name().to_string_lossy()) && a_while {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+        let _ = command.exec(); // returns only if it could not start
+        let _ = std::fs::remove_file(&exe);
+        None
+    }
+    // Windows: the program is in a job that ends with `kova`, so stopping `kova` stops it too.
+    #[cfg(windows)]
+    {
+        let child = command.spawn();
+        let status = child.ok().map(|mut c| {
+            windows_job::tie(&c);
+            c.wait()
+        });
+        let _ = std::fs::remove_file(&exe);
+        status?.ok()?.code()
+    }
+}
+
+#[cfg(windows)]
+mod windows_job {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> *mut c_void;
+        fn SetInformationJobObject(job: *mut c_void, class: i32, info: *const c_void, size: u32) -> i32;
+        fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+    }
+
+    /// JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
+    #[repr(C)]
+    #[derive(Default)]
+    struct Limits {
+        process_time: i64,
+        job_time: i64,
+        flags: u32,
+        smallest_set: usize,
+        largest_set: usize,
+        processes: u32,
+        affinity: usize,
+        priority: u32,
+        scheduling: u32,
+        io: [u64; 6],
+        process_memory: usize,
+        job_memory: usize,
+        peak_process: usize,
+        peak_job: usize,
+    }
+
+    /// The job's handle is never closed: Windows closes it when `kova` ends, which ends the child.
+    pub fn tie(child: &std::process::Child) {
+        const EXTENDED_LIMITS: i32 = 9;
+        const KILL_ON_JOB_CLOSE: u32 = 0x2000;
+        let limits = Limits { flags: KILL_ON_JOB_CLOSE, ..Default::default() };
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+            if !job.is_null() {
+                SetInformationJobObject(job, EXTENDED_LIMITS, (&raw const limits).cast(), size_of::<Limits>() as u32);
+                AssignProcessToJobObject(job, child.as_raw_handle());
+            }
+        }
     }
 }
 

@@ -516,8 +516,9 @@ mode:
 - `else skip`: nothing, the program goes on (only for a function that returns nothing);
 - `else return value`: the call gives this value (`else return none` for a `T?`);
 - `else "message"`: the program stops at the call with this message, like a `require` that fails;
-- no `else`: the function runs in both modes, giving the same results (under `kova run` it is
-  interpreted, like the rest).
+- no `else`: the function runs in both modes, giving the same results. It is there for speed:
+  `kova run` then compiles the whole program before running it (still the `kova run` version of it:
+  `mode = run`, the `else`s of `mode build`), which it does in a few milliseconds.
 
 In the other mode, the function's contracts are left out too, and its arguments are still computed
 (a `move` argument is given away all the same). `kova test` counts as `kova run`.
