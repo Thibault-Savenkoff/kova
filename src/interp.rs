@@ -39,6 +39,9 @@ struct Heap {
     /// Each question being answered: its connection, then who asked, its method and its URL if
     /// it is written when answered.
     links: Vec<Option<(std::net::TcpStream, Option<([u8; 4], String, String)>)>>,
+    /// `log.level(l)`, once called; `KOVA_LOG`'s level, once read.
+    log_level: Option<i64>,
+    log_env: Option<Option<i64>>,
 }
 
 impl Heap {
@@ -108,6 +111,28 @@ impl Heap {
 fn chance(b: &mut [u8]) {
     use std::io::Read;
     std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(b)).expect("/dev/urandom");
+}
+
+/// Whether `s.red` paints (`shared::colors`); on Windows, asks the console to read the colors.
+fn colors() -> bool {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdout().is_terminal();
+    #[cfg(windows)]
+    if terminal {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetStdHandle(n: u32) -> isize;
+            fn GetConsoleMode(h: isize, mode: *mut u32) -> i32;
+            fn SetConsoleMode(h: isize, mode: u32) -> i32;
+        }
+        // STD_OUTPUT_HANDLE, ENABLE_VIRTUAL_TERMINAL_PROCESSING.
+        unsafe {
+            let (h, mut mode) = (GetStdHandle(-11i32 as u32), 0);
+            GetConsoleMode(h, &mut mode);
+            SetConsoleMode(h, mode | 4);
+        }
+    }
+    crate::shared::colors(terminal, |k| std::env::var(k).ok())
 }
 
 #[cfg(windows)]
@@ -890,6 +915,31 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let mut b = vec![0; locals[a[0]] as usize];
                             chance(&mut b);
                             heap.make(crate::shared::hex(&b))
+                        }
+                        StrOp::Paint => {
+                            static COLORS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                            let t = crate::shared::painted(s(0), locals[a[1]], *COLORS.get_or_init(colors));
+                            heap.make(t)
+                        }
+                        StrOp::LogLevel => {
+                            heap.log_level = Some(locals[a[0]]);
+                            0
+                        }
+                        StrOp::Log => {
+                            let text = s(1).to_string();
+                            out.flush().unwrap();
+                            let env = *heap.log_env.get_or_insert_with(|| {
+                                let named = std::env::var("KOVA_LOG").ok();
+                                crate::shared::level_named(named.as_deref()).unwrap_or_else(|()| {
+                                    let said = t!("log_unknown_level", name = named.unwrap_or_default());
+                                    eprint!("{}", crate::shared::log_line(local_now(), 2, &said));
+                                    None
+                                })
+                            });
+                            if locals[a[0]] >= env.or(heap.log_level).unwrap_or(1) {
+                                eprint!("{}", crate::shared::log_line(local_now(), locals[a[0]], &text));
+                            }
+                            0
                         }
                         StrOp::Uuid => {
                             let mut b = [0; 16];

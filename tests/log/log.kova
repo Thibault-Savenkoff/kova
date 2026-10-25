@@ -1,0 +1,17 @@
+// Colors and the log: what the program writes depends on `FORCE_COLOR` and `KOVA_LOG`
+// (tests/kova.rs `terminal_log`).
+import log
+
+fn main {
+    let name: String := "Kova"
+    let red: String := "red".red
+    let both: String := "bold green".green.bold
+    let inner: String := "a {name.cyan} b".underline
+    print("{red} {both} {inner}")
+    log.debug("hidden at first")
+    log.info("started")
+    log.level(log.Level.Warning)
+    log.info("hidden now")
+    log.warning("disk almost full")
+    log.error("file {name} missing")
+}

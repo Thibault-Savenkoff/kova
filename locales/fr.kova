@@ -56,6 +56,7 @@ lang fr {
     fault_negative_size := "`secure.token` prend un nombre d'octets, 0 ou plus"
     fault_bad_key := "ce n'est pas une clé faite par `secure.key` (32 octets en base64)"
     fault_password_settings := "`secure.password_hash` prend `memory` de 8 à 1024 (Mo) et `passes` de 1 à 16"
+    log_unknown_level := "KOVA_LOG={name} n'est pas un niveau : debug, info, warning ou error"
     fault_empty_range := "cet intervalle ne contient aucun nombre à tirer : `random(1..=6)` tire de 1 à 6"
     fault_bad_date := "cette date n'existe pas : année 1 à 9999, mois 1 à 12, un jour de ce mois (29 février seulement une année bissextile)"
     fault_bad_time := "cette heure n'existe pas : heure 0 à 23, minute et seconde 0 à 59"

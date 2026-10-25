@@ -176,7 +176,7 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 
 /// The C runtime functions called by the generated code.
 /// How many `StrOp`s the runtime has (`str_op` numbers them).
-const STR_OPS: usize = 91;
+const STR_OPS: usize = 94;
 
 struct Runtime {
     print: FuncId,
@@ -317,6 +317,9 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Decrypt => (88, "kova_decrypt", 2),
         StrOp::PasswordHash => (89, "kova_password_hash", 3),
         StrOp::PasswordMatches => (90, "kova_password_matches", 2),
+        StrOp::Paint => (91, "kova_str_paint", 2),
+        StrOp::Log => (92, "kova_log", 2),
+        StrOp::LogLevel => (93, "kova_log_level", 1),
     }
 }
 
@@ -368,7 +371,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }

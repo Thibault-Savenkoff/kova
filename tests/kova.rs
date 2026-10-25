@@ -306,6 +306,7 @@ fn command_line() {
     modes();
     leak_counter();
     seeded();
+    terminal_log();
     static_executable();
     cross_build();
 
@@ -387,6 +388,35 @@ fn seeded() {
     let exe = std::env::temp_dir().join(format!("kova-seed-{}", std::process::id()));
     assert!(kova(LANG).args(["build", "tests/seed/seed.kova", "-o"]).arg(&exe).status().unwrap().success());
     assert_eq!(seeded(&mut program(&exe, LANG)), run);
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// `s.red` and `log.info(…)` (PLAN Part 4 "The library after Python, step 5"), in run and build:
+/// colors only for a terminal or with `FORCE_COLOR`, log lines from `KOVA_LOG`'s level or else
+/// the program's.
+fn terminal_log() {
+    let exe = std::env::temp_dir().join(format!("kova-log-{}", std::process::id()));
+    assert!(kova(LANG).args(["build", "tests/log/log.kova", "-o"]).arg(&exe).status().unwrap().success());
+    let plain = "red bold green a Kova b\n";
+    let painted = "\x1b[31mred\x1b[0m \x1b[1m\x1b[32mbold green\x1b[0m\x1b[1m\x1b[0m \x1b[4ma \x1b[36mKova\x1b[0m\x1b[4m b\x1b[0m\n";
+    let shown = "info     started\nwarning  disk almost full\nerror    file Kova missing\n";
+    let all = "debug    hidden at first\ninfo     started\ninfo     hidden now\nwarning  disk almost full\nerror    file Kova missing\n";
+    let wrong = "warning  KOVA_LOG=verbose is no level: debug, info, warning or error\n".to_string() + shown;
+    for (env, out, err) in [(None, plain, shown), (Some(("FORCE_COLOR", "1")), painted, shown), (Some(("KOVA_LOG", "debug")), plain, all), (Some(("KOVA_LOG", "verbose")), plain, &wrong)] {
+        for mut c in [kova(LANG), program(&exe, LANG)] {
+            if c.get_program() == KOVA {
+                c.args(["run", "tests/log/log.kova"]);
+            }
+            c.env_remove("FORCE_COLOR").env_remove("NO_COLOR").env_remove("KOVA_LOG");
+            if let Some((k, v)) = env {
+                c.env(k, v);
+            }
+            let o = c.output().unwrap();
+            // Each line starts with the time: `12:42:29  `.
+            let lines: String = text(&o.stderr).lines().map(|l| format!("{}\n", &l[10..])).collect();
+            assert_eq!((text(&o.stdout).as_str(), lines.as_str()), (out, err), "{env:?}");
+        }
+    }
     let _ = std::fs::remove_file(&exe);
 }
 

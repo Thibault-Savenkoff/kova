@@ -420,9 +420,9 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log"];
 /// Their types.
-pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError"];
+pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError", "log.Level"];
 
 /// `web` written without `import web`, `get` or `Request` without `web.`, or a name from before
 /// the modules (`read_file`): what to write instead.
@@ -472,6 +472,11 @@ pub const LIBRARY: &[(&str, &str)] =
         ("secure.password_hash", "fn secure.password_hash(password: String) memory(mb: Int := 19) passes(n: Int := 2) -> String"),
         ("secure.password_matches(…) hash(…)", "fn secure.password_matches(password: String) hash(hash: String) -> Bool"),
         ("files.sha256", "fn files.sha256(path: String) -> String or files.IoError"),
+        ("log.debug", "fn log.debug(text: String)"),
+        ("log.info", "fn log.info(text: String)"),
+        ("log.warning", "fn log.warning(text: String)"),
+        ("log.error", "fn log.error(text: String)"),
+        ("log.level", "fn log.level(level: log.Level)"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
@@ -620,6 +625,13 @@ pub fn log_mode() -> Type {
     Type::Enum(EnumDef::with_variants("web.Log".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
 }
 
+/// `log.level(log.Level.Debug)` (PLAN Part 4 "The library after Python, step 5"): the lines
+/// shown from that level up, numbered like `shared::LEVELS`.
+pub fn log_level() -> Type {
+    let names = ["Debug", "Info", "Warning", "Error"];
+    Type::Enum(EnumDef::with_variants("log.Level".into(), names.iter().map(|n| (n.to_string(), vec![])).collect()))
+}
+
 /// `d.weekday`: `Weekday.Monday` to `Weekday.Sunday`, numbered 0 to 6 (`kir.rs` `date_method`).
 pub fn weekday() -> Type {
     let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -695,7 +707,7 @@ pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter",
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
-    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url"];
+    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
 
@@ -754,6 +766,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         // PLAN Part 4 "The library after Python, step 4".
         "sha256" | "to_base64" | "to_base64url" => (vec![], s()),
         "hmac_sha256" => (vec![s()], s()),
+        n if crate::shared::PAINTS.iter().any(|(p, _)| *p == n) => (vec![], s()),
         _ => return None,
     })
 }
@@ -1170,6 +1183,11 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.structs.insert("system.RunError".into(), run_error());
     c.structs.insert("Weekday".into(), weekday());
     c.structs.insert("web.Log".into(), log_mode());
+    c.structs.insert("log.Level".into(), log_level());
+    for name in ["log.debug", "log.info", "log.warning", "log.error"] {
+        c.functions.insert(name.into(), Signature::new(None, vec![(Mode::Read, Type::String)], Type::Unit));
+    }
+    c.functions.insert("log.level".into(), Signature::new(None, vec![(Mode::Read, log_level())], Type::Unit));
     c.structs.insert("web.WebError".into(), web_error());
     c.structs.insert("JsonError".into(), json_error());
     c.structs.insert("CsvError".into(), csv_error());

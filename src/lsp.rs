@@ -528,8 +528,8 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         let made = types::date_forms(&t).iter().map(|(f, _)| item(f, CompletionItemKind::FUNCTION, format!("{name}.{f} -> {name}")));
         return Some(made.collect());
     }
-    if name == "web.Log" {
-        return Some(["All", "Start", "Off"].iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, format!("web.Log.{v}"))).collect());
+    if let Some(cases) = [("web.Log", &["All", "Start", "Off"][..]), ("log.Level", &["Debug", "Info", "Warning", "Error"])].iter().find(|(n, _)| *n == name).map(|(_, c)| c) {
+        return Some(cases.iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, format!("{name}.{v}"))).collect());
     }
     if name == "web.Answer" {
         let mut made: Vec<CompletionItem> =
@@ -1464,12 +1464,12 @@ mod tests {
     #[test]
     fn completion_of_imports() {
         let src = "import geometry\nimport ";
-        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "shapes"]);
+        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "log", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
-        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure"]);
+        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure", "log"]);
         // A folder, then its files.
         let folders = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/folders/main.kova");
-        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "shapes"]);
+        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "log", "shapes"]);
         assert_eq!(labels(import_files(folders, "import shapes.", 14)), ["circle", "point", "flat"]);
         assert_eq!(labels(import_files(folders, "import shapes.circle\nimport shapes.flat.", 40)), ["square"]);
         // Tab on `import` writes `import` and types the space that opens the list.

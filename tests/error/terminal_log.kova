@@ -1,0 +1,12 @@
+import log
+
+fn main {
+    log.level(3)
+    print("a".red(2))
+    log.info(5)
+    print(log.Level.Loud)
+}
+// error: different types: `log.Level` expected, `Int` given
+// error: `red` takes 0 argument(s), 1 given
+// error: different types: `String` expected, `Int` given
+// error: `log.Level` has no variant `Loud`

@@ -289,6 +289,7 @@ const THIS_COMPUTER: usize = 20;
 const THIS_COMPUTER_ONLY: usize = 21;
 const THIS_NETWORK: usize = 22;
 const STOP_WITH_CTRL_C: usize = 23;
+const LOG_UNKNOWN_LEVEL: usize = 29;
 
 /// `fault` = the number of its text.
 #[unsafe(no_mangle)]
@@ -1405,6 +1406,44 @@ pub extern "C" fn kova_password_hash(p: i64, mb: i64, passes: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_password_matches(p: i64, hash: i64) -> i64 {
     crypto::password_matches(text_of(p), text_of(hash)) as i64
+}
+
+/// Whether `s.red` paints, once asked (`shared::colors`).
+static COLORS: Global<Option<bool>> = Global::new(None);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_paint(a: i64, code: i64) -> i64 {
+    let on = *COLORS.get().get_or_insert_with(|| shared::colors(sys::is_terminal(1), sys::var));
+    new_text(shared::painted(text_of(a), code, on).as_bytes())
+}
+
+/// `log.level(l)`: -1 until called. `KOVA_LOG`'s level: -2 until read, -1 if it names none.
+static LOG_LEVEL: AtomicI64 = AtomicI64::new(-1);
+static LOG_ENV: AtomicI64 = AtomicI64::new(-2);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_log_level(level: i64) -> i64 {
+    LOG_LEVEL.store(level, Relaxed);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_log(level: i64, t: i64) -> i64 {
+    if LOG_ENV.load(Relaxed) == -2 {
+        let named = sys::var("KOVA_LOG");
+        let env = shared::level_named(named.as_deref()).unwrap_or_else(|()| {
+            // `{name}`: the hole `locale::RUNTIME_HOLES` leaves in this text.
+            let said = String::from_utf8_lossy(text(LOG_UNKNOWN_LEVEL)).replace("{name}", named.as_deref().unwrap_or(""));
+            error(shared::log_line(kova_local_now(), 2, &said).as_bytes());
+            None
+        });
+        LOG_ENV.store(env.unwrap_or(-1), Relaxed);
+    }
+    let shown = [LOG_ENV.load(Relaxed), LOG_LEVEL.load(Relaxed), 1].into_iter().find(|&l| l >= 0).unwrap_or(1);
+    if level >= shown {
+        error(shared::log_line(kova_local_now(), level, text_of(t)).as_bytes());
+    }
+    0
 }
 
 // ---- What the generated code and Rust's own code ask the C library for, which a Kova

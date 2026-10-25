@@ -1,0 +1,13 @@
+import log
+
+// Written into a file or a pipe (as here), a painted text is plain.
+fn main {
+    let name: String := "Kova"
+    print("ok".green.bold)
+    print("{"a {name.red} b".underline} c")
+    print("x".gray.length)
+    log.debug("not shown: info and above by default")
+}
+// expect: ok
+// expect: a Kova b c
+// expect: 1

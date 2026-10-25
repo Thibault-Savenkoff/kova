@@ -499,6 +499,13 @@ pub enum StrOp {
     PasswordHash,
     /// `secure.password_matches(password) hash(h)`: 1 or 0.
     PasswordMatches,
+    /// `s.red`: a new String in the style numbered by the second slot (`shared::PAINTS`), plain
+    /// when the output is not a terminal (`shared::colors`).
+    Paint,
+    /// `log.info(text)`: the level (`shared::LEVELS`), then the text.
+    Log,
+    /// `log.level(l)`: the lowest level shown, unless `KOVA_LOG` names one.
+    LogLevel,
 }
 
 /// What src/csv.rs reads or writes for a List of `elem`: `*` for rows (`List<String>`), else
@@ -534,6 +541,7 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "hmac_sha256" => StrOp::Hmac,
         "to_base64" => StrOp::ToBase64,
         "to_base64url" => StrOp::ToBase64Url,
+        n if crate::shared::PAINTS.iter().any(|(p, _)| *p == n) => StrOp::Paint,
         _ => return None,
     })
 }
@@ -4709,6 +4717,16 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(d, if n == "files.exists" { StrOp::Exists } else { StrOp::IsFolder }, vec![p]));
                     return vec![d];
                 }
+                if let Some(level) = name.text.strip_prefix("log.").and_then(|l| crate::shared::LEVELS.iter().position(|n| *n == l)) {
+                    let (level, text, done) = (self.constant(level as i64), self.expr1(&args[0]), self.int_local());
+                    self.emit(Inst::Str(done, StrOp::Log, vec![level, text]));
+                    return vec![];
+                }
+                if name.text == "log.level" {
+                    let (level, done) = (self.expr1(&args[0]), self.int_local());
+                    self.emit(Inst::Str(done, StrOp::LogLevel, vec![level]));
+                    return vec![];
+                }
                 if name.text == "system.env" {
                     let (n, value) = (self.expr1(&args[0]), self.int_local());
                     self.emit(Inst::Str(value, StrOp::Env, vec![n]));
@@ -5358,6 +5376,9 @@ impl<'a> Translator<'a> {
                 {
                     let mut vals = vec![v];
                     vals.extend(args.iter().map(|a| self.expr1(a)));
+                    if let Some((_, code)) = crate::shared::PAINTS.iter().find(|(p, _)| *p == name.text) {
+                        vals.push(self.constant(*code));
+                    }
                     if matches!(op, StrOp::Split | StrOp::Replace) {
                         let (n, zero, empty) = (self.int_local(), self.constant(0), self.int_local());
                         self.emit(Inst::Str(n, StrOp::Length, vec![vals[1]]));

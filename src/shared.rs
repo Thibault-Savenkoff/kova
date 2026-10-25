@@ -755,9 +755,66 @@ pub fn wrapped(s: &str, width: i64) -> String {
     out
 }
 
+/// `"x".red`, `"x".bold`… (PLAN Part 4 "The library after Python, step 5"): each style's ANSI code.
+pub const PAINTS: &[(&str, i64)] =
+    &[("red", 31), ("green", 32), ("yellow", 33), ("blue", 34), ("magenta", 35), ("cyan", 36), ("gray", 90), ("bold", 1), ("underline", 4)];
+
+/// `s` in the style `code`, when `on`. Each reset inside `s` takes the style back, so that
+/// `"a {b.green} c".red` is red again after `b`.
+pub fn painted(s: &str, code: i64, on: bool) -> String {
+    if !on {
+        return s.into();
+    }
+    let style = format!("\x1b[{code}m");
+    format!("{style}{}\x1b[0m", s.replace("\x1b[0m", &format!("\x1b[0m{style}")))
+}
+
+/// Whether texts are painted: only for a terminal (not a file or a pipe), unless `NO_COLOR` is set
+/// (no-color.org) or `TERM=dumb`; `FORCE_COLOR` (not `0`) paints anyway.
+pub fn colors(terminal: bool, var: impl Fn(&str) -> Option<String>) -> bool {
+    if var("FORCE_COLOR").is_some_and(|v| v != "0") {
+        return true;
+    }
+    terminal && var("NO_COLOR").is_none_or(|v| v.is_empty()) && var("TERM").as_deref() != Some("dumb")
+}
+
+/// The cases of `log.Level`, numbered from 0, as `KOVA_LOG` names them.
+pub const LEVELS: [&str; 4] = ["debug", "info", "warning", "error"];
+
+/// The level `KOVA_LOG` asks for: `Ok(None)` when it is not set, `Err` when it names no level.
+pub fn level_named(v: Option<&str>) -> Result<Option<i64>, ()> {
+    match v.map(|v| v.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(v) if v.is_empty() => Ok(None),
+        Some(v) => LEVELS.iter().position(|l| *l == v).map(|l| Some(l as i64)).ok_or(()),
+    }
+}
+
+/// The line `log.info(text)` writes on stderr, like the server's lines: local time (seconds since
+/// 1970, wall clock), level, text.
+pub fn log_line(now: i64, level: i64, text: &str) -> String {
+    let t = now.rem_euclid(86400);
+    format!("{:02}:{:02}:{:02}  {:<7}  {text}\n", t / 3600, t / 60 % 60, t % 60, LEVELS[level as usize])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colors_and_log() {
+        assert_eq!(painted("a", 31, true), "\x1b[31ma\x1b[0m");
+        assert_eq!(painted(&format!("a {} c", painted("b", 32, true)), 31, true), "\x1b[31ma \x1b[32mb\x1b[0m\x1b[31m c\x1b[0m");
+        assert_eq!(painted("a", 31, false), "a");
+        let env = |pairs: &'static [(&str, &str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        assert!(colors(true, env(&[])) && !colors(false, env(&[])));
+        assert!(!colors(true, env(&[("NO_COLOR", "1")])) && colors(true, env(&[("NO_COLOR", "")])) && !colors(true, env(&[("TERM", "dumb")])));
+        assert!(colors(false, env(&[("FORCE_COLOR", "1")])) && !colors(false, env(&[("FORCE_COLOR", "0")])));
+        assert_eq!(level_named(Some(" Warning ")), Ok(Some(2)));
+        assert_eq!((level_named(None), level_named(Some(""))), (Ok(None), Ok(None)));
+        assert_eq!(level_named(Some("verbose")), Err(()));
+        assert_eq!(log_line(86400 + 3600 + 62, 1, "hi"), "01:01:02  info     hi\n");
+    }
 
     #[test]
     fn chance_and_numbers() {

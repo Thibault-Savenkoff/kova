@@ -804,6 +804,39 @@ key; `secure.encrypt(text) key(k)` gives a code only that key opens (XChaCha20-P
 `secure.decrypt(code) key(k)` gives the text back, `none` if the key is another or the code was
 changed.
 
+### Colors and the log
+
+```kova
+import log
+
+fn main {
+    let name: String := "Kova"
+    print("error:".red.bold + " no file {name.cyan}")
+    log.info("started")
+    log.debug("not shown")
+    log.warning("disk almost full")
+}
+```
+
+```text
+error: no file Kova
+```
+
+`s.red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `gray`, `bold` and `underline` give the
+text in that color or style, one after another if you like. Only a terminal shows them: written
+into a file or given to another program, the text stays plain (`NO_COLOR=1` makes it plain on a
+terminal too, `FORCE_COLOR=1` paints it everywhere). `import log` writes lines on stderr with the
+time and the level, from `info` up:
+
+```console
+14:05:09  info     started
+14:05:09  warning  disk almost full
+```
+
+`log.debug`, `log.info`, `log.warning` and `log.error` are the four levels.
+`log.level(log.Level.Debug)` shows every line from there on, `log.Level.Error` only errors; and
+whoever runs the program can choose without changing it: `KOVA_LOG=debug ./tool`.
+
 ## 16. The web
 
 ```kova

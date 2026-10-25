@@ -22,6 +22,7 @@ unsafe extern "system" {
     fn WriteFile(h: Handle, b: *const u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn ReadFile(h: Handle, b: *mut u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
+    fn SetConsoleMode(h: Handle, mode: u32) -> i32;
     fn SetConsoleOutputCP(page: u32) -> i32;
     fn SetConsoleCP(page: u32) -> i32;
     fn ExitProcess(code: u32) -> !;
@@ -66,6 +67,11 @@ pub extern "system" fn kova_start() -> ! {
         // The console reads and shows UTF-8, the bytes `kova run` writes.
         SetConsoleOutputCP(65001);
         SetConsoleCP(65001);
+        // It reads the colors of `s.red` too (ENABLE_VIRTUAL_TERMINAL_PROCESSING).
+        let mut mode = 0;
+        if GetConsoleMode(standard(1), &mut mode) != 0 {
+            SetConsoleMode(standard(1), mode | 4);
+        }
         let line = GetCommandLineW();
         let mut n = 0;
         while line.add(n).read_volatile() != 0 {
