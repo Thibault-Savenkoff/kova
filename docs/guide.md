@@ -1143,6 +1143,9 @@ extern c from "c" {
         weekday: Int32
         yearday: Int32
         summer: Int32
+        // Linux and macOS add these two; Windows' `tm` stops before them and ignores them.
+        offset: Int
+        zone: Pointer?
     }
     fn calloc(count: Int, size: Int) -> Pointer
     fn free(p: Pointer)
@@ -1151,7 +1154,7 @@ extern c from "c" {
 }
 
 fn main {
-    let t := c.Time { second := 0, minute := 30, hour := 9, day := 1, month := 0, year := 126, weekday := 0, yearday := 0, summer := 0 }
+    let t := c.Time { second := 0, minute := 30, hour := 9, day := 1, month := 0, year := 126, weekday := 0, yearday := 0, summer := 0, offset := 0, zone := none }
     let p: Pointer := c.calloc(64, 1)
     c.strftime(p, 64, "%d/%m/%Y %H:%M", t)
     print(c.text(p, ""))
@@ -1165,7 +1168,7 @@ fn main {
 
 Its fields are numbers, `Bool`, `Pointer`, `Pointer?` and the structs declared before it; Kova lays
 them out as C does. A C function giving a struct back by value cannot be declared: most give its
-address, a `Pointer`.
+address, a `Pointer`, which Kova cannot read yet.
 
 A program with `extern` runs as native code, even under `kova run`.
 
