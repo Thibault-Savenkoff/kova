@@ -1,0 +1,23 @@
+// What stops a program calling C (tests/kova.rs `extern_faults`): one case per argument.
+extern nope from "kova_no_such_library" {
+    fn f -> Int
+}
+
+extern c from "c" {
+    fn missing -> Int from "kova_no_such_function"
+    fn abs(n: Int32) -> Int32
+    fn strlen(text: String) -> Int
+    fn getenv(name: String) -> String
+    fn address(name: String) -> Pointer from "getenv"
+}
+
+fn main {
+    match args[0] {
+        "library" => print(nope.f),
+        "function" => print(c.missing),
+        "int32" => print(c.abs(5000000000)),
+        "zero" => print(c.strlen("a\u{0}b")),
+        "text" => print(c.getenv("KOVA_SURELY_NOT_SET")),
+        _ => print(c.address("KOVA_SURELY_NOT_SET")),
+    }
+}

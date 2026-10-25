@@ -311,6 +311,7 @@ fn command_line() {
     leak_counter();
     seeded();
     terminal_log();
+    extern_faults();
     static_executable();
     cross_build();
 
@@ -419,6 +420,32 @@ fn terminal_log() {
             // Each line starts with the time: `12:42:29  `.
             let lines: String = text(&o.stderr).lines().map(|l| format!("{}\n", &l[10..])).collect();
             assert_eq!((text(&o.stdout).as_str(), lines.as_str()), (out, err), "{env:?}");
+        }
+    }
+    let _ = std::fs::remove_file(&exe);
+}
+
+/// What stops a program calling C (PLAN Part 4 "`extern`, step 1"), the same through `kova run`
+/// (native code too) and a built program.
+fn extern_faults() {
+    let exe = std::env::temp_dir().join(format!("kova-extern-{}", std::process::id()));
+    assert!(kova(LANG).args(["build", "tests/extern/faults.kova", "-o"]).arg(&exe).status().unwrap().success());
+    for (case, said, at) in [
+        ("library", "the library `kova_no_such_library` is not on this computer", "16:28"),
+        ("function", "the library `c` has no function `kova_no_such_function`", "17:29"),
+        ("int32", "this number does not fit in C's `int`", "18:26"),
+        ("zero", "a text given to C holds a 0 byte", "19:25"),
+        ("text", "the C function gave no text (NULL)", "20:25"),
+        ("pointer", "the C function gave no address (NULL)", "21:20"),
+    ] {
+        for mut c in [kova(LANG), program(&exe, LANG)] {
+            if c.get_program() == KOVA {
+                c.args(["run", "tests/extern/faults.kova"]);
+            }
+            let out = c.arg(case).output().unwrap();
+            let stop = text(&out.stderr);
+            assert_eq!(out.status.code(), Some(101), "{case}: {stop}");
+            assert!(stop.starts_with(&format!("error: {said}")) && stop.trim_end().ends_with(&format!("faults.kova:{at}")), "{case}: {stop}");
         }
     }
     let _ = std::fs::remove_file(&exe);

@@ -469,6 +469,7 @@ lang en {
     extern_name_text := "a name in quotes is expected, without code inside: found {found}"
     extern_no_body := "a function of an `extern` block has no body: its code is in the library (found {found})"
     extern_shape := "a function of an `extern` block has no `self`, no `<T>` and no default value: C knows none of them"
+    extern_parts_from := "`{name}` has several parts, which no C name has: write its C name with `from \"…\"`"
     extern_type := "`{type}` cannot cross into C"
     extern_types_help := "an `extern` function takes and gives `Int`, `Int32`, `Float`, `Bool`, `String`, `String?`, `Pointer` or `Pointer?`"
     extern_var := "`var` gives C the address of a number or of a `Pointer`, not of a `{type}`"

@@ -469,6 +469,7 @@ lang fr {
     extern_name_text := "un nom entre guillemets est attendu, sans code dedans : trouvé {found}"
     extern_no_body := "une fonction d'un bloc `extern` n'a pas de corps : son code est dans la bibliothèque (trouvé {found})"
     extern_shape := "une fonction d'un bloc `extern` n'a ni `self`, ni `<T>`, ni valeur par défaut : le C ne connaît rien de tout ça"
+    extern_parts_from := "`{name}` a plusieurs parties, ce qu'aucun nom C n'a : écris son nom C avec `from \"…\"`"
     extern_type := "`{type}` ne peut pas passer en C"
     extern_types_help := "une fonction `extern` prend et donne des `Int`, `Int32`, `Float`, `Bool`, `String`, `String?`, `Pointer` ou `Pointer?`"
     extern_var := "`var` donne au C l'adresse d'un nombre ou d'un `Pointer`, pas d'un `{type}`"

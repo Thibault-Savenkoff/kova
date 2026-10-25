@@ -1064,11 +1064,33 @@ declared with the wrong types can crash the program, so `extern` is where the ca
 then look like any other.
 
 What crosses: `Int`, `Int32` (C's `int`; an `Int` too big for it stops the program), `Float`,
-`Bool`, `String` (C gets a copy ended by a 0 byte; a result is copied too), `Pointer` (an address C
-gives and takes back; Kova never looks inside), and `String?` / `Pointer?` where C may use NULL.
-`db: var Pointer?` gives C the address where it writes one, as `sqlite3_open` does:
-`sqlite.open("notes.db", var db)`. A program with `extern` runs as native code, even under
-`kova run`.
+`Bool` (an `int`, not C99's `bool`), `String` (C gets a copy ended by a 0 byte; a result is copied
+too), `Pointer` (an address C gives and takes back; Kova never looks inside), and `String?` /
+`Pointer?` where C may use NULL. Never declare a function taking a variable number of arguments
+(`printf`): its arguments would go to the wrong places on some processors.
+
+A `var` parameter gives C the address where it writes a value, as `sqlite3_open` does with the
+database it opens. A `var` variable is not narrowed by `if x = none`, so read the result through a
+`let`:
+
+```kova
+extern sqlite from "sqlite3" {
+    fn open(path: String, db: var Pointer?) -> Int32 from "sqlite3_open"
+    fn close(db: Pointer) -> Int32 from "sqlite3_close"
+}
+
+fn main {
+    var opened: Pointer? := none
+    print(sqlite.open("notes.db", var opened))
+    let db: Pointer? := opened
+    if db = none {
+        return
+    }
+    print(sqlite.close(db))
+}
+```
+
+A program with `extern` runs as native code, even under `kova run`.
 
 ## 20. The tools
 

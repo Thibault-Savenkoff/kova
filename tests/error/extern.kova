@@ -3,6 +3,7 @@ extern c from "c" {
     fn g(s: var String)
     fn h(x: move Int)
     fn i -> Char
+    fn put(x: Int) at(y: Int)
 }
 
 extern web from "x" {
@@ -16,5 +17,6 @@ fn main {
 // error: `var` gives C the address of a number or of a `Pointer`, not of a `String`
 // error: `move` gives nothing more to C: write the parameter without it
 // error: `Char` cannot cross into C
+// error: `c.put(…) at(…)` has several parts, which no C name has: write its C name with `from "…"`
 // error: `web` is one of Kova's modules: give the `extern` block another name
 // error: `Int32` exists only in an `extern` block, for C's `int`

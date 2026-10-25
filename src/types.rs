@@ -2398,6 +2398,11 @@ impl Checker<'_> {
                     self.error(func.name.span, t!("extern_shape"));
                     continue;
                 }
+                // `fn put(x: Int) at(y: Int)`: no C function is named `put(…) at(…)`.
+                if !func.breaks.is_empty() && symbol.is_none() {
+                    self.error(func.name.span, t!("extern_parts_from", name = func.name.text));
+                    continue;
+                }
                 let mut params = vec![];
                 let mut kova = vec![];
                 for p in &func.params {
