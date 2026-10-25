@@ -4155,6 +4155,10 @@ impl<'a> Translator<'a> {
     }
 
     fn value(&mut self, e: &Expr) -> Slots {
+        // `connect("x")`: the call with its default values (`types::Info::filled`).
+        if let Some(full) = self.info.filled.get(&e.id).filter(|f| !std::ptr::eq(*f, e)) {
+            return self.value(full);
+        }
         match &e.kind {
             ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Unary(UnOp::Neg, _) if self.ty(e) == Type::BigInt && big_literal(e).is_some() => {
                 vec![self.big_text(&big_literal(e).unwrap())]

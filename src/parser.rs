@@ -842,7 +842,7 @@ impl Parser<'_> {
             while !self.is_sym(")") {
                 let name = self.value_name("what_field")?;
                 self.expect(":")?;
-                fields.push(Param { name, mode: Mode::Read, ty: self.type_()? });
+                fields.push(Param { name, mode: Mode::Read, ty: self.type_()?, default: None });
                 if !self.is_sym(")") {
                     self.expect(",")?;
                 }
@@ -881,7 +881,7 @@ impl Parser<'_> {
             let msg = t!("expected_symbol", symbol = ",", found = self.describe());
             return self.error(self.token().span, msg);
         }
-        Ok(Param { name, mode: Mode::Read, ty })
+        Ok(Param { name, mode: Mode::Read, ty, default: None })
     }
 
     fn test(&mut self) -> R<Test> {
@@ -935,6 +935,11 @@ impl Parser<'_> {
             }
             add_part(&mut name, &part.text);
         }
+        // `fn walk(self) far(km: Int)`: called `rex.walk far(5)`, so named `walk far(…)` as the call
+        // is (like `l.map workers(8)`).
+        if breaks.first() == Some(&0) {
+            name.text = name.text.replacen("(…) ", " ", 1);
+        }
         self.function_rest(name, generics, receiver, params, breaks)
     }
 
@@ -945,7 +950,15 @@ impl Parser<'_> {
             self.expect(":")?;
             let mode = self.mode();
             let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
-            params.push(Param { name, mode, ty });
+            let default = if self.is_sym(":=") {
+                self.advance();
+                let e = self.expression()?;
+                let text = self.src[e.span.start..e.span.end].to_string();
+                Some((e, text))
+            } else {
+                None
+            };
+            params.push(Param { name, mode, ty, default });
             if !self.is_sym(")") {
                 self.expect(",")?;
             }
@@ -1682,7 +1695,7 @@ impl Parser<'_> {
                 let name = self.value_name("what_parameter")?;
                 self.expect(":")?;
                 let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
-                params.push(Param { name, mode: Mode::Read, ty });
+                params.push(Param { name, mode: Mode::Read, ty, default: None });
                 if !self.is_sym(",") {
                     break;
                 }

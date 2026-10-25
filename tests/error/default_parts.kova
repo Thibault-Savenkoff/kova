@@ -1,0 +1,36 @@
+// Default values: only in a part after the first, for all its parameters, read-only, never in an
+// interface, with a value of the right type that reads no variable.
+fn first(a: Int := 1) {
+}
+
+fn half(a: Int) b(x: Int := 1, y: Int) {
+}
+
+fn lent(a: Int) b(x: var Int := 1) {
+}
+
+fn typed(a: Int) b(x: Int := "no") {
+}
+
+fn reads(a: Int) b(x: Int := a) {
+}
+
+fn twice(a: Int) b(x: Int := 1) {
+}
+
+fn twice(a: Int) {
+}
+
+interface Shape {
+    fn grow(self, by: Int) twice(t: Int := 2)
+}
+
+fn main {
+}
+// error: `first` is the first part: a call always writes it
+// error: a call leaves `b(…)` out whole
+// error: `x: var …` cannot have a default value
+// error: different types: `Int` expected, `String` given
+// error: unknown variable `a`
+// error: leaving parts out gives `twice`
+// error: `grow(…) twice(…)` is an interface method

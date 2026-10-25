@@ -767,6 +767,13 @@ impl Owner<'_> {
     }
 
     fn borrow_kind(&mut self, e: &Expr) {
+        // `connect("x")`: the call with its default values (`types::Info::filled`).
+        // Taken out meanwhile: the completed call has the same id.
+        if let Some(full) = self.info.filled.remove(&e.id) {
+            self.borrow_kind(&full);
+            self.info.filled.insert(e.id, full);
+            return;
+        }
         match &e.kind {
             ExprKind::Var(name) if self.info.invoked.contains(&e.id) => self.use_var(name, e.span),
             ExprKind::Var(name) => {

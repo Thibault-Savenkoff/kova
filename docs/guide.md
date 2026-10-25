@@ -74,6 +74,25 @@ fn main {
 
 A function without parameters has no `()`, at its declaration and when it is called: `seven`, `x.to_float`.
 
+A function can be called in parts, each naming what it gives; a part whose parameters all have a
+default value may be left out:
+
+```kova
+fn connect(host: String) port(p: Int := 80) -> String {
+    return "{host}:{p}"
+}
+
+fn main {
+    print(connect("example.com"))
+    print(connect("example.com") port(8080))
+}
+```
+
+```text
+example.com:80
+example.com:8080
+```
+
 ## 4. Choices and loops
 
 ```kova

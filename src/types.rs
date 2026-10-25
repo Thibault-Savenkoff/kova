@@ -389,6 +389,15 @@ pub fn narrowed(cond: &Expr, then: bool) -> Vec<(&str, Option<usize>)> {
     }
 }
 
+/// The name a call is looked for under: `connect`, `Dog.make`.
+fn call_key(e: &Expr) -> String {
+    match &e.kind {
+        ExprKind::Static { ty, name, .. } => method_name(&ty.text, &name.text),
+        ExprKind::Call { name, .. } => name.text.clone(),
+        _ => String::new(),
+    }
+}
+
 /// The structs and enums of the program, by name: a `Type::Struct` or a `Type::Enum`.
 pub type Structs = HashMap<String, Type>;
 
@@ -755,6 +764,9 @@ pub struct Info {
     pub converts: HashMap<usize, usize>,
     /// By the `Expr::id` of `a is Dog`: the type tested (`Dog`).
     pub tested: HashMap<usize, Type>,
+    /// By the `Expr::id` of a call leaving parts out (`connect("x")`): the same call with every part
+    /// and the default values in place (`connect("x") port(80)`), what the other passes read.
+    pub filled: HashMap<usize, Expr>,
     /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
     pub invoked: HashSet<usize>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
@@ -891,7 +903,8 @@ pub fn heading_text(f: &Function) -> String {
     let mut text = String::from("fn");
     for (i, (part, params)) in f.parts().into_iter().enumerate() {
         let mut written: Vec<String> = f.receiver.iter().filter(|_| i == 0).map(|&m| format!("{}self", mode(m))).collect();
-        written.extend(params.iter().map(|p| format!("{}: {}{}", p.name.text, mode(p.mode), p.ty.text())));
+        let default = |p: &Param| p.default.as_ref().map_or(String::new(), |(_, text)| format!(" := {text}"));
+        written.extend(params.iter().map(|p| format!("{}: {}{}{}", p.name.text, mode(p.mode), p.ty.text(), default(p))));
         text += &format!(" {part}");
         if i == 0 {
             text += &generics_text(f);
@@ -979,6 +992,10 @@ struct Checker<'a> {
     guards: HashMap<usize, Vec<String>>,
     converts: HashMap<usize, usize>,
     tested: HashMap<usize, Type>,
+    /// A call's name without some parts (`connect`, `Dog.walk`) → the function's full name, its own
+    /// name, and before which written argument each left-out part's default values go.
+    shortened: HashMap<String, (String, String, Vec<(usize, Vec<Expr>)>)>,
+    filled: HashMap<usize, Expr>,
     diags: Vec<Diag>,
 }
 
@@ -1044,6 +1061,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         guards: HashMap::new(),
         converts: HashMap::new(),
         tested: HashMap::new(),
+        shortened: HashMap::new(),
+        filled: HashMap::new(),
         diags: vec![],
     };
     // Hovering a declaration shows it too.
@@ -1339,6 +1358,23 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
 
+    // `fn connect(host: String) port(p: Int := 80)`: also called as `connect(host)`.
+    for func in &f.functions {
+        c.optional_parts(None, func);
+    }
+    for (i, s) in f.structs.iter().enumerate() {
+        if decls.get(s.name.text.as_str()) == Some(&i) {
+            s.methods.iter().for_each(|m| c.optional_parts(Some(&s.name.text), m));
+        }
+    }
+    for it in &f.interfaces {
+        for (m, _) in &it.methods {
+            if let Some((e, _)) = m.params.iter().find_map(|p| p.default.as_ref()) {
+                c.error(e.span, t!("default_interface", name = m.name.text));
+            }
+        }
+    }
+
     // 3. The bodies.
     for func in &f.functions {
         c.body(func, None);
@@ -1453,6 +1489,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         guards: c.guards,
         converts: c.converts,
         tested: c.tested,
+        filled: c.filled,
         invoked,
         captures: HashMap::new(),
     };
@@ -1886,8 +1923,85 @@ impl Checker<'_> {
         }
     }
 
+    /// The parts of `func` that a call may leave out (all their parameters have a default value),
+    /// and the call's name for each choice of parts left out.
+    fn optional_parts(&mut self, owner: Option<&str>, func: &Function) {
+        let parts = func.parts();
+        let mut optional = vec![];
+        for (i, (part, params)) in parts.iter().enumerate() {
+            let given: Vec<&Expr> = params.iter().filter_map(|p| p.default.as_ref().map(|(e, _)| e)).collect();
+            let Some(first) = given.first() else { continue };
+            if i == 0 {
+                self.diags.push(Diag::new(first.span, t!("default_first_part", name = part)).help(t!("default_first_part_help")));
+            } else if given.len() < params.len() {
+                self.error(first.span, t!("default_whole_part", name = part));
+            } else if let Some(p) = params.iter().find(|p| p.mode != Mode::Read) {
+                self.error(p.default.as_ref().unwrap().0.span, t!("default_mode", name = p.name.text, mode = p.mode.word()));
+            } else {
+                optional.push(i);
+            }
+        }
+        let key = |name: &str| owner.map_or(name.to_string(), |o| method_name(o, name));
+        for mask in 1..1usize << optional.len() {
+            let left_out = |i: usize| optional.iter().position(|&o| o == i).is_some_and(|k| mask >> k & 1 == 1);
+            let (mut names, mut inserts, mut written) = (vec![], vec![], 0);
+            for (i, (part, params)) in parts.iter().enumerate() {
+                if left_out(i) {
+                    inserts.push((written, params.iter().map(|p| p.default.as_ref().unwrap().0.clone()).collect()));
+                } else {
+                    names.push(*part);
+                    written += params.len();
+                }
+            }
+            // As the parser names a call: `connect(…) port(…)`, or `walk far(…)` after a part without arguments.
+            let mut short = if names.len() == 1 { names[0].to_string() } else { names.iter().map(|n| format!("{n}(…)")).collect::<Vec<_>>().join(" ") };
+            if names.len() > 1 && parts[0].1.is_empty() {
+                short = short.replacen("(…) ", " ", 1);
+            }
+            if self.functions.contains_key(&key(&short)) || self.shortened.contains_key(&key(&short)) {
+                self.error(func.name.span, t!("default_name_taken", name = short));
+                continue;
+            }
+            self.shortened.insert(key(&short), (key(&func.name.text), func.name.text.clone(), inserts));
+        }
+    }
+
+    /// `connect("x")` for `connect(host) port(p: Int := 80)`: the call with every part, the default
+    /// values put where the parts left out go. `None` when `key` names a function as written.
+    fn completed(&self, e: &Expr, key: &str) -> Option<Expr> {
+        if self.functions.contains_key(key) {
+            return None;
+        }
+        let (_, own, inserts) = self.shortened.get(key)?;
+        let mut c = e.clone();
+        let (ExprKind::Call { name, args } | ExprKind::Static { name, args, .. } | ExprKind::Method { name, args, .. }) = &mut c.kind else {
+            return None;
+        };
+        name.text = if matches!(e.kind, ExprKind::Call { .. }) { self.shortened[key].0.clone() } else { own.clone() };
+        let mut written = std::mem::take(args).into_iter();
+        let (mut all, mut count) = (vec![], 0);
+        for (at, defaults) in inserts {
+            while count < *at {
+                all.push(written.next()?);
+                count += 1;
+            }
+            all.extend(defaults.iter().cloned());
+        }
+        all.extend(written);
+        *args = all;
+        Some(c)
+    }
+
     /// The parameters of `func`, then its contracts (they only see them, and `result`).
     fn signature(&mut self, func: &Function, owner: Option<&Type>) {
+        // A default value is computed at the call: it reads no parameter, no variable.
+        let saved = std::mem::take(&mut self.scopes);
+        self.scopes = vec![HashMap::new()];
+        for p in func.params.iter().filter(|p| p.default.is_some()) {
+            let ty = type_of(&p.ty, &self.structs);
+            self.expect(&p.default.as_ref().unwrap().0, &ty);
+        }
+        self.scopes = saved;
         self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
         let mut params = HashMap::new();
         if let (Some(ty), Some(r)) = (owner, func.receiver) {
@@ -3730,6 +3844,12 @@ impl Checker<'_> {
                 }
             }
             ExprKind::StructLit { ty, types, fields } => self.struct_literal(ty, types, fields),
+            ExprKind::Call { .. } | ExprKind::Static { .. } if self.completed(e, &call_key(e)).is_some() => {
+                let c = self.completed(e, &call_key(e)).unwrap();
+                let t = self.expr_kind(&c);
+                self.filled.insert(e.id, c);
+                t
+            }
             ExprKind::Call { name, args } => self.call(e.id, name, args),
             ExprKind::Static { ty, types, name, args } => self.static_call(e.id, ty, types, name, args),
             ExprKind::Variant { ty, types, name, args } => self.variant(ty, types, name, args),
@@ -3805,6 +3925,18 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                // `rex.walk` for `fn walk far(km: Int := 1)`: the method, with its default values.
+                if matches!(t, Type::Struct(_) | Type::Enum(_))
+                    && let Some(c) = self.completed(e, &method_name(&t.owner(), &name.text))
+                    && let ExprKind::Method { name, args, .. } = &c.kind
+                {
+                    let sig = self.functions[&method_name(&t.owner(), &name.text)].clone();
+                    let sig = self.for_types(e.id, sig, t.args().to_vec());
+                    self.hidden(&method_name(&t.owner(), &name.text), name.span);
+                    let r = self.method_call(receiver, &t.text(), name, args, sig);
+                    self.filled.insert(e.id, c.clone());
+                    return r;
+                }
                 // `q.body` reads the field even where a method has its name (`r.body("text")`).
                 if matches!(t, Type::Struct(_) | Type::Enum(_))
                     && !(args.is_empty() && t.is_field(&name.text))

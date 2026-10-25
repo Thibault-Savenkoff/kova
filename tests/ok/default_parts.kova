@@ -1,0 +1,42 @@
+// A part whose parameters all have a default value may be left out of a call.
+fn connect(host: String) port(p: Int := 80) secure(on: Bool := false) -> String {
+    return "{host}:{p} {on}"
+}
+
+fn greet(name: String) with(word: String := "hello", mark: Char := '!') {
+    print("{word} {name}{mark}")
+}
+
+struct Dog {
+    name: String
+    fn walk(self) far(km: Int := 1) -> String {
+        return "{self.name} walks {km} km"
+    }
+    fn make(name: String) age(a: Int := 3) -> Dog {
+        return Dog { name := "{name}{a}" }
+    }
+}
+
+fn main {
+    print(connect("site.fr"))
+    print(connect("site.fr") port(8080))
+    print(connect("site.fr") secure(true))
+    print(connect("site.fr") port(1) secure(true))
+    greet("Rex")
+    greet("Rex") with("bye", '.')
+    let rex := Dog { name := "Rex" }
+    print(rex.walk)
+    print(rex.walk far(5))
+    print(Dog.make("Max"))
+    print(Dog.make("Max") age(7))
+}
+// expect: site.fr:80 false
+// expect: site.fr:8080 false
+// expect: site.fr:80 true
+// expect: site.fr:1 true
+// expect: hello Rex!
+// expect: bye Rex.
+// expect: Rex walks 1 km
+// expect: Rex walks 5 km
+// expect: Dog { name: "Max3" }
+// expect: Dog { name: "Max7" }

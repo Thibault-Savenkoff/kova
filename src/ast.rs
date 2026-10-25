@@ -80,6 +80,7 @@ pub struct Variant {
 }
 
 /// `match shape { Circle(r) => …, Square(s) => … }`, as a statement or giving a value.
+#[derive(Clone)]
 pub struct Match {
     /// `match var self.left`: `Var`, the names of its cases change the value matched.
     pub mode: Mode,
@@ -90,6 +91,7 @@ pub struct Match {
 }
 
 /// `Circle(r) => 3.14 * r * r`: a single statement after `=>` becomes a block.
+#[derive(Clone)]
 pub struct Arm {
     pub case: Case,
     /// `Saturday, Sunday =>`: the other variants of the arm, without fields (PLAN Part 4, "Grouped cases").
@@ -97,6 +99,7 @@ pub struct Arm {
     pub body: Block,
 }
 
+#[derive(Clone)]
 pub enum Case {
     /// `Circle(r)`, `Red`: a variant (without its type's name) and what receives its fields.
     /// `none` on an optional (`T?`), `ok(v)` and `err(e)` on a result are variants too.
@@ -192,8 +195,14 @@ pub enum Otherwise {
 impl Function {
     /// Each part of the name with its parameters: `put` with `value`, then `at` with `index`.
     pub fn parts(&self) -> Vec<(&str, &[Param])> {
-        let names: Vec<&str> =
+        let mut names: Vec<&str> =
             if self.breaks.is_empty() { vec![&self.name.text] } else { self.name.text.trim_end_matches("(…)").split("(…) ").collect() };
+        // `walk far(…)`: a first part without arguments is followed by a space only.
+        if !self.breaks.is_empty()
+            && let Some((first, second)) = names[0].split_once(' ')
+        {
+            names.splice(0..1, [first, second]);
+        }
         let mut bounds = vec![0];
         bounds.extend(&self.breaks);
         bounds.push(self.params.len());
@@ -217,6 +226,7 @@ pub struct Test {
 }
 
 /// `require b != 0 else "message"` or `ensure result >= 0`.
+#[derive(Clone)]
 pub struct Contract {
     pub kind: ContractKind,
     pub cond: Expr,
@@ -225,6 +235,7 @@ pub struct Contract {
 }
 
 /// A piece of a text with `{}`: `"Hello {name}!"` = `Text("Hello ")`, `Code(name)`, `Text("!")`.
+#[derive(Clone)]
 pub enum Part {
     Text(String),
     Code(Expr),
@@ -292,6 +303,7 @@ pub fn block_text(params: Vec<String>, result: Option<String>) -> String {
 }
 
 /// What receives a value in a `let`: `x`, `(a, b)`, `(a, _)`.
+#[derive(Clone)]
 pub enum Pattern {
     Name(Name),
     Tuple(Vec<Pattern>, Span),
@@ -300,6 +312,7 @@ pub enum Pattern {
 }
 
 /// What receives a value in `:=`: `x`, `t.0`, `rex.age`, `(a, b)`.
+#[derive(Clone)]
 pub enum Target {
     /// A variable, followed by fields: `t.1.age` = `name: t, fields: [Index(1), Name(age)]`.
     Place { name: Name, fields: Vec<Step>, span: Span },
@@ -307,6 +320,7 @@ pub enum Target {
 }
 
 /// One step into a place: `.0` (tuple), `.age` (struct) or `[i]` (List element).
+#[derive(Clone)]
 pub enum Step {
     Index(usize),
     Name(Name),
@@ -340,10 +354,13 @@ pub struct Name {
 }
 
 /// A parameter `x: var T` or a struct's field (always `Read`).
+#[derive(Clone)]
 pub struct Param {
     pub name: Name,
     pub mode: Mode,
     pub ty: TypeAst,
+    /// `port(p: Int := 80)`: the value given when the call leaves the part out, and its text.
+    pub default: Option<(Expr, String)>,
 }
 
 impl Param {
@@ -353,6 +370,7 @@ impl Param {
     }
 }
 
+#[derive(Clone)]
 pub struct Block {
     /// Position of the opening `{`.
     pub open: Span,
@@ -361,6 +379,7 @@ pub struct Block {
     pub close: Span,
 }
 
+#[derive(Clone)]
 pub enum Stmt {
     /// `let x: Int := 5`, `var (a, b): (Int, Int) := f()` (`var` if `mutable`).
     Declare { mutable: bool, pattern: Pattern, ty: Option<TypeAst>, value: Expr },
@@ -383,6 +402,7 @@ pub enum Stmt {
     Expr(Expr),
 }
 
+#[derive(Clone)]
 pub struct Expr {
     /// Unique number: index in the type table (`types::Info`).
     pub id: usize,
@@ -400,6 +420,7 @@ impl Expr {
     }
 }
 
+#[derive(Clone)]
 pub enum ExprKind {
     Int(u64),
     /// `123456789012345678901234567890`: too big for an `Int`, a `BigInt` (its digits).
