@@ -4,7 +4,7 @@
 docs/guide.md stays the one source (the tests run its examples): this cuts it into one chapter per
 section in docs/book/src (generated), then `mdbook build` writes the site to docs/book/book.
 """
-import pathlib, re, shutil, subprocess
+import pathlib, re, shutil, subprocess, sys
 
 book = pathlib.Path(__file__).parent / "book"
 src = book / "src"
@@ -19,5 +19,13 @@ for s in sections:
     name = f"{int(n):02d}-{re.sub('[^a-z0-9]+', '-', title.lower()).strip('-')}.md"
     (src / name).write_text(re.sub(r"^## \d+\. ", "# ", s, count=1).replace("\n### ", "\n## "), encoding="utf-8")
     summary.append(f"- [{n}. {title}]({name})")
+# The reference chapters: made from the compiler (reference.py) and written by hand (book/extra).
+sys.path.insert(0, str(book.parent))
+import reference
+reference.write(src)
+for f in (book / "extra").glob("*.md"):
+    shutil.copy(f, src / f.name)
+summary += ["", "---", "", "# Reference", ""]
+summary += [f"- [{t}]({f})" for t, f in [("Language", "language.md"), ("Library", "library.md"), ("Messages", "errors.md"), ("The editor", "editor.md"), ("How Kova is built", "architecture.md")]]
 (src / "SUMMARY.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
 subprocess.run(["mdbook", "build", str(book)], check=True)
