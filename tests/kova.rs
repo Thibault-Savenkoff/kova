@@ -25,7 +25,7 @@ fn kova(lang: &str) -> Command {
 fn program(path: impl AsRef<std::ffi::OsStr>, lang: &str) -> Command {
     let mut c = Command::new(path);
     // KOVA_LEAKS: a String never freed makes the program fail (code 102), in run and in build.
-    c.env("KOVA_LANG", lang).env("KOVA_LEAKS", "1").env_remove("LC_ALL").env_remove("LC_MESSAGES").env_remove("LANG");
+    c.env("KOVA_LANG", lang).env("KOVA_LEAKS", "1").env("KOVA_UI_SCRIPT", "1").env_remove("LC_ALL").env_remove("LC_MESSAGES").env_remove("LANG");
     c
 }
 

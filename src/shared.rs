@@ -822,6 +822,74 @@ pub fn library_files(name: &str, system: &str) -> Vec<String> {
     }
 }
 
+/// A view of `import ui` (src/ui.rs), read back from its text: `T5:hello` a text, `B2:Go` a
+/// button (numbered in the order they come), `C2:` a column then its 2 parts, `R…` a row. The
+/// lengths count characters, as Kova's `length` does.
+#[allow(dead_code)] // a button's number: the runtime's
+pub enum UiNode {
+    Text(String),
+    Button(String, usize),
+    Column(Vec<UiNode>),
+    Row(Vec<UiNode>),
+}
+
+#[allow(dead_code)] // the interpreter only uses `ui_describe`
+pub fn ui_tree(text: &str) -> UiNode {
+    let mut chars = text.chars();
+    ui_node(&mut chars, &mut 0)
+}
+
+fn ui_node(chars: &mut core::str::Chars, buttons: &mut usize) -> UiNode {
+    let kind = chars.next().unwrap_or('C');
+    let mut n = 0usize;
+    for c in chars.by_ref() {
+        match c.to_digit(10) {
+            Some(d) => n = n * 10 + d as usize,
+            None => break, // the `:`
+        }
+    }
+    match kind {
+        'T' | 'B' => {
+            let label: String = chars.by_ref().take(n).collect();
+            if kind == 'T' {
+                return UiNode::Text(label);
+            }
+            *buttons += 1;
+            UiNode::Button(label, *buttons - 1)
+        }
+        _ => {
+            let parts = (0..n).map(|_| ui_node(chars, buttons)).collect();
+            if kind == 'R' { UiNode::Row(parts) } else { UiNode::Column(parts) }
+        }
+    }
+}
+
+/// `column(text "0 clics", button "Go")`: what `KOVA_UI_SCRIPT` prints instead of a window.
+pub fn ui_describe(text: &str) -> String {
+    fn write(node: &UiNode, out: &mut String) {
+        let group = |name: &str, parts: &[UiNode], out: &mut String| {
+            out.push_str(name);
+            out.push('(');
+            for (i, p) in parts.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write(p, out);
+            }
+            out.push(')');
+        };
+        match node {
+            UiNode::Text(t) => out.push_str(&format!("text {t:?}")),
+            UiNode::Button(t, _) => out.push_str(&format!("button {t:?}")),
+            UiNode::Column(parts) => group("column", parts, out),
+            UiNode::Row(parts) => group("row", parts, out),
+        }
+    }
+    let mut out = String::new();
+    write(&ui_tree(text), &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,6 +975,12 @@ mod tests {
         for days in [-719162, -1, 0, 59, 365, 20384, 2932896] {
             assert_eq!(year_of(days), (1..=9999).rev().find(|&y| days_from_civil(y, 1, 1) <= days).unwrap());
         }
+    }
+
+    #[test]
+    fn ui_views() {
+        assert_eq!(ui_describe("C2:T7:0 clicsR2:B2:GoB3:a:b"), "column(text \"0 clics\", row(button \"Go\", button \"a:b\"))");
+        assert_eq!(ui_describe("T5:été !"), "text \"été !\"");
     }
 }
 
@@ -1061,4 +1135,3 @@ pub fn exit_code(status: i32) -> i64 {
         signal => 128 + signal as i64,
     }
 }
-

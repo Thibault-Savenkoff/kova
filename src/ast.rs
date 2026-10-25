@@ -23,6 +23,18 @@ pub struct File {
     pub modules: Vec<String>,
     /// `extern sqlite from "sqlite3" { … }`: functions of the system's libraries.
     pub externs: Vec<Extern>,
+    /// `ui.run(title, state, view, update)`: the call keeps the title and the state; the two
+    /// functions are written into the `ui` module made for the program (`src/ui.rs`).
+    pub ui_runs: Vec<UiRun>,
+    /// Where that module's text starts, the last file of the program: it sees every name.
+    pub ui_from: Option<usize>,
+}
+
+/// One `ui.run(…)`: where, and the names of its `view` and `update` functions.
+pub struct UiRun {
+    pub call: Span,
+    pub view: Name,
+    pub update: Name,
 }
 
 /// `extern sqlite from "sqlite3" { fn open(path: String, db: var Pointer) -> Int32 from

@@ -925,6 +925,16 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         // Only before an `Inst::Extern`, which stops the interpreter.
                         StrOp::CText | StrOp::CFree | StrOp::FromCText | StrOp::ExternAddress | StrOp::CWideText | StrOp::CWideFree | StrOp::FromCWideText | StrOp::CRead => 0,
+                        // Only the tests reach it: `kova run` runs a `ui` program as native code.
+                        StrOp::UiShow => {
+                            writeln!(out, "[{}] {}", s(0), crate::shared::ui_describe(s(1))).unwrap();
+                            out.flush().unwrap();
+                            let mut line = String::new();
+                            match std::env::var_os("KOVA_UI_SCRIPT").is_some() && heap.debugger.is_none() {
+                                true if std::io::stdin().read_line(&mut line).is_ok_and(|n| n > 0) => line.trim().parse().unwrap_or(-1),
+                                _ => -1,
+                            }
+                        }
                         StrOp::LogLevel => {
                             heap.log_level = Some(locals[a[0]]);
                             0

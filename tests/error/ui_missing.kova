@@ -1,0 +1,6 @@
+import ui
+
+fn main {
+    print(1)
+}
+// error: a program that imports `ui` calls `ui.run(title, state, view, update)` once

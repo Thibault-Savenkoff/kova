@@ -30,6 +30,7 @@ mod parser;
 mod regex;
 mod shared;
 mod types;
+mod ui;
 mod web;
 
 use std::process::exit;
@@ -127,8 +128,9 @@ fn main() {
             if let Some(code) = discreet(&tree).then(|| native_run(&program, &files, lang(), &given)).flatten() {
                 exit(code)
             }
-            // `extern` (PLAN Part 4 "`extern`, step 1"): C is called by native code only.
-            if !tree.externs.is_empty() {
+            // `extern` (PLAN Part 4 "`extern`, step 1"): C is called by native code only; so
+            // are the system's windows (`import ui`).
+            if !tree.externs.is_empty() || tree.ui_from.is_some() {
                 match native_run(&program, &files, lang(), &given) {
                     Some(code) => exit(code),
                     None => fail(t!("extern_no_native", file = file)),
@@ -404,12 +406,31 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
     visit(&imports, None, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
     root.imports = imports;
     root.modules = done.into_iter().collect();
+    // `import ui`: its module, made for this program (src/ui.rs).
+    let files: Vec<&ast::File> = std::iter::once(&root).chain(&loaded).collect();
+    // After a syntax error, nothing is checked further: the module would only add errors.
+    match ui::module(&files).filter(|_| diags.is_empty()) {
+        Some(Ok(text)) => {
+            let base = sources.add("ui", &text);
+            root.ui_from = Some(base);
+            let (mut tokens, d) = lexer::lex(&text);
+            tokens.iter_mut().for_each(|t| t.span = diag::Span::new(t.span.start + base, t.span.end + base));
+            diags.extend(d);
+            let (tree, next, d) = parser::parse_in(tokens, &sources.text, ids, Some("ui"));
+            ids = next;
+            diags.extend(d);
+            loaded.push(tree);
+        }
+        Some(Err(d)) => diags.extend(d),
+        None => {}
+    }
     for m in loaded {
         root.functions.extend(m.functions);
         root.structs.extend(m.structs);
         root.interfaces.extend(m.interfaces);
         root.private.extend(m.private);
         root.externs.extend(m.externs);
+        root.ui_runs.extend(m.ui_runs);
     }
     (root, ids, diags, sources)
 }

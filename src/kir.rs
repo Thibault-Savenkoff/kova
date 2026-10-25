@@ -537,6 +537,8 @@ pub enum StrOp {
     FromCWideText,
     /// A leaf of a C struct: (address, offset, 1 for a 4-byte `int` else 8 bytes); 0 at NULL.
     CRead,
+    /// `ui.show(title, view)`: the button clicked, -1 once the window is closed (src/ui.rs).
+    UiShow,
     /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
     /// library, C name, line, column), found at its first call.
     ExternAddress,
@@ -4975,6 +4977,12 @@ impl<'a> Translator<'a> {
                     let seconds = self.int_local();
                     self.emit(Inst::Convert(seconds, Conversion::ToBits, r[4], NOWHERE));
                     return self.io_result(StrOp::Web, vec![r[1], r[0], r[3], r[5], r[2], seconds], &ty);
+                }
+                if name.text == "ui.show" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let clicked = self.int_local();
+                    self.emit(Inst::Str(clicked, StrOp::UiShow, vals));
+                    return vec![clicked];
                 }
                 if name.text == "now" {
                     let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);

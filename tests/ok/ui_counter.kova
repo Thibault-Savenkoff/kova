@@ -1,0 +1,45 @@
+// `import ui` (PLAN Part 4 "Native windows: `import ui`"): the tests open no window, each view is
+// printed and the button to click is read from the input (KOVA_UI_SCRIPT, set by the runner).
+import ui
+
+enum Event {
+    Plus
+    Minus
+    Named(name: String)
+}
+
+struct App {
+    clicks: Int
+    name: String
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("{app.name} : {app.clicks}"),
+        ui.row([ui.button("+", Event.Plus), ui.button("-", Event.Minus)]),
+        ui.button("Rex", Event.Named("Rex")),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Plus => app.clicks := app.clicks + 1
+        Minus => app.clicks := app.clicks - 1
+        Named(n) => app.name := n.clone
+    }
+}
+
+fn main {
+    ui.run("Compteur", App { clicks := 0, name := "?" }, view, update)
+    print("fin")
+}
+// stdin: 0
+// stdin: 0
+// stdin: 1
+// stdin: 2
+// expect: [Compteur] column(text "? : 0", row(button "+", button "-"), button "Rex")
+// expect: [Compteur] column(text "? : 1", row(button "+", button "-"), button "Rex")
+// expect: [Compteur] column(text "? : 2", row(button "+", button "-"), button "Rex")
+// expect: [Compteur] column(text "? : 1", row(button "+", button "-"), button "Rex")
+// expect: [Compteur] column(text "Rex : 1", row(button "+", button "-"), button "Rex")
+// expect: fin

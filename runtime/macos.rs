@@ -604,3 +604,189 @@ mod dl {
         pub fn dlsym(library: *mut u8, name: *const u8) -> *mut u8;
     }
 }
+
+/// `ui.show` (src/ui.rs) with AppKit, through the Objective-C runtime (found at the first call):
+/// the window stays, its content is made again from `view` each time (`NSStackView`s). The
+/// program runs its own event loop until a click: the button's number, or -1 once the window
+/// is closed. `KOVA_UI_HIDDEN` never shows the window.
+pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+    use crate::Global;
+    static KIT: Global<Option<Kit>> = Global::new(None);
+    // -2: nothing yet, -1: the window closed.
+    static CLICKED: Global<i64> = Global::new(-2);
+    extern "C" fn clicked(_me: Id, _message: Id, sender: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        *CLICKED.get() = (kit.send_int)(sender, kit.sel("tag"));
+    }
+    extern "C" fn closing(_me: Id, _message: Id, _note: Id) {
+        *CLICKED.get() = -1;
+    }
+    if *CLICKED.get() == -1 {
+        return -1;
+    }
+    *CLICKED.get() = -2;
+    if KIT.get().is_none() {
+        let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return -1 };
+        let f = |name: &str| symbol(objc, name).unwrap_or(0);
+        let send = f("objc_msgSend");
+        unsafe {
+            use core::mem::transmute as t;
+            *KIT.get() = Some(Kit {
+                class: t(f("objc_getClass")),
+                selector: t(f("sel_registerName")),
+                send: t(send),
+                send_int: t(send),
+                send_id: t(send),
+                send_two: t(send),
+                send_text: t(send),
+                send_float: t(send),
+                send_size: t(send),
+                send_insets: t(send),
+                fitting: t(send),
+                window_init: t(send),
+                event: t(send),
+                push: t(f("objc_autoreleasePoolPush")),
+                pop: t(f("objc_autoreleasePoolPop")),
+                window: core::ptr::null_mut(),
+                target: core::ptr::null_mut(),
+            });
+            let kit = KIT.get().as_mut().unwrap();
+            let app = kit.send(kit.class("NSApplication"), "sharedApplication");
+            (kit.send_id)(app, kit.sel("setActivationPolicy:"), 0); // Regular: in the Dock, with a menu bar
+            kit.send(app, "finishLaunching");
+            // A class of its own: `clicked:` for the buttons, `windowWillClose:` for the window.
+            let new_class: extern "C" fn(Id, *const u8, usize) -> Id = t(f("objc_allocateClassPair"));
+            let add: extern "C" fn(Id, Id, usize, *const u8) -> bool = t(f("class_addMethod"));
+            let register: extern "C" fn(Id) = t(f("objc_registerClassPair"));
+            let class = new_class(kit.class("NSObject"), c"KovaUiTarget".as_ptr() as *const u8, 0);
+            add(class, kit.sel("clicked:"), clicked as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("windowWillClose:"), closing as usize, c"v@:@".as_ptr() as *const u8);
+            register(class);
+            kit.target = kit.send(kit.send(class, "alloc"), "init");
+            // Titled, closable, miniaturizable, resizable; buffered.
+            let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
+            let w = (kit.window_init)(kit.send(kit.class("NSWindow"), "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, 15, 2, false);
+            (kit.send_two)(w, kit.sel("setReleasedWhenClosed:"), core::ptr::null_mut());
+            (kit.send_two)(w, kit.sel("setDelegate:"), kit.target);
+            kit.send(w, "center");
+            kit.window = w;
+            if var("KOVA_UI_HIDDEN").is_none() {
+                (kit.send_two)(w, kit.sel("makeKeyAndOrderFront:"), core::ptr::null_mut());
+                (kit.send_two)(app, kit.sel("activateIgnoringOtherApps:"), 1 as Id);
+            }
+        }
+    }
+    let kit = KIT.get().as_ref().unwrap();
+    let pool = (kit.push)();
+    let w = kit.window;
+    (kit.send_two)(w, kit.sel("setTitle:"), kit.text(title));
+    let root = mac_make(kit, view);
+    (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
+    (kit.send_two)(w, kit.sel("setContentView:"), root);
+    let size = (kit.fitting)(root, kit.sel("fittingSize"));
+    (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(240.0), height: size.height });
+    let app = kit.send(kit.class("NSApplication"), "sharedApplication");
+    let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
+    while *CLICKED.get() == -2 {
+        let e = (kit.event)(app, kit.sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64::MAX, future, mode, true);
+        if !e.is_null() {
+            (kit.send_two)(app, kit.sel("sendEvent:"), e);
+        }
+        kit.send(app, "updateWindows");
+    }
+    (kit.pop)(pool);
+    *CLICKED.get()
+}
+
+type Id = *mut u8;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Size {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Insets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+/// The Objective-C runtime: `objc_msgSend` once per prototype, as an `extern` declares it.
+struct Kit {
+    class: extern "C" fn(*const u8) -> Id,
+    selector: extern "C" fn(*const u8) -> Id,
+    send: extern "C" fn(Id, Id) -> Id,
+    send_int: extern "C" fn(Id, Id) -> i64,
+    send_id: extern "C" fn(Id, Id, i64) -> Id,
+    send_two: extern "C" fn(Id, Id, Id) -> Id,
+    send_text: extern "C" fn(Id, Id, *const u8) -> Id,
+    send_float: extern "C" fn(Id, Id, f64) -> Id,
+    send_size: extern "C" fn(Id, Id, Size) -> Id,
+    send_insets: extern "C" fn(Id, Id, Insets) -> Id,
+    fitting: extern "C" fn(Id, Id) -> Size,
+    window_init: extern "C" fn(Id, Id, Rect, u64, u64, bool) -> Id,
+    event: extern "C" fn(Id, Id, u64, Id, Id, bool) -> Id,
+    push: extern "C" fn() -> Id,
+    pop: extern "C" fn(Id),
+    window: Id,
+    target: Id,
+}
+
+impl Kit {
+    fn class(&self, name: &str) -> Id {
+        (self.class)([name.as_bytes(), &[0]].concat().as_ptr())
+    }
+    fn sel(&self, name: &str) -> Id {
+        (self.selector)([name.as_bytes(), &[0]].concat().as_ptr())
+    }
+    fn send(&self, to: Id, message: &str) -> Id {
+        (self.send)(to, self.sel(message))
+    }
+    /// An `NSString` (autoreleased).
+    fn text(&self, t: &str) -> Id {
+        (self.send_text)(self.class("NSString"), self.sel("stringWithUTF8String:"), [t.as_bytes(), &[0]].concat().as_ptr())
+    }
+}
+
+/// The views of a view: a button's tag is its number, `clicked:` reads it.
+fn mac_make(kit: &Kit, node: &crate::shared::UiNode) -> Id {
+    use crate::shared::UiNode::*;
+    match node {
+        Text(s) => (kit.send_two)(kit.class("NSTextField"), kit.sel("labelWithString:"), kit.text(s)),
+        Button(s, n) => {
+            let make: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+            let b = make(kit.class("NSButton"), kit.sel("buttonWithTitle:target:action:"), kit.text(s), kit.target, kit.sel("clicked:"));
+            (kit.send_id)(b, kit.sel("setTag:"), *n as i64);
+            b
+        }
+        // NSUserInterfaceLayoutOrientationHorizontal = 0, Vertical = 1; a column's parts on the
+        // left (NSLayoutAttributeLeading = 5).
+        Column(parts) | Row(parts) => {
+            let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
+            let column = matches!(node, Column(_));
+            (kit.send_id)(stack, kit.sel("setOrientation:"), column as i64);
+            if column {
+                (kit.send_id)(stack, kit.sel("setAlignment:"), 5);
+            }
+            (kit.send_float)(stack, kit.sel("setSpacing:"), 8.0);
+            for p in parts {
+                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), mac_make(kit, p));
+            }
+            (kit.send)(stack, kit.sel("autorelease"))
+        }
+    }
+}

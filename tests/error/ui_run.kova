@@ -1,0 +1,6 @@
+import ui
+
+fn main {
+    ui.run("Kova", 0)
+}
+// error: `ui.run` takes a title, the state, then the names of two functions

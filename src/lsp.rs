@@ -1489,12 +1489,12 @@ mod tests {
     #[test]
     fn completion_of_imports() {
         let src = "import geometry\nimport ";
-        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "log", "shapes"]);
+        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "log", "ui", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
-        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure", "log"]);
+        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure", "log", "ui"]);
         // A folder, then its files.
         let folders = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/folders/main.kova");
-        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "log", "shapes"]);
+        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "log", "ui", "shapes"]);
         assert_eq!(labels(import_files(folders, "import shapes.", 14)), ["circle", "point", "flat"]);
         assert_eq!(labels(import_files(folders, "import shapes.circle\nimport shapes.flat.", 40)), ["square"]);
         // Tab on `import` writes `import` and types the space that opens the list.

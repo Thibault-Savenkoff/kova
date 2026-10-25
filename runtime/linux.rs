@@ -972,3 +972,106 @@ mod dl {
         pub fn dlsym(library: *mut u8, name: *const u8) -> *mut u8;
     }
 }
+
+/// `ui.show` (src/ui.rs) with GTK 4, found at the first call like an `extern` library: the
+/// window stays, its content is made again from `view` each time. The button clicked, or -1
+/// once the window is closed (or when GTK is missing or there is no display).
+pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+    // The library (0 = not looked for yet, 1 = missing), the window, what was clicked (-2: nothing
+    // yet, -1: the window closed).
+    static GTK: Global<usize> = Global::new(0);
+    static WINDOW: Global<usize> = Global::new(0);
+    static CLICKED: Global<i64> = Global::new(-2);
+    extern "C" fn clicked(_button: P, number: P) {
+        *CLICKED.get() = number as i64;
+    }
+    extern "C" fn closing(_window: P, _data: P) -> i32 {
+        *CLICKED.get() = -1;
+        0
+    }
+    if *GTK.get() == 0 {
+        *GTK.get() = library("libgtk-4.so.1").unwrap_or(1);
+    }
+    if *GTK.get() == 1 || *CLICKED.get() == -1 {
+        return -1;
+    }
+    *CLICKED.get() = -2;
+    let f = |name: &str| symbol(*GTK.get(), name).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let g = Gtk {
+            label: t(f("gtk_label_new")),
+            button: t(f("gtk_button_new_with_label")),
+            boxed: t(f("gtk_box_new")),
+            append: t(f("gtk_box_append")),
+            connect: t(f("g_signal_connect_data")),
+            clicked: clicked as usize,
+        };
+        if *WINDOW.get() == 0 {
+            let init: extern "C" fn() -> i32 = t(f("gtk_init_check"));
+            if init() == 0 {
+                return -1;
+            }
+            let new: extern "C" fn() -> P = t(f("gtk_window_new"));
+            let w = new();
+            (g.connect)(w, c"close-request".as_ptr() as *const u8, closing as usize, null_mut(), null_mut(), 0);
+            *WINDOW.get() = w as usize;
+        }
+        let w = *WINDOW.get() as P;
+        let set_title: extern "C" fn(P, *const u8) = t(f("gtk_window_set_title"));
+        set_title(w, c_string(title).as_ptr());
+        let root = gtk_make(&g, view);
+        // 16 pixels around it.
+        for side in ["top", "bottom", "start", "end"] {
+            let margin: extern "C" fn(P, i32) = t(f(&format!("gtk_widget_set_margin_{side}")));
+            margin(root, 16);
+        }
+        let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
+        set_child(w, root);
+        let present: extern "C" fn(P) = t(f("gtk_window_present"));
+        present(w);
+        let iteration: extern "C" fn(P, i32) -> i32 = t(f("g_main_context_iteration"));
+        while *CLICKED.get() == -2 {
+            iteration(null_mut(), 1);
+        }
+        *CLICKED.get()
+    }
+}
+
+type P = *mut u8;
+
+/// The GTK functions `gtk_make` calls.
+struct Gtk {
+    label: extern "C" fn(*const u8) -> P,
+    button: extern "C" fn(*const u8) -> P,
+    boxed: extern "C" fn(i32, i32) -> P,
+    append: extern "C" fn(P, P),
+    connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
+    clicked: usize,
+}
+
+/// The widgets of a view: a button gives its number to `clicked`.
+fn gtk_make(g: &Gtk, node: &crate::shared::UiNode) -> P {
+    use crate::shared::UiNode::*;
+    match node {
+        Text(s) => (g.label)(c_string(s).as_ptr()),
+        Button(s, n) => {
+            let b = (g.button)(c_string(s).as_ptr());
+            (g.connect)(b, c"clicked".as_ptr() as *const u8, g.clicked, *n as P, null_mut(), 0);
+            b
+        }
+        // GTK_ORIENTATION_HORIZONTAL = 0, VERTICAL = 1; 8 pixels between the parts.
+        Column(parts) | Row(parts) => {
+            let b = (g.boxed)(matches!(node, Column(_)) as i32, 8);
+            for p in parts {
+                (g.append)(b, gtk_make(g, p));
+            }
+            b
+        }
+    }
+}
+
+/// A text for C, ended by a 0 byte.
+fn c_string(t: &str) -> Vec<u8> {
+    [t.as_bytes(), &[0]].concat()
+}

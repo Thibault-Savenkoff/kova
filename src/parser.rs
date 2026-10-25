@@ -63,6 +63,7 @@ fn prelude() -> Vec<Interface> {
         in_extern: false,
         symbol: None,
         copies: vec![],
+        ui_runs: vec![],
         public: false,
         private: vec![],
         module: None,
@@ -156,6 +157,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         in_extern: false,
         symbol: None,
         copies: vec![],
+        ui_runs: vec![],
         public: false,
         private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
@@ -195,6 +197,8 @@ struct Parser<'a> {
     symbol: Option<CName>,
     /// Its parameters (and result, after them) given by value: `copy Rect`.
     copies: Vec<usize>,
+    /// See `File::ui_runs`.
+    ui_runs: Vec<UiRun>,
     /// Under `public:` at file level (otherwise private, the default); see `File::private`.
     public: bool,
     private: Vec<(String, Span)>,
@@ -590,7 +594,8 @@ impl Parser<'_> {
             }
         }
         let private = std::mem::take(&mut self.private);
-        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![], externs }
+        let ui_runs = std::mem::take(&mut self.ui_runs);
+        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![], externs, ui_runs, ui_from: None }
     }
 
     /// `import geometry` or `import geometry as geo`.
@@ -1856,7 +1861,25 @@ impl Parser<'_> {
             self.more_parts(&mut name, &mut args, &mut end)?;
         }
         end = self.trailing_block(&mut args)?.unwrap_or(end);
+        if name.text == "ui.run" {
+            self.ui_run(name.span.to(end), &mut args);
+        }
         Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
+    }
+
+    /// `ui.run(title, state, view, update)`: the two functions, named, go into `File::ui_runs`.
+    fn ui_run(&mut self, call: Span, args: &mut Vec<Expr>) {
+        let named = |e: &Expr| match &e.kind {
+            ExprKind::Var(n) => Some(Name { text: n.clone(), span: e.span }),
+            _ => None,
+        };
+        match args.get(2..).map(|a| a.iter().map(named).collect::<Vec<_>>()).as_deref() {
+            Some([Some(view), Some(update)]) => {
+                self.ui_runs.push(UiRun { call, view: view.clone(), update: update.clone() });
+                args.truncate(2);
+            }
+            _ => self.diags.push(Diag::new(call, t!("ui_run_shape"))),
+        }
     }
 
     /// `l.each { x: Int => … }`: a block given last, after the `)` and on the same line

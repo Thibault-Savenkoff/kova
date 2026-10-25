@@ -1507,6 +1507,26 @@ pub extern "C" fn kova_c_read(address: i64, offset: i64, kind: i64) -> i64 {
     unsafe { if kind == 1 { (p as *const i32).read_unaligned() as i64 } else { (p as *const i64).read_unaligned() } }
 }
 
+/// `ui.show(title, view)` (src/ui.rs): the window shows the view; the number of the button
+/// clicked, or -1 once the window is closed. With `KOVA_UI_SCRIPT`, no window (the tests): the
+/// view is printed, and the button to click read from the input (end of input = closed).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_show(title: i64, view: i64) -> i64 {
+    let (title, view) = (text_of(title), text_of(view));
+    if sys::var("KOVA_UI_SCRIPT").is_some() {
+        OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
+        flush();
+        let line = INPUT.with(|(input, at)| read_line(input, at));
+        let clicked = if line > 0 { text_of(line).trim().parse().unwrap_or(-1) } else { -1 };
+        if line > 0 {
+            kova_str_free(line);
+        }
+        return clicked;
+    }
+    flush();
+    sys::ui_show(title, &shared::ui_tree(view))
+}
+
 /// The address of each `extern` function, once found (0 before).
 static EXTERNS: Locked<Vec<i64>> = Locked::new(Vec::new());
 

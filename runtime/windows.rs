@@ -738,3 +738,207 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
     let f = unsafe { GetProcAddress(library as Handle, name.as_ptr()) };
     (f != 0).then_some(f as usize)
 }
+
+/// `ui.show` (src/ui.rs) with Win32 (`user32.dll`, `gdi32.dll`, found at the first call): the
+/// window stays, its controls are made again from `view` each time. Win32 has no layout: `win_size`
+/// and `win_place` put a column's parts under each other, a row's side by side. The button
+/// clicked, or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
+/// from another program).
+pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+    static WIN: Global<Option<Win32>> = Global::new(None);
+    static WINDOW: Global<Handle> = Global::new(0);
+    static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
+    // -2: nothing yet, -1: the window closed.
+    static CLICKED: Global<i64> = Global::new(-2);
+    extern "system" fn procedure(h: Handle, message: u32, w: usize, l: isize) -> isize {
+        let win = WIN.get().as_ref().expect("made before the window");
+        match message {
+            // WM_COMMAND from a button (BN_CLICKED = 0): its number + 1 is its id.
+            0x0111 if w >> 16 == 0 && w & 0xffff > 0 => {
+                *CLICKED.get() = (w & 0xffff) as i64 - 1;
+                // A message sent by another program is handled inside `GetMessageW`, which then
+                // waits for a posted one: WM_NULL, posted to the thread (the window may be gone), wakes it.
+                (win.post)(0, 0, 0, 0);
+                0
+            }
+            // WM_CLOSE
+            0x0010 => {
+                *CLICKED.get() = -1;
+                (win.post)(0, 0, 0, 0);
+                (win.destroy)(h);
+                *WINDOW.get() = 0;
+                0
+            }
+            _ => (win.default)(h, message, w, l),
+        }
+    }
+    if *CLICKED.get() == -1 {
+        return -1;
+    }
+    // Before the controls are made: a click or a close may come while they are.
+    *CLICKED.get() = -2;
+    unsafe {
+        if WIN.get().is_none() {
+            let (Some(user), Some(gdi), Some(kernel)) = (library("user32.dll"), library("gdi32.dll"), library("kernel32.dll")) else { return -1 };
+            let f = |l: usize, name: &str| symbol(l, name).unwrap_or(0);
+            use core::mem::transmute as t;
+            *WIN.get() = Some(Win32 {
+                create: t(f(user, "CreateWindowExW")),
+                destroy: t(f(user, "DestroyWindow")),
+                set_text: t(f(user, "SetWindowTextW")),
+                send: t(f(user, "SendMessageW")),
+                post: t(f(user, "PostMessageW")),
+                default: t(f(user, "DefWindowProcW")),
+                get_dc: t(f(user, "GetDC")),
+                release_dc: t(f(user, "ReleaseDC")),
+                font: (t::<usize, extern "system" fn(i32) -> Handle>(f(gdi, "GetStockObject")))(17), // DEFAULT_GUI_FONT
+                select: t(f(gdi, "SelectObject")),
+                extent: t(f(gdi, "GetTextExtentPoint32W")),
+                adjust: t(f(user, "AdjustWindowRect")),
+                set_pos: t(f(user, "SetWindowPos")),
+                message: t(f(user, "GetMessageW")),
+                translate: t(f(user, "TranslateMessage")),
+                dispatch: t(f(user, "DispatchMessageW")),
+            });
+            let win = WIN.get().as_ref().unwrap();
+            let module: extern "system" fn(*const u16) -> Handle = t(f(kernel, "GetModuleHandleW"));
+            let cursor: extern "system" fn(Handle, usize) -> Handle = t(f(user, "LoadCursorW"));
+            let register: extern "system" fn(*const WindowClass) -> u16 = t(f(user, "RegisterClassExW"));
+            let class = wide("KovaWindow");
+            let instance = module(null());
+            register(&WindowClass {
+                size: core::mem::size_of::<WindowClass>() as u32,
+                style: 0,
+                procedure: procedure as usize,
+                extra: [0, 0],
+                instance,
+                icon: 0,
+                cursor: cursor(0, 32512), // IDC_ARROW
+                background: 16,           // COLOR_BTNFACE + 1
+                menu: null(),
+                class: class.as_ptr(),
+                small_icon: 0,
+            });
+            // WS_OVERLAPPEDWINDOW; CW_USEDEFAULT for the place.
+            let w = (win.create)(0, class.as_ptr(), wide(title).as_ptr(), 0xCF0000, i32::MIN, i32::MIN, 320, 200, 0, 0, instance, null_mut());
+            *WINDOW.get() = w;
+            let show: extern "system" fn(Handle, i32) -> i32 = t(f(user, "ShowWindow"));
+            if var("KOVA_UI_HIDDEN").is_none() {
+                show(w, 5); // SW_SHOW
+            }
+        }
+        let win = WIN.get().as_ref().unwrap();
+        let w = *WINDOW.get();
+        (win.set_text)(w, wide(title).as_ptr());
+        for c in CONTROLS.get().drain(..) {
+            (win.destroy)(c);
+        }
+        let dc = (win.get_dc)(w);
+        (win.select)(dc, win.font);
+        let (width, height) = win_size(win, dc, view);
+        win_place(win, dc, w, view, 16, 16, CONTROLS.get());
+        (win.release_dc)(w, dc);
+        // The window fits its content, 16 pixels around it.
+        let mut r = [0, 0, (width + 32).max(240), height + 32];
+        (win.adjust)(&mut r, 0xCF0000, 0);
+        (win.set_pos)(w, 0, 0, 0, r[2] - r[0], r[3] - r[1], 0x2 | 0x4); // SWP_NOMOVE | SWP_NOZORDER
+        // `MSG`, 48 bytes.
+        let mut m = [0u64; 6];
+        while *CLICKED.get() == -2 {
+            if (win.message)(m.as_mut_ptr(), 0, 0, 0) <= 0 {
+                *CLICKED.get() = -1;
+            }
+            (win.translate)(m.as_ptr());
+            (win.dispatch)(m.as_ptr());
+        }
+        *CLICKED.get()
+    }
+}
+
+/// `WNDCLASSEXW`.
+#[repr(C)]
+struct WindowClass {
+    size: u32,
+    style: u32,
+    procedure: usize,
+    extra: [i32; 2],
+    instance: Handle,
+    icon: Handle,
+    cursor: Handle,
+    background: Handle,
+    menu: *const u16,
+    class: *const u16,
+    small_icon: Handle,
+}
+
+/// The Win32 functions `ui_show` calls, and the font of every control.
+struct Win32 {
+    create: extern "system" fn(u32, *const u16, *const u16, u32, i32, i32, i32, i32, Handle, Handle, Handle, *mut u8) -> Handle,
+    destroy: extern "system" fn(Handle) -> i32,
+    set_text: extern "system" fn(Handle, *const u16) -> i32,
+    send: extern "system" fn(Handle, u32, usize, isize) -> isize,
+    post: extern "system" fn(Handle, u32, usize, isize) -> i32,
+    default: extern "system" fn(Handle, u32, usize, isize) -> isize,
+    get_dc: extern "system" fn(Handle) -> Handle,
+    release_dc: extern "system" fn(Handle, Handle) -> i32,
+    font: Handle,
+    select: extern "system" fn(Handle, Handle) -> Handle,
+    extent: extern "system" fn(Handle, *const u16, i32, *mut [i32; 2]) -> i32,
+    adjust: extern "system" fn(*mut [i32; 4], u32, i32) -> i32,
+    set_pos: extern "system" fn(Handle, Handle, i32, i32, i32, i32, u32) -> i32,
+    message: extern "system" fn(*mut u64, Handle, u32, u32) -> i32,
+    translate: extern "system" fn(*const u64) -> i32,
+    dispatch: extern "system" fn(*const u64) -> isize,
+}
+
+/// Pixels between the parts of a column or a row.
+const GAP: i32 = 8;
+
+/// The (width, height) of a view's controls.
+/// ponytail: one line per text, no wrapping; DPI scaling left to Windows.
+fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32) {
+    use crate::shared::UiNode::*;
+    let text = |s: &str| {
+        let w: Vec<u16> = s.encode_utf16().collect();
+        let mut size = [0i32; 2];
+        (win.extent)(dc, w.as_ptr(), w.len() as i32, &mut size);
+        (size[0], size[1])
+    };
+    match node {
+        Text(s) => text(s),
+        Button(s, _) => {
+            let (w, h) = text(s);
+            (w + 24, h + 12)
+        }
+        Column(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
+        Row(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
+    }
+}
+
+/// Makes a view's controls in `window`, from (x, y).
+fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, made: &mut Vec<Handle>) {
+    use crate::shared::UiNode::*;
+    let (w, h) = win_size(win, dc, node);
+    let mut control = |class: &str, s: &str, id: usize, style: u32| {
+        // WS_CHILD | WS_VISIBLE
+        let c = (win.create)(0, wide(class).as_ptr(), wide(s).as_ptr(), 0x5000_0000 | style, x, y, w, h, window, id as Handle, 0, null_mut());
+        (win.send)(c, 0x0030, win.font as usize, 1); // WM_SETFONT
+        made.push(c);
+    };
+    match node {
+        Text(s) => control("STATIC", s, 0, 0),
+        Button(s, n) => control("BUTTON", s, n + 1, 0),
+        Column(parts) | Row(parts) => {
+            let (mut x, mut y) = (x, y);
+            for p in parts {
+                let (pw, ph) = win_size(win, dc, p);
+                win_place(win, dc, window, p, x, y, made);
+                if matches!(node, Column(_)) {
+                    y += ph + GAP;
+                } else {
+                    x += pw + GAP;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,18 @@
+import ui
+
+enum Event { Clicked }
+enum Other { Nothing }
+struct App { clicks: Int }
+
+// A button's event must be the one `update` takes.
+fn view(app: App) -> ui.View {
+    return ui.column([ui.text("{app.clicks}"), ui.button("Go", Other.Nothing)])
+}
+
+fn update(app: var App, e: Event) {
+}
+
+fn main {
+    ui.run("Kova", App { clicks := 0 }, view, update)
+}
+// error: Other

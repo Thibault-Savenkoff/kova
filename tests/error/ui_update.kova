@@ -1,0 +1,17 @@
+import ui
+
+enum Event { Clicked }
+struct App { clicks: Int }
+
+fn view(app: App) -> ui.View {
+    return ui.text("{app.clicks}")
+}
+
+// The state is changed in place: `app: var App`.
+fn update(app: App, e: Event) {
+}
+
+fn main {
+    ui.run("Kova", App { clicks := 0 }, view, update)
+}
+// error: `update` changes the state at each event: `fn update(app: var App, e: Event)`, without a result

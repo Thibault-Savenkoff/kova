@@ -1196,7 +1196,60 @@ fn main {
 
 A program with `extern` runs as native code, even under `kova run`.
 
-## 20. The tools
+## 20. Windows
+
+`import ui` opens a window of the system itself (GTK on Linux, Win32 on Windows, AppKit on macOS),
+without anything to install on Windows and macOS (Linux needs GTK 4, there on most desktops). A
+program has a state; `view` draws it, `update` changes it at each click; `ui.run` shows the window
+until it is closed:
+
+```kova
+import ui
+
+enum Event {
+    Plus
+    Minus
+}
+
+struct App {
+    clicks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("{app.clicks} clicks"),
+        ui.row([ui.button("+1", Event.Plus), ui.button("-1", Event.Minus)]),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Plus => app.clicks := app.clicks + 1
+        Minus => app.clicks := app.clicks - 1
+    }
+}
+
+fn main {
+    ui.run("Counter", App { clicks := 0 }, view, update)
+    print("closed")
+}
+```
+
+The window is drawn again from `view` after each `update`: nothing else changes it. `ui.text`,
+`ui.button(label, event)`, `ui.column([…])` (one under the other) and `ui.row([…])` (side by
+side) build a view; a button's event is of the type `update` takes. The event says what happened
+and may carry values (`Named(name: String)`).
+
+To test such a program, `KOVA_UI_SCRIPT=1` opens no window: each view is printed, and the number
+of the button to click (counted from 0, in the order they are written) is read from the input; the
+end of the input closes the window. With no input:
+
+```text
+[Counter] column(text "0 clicks", row(button "+1", button "-1"))
+closed
+```
+
+## 21. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.
 - `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).

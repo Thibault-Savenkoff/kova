@@ -423,7 +423,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui"];
 /// Their types.
 pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError", "log.Level"];
 
@@ -1072,6 +1072,8 @@ struct Checker<'a> {
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
     private: HashMap<String, Span>,
+    /// See `File::ui_from`.
+    ui_from: Option<usize>,
     /// The modules read (`shapes.circle`), to name the file a name comes from.
     modules: Vec<String>,
     /// The `ages["Rex"]` targets met (`target`), to refuse `ages["Rex"] += 1`.
@@ -1151,6 +1153,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
+        ui_from: f.ui_from,
         modules: f.modules.clone(),
         map_entries: vec![],
         places: places(f),
@@ -1282,6 +1285,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("system.run(…) args(…)".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(string())))], ran()));
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
+    // What `ui.run` calls (src/ui.rs): shows a view, gives the button clicked, -1 once closed.
+    c.functions.insert("ui.show".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, string())], Type::Int));
     c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
     c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));
     c.functions.insert("secure.key".into(), Signature::new(None, vec![], string()));
@@ -3998,6 +4003,7 @@ impl Checker<'_> {
     /// `t` is written in what `owner` shows to the other files: it must not name a private type.
     fn exposes(&mut self, owner: &str, t: &TypeAst) {
         match t {
+            _ if owner.starts_with("ui.") && self.ui_from.is_some() => {}
             TypeAst::Name(n) | TypeAst::Any(n) | TypeAst::Generic(n, _) if self.private.contains_key(&n.text) => {
                 self.diags.push(
                     Diag::new(n.span, t!("private_in_public", name = owner, type = n.text))
@@ -4019,7 +4025,7 @@ impl Checker<'_> {
     fn hidden(&mut self, name: &str, span: Span) -> bool {
         self.mention(name, span);
         let Some(decl) = self.private.get(name) else { return false };
-        if file_number(self.src, decl.start) == file_number(self.src, span.start) {
+        if file_number(self.src, decl.start) == file_number(self.src, span.start) || self.ui_from.is_some_and(|b| span.start >= b) {
             return false;
         }
         let file = self.file_of(name);

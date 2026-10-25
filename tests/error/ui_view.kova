@@ -1,0 +1,17 @@
+import ui
+
+enum Event { Clicked }
+struct App { clicks: Int }
+
+// `view` must give a `ui.View`.
+fn view(app: App) -> String {
+    return "{app.clicks}"
+}
+
+fn update(app: var App, e: Event) {
+}
+
+fn main {
+    ui.run("Kova", App { clicks := 0 }, view, update)
+}
+// error: `view` draws the state: `fn view(app: App) -> ui.View`
