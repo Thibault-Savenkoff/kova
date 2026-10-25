@@ -315,7 +315,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::SecureKey => (86, "kova_secure_key", 0),
         StrOp::Encrypt => (87, "kova_encrypt", 2),
         StrOp::Decrypt => (88, "kova_decrypt", 2),
-        StrOp::PasswordHash => (89, "kova_password_hash", 1),
+        StrOp::PasswordHash => (89, "kova_password_hash", 3),
         StrOp::PasswordMatches => (90, "kova_password_matches", 2),
     }
 }

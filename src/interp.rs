@@ -906,7 +906,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 StrOp::PasswordHash => {
                                     let mut salt = [0; 16];
                                     chance(&mut salt);
-                                    crypto::password_hash(s(0), &salt)
+                                    crypto::password_hash(s(0), &salt, locals[a[1]] as u32, locals[a[2]] as u32)
                                 }
                                 _ => {
                                     let mut key = [0; 32];

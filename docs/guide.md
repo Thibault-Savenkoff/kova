@@ -797,7 +797,9 @@ one that is not text), `s.hmac_sha256(key)` its signature with a secret key. `s.
 `String.from_base64(code)` write and read base64 (`to_base64url` and `from_base64url` for
 addresses), `none` if the code is not base64 of a text. A password is never stored, nor its
 SHA-256: `secure.password_hash` gives an Argon2id text to keep (made slow on purpose, with its own
-chance inside), which `secure.password_matches(password) hash(stored)` checks. `secure.key` makes a
+chance inside), which `secure.password_matches(password) hash(stored)` checks. It takes 19 MB and 2
+passes, or what `memory(64) passes(3)` asks (8 to 1024 MB, 1 to 16 passes); the text keeps its
+settings, so changing them later leaves the stored ones valid. `secure.key` makes a
 key; `secure.encrypt(text) key(k)` gives a code only that key opens (XChaCha20-Poly1305), and
 `secure.decrypt(code) key(k)` gives the text back, `none` if the key is another or the code was
 changed.

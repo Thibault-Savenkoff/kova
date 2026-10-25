@@ -495,7 +495,7 @@ pub enum StrOp {
     Encrypt,
     /// `secure.decrypt(code) key(k)`: a new String, or 0.
     Decrypt,
-    /// `secure.password_hash(password)`: a new String.
+    /// `secure.password_hash(password) memory(mb) passes(n)`, checked before: a new String.
     PasswordHash,
     /// `secure.password_matches(password) hash(h)`: 1 or 0.
     PasswordMatches,
@@ -669,6 +669,8 @@ pub enum Fault {
     NegativeSize,
     /// `secure.encrypt(text) key("abc")`: not a key made by `secure.key`.
     BadKey,
+    /// `secure.password_hash(p) memory(2)`: 8 to 1024 MB, 1 to 16 passes.
+    PasswordSettings,
 }
 
 impl Fault {
@@ -691,6 +693,7 @@ impl Fault {
             Fault::NoElements => "fault_no_elements",
             Fault::NegativeSize => "fault_negative_size",
             Fault::BadKey => "fault_bad_key",
+            Fault::PasswordSettings => "fault_password_settings",
         }
     }
 }
@@ -4625,13 +4628,35 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if let n @ ("secure.uuid" | "secure.key" | "secure.password_hash" | "secure.password_matches(…) hash(…)") = name.text.as_str() {
+                // `secure.password_hash(p) memory(mb) passes(n)`, the parts left out filled in.
+                if name.text.starts_with("secure.password_hash") {
+                    let p = self.expr1(&args[0]);
+                    let mut at = 1;
+                    let mut part = |t: &mut Self, word: &str, low: i64, high: i64, default: i64| {
+                        if !name.text.contains(word) {
+                            return t.constant(default);
+                        }
+                        let v = t.expr1(&args[at]);
+                        let loc = t.loc(args[at].span);
+                        at += 1;
+                        let (below, above) = (t.with(Op::Lt, v, low), t.with(Op::Gt, v, high));
+                        t.emit(Inst::FaultIf(below, Fault::PasswordSettings, loc));
+                        t.emit(Inst::FaultIf(above, Fault::PasswordSettings, loc));
+                        v
+                    };
+                    let mb = part(self, " memory(", 8, 1024, 19);
+                    let passes = part(self, " passes(", 1, 16, 2);
+                    let t = self.int_local();
+                    self.emit(Inst::Str(t, StrOp::PasswordHash, vec![p, mb, passes]));
+                    self.track(&[t], &Type::String);
+                    return vec![t];
+                }
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)") = name.text.as_str() {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
                     let op = match n {
                         "secure.uuid" => StrOp::Uuid,
                         "secure.key" => StrOp::SecureKey,
-                        "secure.password_hash" => StrOp::PasswordHash,
                         _ => StrOp::PasswordMatches,
                     };
                     self.emit(Inst::Str(t, op, vals));

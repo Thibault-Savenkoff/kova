@@ -469,7 +469,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("secure.key", "fn secure.key -> String"),
         ("secure.encrypt(…) key(…)", "fn secure.encrypt(text: String) key(key: String) -> String"),
         ("secure.decrypt(…) key(…)", "fn secure.decrypt(code: String) key(key: String) -> String?"),
-        ("secure.password_hash", "fn secure.password_hash(password: String) -> String"),
+        ("secure.password_hash", "fn secure.password_hash(password: String) memory(mb: Int := 19) passes(n: Int := 2) -> String"),
         ("secure.password_matches(…) hash(…)", "fn secure.password_matches(password: String) hash(hash: String) -> Bool"),
         ("files.sha256", "fn files.sha256(path: String) -> String or files.IoError"),
         ("read_line", "fn read_line -> String?"),
@@ -1246,7 +1246,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let two = || vec![(Mode::Read, string()), (Mode::Read, string())];
     c.functions.insert("secure.encrypt(…) key(…)".into(), Signature::new(None, two(), string()));
     c.functions.insert("secure.decrypt(…) key(…)".into(), Signature::new(None, two(), Type::Optional(Box::new(string()))));
-    c.functions.insert("secure.password_hash".into(), Signature::new(None, vec![(Mode::Read, string())], string()));
+    // `memory(mb)` and `passes(n)` may be left out (`kir` fills in 19 and 2).
+    for parts in ["", "(…) memory(…)", "(…) passes(…)", "(…) memory(…) passes(…)"] {
+        let n = 1 + parts.matches(" ").count();
+        let params = (0..n).map(|k| (Mode::Read, if k == 0 { string() } else { Type::Int })).collect();
+        c.functions.insert(format!("secure.password_hash{parts}"), Signature::new(None, params, string()));
+    }
     c.functions.insert("secure.password_matches(…) hash(…)".into(), Signature::new(None, two(), Type::Bool));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));

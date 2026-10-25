@@ -408,16 +408,14 @@ pub fn argon2id(password: &[u8], salt: &[u8], secret: &[u8], data: &[u8], memory
     long_hash(size, &[&bytes])
 }
 
-/// The settings of `secure.password_hash` (OWASP's first choice): 19 MiB, 2 passes, 1 lane.
-const MEMORY: u32 = 19456;
-const PASSES: u32 = 2;
-
-/// `secure.password_hash`: the PHC text every Argon2 library reads,
-/// `$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>` (base64 without `=`), from 16 bytes of `salt`.
-pub fn password_hash(password: &str, salt: &[u8; 16]) -> String {
-    let hash = argon2id(password.as_bytes(), salt, &[], &[], MEMORY, PASSES, 1, 32);
+/// `secure.password_hash(password) memory(mb) passes(n)`: the PHC text every Argon2 library reads,
+/// `$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>` (base64 without `=`), from 16 bytes of `salt`,
+/// with 1 lane. By default (src/types.rs) OWASP's first choice: 19 MiB, 2 passes.
+pub fn password_hash(password: &str, salt: &[u8; 16], mb: u32, passes: u32) -> String {
+    let memory = mb * 1024;
+    let hash = argon2id(password.as_bytes(), salt, &[], &[], memory, passes, 1, 32);
     let plain = |b: &[u8]| base64(b, false).trim_end_matches('=').into();
-    let parts: [String; 3] = [alloc::format!("m={MEMORY},t={PASSES},p=1"), plain(salt), plain(&hash)];
+    let parts: [String; 3] = [alloc::format!("m={memory},t={passes},p=1"), plain(salt), plain(&hash)];
     alloc::format!("$argon2id$v=19${}${}${}", parts[0], parts[1], parts[2])
 }
 
@@ -695,7 +693,7 @@ mod tests {
         // RFC 9106 5.3.
         let tag = argon2id(&[1; 32], &[2; 16], &[3; 8], &[4; 12], 32, 3, 4, 32);
         assert_eq!(hex(&tag), "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659");
-        let h = password_hash("correct horse", &[9; 16]);
+        let h = password_hash("correct horse", &[9; 16], 19, 2);
         assert!(h.starts_with("$argon2id$v=19$m=19456,t=2,p=1$CQkJCQkJCQkJCQkJCQkJCQ$"), "{h}");
         assert!(password_matches("correct horse", &h));
         assert!(!password_matches("correct hors", &h));

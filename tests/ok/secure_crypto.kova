@@ -22,6 +22,9 @@ fn main {
     print(secure.password_matches("correct horse") hash(h))
     print(secure.password_matches("correct hors") hash(h))
     print(secure.password_matches("x") hash("pas une empreinte"))
+    let light: String := secure.password_hash("correct horse") memory(8) passes(1)
+    print(light.starts_with("$argon2id$v=19$m=8192,t=1,p=1$"))
+    print(secure.password_matches("correct horse") hash(light))
     let k: String := secure.key
     print(k.length)
     let code: String := secure.encrypt("texte secret ✓") key(k)
@@ -47,6 +50,8 @@ fn main {
 // expect: true
 // expect: false
 // expect: false
+// expect: true
+// expect: true
 // expect: 44
 // expect: false
 // expect: "texte secret ✓"
@@ -54,4 +59,4 @@ fn main {
 // expect: none
 // code: 101
 // stderr: error: this is not a key made by `secure.key` (32 bytes in base64)
-// stderr: secure_crypto.kova:32:35
+// stderr: secure_crypto.kova:35:35

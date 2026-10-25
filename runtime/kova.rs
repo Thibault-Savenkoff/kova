@@ -1398,8 +1398,8 @@ pub extern "C" fn kova_decrypt(code: i64, key: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_password_hash(p: i64) -> i64 {
-    new_text(crypto::password_hash(text_of(p), &chance_of::<16>()).as_bytes())
+pub extern "C" fn kova_password_hash(p: i64, mb: i64, passes: i64) -> i64 {
+    new_text(crypto::password_hash(text_of(p), &chance_of::<16>(), mb as u32, passes as u32).as_bytes())
 }
 
 #[unsafe(no_mangle)]
