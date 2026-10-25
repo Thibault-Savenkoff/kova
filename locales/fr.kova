@@ -231,7 +231,6 @@ lang fr {
     print_no_value := "`{name}` : cette expression ne donne pas de valeur à afficher"
     function_unknown := "fonction inconnue `{name}`"
     module_detail := "un des modules de Kova"
-    file_module_detail := "le fichier {name}.kova, à côté de celui-ci"
     module_import := "`{module}` est un des modules de Kova : écris `import {module}` en haut du fichier"
     module_name_help := "c'est dans le module `{module}` de Kova : écris `import {module}` en haut du fichier, puis `{full}`"
     argument_count := "`{name}` prend {expected} argument(s), {given} donné(s)"

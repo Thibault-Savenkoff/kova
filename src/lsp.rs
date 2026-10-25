@@ -580,10 +580,9 @@ fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIt
     } else {
         vec![]
     };
-    // A file next to this one is a module too: same icon, its own detail.
+    // A `.kova` file of the program: shown as a file, apart from Kova's own modules.
     for n in entries.iter().filter(|p| kova(p) && p.as_path() != me).filter_map(|p| name(p)).filter(|n| !taken.contains(&format!("{prefix}{n}"))) {
-        let shown = format!("{}{n}", prefix.replace('.', "/"));
-        items.push(CompletionItem { detail: Some(t!("file_module_detail", name = shown)), label: n, kind: Some(CompletionItemKind::MODULE), ..Default::default() });
+        items.push(CompletionItem { label: n, kind: Some(CompletionItemKind::FILE), ..Default::default() });
     }
     // A folder holding `.kova` files: `shapes`, then `.` opens its files.
     let holds = |d: &std::path::Path| std::fs::read_dir(d).is_ok_and(|r| r.flatten().any(|e| kova(&e.path())));
