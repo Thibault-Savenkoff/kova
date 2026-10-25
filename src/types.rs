@@ -663,7 +663,9 @@ pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter",
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
-    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat"];
+    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups"];
+/// The String methods whose first argument is a pattern (`src/regex.rs`).
+pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
 
 /// `` `length`, `add` ``.
 fn quoted(names: &[&str]) -> String {
@@ -712,6 +714,11 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "to_upper" | "to_lower" => (vec![], s()),
         "find" => (vec![s()], Type::Optional(Box::new(Type::Int))),
         "repeat" => (vec![Type::Int], s()),
+        "wrapped" => (vec![Type::Int], s()),
+        "matches" => (vec![s()], Type::Bool),
+        "find_all" => (vec![s()], list(s())),
+        "replace_all(…) with(…)" => (vec![s(), s()], s()),
+        "groups" => (vec![s()], Type::Optional(Box::new(list(s())))),
         _ => return None,
     })
 }
@@ -1679,6 +1686,30 @@ fn always_returns(b: &Block) -> bool {
 }
 
 impl Checker<'_> {
+    /// The pattern of `s.matches(…)`, `s.find_all(…)`… (PLAN Part 4 "The library after Python,
+    /// step 2"): written in the call, so a wrong one is found before the program runs.
+    fn pattern(&mut self, p: &Expr) {
+        use crate::regex::Problem;
+        let ExprKind::Str(text) = &p.kind else {
+            if self.types[p.id] == Type::String {
+                self.error(p.span, t!("pattern_literal"));
+            }
+            return;
+        };
+        let Err((at, problem)) = crate::regex::compile(text) else { return };
+        let why = match problem {
+            Problem::Unclosed => t!("pattern_unclosed"),
+            Problem::Unopened => t!("pattern_unopened"),
+            Problem::UnclosedClass => t!("pattern_unclosed_class"),
+            Problem::NothingToRepeat => t!("pattern_nothing"),
+            Problem::UnknownEscape(c) => t!("pattern_escape", char = c),
+            Problem::BadRange(low, high) => t!("pattern_range", low = low, high = high),
+            Problem::BadRepeat => t!("pattern_repeat"),
+            Problem::TrailingBackslash => t!("pattern_backslash"),
+        };
+        self.error(p.span, t!("bad_pattern", why = why, at = at + 1));
+    }
+
     fn error(&mut self, span: Span, msg: impl Into<String>) {
         self.diags.push(Diag::new(span, msg));
     }
@@ -4091,6 +4122,11 @@ impl Checker<'_> {
                 {
                     let params: Vec<(Mode, Type)> = params.into_iter().map(|p| (Mode::Read, p)).collect();
                     self.arguments(name, args, &params, &[]);
+                    if PATTERN_METHODS.contains(&name.text.as_str())
+                        && let Some(p) = args.first()
+                    {
+                        self.pattern(p);
+                    }
                     return result;
                 }
                 let Some((_, _, result, maybe)) = METHODS.iter().find(|(r, n, ..)| *r == t && *n == name.text) else {

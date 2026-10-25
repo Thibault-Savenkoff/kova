@@ -102,6 +102,11 @@ impl Heap {
 }
 
 /// `random(from..to)`: the state is started at the first call.
+/// A pattern of `s.matches(…)`, `s.find_all(…)`…: the checker made sure it is one.
+fn pattern(p: &str) -> crate::regex::Regex {
+    crate::regex::compile(p).unwrap_or_else(|_| unreachable!("pattern checked by the type checker"))
+}
+
 fn random(heap: &mut Heap, from: i64, to: i64) -> i64 {
     let state = heap.chance.get_or_insert_with(|| {
         crate::shared::seed(std::env::var("KOVA_SEED").ok().as_deref()).unwrap_or_else(|| {
@@ -786,6 +791,28 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let (from, to) = (locals[a[1]] as usize, locals[a[2]] as usize);
                             let t: String = s(0).chars().skip(from).take(to - from).collect();
                             heap.make(t)
+                        }
+                        StrOp::Wrap => {
+                            let t = crate::shared::wrapped(s(0), locals[a[1]]);
+                            heap.make(t)
+                        }
+                        StrOp::Matches => crate::regex::matches(&pattern(s(1)), s(0)) as i64,
+                        StrOp::ReplaceAll => {
+                            let t = crate::regex::replace_all(&pattern(s(1)), s(0), s(2));
+                            heap.make(t)
+                        }
+                        StrOp::FindAll | StrOp::Groups => {
+                            let found = match op {
+                                StrOp::FindAll => Some(crate::regex::find_all(&pattern(s(1)), s(0))),
+                                _ => crate::regex::groups(&pattern(s(1)), s(0)),
+                            };
+                            match found {
+                                Some(parts) => {
+                                    let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
+                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                }
+                                None => 0,
+                            }
                         }
                         StrOp::Repeat => {
                             let t = s(0).repeat(locals[a[1]].max(0) as usize);

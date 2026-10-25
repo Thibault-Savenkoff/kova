@@ -1,0 +1,43 @@
+// Patterns and wrapping (PLAN Part 4 "The library after Python", step 2).
+
+fn main {
+    let mail: String := "ana.b@exemple.fr"
+    print(mail.matches("[a-z.]+@[a-z.]+"))
+    print("ana@".matches("[a-z.]+@[a-z.]+"))
+    let ligne: String := "12 pommes, 7 poires et 145 prunes"
+    print(ligne.find_all("""\d+"""))
+    print(ligne.find_all("""\bp\w+"""))
+    print("a  b \t c".replace_all("""\s+""") with(" "))
+    print("<b>gras</b> et <i>penché</i>".replace_all("<.+?>") with(""))
+    let date: String := "le 2026-10-25 à midi"
+    let g: List<String>? := date.groups("""(\d+)-(\d+)-(\d+)""")
+    if g != none {
+        print("{g[2]}/{g[1]}/{g[0]}")
+    }
+    print("pas de date".groups("""(\d+)-(\d+)""") = none)
+    print("x=1".groups("(\\w)=(\\d)(z)?"))
+    print("été, étés, ÉTÉ".find_all("""\bété\b"""))
+    let texte: String := "Kova est un langage compilé, typé strictement, avec la propriété sans ramasse-miettes.\nDeuxième ligne."
+    print(texte.wrapped(30))
+    print("anticonstitutionnellement court".wrapped(10))
+    print("".wrapped(5).length)
+}
+
+// expect: true
+// expect: false
+// expect: ["12", "7", "145"]
+// expect: ["pommes", "poires", "prunes"]
+// expect: a b c
+// expect: gras et penché
+// expect: 25/10/2026
+// expect: true
+// expect: ["x", "1", ""]
+// expect: ["été"]
+// expect: Kova est un langage compilé,
+// expect: typé strictement, avec la
+// expect: propriété sans
+// expect: ramasse-miettes.
+// expect: Deuxième ligne.
+// expect: anticonstitutionnellement
+// expect: court
+// expect: 0

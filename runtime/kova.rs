@@ -24,6 +24,8 @@ mod openssl;
 #[cfg(windows)]
 #[path = "../src/schannel.rs"]
 mod schannel;
+#[path = "../src/regex.rs"]
+mod regex;
 #[path = "../src/shared.rs"]
 mod shared;
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
@@ -557,6 +559,37 @@ pub extern "C" fn kova_str_slice(a: i64, from: i64, to: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_repeat(a: i64, n: i64) -> i64 {
     new_text(&bytes(a).repeat(n.max(0) as usize))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_wrap(a: i64, width: i64) -> i64 {
+    new_text(shared::wrapped(text_of(a), width).as_bytes())
+}
+
+/// A pattern of `s.matches(…)`, `s.find_all(…)`…: src/types.rs made sure it is one.
+fn pattern(p: i64) -> regex::Regex {
+    regex::compile(text_of(p)).unwrap_or_else(|_| unreachable!())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_matches(a: i64, p: i64) -> i64 {
+    regex::matches(&pattern(p), text_of(a)) as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_find_all(a: i64, p: i64) -> i64 {
+    texts(regex::find_all(&pattern(p), text_of(a)).iter().map(String::as_str))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_replace_all(a: i64, p: i64, new: i64) -> i64 {
+    new_text(regex::replace_all(&pattern(p), text_of(a), text_of(new)).as_bytes())
+}
+
+/// The groups of the first match, or 0 if nothing matches.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_groups(a: i64, p: i64) -> i64 {
+    regex::groups(&pattern(p), text_of(a)).map_or(0, |g| texts(g.iter().map(String::as_str)))
 }
 
 /// `words.join(", ")`: the Strings of the List with `sep` between them.

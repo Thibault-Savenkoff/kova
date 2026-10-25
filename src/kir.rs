@@ -454,6 +454,16 @@ pub enum StrOp {
     Chars,
     /// A number for the text (0 for no String): where a key is looked for (`hash`).
     Hash,
+    /// `s.wrapped(width)`: a new String (`shared::wrapped`).
+    Wrap,
+    /// `s.matches(pattern)`: 1 or 0 (`src/regex.rs`; the pattern was checked by the checker).
+    Matches,
+    /// `s.find_all(pattern)`: a new `List<String>`.
+    FindAll,
+    /// `s.replace_all(pattern) with(new)`: a new String.
+    ReplaceAll,
+    /// `s.groups(pattern)`: a new `List<String>`, or 0 if nothing matches.
+    Groups,
 }
 
 /// A String method with arguments or a new List (`types::string_method`): its operation.
@@ -470,6 +480,10 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "to_upper" => StrOp::ToUpper,
         "to_lower" => StrOp::ToLower,
         "repeat" => StrOp::Repeat,
+        "wrapped" => StrOp::Wrap,
+        "matches" => StrOp::Matches,
+        "find_all" => StrOp::FindAll,
+        "replace_all(…) with(…)" => StrOp::ReplaceAll,
         _ => return None,
     })
 }
@@ -5073,6 +5087,16 @@ impl<'a> Translator<'a> {
                         ty => self.temps.push((dst, ty)),
                     }
                     return vec![dst];
+                }
+                // `s.groups(pattern)`: `none` if nothing matches.
+                if self.ty(receiver) == Type::String && name.text == "groups" {
+                    let p = self.expr1(&args[0]);
+                    let (l, zero, present) = (self.int_local(), self.constant(0), self.int_local());
+                    self.emit(Inst::Str(l, StrOp::Groups, vec![v, p]));
+                    self.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
+                    let v = vec![present, l];
+                    self.track(&v, &self.ty(e));
+                    return v;
                 }
                 // `s.find(part)`: `none` if it is not there.
                 if self.ty(receiver) == Type::String && name.text == "find" {

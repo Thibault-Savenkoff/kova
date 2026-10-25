@@ -25,6 +25,7 @@ mod locale;
 mod lsp;
 mod ownership;
 mod parser;
+mod regex;
 mod shared;
 mod types;
 mod web;

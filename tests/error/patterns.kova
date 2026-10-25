@@ -1,0 +1,15 @@
+fn main {
+    let p: String := "a+"
+    print("aa".matches(p))
+    print("aa".matches("(a"))
+    print("aa".find_all("[z-a]"))
+    print("aa".replace_all("""a\q""") with(""))
+    print("aa".groups("""a{3,1}"""))
+    print("aa".matches("*a"))
+}
+// error: a pattern is written directly in the call, as a text without `{…}`, so that Kova can check it
+// error: this pattern is not valid: `(` without `)` (character 1)
+// error: this pattern is not valid: the range `z-a` goes backwards (character 2)
+// error: this pattern is not valid: unknown escape `\q` (known: `\d`, `\w`, `\s`, `\b`, their capitals, `\n`, `\t`, `\r`, or `\` before a sign) (character 2)
+// error: this pattern is not valid: a repeat is written `{2}`, `{2,}` or `{2,5}` (1000 at most), smallest first (character 2)
+// error: this pattern is not valid: a repeat (`*`, `+`, `?`, `{…}`) with nothing before it to repeat (character 1)

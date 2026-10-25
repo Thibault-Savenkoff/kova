@@ -641,6 +641,32 @@ fn offset_by_rule(rule: &[u8], utc: i64) -> Option<i64> {
     Some(if inside { summer } else { standard })
 }
 
+/// `s.wrapped(width)` (PLAN Part 4 "The library after Python, step 2"): each line of `s` cut
+/// between words so that it holds at most `width` characters, words joined by one space. The
+/// line ends already there stay; a word longer than `width` stays whole on its own line.
+pub fn wrapped(s: &str, width: i64) -> String {
+    let mut out = String::new();
+    for (k, line) in s.split('\n').enumerate() {
+        if k > 0 {
+            out.push('\n');
+        }
+        let mut length = 0;
+        for word in line.split_ascii_whitespace() {
+            let n = word.chars().count() as i64;
+            if length > 0 && length + 1 + n > width {
+                out.push('\n');
+                length = 0;
+            } else if length > 0 {
+                out.push(' ');
+                length += 1;
+            }
+            out.push_str(word);
+            length += n;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,3 +862,4 @@ pub fn exit_code(status: i32) -> i64 {
         signal => 128 + signal as i64,
     }
 }
+
