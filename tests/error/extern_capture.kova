@@ -1,0 +1,14 @@
+// A block C calls back uses nothing around it: C may call it after the call (PLAN Part 4 "`extern`, step 2").
+extern c from "c" {
+    fn qsort(base: Pointer, count: Int, size: Int, compare: {Pointer, Pointer -> Int32})
+}
+
+fn main {
+    let p: Pointer? := none
+    if p = none {
+        return
+    }
+    let way: Int := -1
+    c.qsort(p, 1, 1) { a: Pointer, b: Pointer => way }
+}
+// error: this block uses `way` from around it: C may call it later, when `way` is gone

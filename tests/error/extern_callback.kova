@@ -1,0 +1,35 @@
+// What C may call back (PLAN Part 4 "`extern`, step 2"): numbers, `Bool` and pointers only;
+// a function given by its name, of the same types; never a block received by the caller.
+extern c from "c" {
+    fn qsort(base: Pointer, count: Int, size: Int, compare: {Pointer, Pointer -> Int32})
+    fn bad(f: {String -> Int})
+    fn worse(f: var {Pointer})
+}
+
+fn wrong(a: Pointer) -> Int {
+    return 0
+}
+
+fn changing(a: var Pointer, b: Pointer) -> Int {
+    return 0
+}
+
+fn sort(p: Pointer, f: {Pointer, Pointer -> Int}) {
+    c.qsort(p, 1, 1, f)
+}
+
+fn main {
+    let p: Pointer? := none
+    if p = none {
+        return
+    }
+    c.qsort(p, 1, 1, wrong)
+    c.qsort(p, 1, 1, changing)
+    c.qsort(p, 1, 1, nowhere)
+}
+// error: `{String -> Int}` cannot cross into C
+// error: `var` gives C the address of a number or of a `Pointer`, not of a `{Pointer}`
+// error: `f` is a block given to this function: C may call it after the call, when it is gone
+// error: `wrong` cannot be called back by C as a `{Pointer, Pointer -> Int}`
+// error: `changing` cannot be called back by C as a `{Pointer, Pointer -> Int}`
+// error: unknown function `nowhere`

@@ -289,6 +289,9 @@ pub enum Inst {
     Extern(Slots, usize, Slots, Loc),
     /// `dst := function f`, to call it later with `CallIndirect` (a block).
     FuncRef(Local, usize),
+    /// `dst := the address of a function with these C parameters and result`, made by codegen
+    /// around function `f` (its trampoline), for C to call back (PLAN Part 4 "`extern`, step 2").
+    Callback(Local, usize, Vec<CType>, CType),
     /// `results := (the function in this local)(args)`: calls a block.
     CallIndirect(Slots, Local, Slots),
     /// `dst := "text"`: a new String.
@@ -3612,7 +3615,25 @@ impl<'a> Translator<'a> {
         let k = extern_order(self.info).iter().position(|n| *n == name).expect("an extern function");
         let (params, result) = (self.info.externs[name].params.clone(), self.info.externs[name].result);
         let (mut vals, mut places) = (vec![], vec![]);
-        self.arguments_from(name, args, &mut vals, &mut places);
+        let modes = self.signatures[name].1.clone();
+        for ((a, mode), (c, _)) in args.iter().zip(modes).zip(&params) {
+            let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
+            match (c, mode) {
+                (CType::Callback(k), _) => {
+                    let (cs, r) = self.info.externs[name].callbacks[*k].clone();
+                    let address = self.callback(value, &cs, r, span);
+                    vals.push(address);
+                }
+                (_, Mode::Var) => {
+                    let (p, ty) = self.place(value);
+                    let v = self.read(&p);
+                    let out = self.new_slots(&ty);
+                    vals.extend(&v);
+                    places.push((p, out));
+                }
+                _ => vals.extend(self.expr(value)),
+            }
+        }
         let loc = self.loc(span);
         let (mut given, mut copies, mut at) = (vec![], vec![], 0);
         for (c, _) in &params {
@@ -3693,6 +3714,60 @@ impl<'a> Translator<'a> {
         };
         self.track(&v, ty);
         v
+    }
+
+    /// A function C calls back (PLAN Part 4 "`extern`, step 2"): `callback in main` takes the C
+    /// values (an `Int32` or a `Bool` already widened by codegen's trampoline), makes them Kova
+    /// values, runs the block or calls the function given by its name, and gives back its result
+    /// as a C value. The address C receives is the trampoline's (`Inst::Callback`).
+    fn callback(&mut self, e: &Expr, params: &[CType], result: CType, span: Span) -> Local {
+        let Type::Block(ps, r) = self.ty(e) else { unreachable!("callback checked by the type checker") };
+        let loc = self.loc(span);
+        let mut t = self.inner((*r).clone());
+        let raw: Slots = params.iter().map(|&c| if c == CType::Float { t.new_slots(&Type::Float)[0] } else { t.int_local() }).collect();
+        let nb_params = t.locals.len();
+        t.current = t.new_block();
+        let zero = t.constant(0);
+        let mut vals = vec![];
+        for ((&c, &l), ty) in params.iter().zip(&raw).zip(&ps) {
+            let v = match c {
+                CType::Bool | CType::MaybePointer => {
+                    let present = t.int_local();
+                    t.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
+                    if c == CType::Bool { vec![present] } else { vec![present, l] }
+                }
+                _ => vec![l],
+            };
+            vals.push((v, ty.clone()));
+        }
+        let x = match self.info.callbacks.get(&e.id) {
+            Some(f) => t.call(f, vals.into_iter().flat_map(|(v, _)| v).collect(), vec![], span, &r),
+            None => t.run(e, &None, vals, Some(&*r).filter(|r| **r != Type::Unit)),
+        };
+        let out = match result {
+            CType::Nothing => vec![],
+            // `none` leaves its value slot at 0: NULL.
+            CType::MaybePointer => vec![x[1]],
+            CType::Int32 => {
+                let (low, high) = (t.int_local(), t.int_local());
+                let (min, max) = (t.constant(i32::MIN as i64), t.constant(i32::MAX as i64));
+                t.emit(Inst::Binary(low, Op::Lt, x[0], min, NOWHERE));
+                t.emit(Inst::Binary(high, Op::Gt, x[0], max, NOWHERE));
+                t.emit(Inst::FaultIf(low, Fault::Int32Range, loc));
+                t.emit(Inst::FaultIf(high, Fault::Int32Range, loc));
+                vec![x[0]]
+            }
+            _ => vec![x[0]],
+        };
+        let returns = out.iter().map(|&l| t.locals[l]).collect();
+        t.free_temps(0);
+        t.finish(End::Return(out));
+        let name = format!("callback in {}", t.owner.trim_start_matches("block in "));
+        let f = t.function(name, nb_params, returns);
+        let num = self.made_function(f);
+        let address = self.int_local();
+        self.emit(Inst::Callback(address, num, params.to_vec(), result));
+        address
     }
 
     /// After a call: what its blocks changed goes back into the variables, and their boxes are freed.

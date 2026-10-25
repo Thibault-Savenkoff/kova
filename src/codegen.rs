@@ -402,8 +402,47 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         ids.push(id);
     }
 
+    // The trampolines C calls back (`Inst::Callback`, PLAN Part 4 "`extern`, step 2"): one per
+    // function given to C, with the C types: an `int` widened on the way in, narrowed on the way out.
+    let narrow = |c: &crate::types::CType| matches!(c, crate::types::CType::Int32 | crate::types::CType::Bool);
+    let c_type = |c: &crate::types::CType| if narrow(c) { I32 } else if *c == crate::types::CType::Float { F64 } else { I64 };
+    let mut trampolines = HashMap::new();
+    for inst in p.functions.iter().flat_map(|f| &f.blocks).flat_map(|b| &b.insts) {
+        if let Inst::Callback(_, g, params, result) = inst
+            && !trampolines.contains_key(g)
+        {
+            let mut sig = Signature::new(call_conv);
+            sig.params.extend(params.iter().map(|c| AbiParam::new(c_type(c))));
+            sig.returns.extend((*result != crate::types::CType::Nothing).then(|| AbiParam::new(c_type(result))));
+            let id = module.declare_function(&format!("kova_c{g}"), Linkage::Local, &sig)?;
+            trampolines.insert(*g, (id, sig, params.clone(), *result));
+        }
+    }
+
     let mut ctx = module.make_context();
     let mut fbc = FunctionBuilderContext::new();
+    for (&g, (id, sig, params, result)) in &trampolines {
+        ctx.func.signature = sig.clone();
+        let mut b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
+        let target = module.declare_func_in_func(ids[g], b.func);
+        let start = b.create_block();
+        b.append_block_params_for_function_params(start);
+        b.switch_to_block(start);
+        b.seal_block(start);
+        let mut args = vec![];
+        for (v, c) in b.block_params(start).to_vec().into_iter().zip(params) {
+            args.push(if narrow(c) { b.ins().sextend(I64, v) } else { v });
+        }
+        let call = b.ins().call(target, &args);
+        let mut rets = b.inst_results(call).to_vec();
+        if narrow(result) {
+            rets = vec![b.ins().ireduce(I32, rets[0])];
+        }
+        b.ins().return_(&rets);
+        b.finalize(config);
+        module.define_function(*id, &mut ctx)?;
+        module.clear_context(&mut ctx);
+    }
     for (i, f) in p.functions.iter().enumerate() {
         ctx.func.signature = signature(&f.locals[..f.nb_params], &f.returns);
         let b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
@@ -452,7 +491,8 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         };
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         let math = module.declare_func_in_func(rt.math, b.func);
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs }.function(f, &refs, rt_print, config);
+        let callbacks = trampolines.iter().map(|(&g, (id, ..))| (g, module.declare_func_in_func(*id, b.func))).collect();
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, callbacks }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -534,6 +574,8 @@ struct Generator<'a> {
     /// `kova_math(op, x, y)`: `sin`, `pow`… (`shared::math`).
     math: FuncRef,
     externs: &'a [crate::types::ExternFn],
+    /// The trampolines C calls back, by the number of the function each one calls.
+    callbacks: HashMap<usize, FuncRef>,
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/kova.rs`).
@@ -791,6 +833,10 @@ impl Generator<'_> {
                 }
             }
             Inst::Extern(d, k, args, loc) => self.extern_call(d, *k, args, *loc),
+            Inst::Callback(d, f, ..) => {
+                let address = self.b.ins().func_addr(I64, self.callbacks[f]);
+                self.b.def_var(self.vars[*d], address);
+            }
             Inst::FuncRef(d, f) => {
                 let address = self.b.ins().func_addr(I64, refs[*f]);
                 self.b.def_var(self.vars[*d], address);

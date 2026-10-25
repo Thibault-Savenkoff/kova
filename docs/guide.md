@@ -1089,6 +1089,44 @@ fn main {
 }
 ```
 
+Some C functions call a function of the program back: `qsort` to compare two elements, GTK when
+a button is clicked. The parameter has a block type, and the call gives a function by its name, or
+a block that uses nothing around it (C may call it long after the call):
+
+```kova
+extern c from "c" {
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    fn strcpy(into: Pointer, text: String) -> Pointer
+    // `strstr(p, "")` is `p` itself: here, a way to read the text at `p`.
+    fn text(p: Pointer, nothing: String) -> String from "strstr"
+    fn strncmp(a: Pointer, b: Pointer, n: Int) -> Int32
+    fn qsort(base: Pointer, count: Int, size: Int, compare: {Pointer, Pointer -> Int32})
+}
+
+fn letters(a: Pointer, b: Pointer) -> Int {
+    return c.strncmp(a, b, 1)
+}
+
+fn main {
+    let p: Pointer := c.calloc(16, 1)
+    c.strcpy(p, "kova")
+    c.qsort(p, 4, 1, letters)
+    print(c.text(p, ""))
+    c.qsort(p, 4, 1) { a: Pointer, b: Pointer => c.strncmp(b, a, 1) }
+    print(c.text(p, ""))
+    c.free(p)
+}
+```
+
+```text
+akov
+voka
+```
+
+The function sees Kova types (an `Int32` is an `Int`); what it needs from the program goes through
+the `Pointer` most C functions give back to it for that (GTK's `data`).
+
 A program with `extern` runs as native code, even under `kova run`.
 
 ## 20. The tools

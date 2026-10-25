@@ -616,6 +616,10 @@ impl Owner<'_> {
         let mut uses: Vec<(Mode, &Expr)> = receiver.into_iter().collect();
         for (i, a) in args.iter().enumerate() {
             let value = if let ExprKind::Mark(_, x) = &a.kind { x } else { a };
+            // A function given to C by its name: nothing of the caller's.
+            if self.info.callbacks.contains_key(&value.id) {
+                continue;
+            }
             uses.push((modes.get(i).copied().unwrap_or(Mode::Read), value));
         }
         // `print("{l[0]}{pop(var l)}")`: what an unfinished operation still reads cannot change.
@@ -636,6 +640,10 @@ impl Owner<'_> {
                     self.borrow(e);
                     self.pending.extend(own);
                     let used: Vec<String> = self.uses.get(&e.id).into_iter().flatten().map(|(n, _)| n.clone()).collect();
+                    // C may call it back after the call (PLAN Part 4 "`extern`, step 2").
+                    if let Some(n) = used.first().filter(|_| self.info.externs.contains_key(callee)) {
+                        self.diags.push(Diag::new(e.span, t!("extern_capture", name = n)).help(t!("extern_capture_help")));
+                    }
                     for n in used {
                         let id = self.lookup(&n).id;
                         self.pending.push(id);

@@ -857,6 +857,9 @@ pub struct Info {
     pub captures: HashMap<usize, Vec<String>>,
     /// `sqlite.open` → how to call it (PLAN Part 4 "`extern`, step 1").
     pub externs: HashMap<String, ExternFn>,
+    /// By the `Expr::id` of an `extern` call's argument: the function given by its name for C to
+    /// call back (`clicked` in `gtk.connect(b, "clicked", clicked, none)`; PLAN "`extern`, step 2").
+    pub callbacks: HashMap<usize, String>,
 }
 
 /// A name met while checking: `rex` at `span`, declared at `decl`, shown as `rex: Dog`.
@@ -1077,6 +1080,9 @@ struct Checker<'a> {
     guards: HashMap<usize, Vec<String>>,
     /// `x := x + 1` on a guarded `var` (`statements`): the value still sees `x` as its value.
     reread: HashMap<String, Variable>,
+    /// The `extern` functions (`sqlite.open`), and the functions given to them by name (`Info::callbacks`).
+    extern_names: HashSet<String>,
+    callbacks: HashMap<usize, String>,
     converts: HashMap<usize, usize>,
     tested: HashMap<usize, Type>,
     /// A call's name without some parts (`connect`, `Dog.walk`) → the function's full name, its own
@@ -1147,6 +1153,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         matches: vec![],
         guards: HashMap::new(),
         reread: HashMap::new(),
+        extern_names: HashSet::new(),
+        callbacks: HashMap::new(),
         converts: HashMap::new(),
         tested: HashMap::new(),
         shortened: HashMap::new(),
@@ -1337,6 +1345,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         }
     }
     let externs = c.externs(f);
+    c.extern_names = externs.keys().cloned().collect();
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) != Some(&i) {
             continue;
@@ -1614,6 +1623,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         invoked,
         captures: HashMap::new(),
         externs,
+        callbacks: c.callbacks,
     };
     (info, c.diags)
 }
@@ -1636,6 +1646,9 @@ pub enum CType {
     MaybePointer,
     /// No result.
     Nothing,
+    /// `{Pointer, Int32 -> Int}`: the address of a function C calls back, its C types in
+    /// `ExternFn::callbacks` at this number (PLAN Part 4 "`extern`, step 2").
+    Callback(usize),
 }
 
 /// A function of an `extern` block: its library, its C name, its parameters (with `var`: the
@@ -1646,12 +1659,29 @@ pub struct ExternFn {
     pub symbol: String,
     pub params: Vec<(CType, bool)>,
     pub result: CType,
+    /// The parameters and result of each `CType::Callback`.
+    pub callbacks: Vec<(Vec<CType>, CType)>,
 }
 
-/// The C type an `extern` declaration writes, and what the program sees.
-fn c_type(t: &TypeAst) -> Option<(CType, Type)> {
+/// The C type an `extern` declaration writes, and what the program sees. A block type is a
+/// function C calls back, whose own types are added to `callbacks`: numbers, `Bool`, `Pointer`
+/// and `Pointer?` only (a text would need freeing after each call).
+fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>) -> Option<(CType, Type)> {
     let name = |t: &TypeAst| if let TypeAst::Name(n) = t { Some(n.text.clone()) } else { None };
+    let simple = |t: &TypeAst| {
+        c_type(t, &mut vec![]).filter(|(c, _)| matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer))
+    };
     Some(match t {
+        TypeAst::Block(ps, r) => {
+            let params: Vec<(CType, Type)> = ps.iter().map(simple).collect::<Option<_>>()?;
+            let (result, ret) = match r {
+                None => (CType::Nothing, Type::Unit),
+                Some(r) => simple(r)?,
+            };
+            callbacks.push((params.iter().map(|(c, _)| *c).collect(), result));
+            let kova = Type::Block(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret));
+            (CType::Callback(callbacks.len() - 1), kova)
+        }
         TypeAst::Optional(inner) => match name(inner)?.as_str() {
             "String" => (CType::MaybeText, Type::Optional(Box::new(Type::String))),
             "Pointer" => (CType::MaybePointer, Type::Optional(Box::new(Type::Pointer))),
@@ -2471,10 +2501,9 @@ impl Checker<'_> {
                     self.error(func.name.span, t!("extern_parts_from", name = func.name.text));
                     continue;
                 }
-                let mut params = vec![];
-                let mut kova = vec![];
+                let (mut params, mut kova, mut callbacks) = (vec![], vec![], vec![]);
                 for p in &func.params {
-                    let Some((c, t)) = c_type(&p.ty) else {
+                    let Some((c, t)) = c_type(&p.ty, &mut callbacks) else {
                         self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
                         continue;
                     };
@@ -2495,7 +2524,7 @@ impl Checker<'_> {
                 }
                 let (result, ret) = match &func.ret {
                     None => (CType::Nothing, Type::Unit),
-                    Some(r) => match c_type(r) {
+                    Some(r) => match c_type(r, &mut vec![]).filter(|(c, _)| !matches!(c, CType::Callback(_))) {
                         Some(found) => found,
                         None => {
                             self.diags.push(Diag::new(func.name.span, t!("extern_type", type = r.text())).help(t!("extern_types_help")));
@@ -2513,7 +2542,7 @@ impl Checker<'_> {
                 }
                 self.functions.insert(name.clone(), Signature { receiver: None, params: kova, ret, generics: vec![] });
                 let symbol = symbol.as_ref().map_or_else(|| name.rsplit('.').next().unwrap_or(&name).to_string(), |(s, _)| s.clone());
-                made.insert(name, ExternFn { library: e.library.0.clone(), symbol, params, result });
+                made.insert(name, ExternFn { library: e.library.0.clone(), symbol, params, result, callbacks });
             }
         }
         made
@@ -3246,6 +3275,7 @@ impl Checker<'_> {
                 // Already typed to deduce `T`: a `T` given for a `T?` still becomes one.
                 Some(given) if matches!(t, Type::Optional(inner) if **inner == given) => self.wraps[value.id] = true,
                 Some(given) => self.mismatch(value, given, t),
+                None if matches!(t, Type::Block(..)) && self.extern_names.contains(&name.text) => self.callback(value, t),
                 None => self.expect(value, t),
             }
             self.types[a.id] = self.types[value.id].clone();
@@ -3501,6 +3531,39 @@ impl Checker<'_> {
         self.spans[value.id] = value.span;
         self.types[value.id] = ty.clone();
         ty
+    }
+
+    /// What an `extern` function takes for C to call back (PLAN Part 4 "`extern`, step 2"): a
+    /// function by its name, of the same types, or a block that uses nothing around it (checked
+    /// by `ownership.rs`): C may call it long after the call, when those variables are gone.
+    fn callback(&mut self, e: &Expr, expected: &Type) {
+        let named = match &e.kind {
+            ExprKind::Var(n) if self.lookup(n).is_none() => Some((n.as_str(), e.span)),
+            ExprKind::Call { name, args } if args.is_empty() => Some((name.text.as_str(), name.span)),
+            ExprKind::Var(n) => {
+                self.diags.push(Diag::new(e.span, t!("callback_block_variable", name = n)).help(t!("callback_block_variable_help")));
+                self.types[e.id] = Type::Error;
+                return;
+            }
+            _ => None,
+        };
+        let Some((n, span)) = named else { return self.expect(e, expected) };
+        self.spans[e.id] = e.span;
+        self.types[e.id] = expected.clone();
+        let Some(sig) = self.functions.get(n).cloned() else {
+            self.unknown(span, t!("function_unknown", name = n), n);
+            return;
+        };
+        self.hidden(n, span);
+        let given = Type::Block(sig.params.iter().map(|(_, t)| t.clone()).collect(), Box::new(sig.ret.clone()));
+        let plain = sig.receiver.is_none() && sig.generics.is_empty() && sig.params.iter().all(|(m, _)| *m == Mode::Read);
+        if !plain || given != *expected || self.extern_names.contains(n) {
+            self.diags.push(
+                Diag::new(span, t!("callback_type", name = n, type = expected.text())).help(t!("callback_type_help", type = expected.text())),
+            );
+            return;
+        }
+        self.callbacks.insert(e.id, n.to_string());
     }
 
     /// `return`, `break`, `continue` or `x?` inside a block.

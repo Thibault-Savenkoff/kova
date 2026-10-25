@@ -536,6 +536,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 }
                 Inst::Not(d, a) => locals[*d] = 1 - locals[*a],
                 Inst::FuncRef(d, g) => locals[*d] = *g as i64,
+                // Only before an `Inst::Extern`, which stops the interpreter.
+                Inst::Callback(d, ..) => locals[*d] = 0,
                 Inst::Call(..) | Inst::CallIndirect(..) => {
                     let (d, g, a) = match inst {
                         Inst::Call(d, g, a) => (d, *g, a),

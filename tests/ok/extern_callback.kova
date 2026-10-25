@@ -1,0 +1,27 @@
+// A Kova function C calls back (PLAN Part 4 "`extern`, step 2"): `qsort` compares the letters
+// of a text with a function given by its name, then with a block.
+extern c from "c" {
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    fn strcpy(into: Pointer, text: String) -> Pointer
+    // `strstr(p, "")` is `p` itself: here, a way to read the text at `p`.
+    fn text(p: Pointer, nothing: String) -> String from "strstr"
+    fn strncmp(a: Pointer, b: Pointer, n: Int) -> Int32
+    fn qsort(base: Pointer, count: Int, size: Int, compare: {Pointer, Pointer -> Int32})
+}
+
+fn letters(a: Pointer, b: Pointer) -> Int {
+    return c.strncmp(a, b, 1)
+}
+
+fn main {
+    let p: Pointer := c.calloc(16, 1)
+    c.strcpy(p, "kova")
+    c.qsort(p, 4, 1, letters)
+    print(c.text(p, ""))
+    c.qsort(p, 4, 1) { a: Pointer, b: Pointer => c.strncmp(b, a, 1) }
+    print(c.text(p, ""))
+    c.free(p)
+}
+// expect: akov
+// expect: voka
