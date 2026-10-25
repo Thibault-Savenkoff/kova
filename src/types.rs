@@ -1701,6 +1701,8 @@ pub struct ExternFn {
     pub callbacks: Vec<(Vec<CType>, CType)>,
     /// The systems where the library or the C name is another: (system, library, C name).
     pub on: Vec<(&'static str, String, String)>,
+    /// The struct parameters given by value (`copy Rect`), by number; `params.len()` = the result.
+    pub by_value: Vec<usize>,
 }
 
 impl ExternFn {
@@ -2585,7 +2587,7 @@ impl Checker<'_> {
                 self.error(e.name.span, t!("extern_module_taken", name = e.name.text));
                 continue;
             }
-            for (func, symbol) in &e.functions {
+            for (func, symbol, copies) in &e.functions {
                 if func.receiver.is_some() || !func.generics.is_empty() || func.params.iter().any(|p| p.default.is_some()) {
                     self.error(func.name.span, t!("extern_shape"));
                     continue;
@@ -2641,6 +2643,16 @@ impl Checker<'_> {
                 if params.len() != func.params.len() {
                     continue;
                 }
+                // `copy`: a struct C reads, never `var` (C changes its own copy) nor `none`.
+                let refused = copies.iter().find(|&&i| match params.get(i) {
+                    Some((c, var)) => *var || !matches!(c, CType::Struct(_)),
+                    None => !matches!(result, CType::Struct(_)),
+                });
+                if let Some(&i) = refused {
+                    let (span, ty) = func.params.get(i).map_or_else(|| (func.name.span, func.ret.as_ref().map_or(String::new(), TypeAst::text)), |p| (p.name.span, p.ty_text()));
+                    self.error(span, t!("extern_copy", type = ty));
+                    continue;
+                }
                 let name = func.name.text.clone();
                 if self.functions.contains_key(&name) {
                     self.error(func.name.span, t!("function_exists", name = name));
@@ -2658,7 +2670,7 @@ impl Checker<'_> {
                     })
                     .collect();
                 let symbol = c_name;
-                made.insert(name, ExternFn { library: e.library.text.0.clone(), symbol, params, result, callbacks, on });
+                made.insert(name, ExternFn { library: e.library.text.0.clone(), symbol, params, result, callbacks, on, by_value: copies.clone() });
             }
         }
         (made, layouts)

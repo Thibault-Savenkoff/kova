@@ -841,7 +841,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         }
     }
     for e in &f.externs {
-        for (func, _) in &e.functions {
+        for (func, ..) in &e.functions {
             signatures.insert(func.name.text.clone(), (None, func.params.iter().map(|p| p.mode).collect()));
         }
     }

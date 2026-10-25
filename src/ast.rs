@@ -31,8 +31,9 @@ pub struct Extern {
     pub name: Name,
     /// The library, as written.
     pub library: CName,
-    /// Each function, named `sqlite.open`, without a body; its C name when it is not the same.
-    pub functions: Vec<(Function, Option<CName>)>,
+    /// Each function, named `sqlite.open`, without a body; its C name when it is not the same;
+    /// the parameters given by value (`frame: copy Rect`; the result is number `params.len()`).
+    pub functions: Vec<(Function, Option<CName>, Vec<usize>)>,
     /// Its structs, named `win.Point`, with their C types (PLAN Part 4 "`extern`, step 3"); the
     /// parser also gives the program each one as a Kova struct (`Struct::c_view`).
     pub structs: Vec<Struct>,

@@ -468,6 +468,7 @@ lang en {
     extern_item := "an `extern` block contains only functions (`fn`), found {found}"
     extern_name_text := "a name in quotes is expected, without code inside: found {found}"
     extern_system := "`{found}` is not a system: `linux`, `mac` or `windows` gives one system its own name (`from \"sqlite3\" windows \"winsqlite3\"`)"
+    extern_copy := "`copy` gives C a struct itself, not its address: only before a struct of the `extern` block, without `var` nor `?` (found `{type}`)"
     extern_no_body := "a function of an `extern` block has no body: its code is in the library (found {found})"
     extern_shape := "a function of an `extern` block has no `self`, no `<T>` and no default value: C knows none of them"
     extern_parts_from := "`{name}` has several parts, which no C name has: write its C name with `from \"…\"`"

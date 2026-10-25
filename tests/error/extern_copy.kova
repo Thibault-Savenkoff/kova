@@ -1,0 +1,17 @@
+// `copy` only before a struct of the block, never `var` nor `?`.
+extern c from "c" {
+    struct Division {
+        quotient: Int32
+        rest: Int32
+    }
+    fn abs(n: copy Int32) -> Int32
+    fn fill(d: var copy Division)
+    fn div(a: Int32, b: Int32) -> copy Division?
+}
+
+fn main {
+    print(1)
+}
+// error: `copy` gives C a struct itself, not its address: only before a struct of the `extern` block, without `var` nor `?` (found `Int32`)
+// error: (found `var c.Division`)
+// error: (found `c.Division?`)

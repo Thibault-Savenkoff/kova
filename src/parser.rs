@@ -62,6 +62,7 @@ fn prelude() -> Vec<Interface> {
         bodiless: false,
         in_extern: false,
         symbol: None,
+        copies: vec![],
         public: false,
         private: vec![],
         module: None,
@@ -154,6 +155,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         bodiless: false,
         in_extern: false,
         symbol: None,
+        copies: vec![],
         public: false,
         private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
@@ -191,6 +193,8 @@ struct Parser<'a> {
     in_extern: bool,
     /// That `from "c_name"`, read by `extern_`.
     symbol: Option<CName>,
+    /// Its parameters (and result, after them) given by value: `copy Rect`.
+    copies: Vec<usize>,
     /// Under `public:` at file level (otherwise private, the default); see `File::private`.
     public: bool,
     private: Vec<(String, Span)>,
@@ -701,12 +705,12 @@ impl Parser<'_> {
                     self.in_extern = true;
                     let f = self.function(true);
                     self.in_extern = false;
-                    let symbol = self.symbol.take();
+                    let (symbol, copies) = (self.symbol.take(), std::mem::take(&mut self.copies));
                     match f {
                         Ok(mut f) => {
                             f.name.text = format!("{module}.{}", f.name.text);
                             self.hide(self.public, &f.name);
-                            functions.push((f, symbol));
+                            functions.push((f, symbol, copies));
                         }
                         Err(()) => self.skip_statement(),
                     }
@@ -744,7 +748,7 @@ impl Parser<'_> {
             self.hide(self.public, &s.name);
             s.fields.iter_mut().for_each(|p| requalify(&mut p.ty, &own, &module));
         }
-        for (f, _) in &mut functions {
+        for (f, ..) in &mut functions {
             f.params.iter_mut().for_each(|p| requalify(&mut p.ty, &own, &module));
             f.ret.iter_mut().for_each(|t| requalify(t, &own, &module));
         }
@@ -1120,6 +1124,7 @@ impl Parser<'_> {
             let name = self.value_name("what_parameter")?;
             self.expect(":")?;
             let mode = self.mode();
+            self.copy_mark(params.len());
             let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
             let default = if self.is_sym(":=") {
                 self.advance();
@@ -1219,6 +1224,15 @@ impl Parser<'_> {
         Ok(Some(r))
     }
 
+    /// In an `extern` block, `copy` before a struct: C takes or gives the struct itself, not its
+    /// address (PLAN Part 4 "`extern`, structs by value").
+    fn copy_mark(&mut self, number: usize) {
+        if self.in_extern && self.is_keyword("copy") {
+            self.advance();
+            self.copies.push(number);
+        }
+    }
+
     /// `var` or `move` before a parameter's type or an argument; `Read` if neither.
     fn mode(&mut self) -> Mode {
         let mode = match self.kind() {
@@ -1241,6 +1255,7 @@ impl Parser<'_> {
     ) -> R<Function> {
         let ret = if self.is_sym("->") {
             self.advance();
+            self.copy_mark(params.len());
             Some(self.type_()?)
         } else {
             None

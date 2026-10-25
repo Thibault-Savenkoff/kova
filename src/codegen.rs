@@ -9,7 +9,7 @@ use std::path::Path;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I32, I64};
-use cranelift_codegen::ir::{AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode, Value};
+use cranelift_codegen::ir::{AbiParam, ArgumentPurpose, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode, Value};
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -359,6 +359,11 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
     let mut module = ObjectModule::new(builder);
 
     let call_conv = module.isa().default_call_conv();
+    let abi = match (module.isa().triple().architecture, module.isa().triple().operating_system) {
+        (target_lexicon::Architecture::Aarch64(_), _) => Abi::Arm64,
+        (_, target_lexicon::OperatingSystem::Windows) => Abi::Win64,
+        _ => Abi::SysV,
+    };
     let config = module.isa().frontend_config();
     let signature = |params: &[Scalar], returns: &[Scalar]| {
         let mut s = Signature::new(call_conv);
@@ -504,7 +509,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         let math = module.declare_func_in_func(rt.math, b.func);
         let callbacks = trampolines.iter().map(|(&g, (id, ..))| (g, module.declare_func_in_func(*id, b.func))).collect();
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, system, c_structs: &p.c_structs, callbacks }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, system, abi, c_structs: &p.c_structs, callbacks }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -588,9 +593,51 @@ struct Generator<'a> {
     externs: &'a [crate::types::ExternFn],
     /// The system it is made for: an extern's names on it (`ExternFn::names`).
     system: &'static str,
+    abi: Abi,
     c_structs: &'a [Vec<crate::types::CType>],
     /// The trampolines C calls back, by the number of the function each one calls.
     callbacks: HashMap<usize, FuncRef>,
+}
+
+/// How the processor's C passes a struct by value.
+#[derive(Clone, Copy)]
+enum Abi {
+    /// x86-64 Linux and Mac.
+    SysV,
+    /// x86-64 Windows.
+    Win64,
+    /// arm64, every system.
+    Arm64,
+}
+
+/// How a struct given by value (`copy Rect`) crosses, from its copy in a stack slot (PLAN Part 4
+/// "`extern`, structs by value"): in registers, each one loaded from (type, offset); or the copy's
+/// address, given as a pointer (`Address`) or for Cranelift to copy onto the stack (`Stack`). A
+/// result that is not in registers is written by C where a hidden pointer says.
+#[derive(Debug, PartialEq)]
+enum ByValue {
+    Registers(Vec<(cranelift_codegen::ir::Type, i32)>),
+    Address,
+    Stack,
+}
+
+fn by_value(abi: Abi, leaves: &[(usize, crate::types::CType)], size: usize) -> ByValue {
+    use crate::types::CType::Float;
+    let eights = |of: &dyn Fn(usize) -> cranelift_codegen::ir::Type| (0..size.div_ceil(8)).map(|i| (of(i), 8 * i as i32)).collect();
+    match abi {
+        // 1, 2, 4 or 8 bytes in one integer register, even Floats; anything else by its address.
+        Abi::Win64 if size.is_power_of_two() && size <= 8 => ByValue::Registers(vec![(I64, 0)]),
+        Abi::Win64 => ByValue::Address,
+        // Up to 4 Floats, each in its own register; else up to 16 bytes in one or two.
+        Abi::Arm64 if leaves.len() <= 4 && leaves.iter().all(|&(_, c)| c == Float) => ByValue::Registers(leaves.iter().map(|&(o, _)| (F64, o as i32)).collect()),
+        Abi::Arm64 if size <= 16 => ByValue::Registers(eights(&|_| I64)),
+        Abi::Arm64 => ByValue::Address,
+        // Each 8 bytes in a Float register if only Floats lie there, else in an integer one.
+        // ponytail: when the registers run out, C wants the whole struct on the stack, Cranelift
+        // may split it; reached only past 6 integer or 8 Float arguments.
+        Abi::SysV if size <= 16 => ByValue::Registers(eights(&|i| if leaves.iter().filter(|(o, _)| o / 8 == i).all(|&(_, c)| c == Float) { F64 } else { I64 })),
+        Abi::SysV => ByValue::Stack,
+    }
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/kova.rs`).
@@ -697,20 +744,36 @@ impl Generator<'_> {
         let mut sig = Signature::new(self.call_conv);
         let (mut vals, mut slots) = (vec![], vec![]);
         let mut args = args.iter();
-        for &(c, var) in &f.params {
+        for (i, &(c, var)) in f.params.iter().enumerate() {
             // A struct: its leaves stored where C reads them, its address given (PLAN Part 4
-            // "`extern`, step 3"); after a `var` one, read back.
+            // "`extern`, step 3"); after a `var` one, read back. By value, maybe loaded into
+            // registers from there.
             if let CType::Struct(s) = c {
                 let (leaves, size, align) = crate::types::c_layout(s, self.c_structs);
                 let b = &mut self.b;
-                let slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size as u32, align.trailing_zeros() as u8));
+                // Rounded up to 8 bytes: registers are loaded 8 bytes at a time.
+                let slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size.next_multiple_of(8) as u32, align.max(8).trailing_zeros() as u8));
                 for &(offset, c) in &leaves {
                     let v = b.use_var(self.vars[*args.next().expect("a slot per leaf")]);
                     let v = if narrow(c) { b.ins().ireduce(I32, v) } else { v };
                     b.ins().stack_store(I64, v, slot, offset as i32);
                 }
-                vals.push(b.ins().stack_addr(I64, slot, 0));
-                sig.params.push(AbiParam::new(I64));
+                match f.by_value.contains(&i).then(|| by_value(self.abi, &leaves, size)) {
+                    Some(ByValue::Registers(parts)) => {
+                        for (t, offset) in parts {
+                            vals.push(b.ins().stack_load(I64, t, slot, offset));
+                            sig.params.push(AbiParam::new(t));
+                        }
+                    }
+                    Some(ByValue::Stack) => {
+                        vals.push(b.ins().stack_addr(I64, slot, 0));
+                        sig.params.push(AbiParam::special(I64, ArgumentPurpose::StructArgument(size.next_multiple_of(8) as u32)));
+                    }
+                    _ => {
+                        vals.push(b.ins().stack_addr(I64, slot, 0));
+                        sig.params.push(AbiParam::new(I64));
+                    }
+                }
                 if var {
                     slots.push((slot, leaves));
                 }
@@ -734,7 +797,18 @@ impl Generator<'_> {
                 sig.params.push(AbiParam::new(if c == CType::Float { F64 } else { I64 }));
             }
         }
+        // A struct given back by value: put in a stack slot, whose address the program reads as if
+        // C had given it (`-> Time`).
+        let copy_back = match f.result {
+            CType::Struct(s) if f.by_value.contains(&f.params.len()) => {
+                let (leaves, size, align) = crate::types::c_layout(s, self.c_structs);
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size.next_multiple_of(8) as u32, align.max(8).trailing_zeros() as u8);
+                Some((self.b.create_sized_stack_slot(data), by_value(self.abi, &leaves, size)))
+            }
+            _ => None,
+        };
         let result = match f.result {
+            _ if copy_back.is_some() => None,
             CType::Nothing => None,
             CType::Float => Some(F64),
             c if narrow(c) => Some(I32),
@@ -742,9 +816,26 @@ impl Generator<'_> {
         };
         sig.returns.extend(result.map(AbiParam::new));
         let b = &mut self.b;
+        match &copy_back {
+            Some((_, ByValue::Registers(parts))) => sig.returns.extend(parts.iter().map(|&(t, _)| AbiParam::new(t))),
+            Some((slot, _)) => {
+                vals.insert(0, b.ins().stack_addr(I64, *slot, 0));
+                sig.params.insert(0, AbiParam::special(I64, ArgumentPurpose::StructReturn));
+            }
+            None => {}
+        }
         let sig = b.import_signature(sig);
         let call = b.ins().call_indirect(sig, address, &vals);
         let mut outs = d.iter();
+        if let Some((slot, passed)) = copy_back {
+            if let ByValue::Registers(parts) = passed {
+                for (&r, (_, offset)) in b.inst_results(call).to_vec().iter().zip(parts) {
+                    b.ins().stack_store(I64, r, slot, offset);
+                }
+            }
+            let at = b.ins().stack_addr(I64, slot, 0);
+            b.def_var(self.vars[*outs.next().expect("a result slot")], at);
+        }
         if let Some(t) = result {
             let r = b.inst_results(call)[0];
             let r = if t == I32 { b.ins().sextend(I64, r) } else { r };

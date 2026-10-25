@@ -1172,8 +1172,9 @@ fn main {
 Its fields are numbers, `Bool`, `Pointer`, `Pointer?` and the structs declared before it; Kova lays
 them out as C does. A struct as a result (`-> Time`, or `-> Time?` when C may give NULL) is the
 address C gives, copied, as `localtime` gives a `struct tm*`; a block C calls back may take structs
-the same way (`{Pair, Pair -> Int32}` for `qsort` on an array of structs). A C function giving a
-struct back by value, not by its address, cannot be declared.
+the same way (`{Pair, Pair -> Int32}` for `qsort` on an array of structs). A C function that takes
+or gives the struct itself, not its address, says `copy`: C's `div_t div(int, int)` is
+`fn div(a: Int32, b: Int32) -> copy Division`, a `CGRect` parameter is `frame: copy Rect`.
 
 A struct may also hold texts (`String`, `WideString`, their `?`: copies lent to C for the call)
 and functions C calls (a field of block type, given a function by its name, as Windows'

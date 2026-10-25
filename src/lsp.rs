@@ -482,7 +482,7 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
     // `sqlite.`: the functions of an `extern` block (PLAN Part 4 "`extern`, step 1").
     if let ([first], Some(e)) = (parts.as_slice(), tree(src).externs.iter().find(|e| e.name.text == parts[0])) {
         let prefix = format!("{first}.");
-        let items = e.functions.iter().map(|(f, _)| CompletionItem {
+        let items = e.functions.iter().map(|(f, ..)| CompletionItem {
             label: f.name.text[prefix.len()..].to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             detail: Some(heading(f).0),

@@ -1,0 +1,34 @@
+// Structs given and given back by value (`copy`): each processor puts them in its own registers,
+// or passes their address, or puts them on the stack.
+extern c from "c" {
+    struct Division {
+        quotient: Int32
+        rest: Int32
+    }
+    struct Wide {
+        quotient: Int
+        rest: Int
+    }
+    fn div(a: Int32, b: Int32) -> copy Division
+    fn lldiv(a: Int, b: Int) -> copy Wide
+}
+
+extern m from "m" {
+    struct Complex {
+        re: Float
+        im: Float
+    }
+    // Wine lacks Windows' `cabs`; `_cabs` takes the same struct.
+    fn cabs(z: copy Complex) -> Float from "cabs" windows "_cabs"
+}
+
+fn main {
+    let d: c.Division := c.div(17, 5)
+    print("{d.quotient} {d.rest}")
+    let w: c.Wide := c.lldiv(-10000000000, 3)
+    print("{w.quotient} {w.rest}")
+    print(m.cabs(m.Complex { re := 3, im := 4 }))
+}
+// expect: 3 2
+// expect: -3333333333 -1
+// expect: 5.0
