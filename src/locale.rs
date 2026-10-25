@@ -69,10 +69,18 @@ pub const RUNTIME: &[&str] = &[
     "fault_password_settings",
     // `KOVA_LOG` naming no level (runtime/kova.rs `LOG_UNKNOWN_LEVEL`).
     "log_unknown_level",
+    // `extern` (runtime/kova.rs `kova_extern`).
+    "fault_int32",
+    "fault_text_zero",
+    "fault_null_text",
+    "fault_null_pointer",
+    "fault_extern_interpreted",
+    "extern_no_library",
+    "extern_no_function",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.
-pub const RUNTIME_HOLES: &[(&str, &[&str])] = &[("serving", &["port"]), ("serving_files", &["folder", "port"]), ("log_unknown_level", &["name"])];
+pub const RUNTIME_HOLES: &[(&str, &[&str])] = &[("serving", &["port"]), ("serving_files", &["folder", "port"]), ("log_unknown_level", &["name"]), ("extern_no_library", &["library"]), ("extern_no_function", &["library", "function"])];
 
 /// A piece of a translated text.
 #[derive(Clone, Debug, PartialEq)]
@@ -280,6 +288,7 @@ mod tests {
         assert_eq!(RUNTIME[0], "error_prefix", "the runtime reads the prefix at index 0");
         assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "the runtime reads them at 7 and 8");
         assert_eq!(RUNTIME[29], "log_unknown_level", "the runtime reads it at 29");
+        assert_eq!(RUNTIME[35..37], ["extern_no_library", "extern_no_function"], "the runtime reads them at 35 and 36");
         let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
         let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
         assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");

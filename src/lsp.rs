@@ -479,6 +479,17 @@ fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> 
 /// functions and variants. `None` when `chain` (`geo`, `geo.Shape`, `rex.owner`) is a value.
 fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
     let parts: Vec<&str> = chain.split('.').collect();
+    // `sqlite.`: the functions of an `extern` block (PLAN Part 4 "`extern`, step 1").
+    if let ([first], Some(e)) = (parts.as_slice(), tree(src).externs.iter().find(|e| e.name.text == parts[0])) {
+        let prefix = format!("{first}.");
+        let items = e.functions.iter().map(|(f, _)| CompletionItem {
+            label: f.name.text[prefix.len()..].to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(heading(f).0),
+            ..Default::default()
+        });
+        return Some(items.collect());
+    }
     let module = tree(src).imports.into_iter().find(|i| i.alias.text == parts[0]).map(|i| i.module.text);
     let name = match (&module, parts.as_slice()) {
         (Some(m), [_]) => m.clone(),
@@ -1389,6 +1400,14 @@ mod tests {
 
     fn labels(items: Option<Vec<CompletionItem>>) -> Vec<String> {
         items.unwrap().into_iter().map(|i| i.label).collect()
+    }
+
+    #[test]
+    fn extern_functions() {
+        let src = "extern c from \"c\" {\n    fn abs(n: Int32) -> Int32\n    fn len(s: String) -> Int from \"strlen\"\n}\n";
+        let items = statics("/none/main.kova", src, "c").unwrap();
+        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["abs", "len"]);
+        assert_eq!(items[0].detail.as_deref(), Some("fn c.abs(n: Int32) -> Int32"));
     }
 
     #[test]

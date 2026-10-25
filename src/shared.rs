@@ -797,9 +797,44 @@ pub fn log_line(now: i64, level: i64, text: &str) -> String {
     format!("{:02}:{:02}:{:02}  {:<7}  {text}\n", t / 3600, t / 60 % 60, t % 60, LEVELS[level as usize])
 }
 
+/// The files `extern sqlite from "sqlite3"` tries, in order, on `system` (`linux`, `macos`,
+/// `windows`; PLAN Part 4 "`extern`, step 1"). On Linux the plain `.so` comes only with a -dev
+/// package; on macOS the system's libraries are in the dyld cache, not on the disk.
+#[allow(dead_code)] // the runtime's only: `kova run` runs such a program as native code
+pub fn library_files(name: &str, system: &str) -> Vec<String> {
+    let written = name.contains(['/', '\\']) || [".so", ".dll", ".dylib"].iter().any(|e| name.ends_with(e) || name.contains(".so."));
+    if written {
+        return alloc::vec![name.into()];
+    }
+    match (system, name) {
+        ("linux", "c" | "m") => alloc::vec![format!("lib{name}.so.6")],
+        ("macos", "c" | "m") => alloc::vec!["/usr/lib/libSystem.B.dylib".into()],
+        ("windows", "c" | "m") => alloc::vec!["ucrtbase.dll".into()],
+        ("linux", _) => core::iter::once(format!("lib{name}.so")).chain((0..10).map(|v| format!("lib{name}.so.{v}"))).collect(),
+        ("macos", _) => alloc::vec![
+            format!("lib{name}.dylib"),
+            format!("/usr/lib/lib{name}.dylib"),
+            format!("/opt/homebrew/lib/lib{name}.dylib"),
+            format!("/usr/local/lib/lib{name}.dylib"),
+            format!("/System/Library/Frameworks/{name}.framework/{name}"),
+        ],
+        _ => alloc::vec![format!("{name}.dll"), format!("lib{name}.dll")],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn libraries() {
+        assert_eq!(library_files("sqlite3", "linux")[..3], ["libsqlite3.so", "libsqlite3.so.0", "libsqlite3.so.1"]);
+        assert_eq!(library_files("m", "linux"), ["libm.so.6"]);
+        assert_eq!(library_files("libgtk-4.so.1", "linux"), ["libgtk-4.so.1"]);
+        assert_eq!(library_files("sqlite3", "windows"), ["sqlite3.dll", "libsqlite3.dll"]);
+        assert_eq!(library_files("C:\\x\\a.dll", "windows"), ["C:\\x\\a.dll"]);
+        assert_eq!(library_files("AppKit", "macos")[4], "/System/Library/Frameworks/AppKit.framework/AppKit");
+    }
 
     #[test]
     fn colors_and_log() {

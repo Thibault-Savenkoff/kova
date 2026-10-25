@@ -290,6 +290,8 @@ const THIS_COMPUTER_ONLY: usize = 21;
 const THIS_NETWORK: usize = 22;
 const STOP_WITH_CTRL_C: usize = 23;
 const LOG_UNKNOWN_LEVEL: usize = 29;
+const EXTERN_NO_LIBRARY: usize = 35;
+const EXTERN_NO_FUNCTION: usize = 36;
 
 /// `fault` = the number of its text.
 #[unsafe(no_mangle)]
@@ -1406,6 +1408,91 @@ pub extern "C" fn kova_password_hash(p: i64, mb: i64, passes: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_password_matches(p: i64, hash: i64) -> i64 {
     crypto::password_matches(text_of(p), text_of(hash)) as i64
+}
+
+// ---- `extern` (PLAN Part 4 "`extern`, step 1") ----
+
+/// A String given to C: a copy ended by a 0 byte (none if `present` is 0), or -1 if it holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_c_text(s: i64, present: i64) -> i64 {
+    if present == 0 {
+        return 0;
+    }
+    // Not `CString`: freeing one calls `strlen`, which a Windows program does not have.
+    let b = bytes(s);
+    if b.contains(&0) {
+        return -1;
+    }
+    Box::into_raw([b, &[0]].concat().into_boxed_slice()) as *mut u8 as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_c_free(c: i64) -> i64 {
+    if c > 0 {
+        let n = c_bytes(c as *const u8).len() + 1;
+        drop(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(c as *mut u8, n)) });
+    }
+    0
+}
+
+/// The bytes up to the 0 at `p`; read one by one (`read_volatile`: a loop LLVM would turn into a
+/// call of `strlen`, which a Windows program does not have).
+fn c_bytes<'a>(p: *const u8) -> &'a [u8] {
+    let mut n = 0;
+    while unsafe { p.add(n).read_volatile() } != 0 {
+        n += 1;
+    }
+    unsafe { core::slice::from_raw_parts(p, n) }
+}
+
+/// The String a C function gave: a copy (C keeps its own), 0 for NULL.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_from_c_text(p: i64) -> i64 {
+    if p == 0 {
+        return 0;
+    }
+    new_text(String::from_utf8_lossy(c_bytes(p as *const u8)).as_bytes())
+}
+
+/// The address of each `extern` function, once found (0 before).
+static EXTERNS: Locked<Vec<i64>> = Locked::new(Vec::new());
+
+/// The address of `extern` function `k`: its library loaded and the function found at its first
+/// call; if either is missing, the program stops at the call.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_extern(k: i64, library: *const u8, symbol: *const u8, line: i64, col: i64) -> i64 {
+    let k = k as usize;
+    if let Some(&found) = EXTERNS.with(|e| e.get(k).copied()).filter(|&a| a != 0).as_ref() {
+        return found;
+    }
+    let (library, symbol) = (String::from_utf8_lossy(c_bytes(library)), String::from_utf8_lossy(c_bytes(symbol)));
+    let system = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let Some(handle) = shared::library_files(&library, system).iter().find_map(|f| sys::library(f)) else {
+        extern_missing(EXTERN_NO_LIBRARY, &library, &symbol, line, col)
+    };
+    let Some(found) = sys::symbol(handle, &symbol) else { extern_missing(EXTERN_NO_FUNCTION, &library, &symbol, line, col) };
+    EXTERNS.with(|e| {
+        if e.len() <= k {
+            e.resize(k + 1, 0);
+        }
+        e[k] = found as i64;
+    });
+    found as i64
+}
+
+/// Like `kova_fault`, with the library's and the function's names in the text.
+fn extern_missing(i: usize, library: &str, function: &str, line: i64, col: i64) -> ! {
+    let mut m = Vec::new();
+    m.extend_from_slice(text(ERROR_PREFIX));
+    // `{library}`, `{function}`: the holes `locale::RUNTIME_HOLES` leaves in these texts.
+    m.extend_from_slice(String::from_utf8_lossy(text(i)).replace("{library}", library).replace("{function}", function).as_bytes());
+    m.extend_from_slice(b"\n  --> ");
+    kova_show_site(&mut m, line);
+    m.push(b':');
+    put_int(&mut m, col);
+    m.push(b'\n');
+    error(&m);
+    exit(101)
 }
 
 /// Whether `s.red` paints, once asked (`shared::colors`).

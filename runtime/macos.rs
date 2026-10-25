@@ -582,3 +582,25 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
 pub fn join(t: Thread) {
     unsafe { c::pthread_join(t.0, core::ptr::null_mut()) };
 }
+
+/// `extern` (PLAN Part 4 "`extern`, step 1"): a library loaded by the system's loader, or None.
+pub fn library(name: &str) -> Option<usize> {
+    let name = [name.as_bytes(), &[0]].concat();
+    // RTLD_NOW
+    let h = unsafe { dl::dlopen(name.as_ptr(), 2) };
+    (!h.is_null()).then_some(h as usize)
+}
+
+/// A function of a library loaded by `library`, or None.
+pub fn symbol(library: usize, name: &str) -> Option<usize> {
+    let name = [name.as_bytes(), &[0]].concat();
+    let f = unsafe { dl::dlsym(library as *mut u8, name.as_ptr()) };
+    (!f.is_null()).then_some(f as usize)
+}
+
+mod dl {
+    unsafe extern "C" {
+        pub fn dlopen(name: *const u8, flags: i32) -> *mut u8;
+        pub fn dlsym(library: *mut u8, name: *const u8) -> *mut u8;
+    }
+}

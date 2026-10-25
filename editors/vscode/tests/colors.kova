@@ -5,6 +5,12 @@ import geometry as geo
 //              ^^ keyword.control.import.kova
 import shapes
 // <-- keyword.control.import.kova
+extern sqlite from "sqlite3" {
+// <-- storage.type.kova
+//            ^^^^ keyword.control.kova
+    fn open(path: String) -> Int32 from "sqlite3_open"
+//                                 ^^^^ keyword.control.kova
+}
 
 fn fancy(n: Int)
     mode build else skip

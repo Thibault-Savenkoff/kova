@@ -1,0 +1,20 @@
+extern c from "c" {
+    fn f(x: List<Int>) -> Int
+    fn g(s: var String)
+    fn h(x: move Int)
+    fn i -> Char
+}
+
+extern web from "x" {
+    fn j -> Int
+}
+
+fn main {
+    let n: Int32 := 3
+}
+// error: `List<Int>` cannot cross into C
+// error: `var` gives C the address of a number or of a `Pointer`, not of a `String`
+// error: `move` gives nothing more to C: write the parameter without it
+// error: `Char` cannot cross into C
+// error: `web` is one of Kova's modules: give the `extern` block another name
+// error: `Int32` exists only in an `extern` block, for C's `int`

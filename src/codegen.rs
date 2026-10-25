@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::types::{F64, I64};
-use cranelift_codegen::ir::{AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, TrapCode, Value};
+use cranelift_codegen::ir::types::{F64, I32, I64};
+use cranelift_codegen::ir::{AbiParam, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode, Value};
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -176,7 +176,7 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 
 /// The C runtime functions called by the generated code.
 /// How many `StrOp`s the runtime has (`str_op` numbers them).
-const STR_OPS: usize = 94;
+const STR_OPS: usize = 98;
 
 struct Runtime {
     print: FuncId,
@@ -320,6 +320,10 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::Paint => (91, "kova_str_paint", 2),
         StrOp::Log => (92, "kova_log", 2),
         StrOp::LogLevel => (93, "kova_log_level", 1),
+        StrOp::CText => (94, "kova_c_text", 2),
+        StrOp::CFree => (95, "kova_c_free", 1),
+        StrOp::FromCText => (96, "kova_from_c_text", 1),
+        StrOp::ExternAddress => (97, "kova_extern", 5),
     }
 }
 
@@ -371,7 +375,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel, StrOp::CText, StrOp::CFree, StrOp::FromCText, StrOp::ExternAddress] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -417,6 +421,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
                 })
                 .collect(),
             Inst::Text(_, t) => vec![t.as_str()],
+            Inst::Extern(_, k, _, _) => vec![p.externs[*k].library.as_str(), p.externs[*k].symbol.as_str()],
             _ => vec![],
         });
         for t in used {
@@ -447,7 +452,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         };
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         let math = module.declare_func_in_func(rt.math, b.func);
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -528,6 +533,7 @@ struct Generator<'a> {
     lists: [FuncRef; 10],
     /// `kova_math(op, x, y)`: `sin`, `pow`… (`shared::math`).
     math: FuncRef,
+    externs: &'a [crate::types::ExternFn],
 }
 
 /// The runtime functions for Strings (`kova_str_*` in `runtime/kova.rs`).
@@ -615,6 +621,74 @@ impl Generator<'_> {
         b.ins().call(self.rt_fault, &args);
         b.ins().trap(TrapCode::unwrap_user(1));
         b.switch_to_block(next);
+    }
+
+    /// A C function (PLAN Part 4 "`extern`, step 1"): its address from the runtime (found at the
+    /// first call), then a call with its own signature. A `var` parameter is the address of a
+    /// stack slot holding the value, read back after.
+    fn extern_call(&mut self, d: &[Local], k: usize, args: &[Local], loc: Loc) {
+        use crate::types::CType;
+        let f = &self.externs[k];
+        let (library, symbol) = (self.fail.texts[&f.library], self.fail.texts[&f.symbol]);
+        let b = &mut self.b;
+        let (library, symbol) = (b.ins().symbol_value(I64, library), b.ins().symbol_value(I64, symbol));
+        let [number, line, col] = [k as i64, loc.packed(), loc.col as i64].map(|v| b.ins().iconst(I64, v));
+        let call = b.ins().call(self.strings.ops[str_op(StrOp::ExternAddress).0], &[number, library, symbol, line, col]);
+        let address = b.inst_results(call)[0];
+        let narrow = |c: CType| matches!(c, CType::Int32 | CType::Bool);
+        let mut sig = Signature::new(self.call_conv);
+        let (mut vals, mut slots) = (vec![], vec![]);
+        for (&(c, var), &l) in f.params.iter().zip(args) {
+            let v = self.b.use_var(self.vars[l]);
+            let b = &mut self.b;
+            if var {
+                let slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+                let v = if narrow(c) { b.ins().ireduce(I32, v) } else { v };
+                b.ins().stack_store(I64, v, slot, 0);
+                vals.push(b.ins().stack_addr(I64, slot, 0));
+                sig.params.push(AbiParam::new(I64));
+                slots.push((slot, c));
+            } else if narrow(c) {
+                vals.push(b.ins().ireduce(I32, v));
+                sig.params.push(AbiParam::new(I32));
+            } else {
+                vals.push(v);
+                sig.params.push(AbiParam::new(if c == CType::Float { F64 } else { I64 }));
+            }
+        }
+        let result = match f.result {
+            CType::Nothing => None,
+            CType::Float => Some(F64),
+            c if narrow(c) => Some(I32),
+            _ => Some(I64),
+        };
+        sig.returns.extend(result.map(AbiParam::new));
+        let b = &mut self.b;
+        let sig = b.import_signature(sig);
+        let call = b.ins().call_indirect(sig, address, &vals);
+        let mut outs = d.iter();
+        if let Some(t) = result {
+            let r = b.inst_results(call)[0];
+            let r = if t == I32 { b.ins().sextend(I64, r) } else { r };
+            b.def_var(self.vars[*outs.next().expect("a result slot")], r);
+        }
+        for (slot, c) in slots {
+            let v = match c {
+                CType::Float => b.ins().stack_load(I64, F64, slot, 0),
+                CType::Int32 => {
+                    let v = b.ins().stack_load(I64, I32, slot, 0);
+                    b.ins().sextend(I64, v)
+                }
+                // C wrote any `int`: Kova's Bool is 0 or 1.
+                CType::Bool => {
+                    let v = b.ins().stack_load(I64, I32, slot, 0);
+                    let v = b.ins().icmp_imm_s(IntCC::NotEqual, v, 0);
+                    b.ins().uextend(I64, v)
+                }
+                _ => b.ins().stack_load(I64, I64, slot, 0),
+            };
+            b.def_var(self.vars[*outs.next().expect("a slot per var parameter")], v);
+        }
     }
 
     fn inst(&mut self, inst: &Inst, refs: &[FuncRef], rt_print: FuncRef) {
@@ -716,6 +790,7 @@ impl Generator<'_> {
                     self.b.def_var(self.vars[d], r);
                 }
             }
+            Inst::Extern(d, k, args, loc) => self.extern_call(d, *k, args, *loc),
             Inst::FuncRef(d, f) => {
                 let address = self.b.ins().func_addr(I64, refs[*f]);
                 self.b.def_var(self.vars[*d], address);

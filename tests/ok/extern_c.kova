@@ -1,0 +1,38 @@
+// Functions of the C library, on every system (PLAN Part 4 "`extern`, step 1").
+extern c from "c" {
+    fn abs(n: Int32) -> Int32
+    fn strlen(text: String) -> Int
+    fn getenv(name: String) -> String?
+    fn atof(text: String) -> Float
+    fn strtoll(text: String, end: Pointer?, base: Int32) -> Int
+}
+
+extern m from "m" {
+    fn cos(x: Float) -> Float
+    fn frexp(x: Float, exponent: var Int32) -> Float
+}
+
+fn main {
+    print(c.abs(-42))
+    print(c.strlen("héllo"))
+    print(c.getenv("KOVA_SURELY_NOT_SET"))
+    print(c.atof("2.5") * 2.0)
+    print(c.strtoll("ff", none, 16))
+    print(m.cos(0.0))
+    var e: Int := 0
+    print(m.frexp(48.0, var e))
+    print(e)
+}
+// expect: 42
+// expect: 6
+// expect: none
+// expect: 5.0
+// expect: 255
+// expect: 1.0
+// expect: 0.75
+// expect: 6
+
+// `kova test` interprets: it stops at the call (tests/kova.rs `command_line`).
+test "C from a test" {
+    check c.abs(-1) = 1
+}

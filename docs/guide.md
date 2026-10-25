@@ -1032,7 +1032,45 @@ answered at once would change the same `count`. Each thread starts with its own 
 reads. `kova run` still answers one question at a time: only the built program answers several at once
 (so a block that waits for another question of the same server only gets its answer when built).
 
-## 19. The tools
+## 19. Calling C
+
+A library of the system (SQLite, the C library…) is declared once, with Kova types, then called
+like a module:
+
+```kova
+extern c from "c" {
+    fn abs(n: Int32) -> Int32
+    fn length(text: String) -> Int from "strlen"
+    fn getenv(name: String) -> String?
+}
+
+fn main {
+    print(c.abs(-42))
+    print(c.length("héllo"))
+    print(c.getenv("KOVA_SURELY_NOT_SET"))
+}
+```
+
+```text
+42
+6
+none
+```
+
+`from "strlen"` gives the C name when it differs from Kova's. The library is found on each system
+(`"sqlite3"` is `libsqlite3.so` on Linux, `libsqlite3.dylib` on macOS, `sqlite3.dll` on Windows;
+`"c"` and `"m"` are the C library) when the program first calls it. C has no safety net: a function
+declared with the wrong types can crash the program, so `extern` is where the care goes; the calls
+then look like any other.
+
+What crosses: `Int`, `Int32` (C's `int`; an `Int` too big for it stops the program), `Float`,
+`Bool`, `String` (C gets a copy ended by a 0 byte; a result is copied too), `Pointer` (an address C
+gives and takes back; Kova never looks inside), and `String?` / `Pointer?` where C may use NULL.
+`db: var Pointer?` gives C the address where it writes one, as `sqlite3_open` does:
+`sqlite.open("notes.db", var db)`. A program with `extern` runs as native code, even under
+`kova run`.
+
+## 20. The tools
 
 - `kova run`, `kova build`, `kova test`: run, build, test.
 - `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).

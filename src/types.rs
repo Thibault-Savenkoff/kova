@@ -29,6 +29,8 @@ pub enum Type {
     Date,
     /// A day and a time, `2026-10-23 14:05:30`, without time zone: its seconds since 1970-01-01 00:00.
     DateTime,
+    /// An address given by a C function (PLAN Part 4 "`extern`, step 1"): kept and given back, never read.
+    Pointer,
     /// `(Int, Float)`: at least 2 elements.
     Tuple(Vec<Type>),
     /// A `struct`: its slots are those of its fields, in order (like a tuple).
@@ -99,6 +101,7 @@ impl Type {
             Type::BigInt => "BigInt".into(),
             Type::Date => "Date".into(),
             Type::DateTime => "DateTime".into(),
+            Type::Pointer => "Pointer".into(),
             Type::Tuple(ts) => format!("({})", ts.iter().map(Type::text).collect::<Vec<_>>().join(", ")),
             Type::Struct(_) | Type::Enum(_) if self.args().is_empty() => self.owner(),
             Type::Struct(_) | Type::Enum(_) => format!("{}<{}>", self.owner(), self.args().iter().map(Type::text).collect::<Vec<_>>().join(", ")),
@@ -775,7 +778,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
 fn primitive_follows(t: &Type, interface: &str) -> bool {
     match interface {
         "Equal" | "Display" => {
-            matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::Date | Type::DateTime)
+            matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char | Type::String | Type::BigInt | Type::Date | Type::DateTime | Type::Pointer)
         }
         "Comparable" => matches!(t, Type::Int | Type::Float | Type::Char | Type::String | Type::BigInt | Type::Date | Type::DateTime),
         _ => false,
@@ -799,7 +802,7 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Any(_) => false,
         // Borrowed for the call it is given to, never owned.
         Type::Block(..) => true,
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Unit | Type::Error => true,
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::Unit | Type::Error => true,
     }
 }
 
@@ -852,6 +855,8 @@ pub struct Info {
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
     /// `ownership.rs`); the KIR gives them to the block in its box.
     pub captures: HashMap<usize, Vec<String>>,
+    /// `sqlite.open` → how to call it (PLAN Part 4 "`extern`, step 1").
+    pub externs: HashMap<String, ExternFn>,
 }
 
 /// A name met while checking: `rex` at `span`, declared at `decl`, shown as `rex: Dog`.
@@ -1328,6 +1333,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.functions.insert(name.to_string(), Signature { receiver: None, params, ret, generics });
         }
     }
+    let externs = c.externs(f);
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) != Some(&i) {
             continue;
@@ -1604,8 +1610,60 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         filled: c.filled,
         invoked,
         captures: HashMap::new(),
+        externs,
     };
     (info, c.diags)
+}
+
+/// How a value crosses into C (PLAN Part 4 "`extern`, step 1").
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CType {
+    /// `int64_t`.
+    Int,
+    /// `int`, an `Int` in Kova: one that does not fit stops the program.
+    Int32,
+    Float,
+    /// An `int`: 0 or 1.
+    Bool,
+    /// `const char*`, a copy ended by a 0 byte.
+    Text,
+    /// The same, NULL for `none`.
+    MaybeText,
+    Pointer,
+    MaybePointer,
+    /// No result.
+    Nothing,
+}
+
+/// A function of an `extern` block: its library, its C name, its parameters (with `var`: the
+/// address of a copy) and its result.
+#[derive(Clone)]
+pub struct ExternFn {
+    pub library: String,
+    pub symbol: String,
+    pub params: Vec<(CType, bool)>,
+    pub result: CType,
+}
+
+/// The C type an `extern` declaration writes, and what the program sees.
+fn c_type(t: &TypeAst) -> Option<(CType, Type)> {
+    let name = |t: &TypeAst| if let TypeAst::Name(n) = t { Some(n.text.clone()) } else { None };
+    Some(match t {
+        TypeAst::Optional(inner) => match name(inner)?.as_str() {
+            "String" => (CType::MaybeText, Type::Optional(Box::new(Type::String))),
+            "Pointer" => (CType::MaybePointer, Type::Optional(Box::new(Type::Pointer))),
+            _ => return None,
+        },
+        _ => match name(t)?.as_str() {
+            "Int" => (CType::Int, Type::Int),
+            "Int32" => (CType::Int32, Type::Int),
+            "Float" => (CType::Float, Type::Float),
+            "Bool" => (CType::Bool, Type::Bool),
+            "String" => (CType::Text, Type::String),
+            "Pointer" => (CType::Pointer, Type::Pointer),
+            _ => return None,
+        },
+    })
 }
 
 /// How `t` can follow `bound`: `struct Dog : Comparable`, or `<T: Comparable>` for a `T`.
@@ -1642,6 +1700,7 @@ pub fn primitive(name: &str) -> Option<Type> {
         "BigInt" => Type::BigInt,
         "Date" => Type::Date,
         "DateTime" => Type::DateTime,
+        "Pointer" => Type::Pointer,
         _ => return None,
     })
 }
@@ -2326,6 +2385,67 @@ impl Checker<'_> {
         }
     }
 
+    /// The functions of the `extern` blocks: checked, then known like the others (`sqlite.open`).
+    fn externs(&mut self, f: &File) -> HashMap<String, ExternFn> {
+        let mut made = HashMap::new();
+        for e in &f.externs {
+            if MODULES.contains(&e.name.text.as_str()) {
+                self.error(e.name.span, t!("extern_module_taken", name = e.name.text));
+                continue;
+            }
+            for (func, symbol) in &e.functions {
+                if func.receiver.is_some() || !func.generics.is_empty() || func.params.iter().any(|p| p.default.is_some()) {
+                    self.error(func.name.span, t!("extern_shape"));
+                    continue;
+                }
+                let mut params = vec![];
+                let mut kova = vec![];
+                for p in &func.params {
+                    let Some((c, t)) = c_type(&p.ty) else {
+                        self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
+                        continue;
+                    };
+                    let var = match p.mode {
+                        Mode::Read => false,
+                        Mode::Var if matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer) => true,
+                        Mode::Var => {
+                            self.error(p.name.span, t!("extern_var", type = p.ty.text()));
+                            continue;
+                        }
+                        Mode::Move => {
+                            self.error(p.name.span, t!("extern_move"));
+                            continue;
+                        }
+                    };
+                    params.push((c, var));
+                    kova.push((p.mode, t));
+                }
+                let (result, ret) = match &func.ret {
+                    None => (CType::Nothing, Type::Unit),
+                    Some(r) => match c_type(r) {
+                        Some(found) => found,
+                        None => {
+                            self.diags.push(Diag::new(func.name.span, t!("extern_type", type = r.text())).help(t!("extern_types_help")));
+                            continue;
+                        }
+                    },
+                };
+                if params.len() != func.params.len() {
+                    continue;
+                }
+                let name = func.name.text.clone();
+                if self.functions.contains_key(&name) {
+                    self.error(func.name.span, t!("function_exists", name = name));
+                    continue;
+                }
+                self.functions.insert(name.clone(), Signature { receiver: None, params: kova, ret, generics: vec![] });
+                let symbol = symbol.as_ref().map_or_else(|| name.rsplit('.').next().unwrap_or(&name).to_string(), |(s, _)| s.clone());
+                made.insert(name, ExternFn { library: e.library.0.clone(), symbol, params, result });
+            }
+        }
+        made
+    }
+
     fn report_unknown(&mut self, t: &TypeAst) {
         if let TypeAst::Name(n) | TypeAst::Generic(n, _) | TypeAst::Any(n) = t {
             self.hidden(&n.text, n.span);
@@ -2340,6 +2460,9 @@ impl Checker<'_> {
             ),
             TypeAst::Name(n) if self.structs.get(&n.text).is_some_and(|t| is_template(t, &n.text)) => {
                 self.generic_without_types(n)
+            }
+            TypeAst::Name(n) if n.text == "Int32" => {
+                self.diags.push(Diag::new(n.span, t!("int32_outside")).help(t!("int32_outside_help")));
             }
             TypeAst::Name(n) if n.text == "Nothing" => {
                 self.diags.push(Diag::new(n.span, t!("nothing_only_in_result")).help(t!("nothing_only_in_result_help")));

@@ -1,0 +1,10 @@
+extern c "c" {
+}
+
+extern d from "d" {
+    fn f -> Int {
+        return 1
+    }
+}
+// error: `extern` takes a name, then `from` and the library: `extern sqlite from "sqlite3"`, found `"c"`
+// error: a function of an `extern` block has no body: its code is in the library (found `{`)

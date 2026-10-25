@@ -21,6 +21,18 @@ pub struct File {
     /// The modules the program reads, as written after `import` (`geometry`, `shapes.circle`):
     /// filled in the root file once they are all read.
     pub modules: Vec<String>,
+    /// `extern sqlite from "sqlite3" { … }`: functions of the system's libraries.
+    pub externs: Vec<Extern>,
+}
+
+/// `extern sqlite from "sqlite3" { fn open(path: String, db: var Pointer) -> Int32 from
+/// "sqlite3_open" }` (PLAN Part 4 "`extern`, step 1"): called `sqlite.open(…)`.
+pub struct Extern {
+    pub name: Name,
+    /// The library, as written.
+    pub library: (String, Span),
+    /// Each function, named `sqlite.open`, without a body; its C name when it is not the same.
+    pub functions: Vec<(Function, Option<(String, Span)>)>,
 }
 
 /// `import geometry` or `import geometry as geo` (PLAN 2.9).

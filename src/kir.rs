@@ -37,7 +37,7 @@ use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKin
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
-use crate::types::{EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{CType, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -106,7 +106,7 @@ fn variant_fields(d: &EnumDef) -> impl Iterator<Item = Type> + '_ {
 /// The slots needed for a value of this type, in order.
 pub fn scalars(t: &Type) -> Vec<Scalar> {
     match t {
-        Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Box(_) => vec![Scalar::Int],
+        Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Box(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         Type::Float => vec![Scalar::Float],
@@ -136,7 +136,7 @@ fn heap(t: &Type) -> Vec<Option<Type>> {
         Type::Box(t) => vec![Some(Type::List(t.clone()))],
         Type::Optional(t) => std::iter::once(None).chain(heap(t)).collect(),
         Type::Result(ok, err) => std::iter::once(None).chain(heap(err)).chain(heap(ok)).collect(),
-        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
+        Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::Unit | Type::Error | Type::Param(_) | Type::Block(..) => {
             vec![None; scalars(t).len()]
         }
     }
@@ -213,6 +213,15 @@ pub struct Program {
     pub main: Option<usize>,
     /// The `test` blocks (name, number of their function): translated only for `kova test`.
     pub tests: Vec<(String, usize)>,
+    /// The functions of the `extern` blocks, in the order of `extern_order` (`Inst::Extern`).
+    pub externs: Vec<crate::types::ExternFn>,
+}
+
+/// The `extern` functions, numbered (`Inst::Extern`).
+fn extern_order(info: &Info) -> Vec<&String> {
+    let mut names: Vec<&String> = info.externs.keys().collect();
+    names.sort();
+    names
 }
 
 pub struct Function {
@@ -274,6 +283,10 @@ pub enum Inst {
     Convert(Local, Conversion, Local, Loc),
     /// `results := f(args)`.
     Call(Slots, usize, Slots),
+    /// `results := extern function k (Program::externs)(args)`, one slot per C value; then one
+    /// result per `var` parameter, what C left at its address. The location: for a library or a
+    /// function not found.
+    Extern(Slots, usize, Slots, Loc),
     /// `dst := function f`, to call it later with `CallIndirect` (a block).
     FuncRef(Local, usize),
     /// `results := (the function in this local)(args)`: calls a block.
@@ -506,6 +519,15 @@ pub enum StrOp {
     Log,
     /// `log.level(l)`: the lowest level shown, unless `KOVA_LOG` names one.
     LogLevel,
+    /// For an `extern` call: a copy of a String ended by a 0 byte, given to C (freed by
+    /// `CFree`); the second slot says whether there is one (else 0); -1 if it holds a 0 byte.
+    CText,
+    CFree,
+    /// The String a C function gave (copied; NULL gives 0).
+    FromCText,
+    /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
+    /// library, C name, line, column), found at its first call.
+    ExternAddress,
 }
 
 /// What src/csv.rs reads or writes for a List of `elem`: `*` for rows (`List<String>`), else
@@ -679,6 +701,15 @@ pub enum Fault {
     BadKey,
     /// `secure.password_hash(p) memory(2)`: 8 to 1024 MB, 1 to 16 passes.
     PasswordSettings,
+    /// An `Int` given to C as an `Int32` that does not fit.
+    Int32Range,
+    /// A `String` given to C holding a 0 byte.
+    TextWithZero,
+    /// A C function declared `-> String` or `-> Pointer` gave NULL.
+    NullText,
+    NullPointer,
+    /// An `extern` call under `kova test` or `kova debug`, which interpret.
+    ExternInterpreted,
 }
 
 impl Fault {
@@ -700,6 +731,11 @@ impl Fault {
             Fault::BadWorkers => "fault_workers",
             Fault::NoElements => "fault_no_elements",
             Fault::NegativeSize => "fault_negative_size",
+            Fault::Int32Range => "fault_int32",
+            Fault::TextWithZero => "fault_text_zero",
+            Fault::NullText => "fault_null_text",
+            Fault::NullPointer => "fault_null_pointer",
+            Fault::ExternInterpreted => "fault_extern_interpreted",
             Fault::BadKey => "fault_bad_key",
             Fault::PasswordSettings => "fault_password_settings",
         }
@@ -790,6 +826,11 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     for it in &f.interfaces {
         for (m, _) in &it.methods {
             signatures.insert(method_name(&it.name.text, &m.name.text), (m.receiver, m.params.iter().map(|p| p.mode).collect()));
+        }
+    }
+    for e in &f.externs {
+        for (func, _) in &e.functions {
+            signatures.insert(func.name.text.clone(), (None, func.params.iter().map(|p| p.mode).collect()));
         }
     }
     let n = all.len();
@@ -921,7 +962,8 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         k += 1;
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
-    Program { functions, main: numbers.get("main").copied(), tests }
+    let externs = extern_order(info).into_iter().map(|n| info.externs[n].clone()).collect();
+    Program { functions, main: numbers.get("main").copied(), tests, externs }
 }
 
 struct Translator<'a> {
@@ -1980,7 +2022,7 @@ impl<'a> Translator<'a> {
             // Written inline, the hash of a `Cell` would hold that of its `next`, and so on forever.
             // ponytail: values differing only inside a box share a number; a `Hash` helper if Maps of such keys get slow.
             Type::Box(_) => self.constant(0),
-            Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime => v[0],
+            Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer => v[0],
             Type::String | Type::BigInt => {
                 let d = self.int_local();
                 self.emit(Inst::Str(d, StrOp::Hash, vec![v[0]]));
@@ -3125,6 +3167,12 @@ impl<'a> Translator<'a> {
             }
             Type::Block(..) => m.push(Piece::Text(ty.text())),
             Type::Date | Type::DateTime => self.date_pieces(v[0], ty, m),
+            // `Pointer(140245…)`: its address, which only means something to C.
+            Type::Pointer => {
+                m.push(Piece::Text("Pointer(".into()));
+                m.push(Piece::Value(v[0], Show::Int));
+                m.push(Piece::Text(")".into()));
+            }
             Type::Char | Type::String => {
                 let quote = if *ty == Type::Char { "'" } else { "\"" };
                 m.push(Piece::Text(quote.into()));
@@ -3402,7 +3450,7 @@ impl<'a> Translator<'a> {
         match p {
             Part::Text(t) => m.push(Piece::Text(t.clone())),
             Part::Code(e) => match &self.ty(e) {
-                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime) => {
+                ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime | Type::Pointer) => {
                     let ty = ty.clone();
                     let v = self.expr(e);
                     self.value_pieces(&v, &ty, m);
@@ -3535,6 +3583,95 @@ impl<'a> Translator<'a> {
         }
         self.track(&result, ty);
         result
+    }
+
+    /// `sqlite.open("notes.db", var db)` (PLAN Part 4 "`extern`, step 1"): each argument made a C
+    /// value (a text copied, an `Int32` checked), the call, then its result made a Kova value.
+    fn extern_call(&mut self, name: &str, args: &[Expr], span: Span, ty: &Type) -> Slots {
+        let k = extern_order(self.info).iter().position(|n| *n == name).expect("an extern function");
+        let (params, result) = (self.info.externs[name].params.clone(), self.info.externs[name].result);
+        let (mut vals, mut places) = (vec![], vec![]);
+        self.arguments_from(name, args, &mut vals, &mut places);
+        let loc = self.loc(span);
+        let (mut given, mut copies, mut at) = (vec![], vec![], 0);
+        for (c, _) in &params {
+            match c {
+                CType::Text | CType::MaybeText => {
+                    let (present, s) = if *c == CType::Text { (self.constant(1), vals[at]) } else { (vals[at], vals[at + 1]) };
+                    let (copy, minus, zero) = (self.int_local(), self.constant(-1), self.int_local());
+                    self.emit(Inst::Str(copy, StrOp::CText, vec![s, present]));
+                    self.emit(Inst::Binary(zero, Op::Eq, copy, minus, NOWHERE));
+                    self.emit(Inst::FaultIf(zero, Fault::TextWithZero, loc));
+                    given.push(copy);
+                    copies.push(copy);
+                }
+                CType::Int32 => {
+                    let v = vals[at];
+                    let (low, high, (min, max)) = (self.int_local(), self.int_local(), (self.constant(i32::MIN as i64), self.constant(i32::MAX as i64)));
+                    self.emit(Inst::Binary(low, Op::Lt, v, min, NOWHERE));
+                    self.emit(Inst::Binary(high, Op::Gt, v, max, NOWHERE));
+                    self.emit(Inst::FaultIf(low, Fault::Int32Range, loc));
+                    self.emit(Inst::FaultIf(high, Fault::Int32Range, loc));
+                    given.push(v);
+                }
+                // `none` leaves its value slot at 0: NULL.
+                CType::MaybePointer => given.push(vals[at + 1]),
+                _ => given.push(vals[at]),
+            }
+            at += if matches!(c, CType::MaybeText | CType::MaybePointer) { 2 } else { 1 };
+        }
+        let got = match result {
+            CType::Nothing => vec![],
+            CType::Float => self.new_slots(&Type::Float),
+            _ => vec![self.int_local()],
+        };
+        // What C left at each `var` parameter's address, then made a Kova value.
+        let kinds: Vec<CType> = params.iter().filter(|(_, var)| *var).map(|(c, _)| *c).collect();
+        let raw: Slots = kinds.iter().map(|&c| if c == CType::Float { self.new_slots(&Type::Float)[0] } else { self.int_local() }).collect();
+        self.emit(Inst::Extern([got.clone(), raw.clone()].concat(), k, given, loc));
+        for (((place, out), r), c) in places.iter().zip(raw).zip(kinds) {
+            if c == CType::MaybePointer {
+                let zero = self.constant(0);
+                self.emit(Inst::Binary(out[0], Op::Ne, r, zero, NOWHERE));
+                self.emit(Inst::Copy(out[1], r));
+            } else {
+                self.emit(Inst::Copy(out[0], r));
+            }
+            self.write(place, out);
+        }
+        for copy in copies {
+            let done = self.int_local();
+            self.emit(Inst::Str(done, StrOp::CFree, vec![copy]));
+        }
+        let zero = self.constant(0);
+        let v = match result {
+            CType::Nothing => return vec![],
+            CType::Bool | CType::MaybePointer => {
+                let present = self.int_local();
+                self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
+                if result == CType::Bool { vec![present] } else { vec![present, got[0]] }
+            }
+            CType::Text | CType::Pointer => {
+                let null = self.int_local();
+                self.emit(Inst::Binary(null, Op::Eq, got[0], zero, NOWHERE));
+                self.emit(Inst::FaultIf(null, if result == CType::Text { Fault::NullText } else { Fault::NullPointer }, loc));
+                if result == CType::Pointer {
+                    return got;
+                }
+                let s = self.int_local();
+                self.emit(Inst::Str(s, StrOp::FromCText, vec![got[0]]));
+                vec![s]
+            }
+            CType::MaybeText => {
+                let (present, s) = (self.int_local(), self.int_local());
+                self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
+                self.emit(Inst::Str(s, StrOp::FromCText, vec![got[0]]));
+                vec![present, s]
+            }
+            _ => return got,
+        };
+        self.track(&v, ty);
+        v
     }
 
     /// After a call: what its blocks changed goes back into the variables, and their boxes are freed.
@@ -4528,7 +4665,7 @@ impl<'a> Translator<'a> {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.given(&args[0]) {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime) => {
+                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime | Type::Pointer) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -4716,6 +4853,9 @@ impl<'a> Translator<'a> {
                     let (p, d) = (self.expr1(&args[0]), self.int_local());
                     self.emit(Inst::Str(d, if n == "files.exists" { StrOp::Exists } else { StrOp::IsFolder }, vec![p]));
                     return vec![d];
+                }
+                if self.info.externs.contains_key(&name.text) {
+                    return self.extern_call(&name.text, args, name.span, &self.ty(e));
                 }
                 if let Some(level) = name.text.strip_prefix("log.").and_then(|l| crate::shared::LEVELS.iter().position(|n| *n == l)) {
                     let (level, text, done) = (self.constant(level as i64), self.expr1(&args[0]), self.int_local());
@@ -5012,7 +5152,7 @@ impl<'a> Translator<'a> {
                 v
             }
             ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
-                if !matches!(self.ty(a), Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime) =>
+                if !matches!(self.ty(a), Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer) =>
             {
                 let ty = self.ty(a);
                 let (va, vb) = (self.expr(a), self.expr(b));

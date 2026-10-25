@@ -127,6 +127,13 @@ fn main() {
             if let Some(code) = discreet(&tree).then(|| native_run(&program, &files, lang(), &given)).flatten() {
                 exit(code)
             }
+            // `extern` (PLAN Part 4 "`extern`, step 1"): C is called by native code only.
+            if !tree.externs.is_empty() {
+                match native_run(&program, &files, lang(), &given) {
+                    Some(code) => exit(code),
+                    None => fail(t!("extern_no_native", file = file)),
+                }
+            }
             // Each Kova call is a call of the interpreter: a stack as deep as a built program's
             // (a 100,000-deep recursion) needs more than the 8 MB the system gives.
             let code = std::thread::scope(|s| {
@@ -402,6 +409,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
         root.structs.extend(m.structs);
         root.interfaces.extend(m.interfaces);
         root.private.extend(m.private);
+        root.externs.extend(m.externs);
     }
     (root, ids, diags, sources)
 }

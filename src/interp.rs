@@ -921,6 +921,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = crate::shared::painted(s(0), locals[a[1]], *COLORS.get_or_init(colors));
                             heap.make(t)
                         }
+                        // Only before an `Inst::Extern`, which stops the interpreter.
+                        StrOp::CText | StrOp::CFree | StrOp::FromCText | StrOp::ExternAddress => 0,
                         StrOp::LogLevel => {
                             heap.log_level = Some(locals[a[0]]);
                             0
@@ -1036,6 +1038,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.list(locals[*l]).1 as i64 },
                 Inst::FaultIf(c, f, loc) if locals[*c] != 0 => return Err(fault(*f, loc)),
                 Inst::FaultIf(..) => {}
+                // `kova run` runs such a program as native code (main.rs `native_run`).
+                Inst::Extern(_, _, _, loc) => return Err(fault(Fault::ExternInterpreted, loc)),
                 Inst::ListCheck(l, i, loc) => {
                     let length = *heap.list(locals[*l]).1 as i64;
                     if !(0..length).contains(&locals[*i]) {

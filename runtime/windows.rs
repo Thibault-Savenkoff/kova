@@ -23,6 +23,8 @@ unsafe extern "system" {
     fn ReadFile(h: Handle, b: *mut u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
     fn SetConsoleMode(h: Handle, mode: u32) -> i32;
+    fn LoadLibraryW(name: *const u16) -> Handle;
+    fn GetProcAddress(library: Handle, name: *const u8) -> Handle;
     fn SetConsoleOutputCP(page: u32) -> i32;
     fn SetConsoleCP(page: u32) -> i32;
     fn ExitProcess(code: u32) -> !;
@@ -722,4 +724,17 @@ pub fn join(t: Thread) {
         WaitForSingleObject(t.0, u32::MAX);
         CloseHandle(t.0);
     }
+}
+
+/// `extern` (PLAN Part 4 "`extern`, step 1"): a DLL loaded by Windows, or None.
+pub fn library(name: &str) -> Option<usize> {
+    let h = unsafe { LoadLibraryW(wide(name).as_ptr()) };
+    (h != 0).then_some(h as usize)
+}
+
+/// A function of a DLL loaded by `library`, or None.
+pub fn symbol(library: usize, name: &str) -> Option<usize> {
+    let name = [name.as_bytes(), &[0]].concat();
+    let f = unsafe { GetProcAddress(library as Handle, name.as_ptr()) };
+    (f != 0).then_some(f as usize)
 }

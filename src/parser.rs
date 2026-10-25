@@ -60,6 +60,8 @@ fn prelude() -> Vec<Interface> {
         from_start: false,
         in_interface: false,
         bodiless: false,
+        in_extern: false,
+        symbol: None,
         public: false,
         private: vec![],
         module: None,
@@ -120,6 +122,14 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         let renamed = kind(last + 1) == Some(Kind::Ident) && text(&tokens[last + 1]) == "as" && kind(last + 2) == Some(Kind::Ident);
         imports.insert(text(&tokens[if renamed { last + 2 } else { last }]), module);
     }
+    // `extern sqlite from "sqlite3"`: `sqlite.open` is a function of this block.
+    let word = |i: usize, w: &str| kind(i) == Some(Kind::Ident) && text(&tokens[i]) == w;
+    for i in 0..tokens.len() {
+        if at_top(i) && word(i, "extern") && kind(i + 1) == Some(Kind::Ident) && kind(i + 2) == Some(Kind::Keyword("from")) {
+            let name = text(&tokens[i + 1]);
+            imports.insert(name.clone(), module.map_or(name.clone(), |m| format!("{m}.{name}")));
+        }
+    }
     // The names this file declares at its top: `fn distance`, `struct Point`, `copy struct`, `enum`, `interface`.
     let own = (0..tokens.len().saturating_sub(1))
         .filter(|&i| at_top(i))
@@ -142,6 +152,8 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         from_start: false,
         in_interface: false,
         bodiless: false,
+        in_extern: false,
+        symbol: None,
         public: false,
         private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
@@ -175,6 +187,10 @@ struct Parser<'a> {
     /// In an `interface`: a method may have no body (`function_rest` then sets `bodiless`).
     in_interface: bool,
     bodiless: bool,
+    /// Reading an `extern` block: functions without a body, maybe `from "c_name"`.
+    in_extern: bool,
+    /// That `from "c_name"`, read by `extern_`.
+    symbol: Option<(String, Span)>,
     /// Under `public:` at file level (otherwise private, the default); see `File::private`.
     public: bool,
     private: Vec<(String, Span)>,
@@ -512,7 +528,7 @@ impl Parser<'_> {
 
     fn file(&mut self) -> File {
         let (mut header, mut functions, mut structs, mut tests, mut langs) = (None, vec![], vec![], vec![], vec![]);
-        let (mut interfaces, mut imports) = (vec![], vec![]);
+        let (mut interfaces, mut imports, mut externs) = (vec![], vec![], vec![]);
         loop {
             self.skip_newlines();
             let read = match self.kind() {
@@ -551,6 +567,8 @@ impl Parser<'_> {
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
+                // Neither is `extern`.
+                Kind::Ident if self.at_extern() => self.extern_().map(|e| externs.push(e)),
                 _ => {
                     let msg = t!("declaration_expected", found = self.describe());
                     self.error(self.token().span, msg)
@@ -561,7 +579,7 @@ impl Parser<'_> {
             }
         }
         let private = std::mem::take(&mut self.private);
-        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![] }
+        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![], externs }
     }
 
     /// `import geometry` or `import geometry as geo`.
@@ -630,6 +648,7 @@ impl Parser<'_> {
         self.advance();
         while !matches!(self.kind(), Kind::Keyword("fn" | "test" | "struct" | "copy" | "enum" | "interface") | Kind::Eof)
             && !self.at_lang()
+            && !self.at_extern()
         {
             self.advance();
         }
@@ -637,6 +656,75 @@ impl Parser<'_> {
 
     fn at_lang(&self) -> bool {
         self.kind() == Kind::Ident && self.text(self.token().span) == "lang"
+    }
+
+    fn at_extern(&self) -> bool {
+        self.kind() == Kind::Ident && self.text(self.token().span) == "extern" && self.kind_at(1) == Kind::Ident
+    }
+
+    /// `extern sqlite from "sqlite3" { fn … }` (PLAN Part 4 "`extern`, step 1").
+    fn extern_(&mut self) -> R<Extern> {
+        self.advance(); // extern
+        let name = self.value_name("what_module")?;
+        if !self.is_keyword("from") {
+            let msg = t!("extern_from", found = self.describe());
+            return self.error(self.token().span, msg);
+        }
+        self.advance();
+        let library = self.plain_text()?;
+        let module = self.imports.get(&name.text).cloned().unwrap_or(name.text.clone());
+        self.skip_newlines();
+        self.expect("{")?;
+        let mut functions = vec![];
+        loop {
+            self.skip_newlines();
+            match self.kind() {
+                Kind::Sym("}") => break,
+                Kind::Keyword("fn") => {
+                    self.in_extern = true;
+                    let f = self.function(true);
+                    self.in_extern = false;
+                    let symbol = self.symbol.take();
+                    match f {
+                        Ok(mut f) => {
+                            f.name.text = format!("{module}.{}", f.name.text);
+                            self.hide(self.public, &f.name);
+                            functions.push((f, symbol));
+                        }
+                        Err(()) => self.skip_statement(),
+                    }
+                }
+                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
+                    let span = self.token().span;
+                    self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
+                    return Ok(Extern { name, library, functions });
+                }
+                _ => {
+                    let msg = t!("extern_item", found = self.describe());
+                    self.diags.push(Diag::new(self.token().span, msg));
+                    self.skip_statement();
+                }
+            }
+        }
+        self.advance(); // }
+        Ok(Extern { name, library, functions })
+    }
+
+    /// A `"…"` without `{code}`: a library's or a C function's name.
+    fn plain_text(&mut self) -> R<(String, Span)> {
+        let t = self.token();
+        if t.kind != Kind::Str {
+            let msg = t!("extern_name_text", found = self.describe());
+            return self.error(t.span, msg);
+        }
+        self.advance();
+        match self.text_parts(t).as_slice() {
+            [Part::Text(s)] if !s.is_empty() => Ok((s.clone(), t.span)),
+            _ => {
+                let msg = t!("extern_name_text", found = self.text(t.span));
+                self.error(t.span, msg)
+            }
+        }
     }
 
     /// Texts are plain until J3: `{x}` is refused in a test name or a contract message.
@@ -1101,6 +1189,20 @@ impl Parser<'_> {
         } else {
             None
         };
+        // In an `extern` block: maybe `from "c_name"`, never a body.
+        if self.in_extern {
+            if self.is_keyword("from") {
+                self.advance();
+                self.symbol = Some(self.plain_text()?);
+            }
+            if !matches!(self.kind(), Kind::Newline | Kind::Sym("}") | Kind::Eof) {
+                let msg = t!("extern_no_body", found = self.describe());
+                return self.error(self.token().span, msg);
+            }
+            let at = self.token().span;
+            let body = Block { open: at, stmts: vec![], close: at };
+            return Ok(Function { name, generics, receiver, params, breaks, ret, contracts: vec![], only: None, body });
+        }
         let (mut contracts, mut only) = (vec![], None);
         loop {
             self.skip_newlines();
