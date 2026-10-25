@@ -769,6 +769,39 @@ guessed (a password, a session key), `import secure`: `secure.random(1..=6)` dra
 system's own chance, `secure.token(16)` gives 16 bytes of it in hexadecimal (32 characters) and
 `secure.uuid` a UUID (version 4).
 
+```kova
+import secure
+
+fn main {
+    print("hello".sha256)
+    print("Kova".to_base64)
+    print(String.from_base64("S292YQ=="))
+    let stored: String := secure.password_hash("correct horse")
+    print(secure.password_matches("correct horse") hash(stored))
+    let key: String := secure.key
+    let code: String := secure.encrypt("meet at noon") key(key)
+    print(secure.decrypt(code) key(key))
+}
+```
+
+```text
+2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+S292YQ==
+"Kova"
+true
+"meet at noon"
+```
+
+`s.sha256` is a text's fingerprint (64 hexadecimal digits; `files.sha256(path)` for a file, even
+one that is not text), `s.hmac_sha256(key)` its signature with a secret key. `s.to_base64` and
+`String.from_base64(code)` write and read base64 (`to_base64url` and `from_base64url` for
+addresses), `none` if the code is not base64 of a text. A password is never stored, nor its
+SHA-256: `secure.password_hash` gives an Argon2id text to keep (made slow on purpose, with its own
+chance inside), which `secure.password_matches(password) hash(stored)` checks. `secure.key` makes a
+key; `secure.encrypt(text) key(k)` gives a code only that key opens (XChaCha20-Poly1305), and
+`secure.decrypt(code) key(k)` gives the text back, `none` if the key is another or the code was
+changed.
+
 ## 16. The web
 
 ```kova

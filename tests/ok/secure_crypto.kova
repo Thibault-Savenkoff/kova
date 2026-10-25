@@ -1,0 +1,57 @@
+// Fingerprints, base64, passwords and encryption (PLAN Part 4 "The library after Python",
+// step 4); the values come from Python's hashlib, hmac and base64.
+
+import files
+import secure
+
+fn main {
+    print("bonjour".sha256)
+    print("".sha256)
+    print("message".hmac_sha256("clé"))
+    print("Kova ✓".to_base64)
+    print("Kova?>".to_base64url)
+    print(String.from_base64("S292YSDinJM="))
+    print(String.from_base64url("S292YT8-"))
+    print(String.from_base64("pas du base64 !"))
+    print(String.from_base64("/w=="))
+    print(files.sha256("tests/data/poem.txt"))
+    print(files.sha256("tests/data/nothing.txt"))
+    let h: String := secure.password_hash("correct horse")
+    print(h.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"))
+    print(h = secure.password_hash("correct horse"))
+    print(secure.password_matches("correct horse") hash(h))
+    print(secure.password_matches("correct hors") hash(h))
+    print(secure.password_matches("x") hash("pas une empreinte"))
+    let k: String := secure.key
+    print(k.length)
+    let code: String := secure.encrypt("texte secret ✓") key(k)
+    print(code = secure.encrypt("texte secret ✓") key(k))
+    print(secure.decrypt(code) key(k))
+    print(secure.decrypt(code) key(secure.key))
+    print(secure.decrypt("abc") key(k))
+    print(secure.encrypt("x") key("pas une clé"))
+}
+// expect: 2cb4b1431b84ec15d35ed83bb927e27e8967d75f4bcd9cc4b25c8d879ae23e18
+// expect: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+// expect: db2c961fbceb3e501b97e595684f00d610137476a99623b82746a193e53f19b2
+// expect: S292YSDinJM=
+// expect: S292YT8-
+// expect: "Kova ✓"
+// expect: "Kova?>"
+// expect: none
+// expect: none
+// expect: ok("8ec8b4b028f1a2dfcafec0de6a26973c01a0064b6b9a1a05c98969bbec44a7df")
+// expect: err(NotFound("tests/data/nothing.txt"))
+// expect: true
+// expect: false
+// expect: true
+// expect: false
+// expect: false
+// expect: 44
+// expect: false
+// expect: "texte secret ✓"
+// expect: none
+// expect: none
+// code: 101
+// stderr: error: this is not a key made by `secure.key` (32 bytes in base64)
+// stderr: secure_crypto.kova:32:35

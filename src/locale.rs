@@ -65,6 +65,7 @@ pub const RUNTIME: &[&str] = &[
     "fault_workers",
     "fault_no_elements",
     "fault_negative_size",
+    "fault_bad_key",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.

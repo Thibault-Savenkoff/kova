@@ -11,6 +11,8 @@ extern crate alloc;
 
 #[path = "../src/bigint.rs"]
 mod bigint;
+#[path = "../src/crypto.rs"]
+mod crypto;
 #[path = "../src/csv.rs"]
 mod csv;
 #[path = "../src/http.rs"]
@@ -1322,6 +1324,87 @@ pub extern "C" fn kova_uuid() -> i64 {
     let mut b = [0; 16];
     sys::chance(&mut b);
     new_text(shared::uuid(b).as_bytes())
+}
+
+// ---- PLAN Part 4 "The library after Python, step 4" (src/crypto.rs) ----
+
+fn chance_of<const N: usize>() -> [u8; N] {
+    let mut b = [0; N];
+    sys::chance(&mut b);
+    b
+}
+
+/// A new String, or 0 for `None`.
+fn maybe(t: Option<String>) -> i64 {
+    t.map_or(0, |t| new_text(t.as_bytes()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_sha256(a: i64) -> i64 {
+    new_text(shared::hex(&crypto::sha256(bytes(a))).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_hmac_sha256(a: i64, key: i64) -> i64 {
+    new_text(shared::hex(&crypto::hmac_sha256(bytes(key), bytes(a))).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_to_base64(a: i64) -> i64 {
+    new_text(crypto::base64(bytes(a), false).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_to_base64url(a: i64) -> i64 {
+    new_text(crypto::base64(bytes(a), true).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_from_base64(a: i64) -> i64 {
+    maybe(crypto::from_base64(text_of(a), false).and_then(|b| String::from_utf8(b).ok()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_from_base64url(a: i64) -> i64 {
+    maybe(crypto::from_base64(text_of(a), true).and_then(|b| String::from_utf8(b).ok()))
+}
+
+/// The fingerprint of a file's bytes, or minus the `IoError` variant + 1 (like `kova_read_file`).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_file_sha256(p: i64) -> i64 {
+    match path(p) {
+        None => -5,
+        Some(p) if is_dir(p) => -3,
+        Some(p) => match sys::read_file(p) {
+            Ok(b) => new_text(shared::hex(&crypto::sha256(&b)).as_bytes()),
+            Err(f) => -f,
+        },
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_secure_key() -> i64 {
+    new_text(crypto::base64(&chance_of::<32>(), false).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_encrypt(text: i64, key: i64) -> i64 {
+    maybe(crypto::encrypt(text_of(text), text_of(key), &chance_of::<24>()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_decrypt(code: i64, key: i64) -> i64 {
+    maybe(crypto::decrypt(text_of(code), text_of(key)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_password_hash(p: i64) -> i64 {
+    new_text(crypto::password_hash(text_of(p), &chance_of::<16>()).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_password_matches(p: i64, hash: i64) -> i64 {
+    crypto::password_matches(text_of(p), text_of(hash)) as i64
 }
 
 // ---- What the generated code and Rust's own code ask the C library for, which a Kova

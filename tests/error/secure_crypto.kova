@@ -1,0 +1,12 @@
+import secure
+
+fn main {
+    print(5.sha256)
+    print("a".hmac_sha256(3))
+    let t: String := String.from_base64("YQ==")
+    print(secure.password_matches("a"))
+}
+// error: `Int` has no method `sha256`
+// error: different types: `String` expected, `Int` given
+// error: different types: `String` expected, `String?` given
+// error: unknown function `secure.password_matches`

@@ -6,6 +6,7 @@ extern crate alloc;
 mod ast;
 mod bigint;
 mod codegen;
+mod crypto;
 mod csv;
 mod debug;
 mod diag;

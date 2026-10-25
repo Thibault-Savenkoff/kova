@@ -896,6 +896,50 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             chance(&mut b);
                             heap.make(crate::shared::uuid(b))
                         }
+                        StrOp::Sha256 | StrOp::Hmac | StrOp::ToBase64 | StrOp::ToBase64Url | StrOp::PasswordHash | StrOp::SecureKey => {
+                            use crate::crypto;
+                            let t = match op {
+                                StrOp::Sha256 => crate::shared::hex(&crypto::sha256(s(0).as_bytes())),
+                                StrOp::Hmac => crate::shared::hex(&crypto::hmac_sha256(s(1).as_bytes(), s(0).as_bytes())),
+                                StrOp::ToBase64 => crypto::base64(s(0).as_bytes(), false),
+                                StrOp::ToBase64Url => crypto::base64(s(0).as_bytes(), true),
+                                StrOp::PasswordHash => {
+                                    let mut salt = [0; 16];
+                                    chance(&mut salt);
+                                    crypto::password_hash(s(0), &salt)
+                                }
+                                _ => {
+                                    let mut key = [0; 32];
+                                    chance(&mut key);
+                                    crypto::base64(&key, false)
+                                }
+                            };
+                            heap.make(t)
+                        }
+                        StrOp::PasswordMatches => crate::crypto::password_matches(s(0), s(1)) as i64,
+                        StrOp::FromBase64 | StrOp::FromBase64Url | StrOp::Encrypt | StrOp::Decrypt => {
+                            use crate::crypto;
+                            let t = match op {
+                                StrOp::FromBase64 | StrOp::FromBase64Url => crypto::from_base64(s(0), matches!(op, StrOp::FromBase64Url)).and_then(|b| String::from_utf8(b).ok()),
+                                StrOp::Encrypt => {
+                                    let mut nonce = [0; 24];
+                                    chance(&mut nonce);
+                                    crypto::encrypt(s(0), s(1), &nonce)
+                                }
+                                _ => crypto::decrypt(s(0), s(1)),
+                            };
+                            t.map_or(0, |t| heap.make(t))
+                        }
+                        StrOp::FileSha256 => match std::fs::read(s(0)) {
+                            _ if std::path::Path::new(s(0)).is_dir() => -3,
+                            Ok(b) => heap.make(crate::shared::hex(&crate::crypto::sha256(&b))),
+                            Err(e) => match e.kind() {
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => -1,
+                                std::io::ErrorKind::PermissionDenied => -2,
+                                std::io::ErrorKind::IsADirectory => -3,
+                                _ => -5,
+                            },
+                        },
                         StrOp::CsvRead => csv_read(heap, locals[a[0]], locals[a[1]]),
                         StrOp::CsvWrite => csv_write(heap, locals[a[0]], locals[a[1]], locals[a[2]]),
                         StrOp::Repeat => {

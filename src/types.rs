@@ -466,6 +466,12 @@ pub const LIBRARY: &[(&str, &str)] =
         ("secure.random", "fn secure.random(from..to) -> Int"),
         ("secure.token", "fn secure.token(bytes: Int) -> String"),
         ("secure.uuid", "fn secure.uuid -> String"),
+        ("secure.key", "fn secure.key -> String"),
+        ("secure.encrypt(…) key(…)", "fn secure.encrypt(text: String) key(key: String) -> String"),
+        ("secure.decrypt(…) key(…)", "fn secure.decrypt(code: String) key(key: String) -> String?"),
+        ("secure.password_hash", "fn secure.password_hash(password: String) -> String"),
+        ("secure.password_matches(…) hash(…)", "fn secure.password_matches(password: String) hash(hash: String) -> Bool"),
+        ("files.sha256", "fn files.sha256(path: String) -> String or files.IoError"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
@@ -689,7 +695,7 @@ pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter",
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
-    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups"];
+    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
 
@@ -745,6 +751,9 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "find_all" => (vec![s()], list(s())),
         "replace_all(…) with(…)" => (vec![s(), s()], s()),
         "groups" => (vec![s()], Type::Optional(Box::new(list(s())))),
+        // PLAN Part 4 "The library after Python, step 4".
+        "sha256" | "to_base64" | "to_base64url" => (vec![], s()),
+        "hmac_sha256" => (vec![s()], s()),
         _ => return None,
     })
 }
@@ -1222,6 +1231,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         ("files.is_folder", 1, Type::Bool),
         ("files.matching", 1, io(Type::List(Box::new(string())))),
         ("system.env", 1, Type::Optional(Box::new(string()))),
+        ("files.sha256", 1, io(string())),
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
     }
@@ -1232,6 +1242,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
     c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));
+    c.functions.insert("secure.key".into(), Signature::new(None, vec![], string()));
+    let two = || vec![(Mode::Read, string()), (Mode::Read, string())];
+    c.functions.insert("secure.encrypt(…) key(…)".into(), Signature::new(None, two(), string()));
+    c.functions.insert("secure.decrypt(…) key(…)".into(), Signature::new(None, two(), Type::Optional(Box::new(string()))));
+    c.functions.insert("secure.password_hash".into(), Signature::new(None, vec![(Mode::Read, string())], string()));
+    c.functions.insert("secure.password_matches(…) hash(…)".into(), Signature::new(None, two(), Type::Bool));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
@@ -3391,6 +3407,11 @@ impl Checker<'_> {
             self.csv_form(&elem, &format!("{}.from_csv", list.text()), name.span);
             self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
             return Type::Result(Box::new(list), Box::new(csv_error()));
+        }
+        // `String.from_base64(code)` (PLAN Part 4 "The library after Python, step 4").
+        if let ("String", "from_base64" | "from_base64url", []) = (ty.text.as_str(), name.text.as_str(), types) {
+            self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+            return Type::Optional(Box::new(Type::String));
         }
         // `Map<String, Book>.from_json(text)`: a JSON object whose keys are not known before.
         if let ("Map", "from_json", [k, v]) = (ty.text.as_str(), name.text.as_str(), types) {

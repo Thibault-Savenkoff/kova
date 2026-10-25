@@ -478,6 +478,27 @@ pub enum StrOp {
     SecureToken,
     /// `secure.uuid`: a new String.
     Uuid,
+    /// PLAN Part 4 "The library after Python, step 4" (src/crypto.rs). `s.sha256`,
+    /// `s.hmac_sha256(key)`, `s.to_base64`, `s.to_base64url`: a new String.
+    Sha256,
+    Hmac,
+    ToBase64,
+    ToBase64Url,
+    /// `String.from_base64(code)`, `String.from_base64url(code)`: a new String, or 0.
+    FromBase64,
+    FromBase64Url,
+    /// `files.sha256(path)`: a new String, or minus the `IoError` variant + 1.
+    FileSha256,
+    /// `secure.key`: 32 bytes of chance in base64, a new String.
+    SecureKey,
+    /// `secure.encrypt(text) key(k)`: a new String, or 0 if `k` is no key.
+    Encrypt,
+    /// `secure.decrypt(code) key(k)`: a new String, or 0.
+    Decrypt,
+    /// `secure.password_hash(password)`: a new String.
+    PasswordHash,
+    /// `secure.password_matches(password) hash(h)`: 1 or 0.
+    PasswordMatches,
 }
 
 /// What src/csv.rs reads or writes for a List of `elem`: `*` for rows (`List<String>`), else
@@ -509,6 +530,10 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "matches" => StrOp::Matches,
         "find_all" => StrOp::FindAll,
         "replace_all(…) with(…)" => StrOp::ReplaceAll,
+        "sha256" => StrOp::Sha256,
+        "hmac_sha256" => StrOp::Hmac,
+        "to_base64" => StrOp::ToBase64,
+        "to_base64url" => StrOp::ToBase64Url,
         _ => return None,
     })
 }
@@ -642,6 +667,8 @@ pub enum Fault {
     NoElements,
     /// `secure.token(-1)`.
     NegativeSize,
+    /// `secure.encrypt(text) key("abc")`: not a key made by `secure.key`.
+    BadKey,
 }
 
 impl Fault {
@@ -663,6 +690,7 @@ impl Fault {
             Fault::BadWorkers => "fault_workers",
             Fault::NoElements => "fault_no_elements",
             Fault::NegativeSize => "fault_negative_size",
+            Fault::BadKey => "fault_bad_key",
         }
     }
 }
@@ -4513,6 +4541,7 @@ impl<'a> Translator<'a> {
                     "files.size" => Some(StrOp::FileSize),
                     "files.modified" => Some(StrOp::Modified),
                     "files.matching" => Some(StrOp::Matching),
+                    "files.sha256" => Some(StrOp::FileSha256),
                     _ => None,
                 };
                 if let Some(op) = io {
@@ -4596,11 +4625,39 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if name.text == "secure.uuid" {
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_hash" | "secure.password_matches(…) hash(…)") = name.text.as_str() {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
-                    self.emit(Inst::Str(t, StrOp::Uuid, vec![]));
+                    let op = match n {
+                        "secure.uuid" => StrOp::Uuid,
+                        "secure.key" => StrOp::SecureKey,
+                        "secure.password_hash" => StrOp::PasswordHash,
+                        _ => StrOp::PasswordMatches,
+                    };
+                    self.emit(Inst::Str(t, op, vals));
+                    if n != "secure.password_matches(…) hash(…)" {
+                        self.track(&[t], &Type::String);
+                    }
+                    return vec![t];
+                }
+                if name.text == "secure.encrypt(…) key(…)" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let (t, zero, bad) = (self.int_local(), self.constant(0), self.int_local());
+                    self.emit(Inst::Str(t, StrOp::Encrypt, vals));
+                    self.emit(Inst::Binary(bad, Op::Eq, t, zero, NOWHERE));
+                    let loc = self.loc(args[1].span);
+                    self.emit(Inst::FaultIf(bad, Fault::BadKey, loc));
                     self.track(&[t], &Type::String);
                     return vec![t];
+                }
+                if name.text == "secure.decrypt(…) key(…)" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let (t, zero, present) = (self.int_local(), self.constant(0), self.int_local());
+                    self.emit(Inst::Str(t, StrOp::Decrypt, vals));
+                    self.emit(Inst::Binary(present, Op::Ne, t, zero, NOWHERE));
+                    let v = vec![present, t];
+                    self.track(&v, &self.ty(e));
+                    return v;
                 }
                 // `random(1..=6)`: the end made exclusive, then the range must hold a number.
                 if name.text == "random" || name.text == "secure.random" {
@@ -4731,6 +4788,16 @@ impl<'a> Translator<'a> {
                 let (body, seconds, follow) = (self.text(""), self.float_constant(DEFAULT_SECONDS), self.constant(1));
                 let v = vec![method, url[0], headers, body, seconds, follow];
                 self.track(&v, &crate::types::request());
+                v
+            }
+            ExprKind::Static { ty, name, args, .. } if ty.text == "String" && name.text.starts_with("from_base64") => {
+                let (code, t) = (self.expr1(&args[0]), self.int_local());
+                let op = if name.text == "from_base64" { StrOp::FromBase64 } else { StrOp::FromBase64Url };
+                self.emit(Inst::Str(t, op, vec![code]));
+                let (zero, present) = (self.constant(0), self.int_local());
+                self.emit(Inst::Binary(present, Op::Ne, t, zero, NOWHERE));
+                let v = vec![present, t];
+                self.track(&v, &self.ty(e));
                 v
             }
             ExprKind::Static { name, args, .. } if name.text == "from_csv" && matches!(self.ty(e), Type::Result(..)) => {
