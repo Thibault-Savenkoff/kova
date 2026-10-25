@@ -1177,12 +1177,24 @@ fn https() {
     }
     let source = "tests/web/https.kova";
     let expected = Expected { output: expectations(&std::fs::read_to_string(source).unwrap(), "expect"), code: 0, stderr: vec![] };
-    let mut failures = vec![];
-    check_output("https", "run", &kova(LANG).arg("run").arg(source).output().unwrap(), &expected, &mut failures);
     let exe = std::env::temp_dir().join(format!("kova-https-{}{EXE}", std::process::id()));
     let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
-    check_output("https", "build", &program(&exe, LANG).output().unwrap(), &expected, &mut failures);
+    // badssl.com sometimes refuses or drops the runners' connections: 3 tries each.
+    let mut failures = vec![];
+    for mode in ["run", "build"] {
+        let mut tries = vec![];
+        for _ in 0..3 {
+            let out = if mode == "run" { kova(LANG).arg("run").arg(source).output() } else { program(&exe, LANG).output() };
+            tries.clear();
+            check_output("https", mode, &out.unwrap(), &expected, &mut tries);
+            if tries.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        failures.extend(tries);
+    }
     let _ = std::fs::remove_file(&exe);
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
