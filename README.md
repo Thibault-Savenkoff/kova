@@ -3,7 +3,7 @@
 Kova is a compiled programming language with strict types and memory managed without a garbage collector.
 Run a program at once with `kova run`, or build a small native executable with `kova build`.
 
-Documentation: [the guide](docs/guide.md), also as a website: `python3 docs/build_site.py`, then open `docs/site/index.html` (or publish `docs/site/` on any static host).
+Documentation: [the guide](docs/guide.md), also as a website made with [mdBook](https://rust-lang.github.io/mdBook/): `cargo install mdbook --locked`, then `python3 docs/build_site.py`, and open `docs/book/book/index.html` (or publish that folder on any static host).
 
 ```kova
 struct Dog {
