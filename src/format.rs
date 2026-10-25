@@ -176,8 +176,10 @@ fn space(a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in
         Kind::Sym("-") => !value_before(before),
         _ => false,
     };
-    // `r.header("Content-Type")`: a method there, not the keyword.
-    let method = a.kind == Kind::Keyword("header") && before.is_some_and(|t| t.kind == Kind::Sym("."));
+    // `r.header("Content-Type")`, `files.move(a)`: after a dot a reserved word is a name; and
+    // `to(b)` after a `)` is a part of a keyword message (`files.copy(a) to(b)`).
+    let method = matches!(a.kind, Kind::Keyword(_)) && before.is_some_and(|t| t.kind == Kind::Sym("."))
+        || a.kind == Kind::Keyword("to") && b.kind == Kind::Sym("(") && before.is_some_and(|t| t.kind == Kind::Sym(")"));
     let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
@@ -203,6 +205,13 @@ mod tests {
         // `fn main()` is an error for the compiler, not for the layout; line breaks never move.
         assert_eq!(format(messy).as_deref(), Some(tidy));
         assert_eq!(format(tidy).as_deref(), Some(tidy));
+    }
+
+    #[test]
+    fn reserved_words_as_names() {
+        let src = "fn main {\n    f(files.copy (a) to (b))\n    files.move (a) to(b)\n    from i := 1 to 3 {\n    }\n    f(move a)\n}\n";
+        let tidy = "fn main {\n    f(files.copy(a) to(b))\n    files.move(a) to(b)\n    from i := 1 to 3 {\n    }\n    f(move a)\n}\n";
+        assert_eq!(format(src).as_deref(), Some(tidy));
     }
 
     #[test]

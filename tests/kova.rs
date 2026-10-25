@@ -1219,4 +1219,6 @@ fn run_programs() {
         [\"fail\"]\né ok\nerrors: true, code 101\ntrue\n[\"three\"]\né ok\nerrors: false, code 3\nNotFound(\"kova-no-such-program\")\n";
     assert_eq!(text(&run.stdout), expected, "run: {}", text(&run.stderr));
     assert_eq!(text(&built.stdout), expected, "build: {}", text(&built.stderr));
+    // KOVA_LEAKS: code 102 if a String was never freed.
+    assert!(run.status.success() && built.status.success(), "codes {:?} {:?}", run.status, built.status);
 }

@@ -443,7 +443,9 @@ pub fn kind(path: &str) -> Result<bool, i64> {
 }
 
 /// What `files.size` and `files.modified` say, of the link itself if it is one (`follow`
-/// unused: ponytail, links are rare on Windows; open the file to follow them).
+/// unused: ponytail, links are rare on Windows; open the file to follow them). A link is what
+/// Rust's `is_symlink` calls one (`kova run`): a reparse point whose tag is a name surrogate
+/// (symbolic link, junction), not a OneDrive folder.
 pub fn info(path: &str, _follow: bool) -> Result<crate::Info, i64> {
     // WIN32_FILE_ATTRIBUTE_DATA: attributes, 3 times (creation, access, writing), size high, low.
     let mut d = [0u32; 9];
@@ -453,7 +455,13 @@ pub fn info(path: &str, _follow: bool) -> Result<crate::Info, i64> {
     let written = (d[6] as u64) << 32 | d[5] as u64; // a FILETIME: low half first
     let modified = (written / 10_000_000) as i64 - 11_644_473_600;
     let size = ((d[7] as u64) << 32 | d[8] as u64) as i64;
-    Ok(crate::Info { folder: d[0] & 0x10 != 0, link: d[0] & 0x400 != 0, size, modified })
+    let link = d[0] & 0x400 != 0 && {
+        // WIN32_FIND_DATAW: the tag after the attributes, the 3 times and the size.
+        let mut found = [0u32; 148];
+        let h = unsafe { FindFirstFileW(wide(path).as_ptr(), found.as_mut_ptr()) };
+        h != INVALID && unsafe { FindClose(h) } != 0 && found[9] & 0x2000_0000 != 0
+    };
+    Ok(crate::Info { folder: d[0] & 0x10 != 0, link, size, modified })
 }
 
 /// The local time at `utc` (seconds since 1970), by the rules of that day (summer time or not).

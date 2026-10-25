@@ -28,15 +28,15 @@ fn main {
     let dir: String := folder
     show(files.make_dir("{dir}/src/deep"), dir)
     show(files.write("{dir}/a.txt", "hello"), dir)
-    show(files.copy ("{dir}/a.txt") to ("{dir}/b.txt"), dir)
+    show(files.copy("{dir}/a.txt") to("{dir}/b.txt"), dir)
     print(files.read("{dir}/b.txt"))
-    show(files.copy ("{dir}/missing.txt") to ("{dir}/c.txt"), dir)
-    show(files.copy ("{dir}/a.txt") to ("{dir}/nowhere/c.txt"), dir)
-    show(files.copy ("{dir}/a.txt") to ("{dir}/src"), dir)
-    show(files.copy ("{dir}/src") to ("{dir}/c.txt"), dir)
-    show(files.move ("{dir}/b.txt") to ("{dir}/src/c.txt"), dir)
+    show(files.copy("{dir}/missing.txt") to("{dir}/c.txt"), dir)
+    show(files.copy("{dir}/a.txt") to("{dir}/nowhere/c.txt"), dir)
+    show(files.copy("{dir}/a.txt") to("{dir}/src"), dir)
+    show(files.copy("{dir}/src") to("{dir}/c.txt"), dir)
+    show(files.move("{dir}/b.txt") to("{dir}/src/c.txt"), dir)
     print(files.exists("{dir}/b.txt"))
-    show(files.move ("{dir}/b.txt") to ("{dir}/d.txt"), dir)
+    show(files.move("{dir}/b.txt") to("{dir}/d.txt"), dir)
     print(files.size("{dir}/src/c.txt"))
     match files.size(dir) {
         ok(n) => print(n)
@@ -46,7 +46,10 @@ fn main {
     print(files.is_folder("{dir}/a.txt"))
     print(files.is_folder("{dir}/missing"))
     match files.modified("{dir}/a.txt") {
-        ok(t) => print(t.seconds_until(DateTime.now) < 600)
+        ok(t) => {
+            let s: Int := t.seconds_until(DateTime.now)
+            print(s >= 0 && s < 600)
+        }
         err(e) => print(e)
     }
     show(files.write("{dir}/src/deep/d.kova", ""), dir)

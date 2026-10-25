@@ -291,7 +291,7 @@ fn previous_part(tokens: &[Token], k: usize) -> Option<(usize, u32)> {
         }
         false
     })?;
-    (open >= 1 && tokens[open - 1].kind == Kind::Ident).then_some((open - 1, args))
+    (open >= 1 && matches!(tokens[open - 1].kind, Kind::Ident | Kind::Keyword(_))).then_some((open - 1, args))
 }
 
 fn seen_at<'a>(info: &'a types::Info, src: &str, cursor: usize) -> Option<&'a types::Seen> {
@@ -1166,7 +1166,8 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
             Kind::Sym(")") => depth += 1,
             Kind::Sym("(") if depth > 0 => depth -= 1,
             Kind::Sym("(") => {
-                name = before.get(k.wrapping_sub(1)).filter(|p| p.kind == Kind::Ident).map(|p| (k - 1, &src[p.span.start..p.span.end]));
+                // A reserved word too: `files.copy(`, `to(` (parts and names after a dot).
+                name = before.get(k.wrapping_sub(1)).filter(|p| matches!(p.kind, Kind::Ident | Kind::Keyword(_))).map(|p| (k - 1, &src[p.span.start..p.span.end]));
                 break;
             }
             Kind::Sym(",") if depth == 0 => commas += 1,
@@ -1186,12 +1187,14 @@ fn signature(src: &str, cursor: usize) -> Option<SignatureHelp> {
     // `web.get(`: the name of Kova's module, whatever alias the file gives it.
     let alias = k.checked_sub(2).filter(|&j| before[j + 1].kind == Kind::Sym(".")).map(|j| &src[before[j].span.start..before[j].span.end]);
     let module = alias.and_then(|a| tree(src).imports.into_iter().find(|i| i.alias.text == a)).map(|i| i.module.text);
-    let in_module = module.map(|m| format!("{m}.{name}"));
+    // `files.copy(a) to(`: the message is named by its first part.
+    let first = parts[0];
+    let in_module = module.map(|m| format!("{m}.{first}"));
     let (label, params) = if types::BUILTINS.contains(&name) {
         let label = format!("fn {name}(value)");
         let start = label.find('(').unwrap() as u32 + 1;
         (label, vec![[start, start + 5]])
-    } else if let Some((_, text)) = types::LIBRARY.iter().find(|(n, _)| n.split(' ').next().unwrap_or(n).trim_end_matches("(…)") == in_module.as_deref().unwrap_or(name)) {
+    } else if let Some((_, text)) = types::LIBRARY.iter().find(|(n, _)| n.split(' ').next().unwrap_or(n).trim_end_matches("(…)") == in_module.as_deref().unwrap_or(first)) {
         // `fn read_file(path: String) -> …`: the parameter is between the parentheses.
         let (open, close) = (text.find('(').map_or(0, |i| i + 1), text.find(')').unwrap_or(0));
         (text.to_string(), if close > open { vec![[open as u32, close as u32]] } else { vec![] })
@@ -1438,6 +1441,8 @@ mod tests {
         }
         assert_eq!(web.iter().filter(|n| *n == "serve").count(), 1, "{web:?}");
         assert!(at("/none/main.kova", "import files\nfn main {\n  files.").contains(&"read".to_string()));
+        let system = at("/none/main.kova", "import system\nfn main {\n  system.");
+        assert!(system.contains(&"run(…) args(…)".to_string()) && system.contains(&"env".to_string()), "{system:?}");
         let src = "import web\nfn main {\n  web.serve(80) { q: web.Request =>\n    print(q.)\n    web.Answer.status(404)\n  }\n}";
         let asked = labels(members("/none/main.kova", src, src.find("q.)").unwrap() + 2));
         for name in ["path", "query", "header", "body"] {
@@ -1579,6 +1584,11 @@ mod tests {
         let src = "struct Grid {\n  n: Int\n  fn put(var self, value: Int) at(index: Int) {}\n}\nfn main {\n  var g: Grid := Grid { n := 1 }\n  g.put(1) at(";
         let help = signature(src, src.len()).unwrap();
         assert_eq!(help.signatures[0].label, "fn put(var self, value: Int) at(index: Int)");
+        assert_eq!(help.active_parameter, Some(1));
+        // A part named by a reserved word.
+        let copy = "import files\nfn main {\n  print(files.copy(\"a\") to(";
+        let help = signature(copy, copy.len()).unwrap();
+        assert_eq!(help.signatures[0].label, "fn files.copy(path: String) to(destination: String) -> Nothing or files.IoError");
         assert_eq!(help.active_parameter, Some(1));
         // While the first part is typed, the bubble already shows the whole message.
         let help = signature(src, src.find("put(1").unwrap() + 4).unwrap();
