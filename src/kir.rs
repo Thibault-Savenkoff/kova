@@ -464,6 +464,22 @@ pub enum StrOp {
     ReplaceAll,
     /// `s.groups(pattern)`: a new `List<String>`, or 0 if nothing matches.
     Groups,
+    /// `List<Book>.from_csv(text)` (src/csv.rs): (text, the fields as `csv_spec` writes them) → a
+    /// new List, or a `csv::Problem::code` below 0.
+    CsvRead,
+    /// `books.to_csv`: (the List, `csv_spec`, the separator) → a new String.
+    CsvWrite,
+}
+
+/// What src/csv.rs reads or writes for a List of `elem`: `*` for rows (`List<String>`), else
+/// each field's kind and name (`s:title,?i:pages`).
+fn csv_spec(elem: &Type) -> String {
+    let Type::Struct(d) = elem else { return "*".into() };
+    let fields: Vec<String> = d.fields().iter().map(|(name, t)| {
+        let kind = crate::types::csv_kind(t).expect("checked by the type checker");
+        format!("{}{}:{name}", if kind.len() > 1 { "?" } else { "" }, &kind[kind.len() - 1..])
+    }).collect();
+    fields.join(",")
 }
 
 /// A String method with arguments or a new List (`types::string_method`): its operation.
@@ -1569,6 +1585,64 @@ impl<'a> Translator<'a> {
         v
     }
 
+    /// `List<Book>.from_csv(text)`: `ok(list)`, or `err(CsvError.X(…))` decoded from
+    /// `csv::Problem::code`.
+    fn from_csv(&mut self, text: Local, ty: &Type) -> Slots {
+        let Type::Result(value, error) = ty else { unreachable!("a result checked by the type checker") };
+        let (Type::List(elem), Type::Enum(d)) = (&**value, &**error) else { unreachable!("a List, and CsvError") };
+        let (elem, d) = ((**elem).clone(), d.clone());
+        let v = self.new_slots(ty);
+        v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+        let (spec, r, zero) = (self.text(&csv_spec(&elem)), self.int_local(), self.constant(0));
+        self.emit(Inst::Str(r, StrOp::CsvRead, vec![text, spec]));
+        self.emit(Inst::Free(spec));
+        let (good, done) = (self.int_local(), self.new_block());
+        self.emit(Inst::Binary(good, Op::Gt, r, zero, NOWHERE));
+        self.or_else(good, done, |t| {
+            // -(1 + variant + 4 × (field + 4096 × line))
+            let c = t.int_local();
+            t.emit(Inst::Binary(c, Op::Minus, zero, r, NOWHERE));
+            let c = t.with(Op::Minus, c, 1);
+            let variant = t.with(Op::Rem, c, 4);
+            let rest = t.with(Op::Div, c, 4);
+            let (field, line) = (t.with(Op::Rem, rest, 4096), t.with(Op::Div, rest, 4096));
+            t.emit(Inst::Copy(v[1], variant));
+            let at = |k: usize, j: usize| v[1 + variant_slice(&d, k).0 + j];
+            // `NotCsv(line)`, `Missing(column)`, `WrongKind(line, column)`.
+            let (not_csv, missing, wrong, after) = (t.new_block(), t.new_block(), t.new_block(), t.new_block());
+            let (is_not, is_missing) = (t.with(Op::Eq, variant, 0), t.with(Op::Eq, variant, 1));
+            let other = t.new_block();
+            t.go(End::Branch(is_not, not_csv, other), not_csv);
+            t.emit(Inst::Copy(at(0, 0), line));
+            t.go(End::Jump(after), other);
+            let column = t.int_local();
+            t.emit(Inst::Const(column, 0));
+            // Rows (`List<List<String>>`) only fail with `NotCsv`.
+            let names: Vec<String> = match &elem {
+                Type::Struct(s) => s.fields().iter().map(|(n, _)| n.clone()).collect(),
+                _ => vec![],
+            };
+            for (k, name) in names.into_iter().enumerate() {
+                let (yes, no) = (t.new_block(), t.new_block());
+                let is = t.with(Op::Eq, field, k as i64);
+                t.go(End::Branch(is, yes, no), yes);
+                t.emit(Inst::Text(column, name));
+                t.go(End::Jump(no), no);
+            }
+            t.go(End::Branch(is_missing, missing, wrong), missing);
+            t.emit(Inst::Copy(at(1, 0), column));
+            t.go(End::Jump(after), wrong);
+            t.emit(Inst::Copy(at(2, 0), line));
+            t.emit(Inst::Copy(at(2, 1), column));
+            t.go(End::Jump(after), after);
+        });
+        self.emit(Inst::Const(v[0], 1));
+        self.emit(Inst::Copy(v[v.len() - 1], r));
+        self.go(End::Jump(done), done);
+        self.track(&v, ty);
+        v
+    }
+
     /// Runs `body` with the real type and the value inside the box of an `any` (borrowed from it);
     /// nothing for 0 (a box given away).
     fn on_boxed(&mut self, b: Local, interface: &str, mut body: impl FnMut(&mut Self, &Type, Slots)) {
@@ -1704,10 +1778,13 @@ impl<'a> Translator<'a> {
             } else if *ty == crate::types::weekday() {
                 // Built in, for people: `Friday`.
                 pieces.push(Piece::Text(name.clone()));
-            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error() || *ty == crate::types::json_error() || *ty == crate::types::run_error(), &fields[..]) {
-                // Built in, for people: `NotFound("notes.txt")`.
-                pieces.push(Piece::Text(format!("{name}(")));
-                self.value_pieces(&v[at..at + 1], t, &mut pieces);
+            } else if [crate::types::io_error(), crate::types::web_error(), crate::types::json_error(), crate::types::run_error(), crate::types::csv_error()].contains(ty) {
+                // Built in, for people: `NotFound("notes.txt")`, `WrongKind(2, "pages")`.
+                for (j, (_, t)) in fields.iter().enumerate() {
+                    pieces.push(Piece::Text(if j == 0 { format!("{name}(") } else { ", ".into() }));
+                    self.value_pieces(&v[at..at + 1], t, &mut pieces);
+                    at += 1;
+                }
                 pieces.push(Piece::Text(")".into()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", ty.text())));
@@ -4573,6 +4650,11 @@ impl<'a> Translator<'a> {
                 self.track(&v, &crate::types::request());
                 v
             }
+            ExprKind::Static { name, args, .. } if name.text == "from_csv" && matches!(self.ty(e), Type::Result(..)) => {
+                let text = self.expr1(&args[0]);
+                let ty = self.ty(e);
+                self.from_csv(text, &ty)
+            }
             ExprKind::Static { name, args, .. } if name.text == "from_json" && matches!(self.ty(e), Type::Result(..)) => {
                 let text = self.expr1(&args[0]);
                 let ty = self.ty(e);
@@ -4900,6 +4982,20 @@ impl<'a> Translator<'a> {
                 }
                 self.track(&v, &ty);
                 v
+            }
+            // `books.to_csv`, `books.to_csv separator(';')`.
+            ExprKind::Method { receiver, name, args } if name.text.starts_with("to_csv") && matches!(self.ty(receiver), Type::List(_)) => {
+                let Type::List(elem) = self.ty(receiver) else { unreachable!() };
+                let l = self.expr1(receiver);
+                let sep = match args.first() {
+                    Some(a) => self.expr1(a),
+                    None => self.constant(',' as i64),
+                };
+                let (spec, text) = (self.text(&csv_spec(&elem)), self.int_local());
+                self.emit(Inst::Str(text, StrOp::CsvWrite, vec![l, spec, sep]));
+                self.emit(Inst::Free(spec));
+                self.track(&[text], &Type::String);
+                vec![text]
             }
             // `book.to_json` (PLAN Part 4 "JSON").
             ExprKind::Method { receiver, name, args } if name.text == "to_json" && args.is_empty() && matches!(self.ty(receiver), Type::Struct(_) | Type::List(_) | Type::Map(..)) => {

@@ -176,7 +176,7 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 
 /// The C runtime functions called by the generated code.
 /// How many `StrOp`s the runtime has (`str_op` numbers them).
-const STR_OPS: usize = 72;
+const STR_OPS: usize = 74;
 
 struct Runtime {
     print: FuncId,
@@ -298,6 +298,8 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::FindAll => (69, "kova_str_find_all", 2),
         StrOp::ReplaceAll => (70, "kova_str_replace_all", 3),
         StrOp::Groups => (71, "kova_str_groups", 2),
+        StrOp::CsvRead => (72, "kova_csv_read", 2),
+        StrOp::CsvWrite => (73, "kova_csv_write", 3),
     }
 }
 
@@ -349,7 +351,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }

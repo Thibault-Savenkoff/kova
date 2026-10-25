@@ -102,6 +102,53 @@ impl Heap {
 }
 
 /// `random(from..to)`: the state is started at the first call.
+/// `List<Book>.from_csv(text)` (src/csv.rs): a new List, or the problem's code.
+fn csv_read(heap: &mut Heap, text: i64, spec: i64) -> i64 {
+    let (text, spec) = (heap.get(text).to_string(), heap.get(spec).to_string());
+    let strings = |heap: &mut Heap, parts: Vec<String>| {
+        let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
+        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+    };
+    if spec == "*" {
+        return match crate::csv::rows(&text) {
+            Ok((rows, _)) => {
+                let rows: Vec<i64> = rows.into_iter().map(|(_, r)| strings(heap, r)).collect();
+                heap.add(Object::List { width: 1, length: rows.len(), slots: rows, index: 0 })
+            }
+            Err(p) => p.code(),
+        };
+    }
+    match crate::csv::records(&text, &spec) {
+        Ok(cells) => {
+            let width: usize = crate::csv::fields(&spec).iter().map(|f| 1 + f.optional as usize).sum();
+            let slots: Vec<i64> = cells.into_iter().map(|c| match c {
+                crate::csv::Slot::Int(n) => n,
+                crate::csv::Slot::Text(t) => heap.make(t),
+            }).collect();
+            heap.add(Object::List { width, length: slots.len() / width.max(1), slots, index: 0 })
+        }
+        Err(p) => p.code(),
+    }
+}
+
+/// `books.to_csv separator(c)`: a new String.
+fn csv_write(heap: &mut Heap, l: i64, spec: i64, sep: i64) -> i64 {
+    let spec = heap.get(spec).to_string();
+    let sep = char::from_u32(sep as u32).unwrap_or(',');
+    let (width, length, slots) = heap.list(l);
+    let slots = slots[..width * *length].to_vec();
+    let text = if spec == "*" {
+        let rows: Vec<Vec<String>> = slots.iter().map(|&r| {
+            let cells = heap.list(r).2.clone();
+            cells.iter().map(|&c| heap.get(c).to_string()).collect()
+        }).collect();
+        crate::csv::write_rows(&rows, sep)
+    } else {
+        crate::csv::write_records(&spec, &slots, &|s| heap.get(s).to_string(), sep)
+    };
+    heap.make(text)
+}
+
 /// A pattern of `s.matches(…)`, `s.find_all(…)`…: the checker made sure it is one.
 fn pattern(p: &str) -> crate::regex::Regex {
     crate::regex::compile(p).unwrap_or_else(|_| unreachable!("pattern checked by the type checker"))
@@ -814,6 +861,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 None => 0,
                             }
                         }
+                        StrOp::CsvRead => csv_read(heap, locals[a[0]], locals[a[1]]),
+                        StrOp::CsvWrite => csv_write(heap, locals[a[0]], locals[a[1]], locals[a[2]]),
                         StrOp::Repeat => {
                             let t = s(0).repeat(locals[a[1]].max(0) as usize);
                             heap.make(t)

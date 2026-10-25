@@ -797,6 +797,8 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         fold,
         plain("sorted", format!("-> List<{elem}>  ·  sorted {{ a: {elem}, b: {elem} => a < b }}")),
         plain("to_json", "-> String".into()),
+        plain("to_csv", "-> String".into()),
+        plain("to_csv separator(…)", "(c: Char) -> String".into()),
     ]
 }
 
@@ -1392,7 +1394,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "to_json", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

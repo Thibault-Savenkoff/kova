@@ -11,6 +11,8 @@ extern crate alloc;
 
 #[path = "../src/bigint.rs"]
 mod bigint;
+#[path = "../src/csv.rs"]
+mod csv;
 #[path = "../src/http.rs"]
 mod http;
 #[path = "../src/json.rs"]
@@ -564,6 +566,43 @@ pub extern "C" fn kova_str_repeat(a: i64, n: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_wrap(a: i64, width: i64) -> i64 {
     new_text(shared::wrapped(text_of(a), width).as_bytes())
+}
+
+/// `List<Book>.from_csv(text)` (src/csv.rs): a new List, or the problem's code.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_csv_read(text: i64, spec: i64) -> i64 {
+    if text_of(spec) == "*" {
+        return match csv::rows(text_of(text)) {
+            Ok((rows, _)) => numbers(rows.iter().map(|(_, r)| texts(r.iter().map(String::as_str)))),
+            Err(p) => p.code(),
+        };
+    }
+    match csv::records(text_of(text), text_of(spec)) {
+        Ok(cells) => {
+            let width: usize = csv::fields(text_of(spec)).iter().map(|f| 1 + f.optional as usize).sum();
+            let slots: Vec<i64> = cells.into_iter().map(|c| match c {
+                csv::Slot::Int(n) => n,
+                csv::Slot::Text(t) => new_text(t.as_bytes()),
+            }).collect();
+            new_list(List { length: slots.len() / width.max(1), width, slots, index: 0 })
+        }
+        Err(p) => p.code(),
+    }
+}
+
+/// `books.to_csv separator(c)`: a new String.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_csv_write(l: i64, spec: i64, sep: i64) -> i64 {
+    let sep = char::from_u32(sep as u32).unwrap_or(',');
+    let l = list(l);
+    let slots = &l.slots[..l.width * l.length];
+    let text = if text_of(spec) == "*" {
+        let rows: Vec<Vec<String>> = slots.iter().map(|&r| list(r).slots.iter().map(|&c| String::from(text_of(c))).collect()).collect();
+        csv::write_rows(&rows, sep)
+    } else {
+        csv::write_records(text_of(spec), slots, &|s| String::from(text_of(s)), sep)
+    };
+    new_text(text.as_bytes())
 }
 
 /// A pattern of `s.matches(…)`, `s.find_all(…)`…: src/types.rs made sure it is one.

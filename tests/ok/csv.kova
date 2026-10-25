@@ -1,0 +1,73 @@
+// Tables (PLAN Part 4 "The library after Python", step 2).
+
+struct Book {
+    title: String
+    pages: Int
+    price: Float?
+    read: Bool
+    bought: Date
+}
+
+fn show(r: List<Book> or CsvError) {
+    match r {
+        ok(books) => print(books.length)
+        err(e) => print(e)
+    }
+}
+
+fn tables -> Nothing or CsvError {
+    let text: String := """
+        title;pages;price;read;bought;note
+        Dune; 412 ;9,5;true;2026-01-02;bien
+        "Le ""Petit"" Prince";96;;false;2025-12-24
+        """
+    let books: List<Book> := List<Book>.from_csv(text)?
+    for b in books {
+        let price: String := match b.price {
+            none => "none"
+            p => "{p}"
+        }
+        print("{b.title} {b.pages} {price} {b.read} {b.bought}")
+    }
+    let out: String := books.to_csv
+    print(out)
+    let again: List<Book> := List<Book>.from_csv(out)?
+    print(again.to_csv separator(';') = out.replace(",", ";"))
+    let numbers: String := "title,pages,price,read,bought\nx,1,2.0,true,2026-10-25\ny,2,0.1,false,2026-10-25\nz,3,1e21,false,2026-10-25\n"
+    print(List<Book>.from_csv(numbers)?.to_csv = numbers)
+    let rows: List<List<String>> := List<List<String>>.from_csv("a,b\n\"x,y\",\"deux\nlignes\"\n")?
+    print(rows)
+    print(rows.to_csv)
+    show(List<Book>.from_csv("title,pages\nx,1"))
+    show(List<Book>.from_csv("title,pages,price,read,bought\nx,1,,maybe,2026-10-25"))
+    show(List<Book>.from_csv("title,pages,price,read,bought\n\"x,1"))
+    show(List<Book>.from_csv(""))
+    return ok
+}
+
+fn main {
+    match tables {
+        ok => print("ok")
+        err(e) => print(e)
+    }
+}
+
+// expect: Dune 412 9.5 true 2026-01-02
+// expect: Le "Petit" Prince 96 none false 2025-12-24
+// expect: title,pages,price,read,bought
+// expect: Dune,412,9.5,true,2026-01-02
+// expect: "Le ""Petit"" Prince",96,,false,2025-12-24
+// expect:
+// expect: true
+// expect: true
+// expect: [["a", "b"], ["x,y", "deux
+// expect: lignes"]]
+// expect: a,b
+// expect: "x,y","deux
+// expect: lignes"
+// expect:
+// expect: Missing("price")
+// expect: WrongKind(2, "read")
+// expect: NotCsv(2)
+// expect: Missing("title")
+// expect: ok

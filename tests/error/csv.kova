@@ -1,0 +1,16 @@
+struct Shelf {
+    books: List<String>
+}
+
+fn main {
+    let s: List<Shelf> or CsvError := List<Shelf>.from_csv("books")
+    let n: List<Int> or CsvError := List<Int>.from_csv("1")
+    let rows: List<List<String>> := [["a"]]
+    let sep: Char := ';'
+    print(rows.to_csv separator(sep))
+    print(rows.to_csv separator('"'))
+}
+// error: `List<Shelf>.from_csv` cannot hold `books`: a CSV cell holds no `List<String>`
+// error: `List<Int>.from_csv`: a table is a List of rows, not of `Int`
+// error: the separator is written directly, a `Char` other than `'"'` and a line end: `separator(';')`
+// error: the separator is written directly, a `Char` other than `'"'` and a line end: `separator(';')`

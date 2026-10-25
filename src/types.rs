@@ -525,6 +525,29 @@ pub fn json_error() -> Type {
     Type::Enum(EnumDef::with_variants("JsonError".into(), variants))
 }
 
+/// The letter of a type that fits in a CSV cell (src/csv.rs `Field`), `?` before it for an optional.
+pub fn csv_kind(t: &Type) -> Option<String> {
+    Some(match t {
+        Type::Int => "i".into(),
+        Type::Float => "f".into(),
+        Type::Bool => "b".into(),
+        Type::Char => "c".into(),
+        Type::String => "s".into(),
+        Type::Date => "d".into(),
+        Type::DateTime => "t".into(),
+        Type::Optional(t) if !matches!(**t, Type::Optional(_)) => format!("?{}", csv_kind(t)?),
+        _ => return None,
+    })
+}
+
+/// `CsvError`, why `List<Book>.from_csv(text)` gives no List (PLAN Part 4 "The library after
+/// Python, step 2"). Numbered like `csv::Problem`.
+pub fn csv_error() -> Type {
+    let (line, column) = (|| ("line".to_string(), Type::Int), || ("column".to_string(), Type::String));
+    let variants = vec![("NotCsv".into(), vec![line()]), ("Missing".into(), vec![column()]), ("WrongKind".into(), vec![line(), column()])];
+    Type::Enum(EnumDef::with_variants("CsvError".into(), variants))
+}
+
 /// `Response`, a site's answer: its code, where it came from (after the redirections), its body
 /// and its headers (names in small letters; `r.header(name)` whatever the capitals).
 pub fn response() -> Type {
@@ -1137,6 +1160,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.structs.insert("web.Log".into(), log_mode());
     c.structs.insert("web.WebError".into(), web_error());
     c.structs.insert("JsonError".into(), json_error());
+    c.structs.insert("CsvError".into(), csv_error());
     c.structs.insert("web.Response".into(), response());
     c.structs.insert("web.Request".into(), request());
     for start in REQUEST_STARTS {
@@ -1706,6 +1730,7 @@ impl Checker<'_> {
             Problem::BadRange(low, high) => t!("pattern_range", low = low, high = high),
             Problem::BadRepeat => t!("pattern_repeat"),
             Problem::TrailingBackslash => t!("pattern_backslash"),
+            Problem::TooBig => t!("pattern_too_big"),
         };
         self.error(p.span, t!("bad_pattern", why = why, at = at + 1));
     }
@@ -1838,7 +1863,7 @@ impl Checker<'_> {
             }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
-            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() || *t == json_error() || *t == run_error() => interface == "Display",
+            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() || *t == json_error() || *t == run_error() || *t == csv_error() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,
@@ -3036,6 +3061,18 @@ impl Checker<'_> {
                 self.json_form(&list, &format!("{}.to_json", list.text()), name.span);
                 (vec![], Type::String)
             }
+            // `books.to_csv`, `books.to_csv separator(';')` (PLAN Part 4 "The library after Python,
+            // step 2").
+            "to_csv" | "to_csv separator(…)" => {
+                let list = Type::List(Box::new(elem.clone()));
+                self.csv_form(elem, &format!("{}.to_csv", list.text()), name.span);
+                if let Some(sep) = args.first()
+                    && !matches!(sep.kind, ExprKind::Char(c) if !matches!(c, '"' | '\n' | '\r'))
+                {
+                    self.error(sep.span, t!("csv_separator"));
+                }
+                (if args.is_empty() { vec![] } else { vec![(Mode::Read, Type::Char)] }, Type::String)
+            }
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "remove" => (vec![(Mode::Read, Type::Int)], elem.clone()),
             // `words.join(", ")`: only Strings are joined (a number has no single text).
@@ -3060,7 +3097,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "join" | "to_json") {
+        if !matches!(name.text.as_str(), "length" | "join" | "to_json" | "to_csv" | "to_csv separator(…)") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -3332,6 +3369,15 @@ impl Checker<'_> {
             self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
             return Type::Result(Box::new(list), Box::new(json_error()));
         }
+        // `List<Book>.from_csv(text)`: a table whose first line names the columns (PLAN Part 4 "The
+        // library after Python, step 2").
+        if let ("List", "from_csv", [elem]) = (ty.text.as_str(), name.text.as_str(), types) {
+            let elem = self.written_type(elem);
+            let list = Type::List(Box::new(elem.clone()));
+            self.csv_form(&elem, &format!("{}.from_csv", list.text()), name.span);
+            self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+            return Type::Result(Box::new(list), Box::new(csv_error()));
+        }
         // `Map<String, Book>.from_json(text)`: a JSON object whose keys are not known before.
         if let ("Map", "from_json", [k, v]) = (ty.text.as_str(), name.text.as_str(), types) {
             let map = Type::Map(Box::new(self.written_type(k)), Box::new(self.written_type(v)));
@@ -3413,6 +3459,30 @@ impl Checker<'_> {
             Ok(ty) => Diag::new(span, t!("json_no_form", call = call, field = field, type = ty.text())).help(t!("json_no_form_help")),
             Err(file) => Diag::new(span, t!("json_private", call = call, field = field, file = file)).help(t!("json_private_help", file = file)),
         });
+    }
+
+    /// `List<T>.from_csv` / `l.to_csv` (named `call`): `T` is a row, a `List<String>` or a struct
+    /// whose fields each fit in a cell, none private in another file.
+    fn csv_form(&mut self, t: &Type, call: &str, span: Span) {
+        let Type::Struct(d) = t else {
+            if !matches!(t, Type::Error) && *t != Type::List(Box::new(Type::String)) {
+                self.diags.push(Diag::new(span, t!("csv_no_form_root", call = call, type = t.text())).help(t!("csv_no_form_help")));
+            }
+            return;
+        };
+        for (name, f) in d.fields().iter() {
+            if let Some(decl) = self.private.get(&method_name(&t.owner(), name))
+                && file_number(self.src, decl.start) != file_number(self.src, span.start)
+            {
+                let file = self.file_of(&t.owner());
+                self.diags.push(Diag::new(span, t!("json_private", call = call, field = name, file = file)).help(t!("csv_private_help", file = file)));
+                return;
+            }
+            if csv_kind(f).is_none() {
+                self.diags.push(Diag::new(span, t!("csv_no_form", call = call, field = name, type = f.text())).help(t!("csv_no_form_help")));
+                return;
+            }
+        }
     }
 
     /// The first field of `t` without a JSON form: its path (`author.born`) and its type, or the

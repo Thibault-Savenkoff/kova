@@ -30,10 +30,15 @@ pub enum Problem {
     BadRepeat,
     /// A `\` at the very end.
     TrailingBackslash,
+    /// Repeats inside repeats making more than `LARGEST` steps: `((a{1000}){1000}){1000}`.
+    TooBig,
 }
 
 /// The most a `{n,m}` may say.
 const MOST: usize = 1000;
+/// The most steps a pattern may become: the checker compiles every pattern while the editor
+/// types, so it must stay quick.
+const LARGEST: usize = 100_000;
 
 #[derive(Clone, Debug)]
 enum Node {
@@ -86,6 +91,9 @@ pub fn compile(pattern: &str) -> Result<Regex, (usize, Problem)> {
     let node = p.either()?;
     if p.at < chars.len() {
         return Err((p.at, Problem::Unopened));
+    }
+    if size(&node) > LARGEST {
+        return Err((0, Problem::TooBig));
     }
     let mut ops = vec![Op::Save(0)];
     emit(&node, &mut ops);
@@ -299,6 +307,17 @@ enum Escaped {
 /// characters a text holds (Unicode's private-use area), checked by `in_class`.
 const WORD: char = '\u{10FFFE}';
 const SPACE: char = '\u{10FFFD}';
+
+/// How many steps `emit` makes of a node (at most; never overflows).
+fn size(node: &Node) -> usize {
+    match node {
+        Node::Group(inside, _) => size(inside).saturating_add(2),
+        Node::Concat(items) => items.iter().fold(0, |n, i| n.saturating_add(size(i))),
+        Node::Either(ways) => ways.iter().fold(0, |n, w| n.saturating_add(size(w)).saturating_add(2)),
+        Node::Repeat(inside, least, most, _) => size(inside).saturating_add(2).saturating_mul(most.unwrap_or(*least).max(*least) + 1),
+        _ => 1,
+    }
+}
 
 fn emit(node: &Node, ops: &mut Vec<Op>) {
     match node {
@@ -556,5 +575,6 @@ mod tests {
         assert_eq!(e("a{3,1}"), (1, Problem::BadRepeat));
         assert_eq!(e("a{"), (1, Problem::BadRepeat));
         assert_eq!(e("a\\"), (1, Problem::TrailingBackslash));
+        assert_eq!(e("((a{1000}){1000}){1000}"), (0, Problem::TooBig));
     }
 }

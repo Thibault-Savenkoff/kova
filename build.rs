@@ -16,7 +16,7 @@ use object::{Object, ObjectSymbol};
 fn main() {
     let var = |name: &str| std::env::var(name).unwrap_or_default();
     let out = PathBuf::from(var("OUT_DIR"));
-    for f in ["runtime", "src/shared.rs", "src/bigint.rs", "src/http.rs", "src/json.rs", "src/regex.rs", "src/openssl.rs", "src/schannel.rs", "src/network_framework.rs"] {
+    for f in ["runtime", "src/shared.rs", "src/bigint.rs", "src/http.rs", "src/json.rs", "src/regex.rs", "src/csv.rs", "src/openssl.rs", "src/schannel.rs", "src/network_framework.rs"] {
         println!("cargo:rerun-if-changed={f}");
     }
     let rustc = var("RUSTC");

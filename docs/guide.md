@@ -155,6 +155,38 @@ a + b + c
 quotes, braces and `\` (`"""{"title": "Dune"}"""`). On several lines, it starts on the line after
 its `"""`, and the closing `"""`, alone on its line, gives the indentation taken off every line.
 
+```kova
+fn main {
+    let line: String := "12 apples, 7 pears and 145 plums"
+    print(line.find_all("""\d+"""))
+    print("ana@example.org".matches("[a-z.]+@[a-z.]+"))
+    print("a   b \t c".replace_all("""\s+""") with(" "))
+    let parts: List<String>? := "on 2026-10-25".groups("""(\d+)-(\d+)-(\d+)""")
+    if parts != none {
+        print("{parts[2]}/{parts[1]}/{parts[0]}")
+    }
+    print("Kova checks every pattern before the program runs.".wrapped(20))
+}
+```
+
+```text
+["12", "7", "145"]
+true
+a b c
+25/10/2026
+Kova checks every
+pattern before the
+program runs.
+```
+
+A pattern says what a text looks like: `\d` a digit, `\w` a letter, a digit or `_`, `\s` a space,
+`.` any character, `[a-z]` one of these, `[^,]` any but these, `x*` `x+` `x?` `x{2,5}` repeats (`*?`
+the shortest), `a|b` one or the other, `(…)` a group, `^` `$` the start and the end, `\b` the edge of
+a word. `matches` asks whether the whole text fits; `find_all` gives every piece that fits,
+`replace_all(…) with(…)` replaces them, `groups` gives the groups of the first one, `none` if
+nothing fits. The pattern is written in the call, so the compiler checks it: write it raw when it
+holds a `\`. `s.wrapped(40)` cuts the lines of a text between words, 40 characters at most.
+
 ## 6. Structs and methods
 
 ```kova
@@ -797,6 +829,55 @@ array is read by `List<Book>.from_json(text)` and written by `books.to_json`; an
 not known before, by `Map<String, Book>.from_json(text)` and `shelf.to_json`. With the web:
 `Book.from_json(page.body)`. In a Kova text, a brace is written `\{`, or the text is raw:
 `"""{"title": "Dune"}"""`.
+
+### Tables (CSV)
+
+```kova
+struct Fruit {
+    name: String
+    price: Float
+    stock: Int?
+}
+
+fn main {
+    let text: String := """
+        name;price;stock
+        apple;2,5;12
+        "pear, green";3;
+        """
+    match List<Fruit>.from_csv(text) {
+        ok(fruits) => {
+            print(fruits[1].name)
+            print(fruits.to_csv)
+        }
+        err(e) => print("not a table: {e}")
+    }
+    print(List<Fruit>.from_csv("name,stock\nplum,4"))
+    let rows: List<List<String>> := [["a", "b"], ["1", "2"]]
+    print(rows.to_csv separator(';'))
+}
+```
+
+```text
+pear, green
+name,price,stock
+apple,2.5,12
+"pear, green",3.0,
+
+err(Missing("price"))
+a;b
+1;2
+
+```
+
+A table's first line names its columns: `List<Fruit>.from_csv(text)` finds each field's column by
+name (other columns are left out) and reads a `Fruit` per line. Its fields are `Int`, `Float`,
+`Bool`, `Char`, `String`, `Date`, `DateTime`, or one of them with `?`: an empty cell is then
+`none`. The separator is found in the first line: `,`, `;` or a tab; with `;`, a number may have a
+decimal comma (`2,5`), as spreadsheets write it in French. A failure says where: `NotCsv(line)` (a
+`"` never closed), `Missing(column)` or `WrongKind(line, column)`. `fruits.to_csv` writes the
+names, then a line per element, with `,` or `to_csv separator(';')`. A table whose lines are not
+known before is a `List<List<String>>`: every cell as written, the first line included.
 
 ## 18. A web server
 
