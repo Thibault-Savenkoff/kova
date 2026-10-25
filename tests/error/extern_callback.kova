@@ -26,6 +26,7 @@ fn main {
     c.qsort(p, 1, 1, wrong)
     c.qsort(p, 1, 1, changing)
     c.qsort(p, 1, 1, nowhere)
+    c.qsort(p, 1, 1, p)
 }
 // error: `{String -> Int}` cannot cross into C
 // error: `var` gives C the address of a number or of a `Pointer`, not of a `{Pointer}`
@@ -33,3 +34,4 @@ fn main {
 // error: `wrong` cannot be called back by C as a `{Pointer, Pointer -> Int}`
 // error: `changing` cannot be called back by C as a `{Pointer, Pointer -> Int}`
 // error: unknown function `nowhere`
+// error: different types: `{Pointer, Pointer -> Int}` expected, `Pointer` given

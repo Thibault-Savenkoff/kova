@@ -3540,7 +3540,7 @@ impl Checker<'_> {
         let named = match &e.kind {
             ExprKind::Var(n) if self.lookup(n).is_none() => Some((n.as_str(), e.span)),
             ExprKind::Call { name, args } if args.is_empty() => Some((name.text.as_str(), name.span)),
-            ExprKind::Var(n) => {
+            ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. })) => {
                 self.diags.push(Diag::new(e.span, t!("callback_block_variable", name = n)).help(t!("callback_block_variable_help")));
                 self.types[e.id] = Type::Error;
                 return;
