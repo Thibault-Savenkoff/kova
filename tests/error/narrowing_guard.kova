@@ -7,13 +7,15 @@ fn size(x: String?) -> Int {
 }
 
 fn main {
-    // A `var` may still change: it stays a `String?` after the guard.
+    // A `var` is its value only until a statement changes it: then a `String?` again.
     var y: String? := "a"
     if y = none {
         return
     }
     print(y.length)
     y := "b"
+    print(y.length)
 }
 // error: `String?` has no method `length`
-// error: or after `if x = none { return }` when `x` is not a `var`
+// error: or after `if x = none { return }` (a `var` until it changes)
+// error: `String?` has no method `length`

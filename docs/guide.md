@@ -1070,8 +1070,8 @@ too), `Pointer` (an address C gives and takes back; Kova never looks inside), an
 (`printf`): its arguments would go to the wrong places on some processors.
 
 A `var` parameter gives C the address where it writes a value, as `sqlite3_open` does with the
-database it opens. A `var` variable is not narrowed by `if x = none`, so read the result through a
-`let`:
+database it opens. After `if db = none { return }`, `db` is the `Pointer` itself, until a line
+changes it:
 
 ```kova
 extern sqlite from "sqlite3" {
@@ -1080,9 +1080,8 @@ extern sqlite from "sqlite3" {
 }
 
 fn main {
-    var opened: Pointer? := none
-    print(sqlite.open("notes.db", var opened))
-    let db: Pointer? := opened
+    var db: Pointer? := none
+    print(sqlite.open("notes.db", var db))
     if db = none {
         return
     }

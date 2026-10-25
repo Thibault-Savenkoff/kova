@@ -1075,6 +1075,8 @@ struct Checker<'a> {
     hints: Vec<(Span, Type)>,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
+    /// `x := x + 1` on a guarded `var` (`statements`): the value still sees `x` as its value.
+    reread: HashMap<String, Variable>,
     converts: HashMap<usize, usize>,
     tested: HashMap<usize, Type>,
     /// A call's name without some parts (`connect`, `Dog.walk`) → the function's full name, its own
@@ -1144,6 +1146,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         hints: vec![],
         matches: vec![],
         guards: HashMap::new(),
+        reread: HashMap::new(),
         converts: HashMap::new(),
         tested: HashMap::new(),
         shortened: HashMap::new(),
@@ -1805,6 +1808,71 @@ fn guarded(s: &Stmt) -> Vec<&str> {
         _ => vec![],
     };
     names.into_iter().filter(|(_, is)| is.is_none()).map(|(n, _)| n).collect()
+}
+
+/// Does `s` change the variable `name`: `name := …`, `f(var name)`, `for x in var name`,
+/// `match var name`? A guarded `var` is its value only until such a statement (PLAN Part 4,
+/// "Narrowing a `var` after a guard"); written, not typed, so it may say yes too often.
+pub fn changes(s: &Stmt, name: &str) -> bool {
+    let block = |b: &Block| b.stmts.iter().any(|s| changes(s, name));
+    let expr = |e: &Expr| changes_in(e, name);
+    match s {
+        Stmt::Declare { value, .. } | Stmt::Expr(value) => expr(value),
+        Stmt::Assign { target, value, .. } => assigns(target, name) || expr(value),
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr),
+        Stmt::Check(c) => expr(&c.cond),
+        Stmt::Break(_) | Stmt::Continue(_) => false,
+        Stmt::If { cond, then, otherwise } => expr(cond) || block(then) || otherwise.as_ref().is_some_and(block),
+        Stmt::While { cond, body } => expr(cond) || block(body),
+        Stmt::Loop { start, end, body, .. } => expr(start) || expr(end) || block(body),
+        Stmt::Each { mode, list, body, .. } => (*mode != Mode::Read && written_root(list) == Some(name)) || expr(list) || block(body),
+        Stmt::Match(m) => match_changes(m, name),
+    }
+}
+
+pub fn changes_in(e: &Expr, name: &str) -> bool {
+    let any = |es: &[Expr]| es.iter().any(|e| changes_in(e, name));
+    let block = |b: &Block| b.stmts.iter().any(|s| changes(s, name));
+    match &e.kind {
+        ExprKind::Mark(mode, x) => (*mode != Mode::Read && written_root(x) == Some(name)) || changes_in(x, name),
+        ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } => any(args),
+        ExprKind::Method { receiver, args, .. } => changes_in(receiver, name) || any(args),
+        ExprKind::Unary(_, a) | ExprKind::Try(a) | ExprKind::Is(a, _) | ExprKind::Outcome { value: a, .. } | ExprKind::Field(a, _) => {
+            changes_in(a, name)
+        }
+        ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => changes_in(a, name) || changes_in(b, name),
+        ExprKind::Tuple(es) | ExprKind::List(es) | ExprKind::SetLit(es) => any(es),
+        ExprKind::MapLit(pairs) => pairs.iter().any(|(k, v)| changes_in(k, name) || changes_in(v, name)),
+        ExprKind::StructLit { fields, .. } => fields.iter().any(|(_, v)| changes_in(v, name)),
+        ExprKind::Interp(parts) => parts.iter().any(|p| matches!(p, Part::Code(e) if changes_in(e, name))),
+        ExprKind::If { cond, then, otherwise } => changes_in(cond, name) || block(then) || block(otherwise),
+        ExprKind::Match(m) => match_changes(m, name),
+        ExprKind::Block { body, .. } => block(body),
+        _ => false,
+    }
+}
+
+fn match_changes(m: &Match, name: &str) -> bool {
+    (m.mode != Mode::Read && written_root(&m.subject) == Some(name))
+        || changes_in(&m.subject, name)
+        || m.arms.iter().any(|a| a.body.stmts.iter().any(|s| changes(s, name)))
+}
+
+fn assigns(t: &Target, name: &str) -> bool {
+    match t {
+        Target::Place { name: n, fields, .. } => n.text == name || fields.iter().any(|f| matches!(f, Step::At(e) if changes_in(e, name))),
+        Target::Tuple(ts, _) => ts.iter().any(|t| assigns(t, name)),
+    }
+}
+
+/// The variable under `x`, `x.age`, `x[0]`, as written.
+fn written_root(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Var(n) => Some(n),
+        ExprKind::Field(x, _) | ExprKind::Index(x, _) => written_root(x),
+        ExprKind::Method { receiver, args, .. } if args.is_empty() => written_root(receiver),
+        _ => None,
+    }
 }
 
 /// Does the block always end with a `return`?
@@ -2762,13 +2830,34 @@ impl Checker<'_> {
     }
 
     /// In order. After `if x = none { return }`, `x` is its value until the end of the block
-    /// (`guarded`), unless it is a `var` (it may still change); the scopes opened for that are
-    /// closed with the block's.
+    /// (`guarded`); a `var` only until a statement that changes it (`changes`), where it is
+    /// its optional again. The scopes opened for that are closed with the block's.
     fn statements(&mut self, stmts: &[Stmt]) {
+        // The guarded `var`s, as they were before.
+        let mut held: Vec<(String, Variable)> = vec![];
         for s in stmts {
+            let (back, kept) = held.into_iter().partition(|(n, _)| changes(s, n));
+            held = kept;
+            if !back.is_empty() {
+                if let Stmt::Assign { target: Target::Place { name, fields, .. }, op: None, value } = s
+                    && fields.is_empty()
+                    && back.iter().any(|(n, _)| *n == name.text)
+                    && !changes_in(value, &name.text)
+                    && let Some(v) = self.lookup(&name.text)
+                {
+                    self.reread.insert(name.text.clone(), Variable { ty: v.ty.clone(), kind: v.kind, span: v.span });
+                }
+                self.scopes.push(back.into_iter().collect());
+            }
             self.stmt(s);
             let Stmt::If { cond, .. } = s else { continue };
-            let names: Vec<&str> = guarded(s).into_iter().filter(|n| self.lookup(n).is_some_and(|v| v.kind != VarKind::Var)).collect();
+            let names: Vec<&str> = guarded(s).into_iter().filter(|n| self.lookup(n).is_some()).collect();
+            for n in &names {
+                let v = self.lookup(n).unwrap();
+                if v.kind == VarKind::Var && matches!(v.ty, Type::Optional(_)) {
+                    held.push((n.to_string(), Variable { ty: v.ty.clone(), kind: v.kind, span: v.span }));
+                }
+            }
             if !names.is_empty() {
                 self.narrow(&names.iter().map(|&n| (n, None)).collect::<Vec<_>>());
                 self.guards.insert(cond.id, names.iter().map(|n| n.to_string()).collect());
@@ -3864,7 +3953,15 @@ impl Checker<'_> {
                     let text = &self.src[target.span().start..target.span().end];
                     self.error(target.span(), t!("not_numeric", target = text));
                 }
+                let reread = std::mem::take(&mut self.reread);
+                let again = !reread.is_empty();
+                if again {
+                    self.scopes.push(reread);
+                }
                 self.expect(value, &ty);
+                if again {
+                    self.scopes.pop();
+                }
             }
             Stmt::Return { span, .. } if self.in_block > 0 => self.block_exit(*span, "return"),
             Stmt::Break(span) if self.in_block > 0 && self.loops == 0 => self.block_exit(*span, "break"),

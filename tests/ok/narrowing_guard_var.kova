@@ -1,0 +1,56 @@
+// A guarded `var` (PLAN Part 4, "Narrowing a `var` after a guard"): its value until a statement
+// changes it (`x := …`, `f(var x)`…), its optional again from that statement on.
+fn fill(x: var Int?) {
+    x := 7
+}
+
+fn last(l: List<String>) -> String? {
+    var found: String? := none
+    for s in l {
+        found := s.clone
+    }
+    if found = none {
+        return none
+    }
+    print(found.length)
+    return found
+}
+
+fn main {
+    var x: Int? := none
+    fill(var x)
+    if x = none {
+        return
+    }
+    print(x + 1)
+    x := x * 10
+    print(x)
+    x := none
+    print(x)
+    fill(var x)
+    if x = none {
+        return
+    }
+    print(x * 2)
+    var name: String? := "Rex"
+    if name = none {
+        return
+    }
+    name := "{name}!"
+    print(name)
+    var n: Int := 0
+    while n < 2 {
+        n += 1
+        name := none
+    }
+    print(name)
+    print(last(["a", "bc"]))
+}
+// expect: 8
+// expect: 70
+// expect: none
+// expect: 14
+// expect: "Rex!"
+// expect: none
+// expect: 2
+// expect: "bc"

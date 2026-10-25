@@ -37,7 +37,7 @@ use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKin
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
-use crate::types::{CType, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{CType, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -881,6 +881,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         temps: vec![],
         envs: vec![],
         env_marks: vec![],
+        reopen: None,
     };
     let make = |(name, receiver, params, ret, written_contracts, body, subst, only, from): &Source<'f>, with_site: bool| {
             let mut structs = info.structs.clone();
@@ -1023,6 +1024,8 @@ struct Translator<'a> {
     envs: Vec<(Local, Vec<Slots>)>,
     /// Where the boxes of each call whose arguments are ready start in `envs` (see `call_to`).
     env_marks: Vec<usize>,
+    /// A guarded `var` given its optional back after the value of `x := …` (`statements`).
+    reopen: Option<Vars>,
 }
 
 /// The names of one open block.
@@ -2782,12 +2785,26 @@ impl<'a> Translator<'a> {
 
     /// In order. After `if x = none { return }`, `x` is its value until the end of the block
     /// (`Info::guards`): a borrowed scope for it, then a new one for the names declared after.
+    /// From a statement that changes it (`types::changes`, only a `var`'s), `x` is its optional again.
     fn statements(&mut self, stmts: &[Stmt]) {
+        let mut held: Vec<(String, (Slots, Type))> = vec![];
         for s in stmts {
+            let (back, kept): (Vec<_>, _) = held.into_iter().partition(|(n, _)| changes(s, n));
+            held = kept;
+            // `x := x + 1`: the value is computed with `x` its value, then `x` is its optional.
+            let plain = matches!(s, Stmt::Assign { target: Target::Place { name, fields, .. }, op: None, value }
+                if fields.is_empty() && back.iter().any(|(n, _)| *n == name.text) && !changes_in(value, &name.text));
+            if plain {
+                self.reopen = Some(back.into_iter().collect());
+            } else if !back.is_empty() {
+                self.names.push(Scope { borrowed: true, vars: back.into_iter().collect() });
+                self.names.push(Scope::default());
+            }
             self.stmt(s);
             if let Stmt::If { cond, .. } = s
                 && let Some(names) = self.info.guards.get(&cond.id)
             {
+                held.extend(names.iter().map(|n| (n.clone(), self.variable(n))));
                 let names: Vec<(&str, Option<usize>)> = names.iter().map(|n| (n.as_str(), None)).collect();
                 self.narrow(&names);
                 self.names.push(Scope::default());
@@ -2819,6 +2836,10 @@ impl<'a> Translator<'a> {
                 None => {
                     let v = self.owned(value);
                     let ty = self.given(value);
+                    if let Some(vars) = self.reopen.take() {
+                        self.names.push(Scope { borrowed: true, vars });
+                        self.names.push(Scope::default());
+                    }
                     let new = self.new_slots(&ty);
                     self.copy(&new, &v);
                     let mut at = 0;
@@ -3875,6 +3896,7 @@ impl<'a> Translator<'a> {
             temps: vec![],
             envs: vec![],
             env_marks: vec![],
+            reopen: None,
         }
     }
 
