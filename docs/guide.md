@@ -1059,7 +1059,10 @@ none
 
 `from "strlen"` gives the C name when it differs from Kova's. The library is found on each system
 (`"sqlite3"` is `libsqlite3.so` on Linux, `libsqlite3.dylib` on macOS, `sqlite3.dll` on Windows;
-`"c"` and `"m"` are the C library) when the program first calls it. C has no safety net: a function
+`"c"` and `"m"` are the C library) when the program first calls it. A system that names it
+otherwise says so after it, and a function likewise: `extern sqlite from "sqlite3" windows
+"winsqlite3"`, `from "gmtime" windows "_gmtime64"` (systems: `linux`, `mac`, `windows`); each
+build takes its own system's names. C has no safety net: a function
 declared with the wrong types can crash the program, so `extern` is where the care goes; the calls
 then look like any other.
 

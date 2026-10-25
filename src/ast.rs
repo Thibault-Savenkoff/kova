@@ -30,12 +30,19 @@ pub struct File {
 pub struct Extern {
     pub name: Name,
     /// The library, as written.
-    pub library: (String, Span),
+    pub library: CName,
     /// Each function, named `sqlite.open`, without a body; its C name when it is not the same.
-    pub functions: Vec<(Function, Option<(String, Span)>)>,
+    pub functions: Vec<(Function, Option<CName>)>,
     /// Its structs, named `win.Point`, with their C types (PLAN Part 4 "`extern`, step 3"); the
     /// parser also gives the program each one as a Kova struct (`Struct::c_view`).
     pub structs: Vec<Struct>,
+}
+
+/// A library's or a C function's name, then the systems that name it otherwise (`from "sqlite3"
+/// windows "winsqlite3"`, PLAN Part 4 "`extern`, names per system").
+pub struct CName {
+    pub text: (String, Span),
+    pub on: Vec<(Name, (String, Span))>,
 }
 
 /// `import geometry` or `import geometry as geo` (PLAN 2.9).

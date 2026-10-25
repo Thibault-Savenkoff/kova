@@ -1,0 +1,12 @@
+// A library or a function named otherwise on some systems: each build takes its own system's names.
+extern c from "nothing" linux "c" mac "c" windows "c" {
+    fn length(s: String) -> Int from "nothing" linux "strlen" mac "strlen" windows "strlen"
+    fn abs(n: Int32) -> Int32
+}
+
+fn main {
+    print(c.length("bonjour"))
+    print(c.abs(-4))
+}
+// expect: 7
+// expect: 4

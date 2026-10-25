@@ -190,7 +190,7 @@ struct Parser<'a> {
     /// Reading an `extern` block: functions without a body, maybe `from "c_name"`.
     in_extern: bool,
     /// That `from "c_name"`, read by `extern_`.
-    symbol: Option<(String, Span)>,
+    symbol: Option<CName>,
     /// Under `public:` at file level (otherwise private, the default); see `File::private`.
     public: bool,
     private: Vec<(String, Span)>,
@@ -678,7 +678,7 @@ impl Parser<'_> {
             return self.error(self.token().span, msg);
         }
         self.advance();
-        let library = self.plain_text()?;
+        let library = self.c_name()?;
         let module = self.imports.get(&name.text).cloned().unwrap_or(name.text.clone());
         self.skip_newlines();
         self.expect("{")?;
@@ -749,6 +749,21 @@ impl Parser<'_> {
             f.ret.iter_mut().for_each(|t| requalify(t, &own, &module));
         }
         Ok(Extern { name, library, functions, structs })
+    }
+
+    /// After `from`: a name, then the systems that name it otherwise (`windows "winsqlite3"`).
+    fn c_name(&mut self) -> R<CName> {
+        let text = self.plain_text()?;
+        let mut on = vec![];
+        while self.kind() == Kind::Ident {
+            let t = self.advance();
+            let system = Name { text: self.text(t.span), span: t.span };
+            if !crate::codegen::SYSTEMS.contains(&system.text.as_str()) {
+                self.diags.push(Diag::new(t.span, t!("extern_system", found = system.text)));
+            }
+            on.push((system, self.plain_text()?));
+        }
+        Ok(CName { text, on })
     }
 
     /// A `"…"` without `{code}`: a library's or a C function's name.
@@ -1234,7 +1249,7 @@ impl Parser<'_> {
         if self.in_extern {
             if self.is_keyword("from") {
                 self.advance();
-                self.symbol = Some(self.plain_text()?);
+                self.symbol = Some(self.c_name()?);
             }
             if !matches!(self.kind(), Kind::Newline | Kind::Sym("}") | Kind::Eof) {
                 let msg = t!("extern_no_body", found = self.describe());

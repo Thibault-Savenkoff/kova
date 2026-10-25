@@ -39,7 +39,15 @@ pub enum Target {
     MacIntel,
 }
 
+/// The systems an `extern` may name a library for (`windows "winsqlite3"`).
+pub const SYSTEMS: [&str; 3] = ["linux", "mac", "windows"];
+
 impl Target {
+    /// Its system in `SYSTEMS`.
+    pub fn system(self) -> &'static str {
+        self.name().split('-').next().unwrap()
+    }
+
     pub const NAMES: [(&str, Target); 7] = [
         ("linux", Target::Linux),
         ("windows", Target::Windows),
@@ -149,7 +157,7 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
     // program's object is Linux's; arm64 Windows and Linux call functions the same way.
     let windows_arm = target == Target::WindowsArm;
     let triple = if windows_arm { "aarch64-unknown-linux-gnu" } else { target.triple() };
-    let object = make_object(p, files, lang, triple.parse().unwrap(), windows_arm).map_err(|e| t!("codegen_failed", error = e))?;
+    let object = make_object(p, files, lang, triple.parse().unwrap(), windows_arm, target.system()).map_err(|e| t!("codegen_failed", error = e))?;
     // Kova's own linker: no `cc`, nor Microsoft's or Apple's linker (src/link.rs).
     let exe = match target {
         Target::Linux => crate::link::elf(&object, runtime, false),
@@ -331,7 +339,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     }
 }
 
-fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: target_lexicon::Triple, windows_arm: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: target_lexicon::Triple, windows_arm: bool, system: &'static str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
     // Code that runs at any address, as macOS wants it; not for Windows on arm64, where Cranelift
@@ -464,7 +472,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
                 })
                 .collect(),
             Inst::Text(_, t) => vec![t.as_str()],
-            Inst::Extern(_, k, _, _) => vec![p.externs[*k].library.as_str(), p.externs[*k].symbol.as_str()],
+            Inst::Extern(_, k, _, _) => <[&str; 2]>::from(p.externs[*k].names(system)).to_vec(),
             _ => vec![],
         });
         for t in used {
@@ -496,7 +504,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         let math = module.declare_func_in_func(rt.math, b.func);
         let callbacks = trampolines.iter().map(|(&g, (id, ..))| (g, module.declare_func_in_func(*id, b.func))).collect();
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, c_structs: &p.c_structs, callbacks }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, system, c_structs: &p.c_structs, callbacks }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -578,6 +586,8 @@ struct Generator<'a> {
     /// `kova_math(op, x, y)`: `sin`, `pow`… (`shared::math`).
     math: FuncRef,
     externs: &'a [crate::types::ExternFn],
+    /// The system it is made for: an extern's names on it (`ExternFn::names`).
+    system: &'static str,
     c_structs: &'a [Vec<crate::types::CType>],
     /// The trampolines C calls back, by the number of the function each one calls.
     callbacks: HashMap<usize, FuncRef>,
@@ -676,7 +686,8 @@ impl Generator<'_> {
     fn extern_call(&mut self, d: &[Local], k: usize, args: &[Local], loc: Loc) {
         use crate::types::CType;
         let f = &self.externs[k];
-        let (library, symbol) = (self.fail.texts[&f.library], self.fail.texts[&f.symbol]);
+        let (library, symbol) = f.names(self.system);
+        let (library, symbol) = (self.fail.texts[library], self.fail.texts[symbol]);
         let b = &mut self.b;
         let (library, symbol) = (b.ins().symbol_value(I64, library), b.ins().symbol_value(I64, symbol));
         let [number, line, col] = [k as i64, loc.packed(), loc.col as i64].map(|v| b.ins().iconst(I64, v));

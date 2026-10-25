@@ -1,0 +1,8 @@
+extern sqlite from "sqlite3" windws "winsqlite3" {
+    fn version -> String from "sqlite3_libversion"
+}
+
+fn main {
+    print(sqlite.version)
+}
+// error: `windws` is not a system

@@ -1699,6 +1699,15 @@ pub struct ExternFn {
     pub result: CType,
     /// The parameters and result of each `CType::Callback`.
     pub callbacks: Vec<(Vec<CType>, CType)>,
+    /// The systems where the library or the C name is another: (system, library, C name).
+    pub on: Vec<(&'static str, String, String)>,
+}
+
+impl ExternFn {
+    /// Its library and C name on `system` (`linux`, `mac`, `windows`).
+    pub fn names(&self, system: &str) -> (&str, &str) {
+        self.on.iter().find(|(s, ..)| *s == system).map_or((&self.library, &self.symbol), |(_, l, s)| (l, s))
+    }
 }
 
 /// The C structs met so far: name → number in `Info::c_structs`, Kova type.
@@ -2638,8 +2647,18 @@ impl Checker<'_> {
                     continue;
                 }
                 self.functions.insert(name.clone(), Signature { receiver: None, params: kova, ret, generics: vec![] });
-                let symbol = symbol.as_ref().map_or_else(|| name.rsplit('.').next().unwrap_or(&name).to_string(), |(s, _)| s.clone());
-                made.insert(name, ExternFn { library: e.library.0.clone(), symbol, params, result, callbacks });
+                let c_name = symbol.as_ref().map_or_else(|| name.rsplit('.').next().unwrap_or(&name).to_string(), |c| c.text.0.clone());
+                // Each system naming the library or the function otherwise: both its names.
+                let named = |c: Option<&CName>, system: &str| c?.on.iter().find(|(s, _)| s.text == system).map(|(_, (n, _))| n.clone());
+                let on = crate::codegen::SYSTEMS
+                    .iter()
+                    .filter_map(|&system| match (named(Some(&e.library), system), named(symbol.as_ref(), system)) {
+                        (None, None) => None,
+                        (l, s) => Some((system, l.unwrap_or(e.library.text.0.clone()), s.unwrap_or(c_name.clone()))),
+                    })
+                    .collect();
+                let symbol = c_name;
+                made.insert(name, ExternFn { library: e.library.text.0.clone(), symbol, params, result, callbacks, on });
             }
         }
         (made, layouts)
