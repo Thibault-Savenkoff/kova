@@ -859,6 +859,9 @@ pub struct Info {
     pub externs: HashMap<String, ExternFn>,
     /// The fields' C types of each struct of the `extern` blocks (`CType::Struct`).
     pub c_structs: Vec<Vec<CType>>,
+    /// The fields of those structs holding a function C calls (`win.Class.procedure`): its C
+    /// parameters and result (PLAN Part 4 "`extern`, step 5").
+    pub callback_fields: HashMap<String, (Vec<CType>, CType)>,
     /// By the `Expr::id` of an `extern` call's argument: the function given by its name for C to
     /// call back (`clicked` in `gtk.connect(b, "clicked", clicked, none)`; PLAN "`extern`, step 2").
     pub callbacks: HashMap<usize, String>,
@@ -1085,6 +1088,8 @@ struct Checker<'a> {
     /// The `extern` functions (`sqlite.open`), and the functions given to them by name (`Info::callbacks`).
     extern_names: HashSet<String>,
     callbacks: HashMap<usize, String>,
+    /// `win.Class.procedure` → its block type and C types (`Info::callback_fields`).
+    callback_fields: HashMap<String, (Type, (Vec<CType>, CType))>,
     converts: HashMap<usize, usize>,
     tested: HashMap<usize, Type>,
     /// A call's name without some parts (`connect`, `Dog.walk`) → the function's full name, its own
@@ -1157,6 +1162,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         reread: HashMap::new(),
         extern_names: HashSet::new(),
         callbacks: HashMap::new(),
+        callback_fields: HashMap::new(),
         converts: HashMap::new(),
         tested: HashMap::new(),
         shortened: HashMap::new(),
@@ -1627,6 +1633,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         externs,
         callbacks: c.callbacks,
         c_structs,
+        callback_fields: c.callback_fields.into_iter().map(|(n, (_, c))| (n, c)).collect(),
     };
     (info, c.diags)
 }
@@ -2543,7 +2550,14 @@ impl Checker<'_> {
                 .fields
                 .iter()
                 .filter_map(|p| match c_type(&p.ty, &mut vec![], &structs) {
-                    Some((c, _)) if !matches!(c, CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText | CType::Callback(_) | CType::MaybeStruct(_)) => Some(c),
+                    // A function C calls (`lpfnWndProc`): its own C types, kept by field.
+                    Some((CType::Callback(_), ty)) => {
+                        let mut found = vec![];
+                        c_type(&p.ty, &mut found, &structs);
+                        self.callback_fields.insert(method_name(&s.name.text, &p.name.text), (ty, found.remove(0)));
+                        Some(CType::Pointer)
+                    }
+                    Some((c, _)) if !matches!(c, CType::MaybeStruct(_)) => Some(c),
                     _ => {
                         self.diags.push(Diag::new(p.name.span, t!("extern_field_type", type = p.ty.text())).help(t!("extern_field_types_help")));
                         None
@@ -2580,6 +2594,13 @@ impl Checker<'_> {
                     };
                     if let CType::MaybeStruct(_) = c {
                         self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
+                        continue;
+                    }
+                    // C may change a text it was lent: who would free which?
+                    if let (Mode::Var, CType::Struct(k)) = (p.mode, c)
+                        && c_layout(k, &layouts).0.iter().any(|(_, c)| matches!(c, CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText))
+                    {
+                        self.error(p.name.span, t!("extern_var_text", type = p.ty.text()));
                         continue;
                     }
                     let var = match p.mode {
@@ -4795,7 +4816,11 @@ impl Checker<'_> {
             }
             given.push(&name.text);
             self.mention(&method_name(&owner, &name.text), name.span);
-            self.expect(value, t);
+            // `procedure := window_procedure`: a function C calls (PLAN Part 4 "`extern`, step 5").
+            match self.callback_fields.get(&method_name(&owner, &name.text)).map(|(t, _)| t.clone()) {
+                Some(block) => self.callback(value, &block),
+                None => self.expect(value, t),
+            }
         }
         let missing: Vec<String> =
             d.fields().iter().filter(|(n, _)| !given.contains(&n.as_str())).map(|(n, _)| format!("`{n}`")).collect();

@@ -1172,6 +1172,11 @@ address C gives, copied, as `localtime` gives a `struct tm*`; a block C calls ba
 the same way (`{Pair, Pair -> Int32}` for `qsort` on an array of structs). A C function giving a
 struct back by value, not by its address, cannot be declared.
 
+A struct may also hold texts (`String`, `WideString`, their `?`: copies lent to C for the call)
+and functions C calls (a field of block type, given a function by its name, as Windows'
+`WNDCLASSEXW` wants its `lpfnWndProc`); the program sees such a field as a `Pointer`. A struct
+holding a text cannot be given as `var`: C could change a text it was only lent.
+
 Windows' `…W` functions take UTF-16 texts: `WideString` (or `WideString?`) declares one, and the
 program gives and gets ordinary `String`s:
 

@@ -1,14 +1,16 @@
-// `WideString` only in `extern`; a `Pair?` comes back from C but is never given to it, and no text
-// is a struct's field (PLAN Part 4 "`extern`, step 4").
+// `WideString` only in `extern`; a `Pair?` comes back from C but is never given to it, and a struct
+// holding a text is never `var` (PLAN Part 4 "`extern`, step 4").
 extern c from "c" {
     struct Pair { key: Int32, name: WideString }
     struct Fine { key: Int32 }
+    struct Labeled { key: Int32, label: String }
     fn maybe(p: Fine?) -> Int
+    fn change(p: var Labeled)
 }
 
 fn main {
     let w: WideString := "a"
 }
-// error: `WideString` cannot be a field of a C struct
 // error: `c.Fine?` cannot cross into C
+// error: `var c.Labeled` would let C change a text it was lent: give the struct without `var`
 // error: `WideString` exists only in an `extern` block, for Windows' UTF-16 texts

@@ -1,0 +1,38 @@
+// Texts and functions in C structs (PLAN Part 4 "`extern`, step 5"): a text field is lent to C
+// for the call, a function field holds the address C calls (shown as a `Pointer`).
+extern c from "c" {
+    struct Named { id: Int32, name: String, wide: WideString?, note: String? }
+    struct Sorter { compare: {Pointer, Pointer -> Int32} }
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    // `memcpy` gives back where it copied to: here, a way to read a struct at `p`.
+    fn put(into: Pointer, source: Named, size: Int) -> Named from "memcpy"
+    fn put_sorter(into: Pointer, source: Sorter, size: Int) -> Sorter from "memcpy"
+    fn strcpy(into: Pointer, text: String) -> Pointer
+    fn text(p: Pointer, nothing: String) -> String from "strstr"
+    fn strncmp(a: Pointer, b: Pointer, n: Int) -> Int32
+    fn qsort(base: Pointer, count: Int, size: Int, compare: Pointer)
+}
+
+fn letters(a: Pointer, b: Pointer) -> Int {
+    return c.strncmp(a, b, 1)
+}
+
+fn main {
+    let p: Pointer := c.calloc(32, 1)
+    let back: c.Named := c.put(p, c.Named { id := 7, name := "Rex", wide := "Rüdiger", note := none }, 32)
+    print("{back.id} {back.name}")
+    print(back.wide)
+    print(back.note)
+    let sorter: c.Sorter := c.put_sorter(p, c.Sorter { compare := letters }, 8)
+    let q: Pointer := c.calloc(8, 1)
+    c.strcpy(q, "kova")
+    c.qsort(q, 4, 1, sorter.compare)
+    print(c.text(q, ""))
+    c.free(q)
+    c.free(p)
+}
+// expect: 7 Rex
+// expect: "Rüdiger"
+// expect: none
+// expect: akov

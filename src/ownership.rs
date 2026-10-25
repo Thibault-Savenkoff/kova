@@ -863,7 +863,14 @@ impl Owner<'_> {
             }
             // A new tuple or struct owns its elements.
             ExprKind::Tuple(elems) => elems.iter().for_each(|x| self.give(x)),
-            ExprKind::StructLit { fields, .. } => fields.iter().for_each(|(_, x)| self.give(x)),
+            // A function C calls, given by its name (`types::Info::callbacks`): nothing of the caller's.
+            ExprKind::StructLit { fields, .. } => {
+                for (_, x) in fields {
+                    if !self.info.callbacks.contains_key(&x.id) {
+                        self.give(x);
+                    }
+                }
+            }
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
             ExprKind::Outcome { value, .. } => self.give(value),
             ExprKind::Is(x, _) => self.borrow(x),

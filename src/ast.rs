@@ -86,6 +86,7 @@ impl Struct {
             match t {
                 TypeAst::Name(n) => ["Int", "Int32", "Float", "Bool", "Pointer"].contains(&n.text.as_str()) || n.text.contains('.'),
                 TypeAst::Optional(t) => c_like(t),
+                TypeAst::Block(..) => true,
                 _ => false,
             }
         }
@@ -93,6 +94,8 @@ impl Struct {
             match t {
                 TypeAst::Name(n) if n.text == "Int32" => TypeAst::Name(Name { text: "Int".into(), span: n.span }),
                 TypeAst::Name(n) if n.text == "WideString" => TypeAst::Name(Name { text: "String".into(), span: n.span }),
+                // A function C calls: the program holds its address.
+                TypeAst::Block(..) => TypeAst::Name(Name { text: "Pointer".into(), span: Span::new(0, 0) }),
                 TypeAst::Optional(t) => TypeAst::Optional(Box::new(kova(t))),
                 t => t.clone(),
             }

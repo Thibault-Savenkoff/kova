@@ -401,7 +401,11 @@ impl Parser<'_> {
     }
 
     fn base_type(&mut self) -> R<TypeAst> {
-        // A block type anywhere else than a parameter: the block would outlive its call.
+        // A block type anywhere else than a parameter: the block would outlive its call. In an
+        // `extern` block, a struct's field may be one: a function C calls (its address).
+        if self.is_sym("{") && self.in_extern {
+            return self.block_type();
+        }
         if self.is_sym("{") {
             let span = self.token().span;
             return self.error(span, t!("block_type_place"));

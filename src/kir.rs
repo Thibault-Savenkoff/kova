@@ -3646,29 +3646,10 @@ impl<'a> Translator<'a> {
         let loc = self.loc(span);
         let (mut given, mut copies, mut at) = (vec![], vec![], 0);
         for (c, _) in &params {
-            match c {
-                CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText => {
-                    let plain = matches!(c, CType::Text | CType::WideText);
-                    let (present, s) = if plain { (self.constant(1), vals[at]) } else { (vals[at], vals[at + 1]) };
-                    let (copy, minus, zero) = (self.int_local(), self.constant(-1), self.int_local());
-                    let (make, free) = if matches!(c, CType::Text | CType::MaybeText) { (StrOp::CText, StrOp::CFree) } else { (StrOp::CWideText, StrOp::CWideFree) };
-                    self.emit(Inst::Str(copy, make, vec![s, present]));
-                    self.emit(Inst::Binary(zero, Op::Eq, copy, minus, NOWHERE));
-                    self.emit(Inst::FaultIf(zero, Fault::TextWithZero, loc));
-                    given.push(copy);
-                    copies.push((copy, free));
-                    at += if plain { 1 } else { 2 };
-                    continue;
-                }
-                CType::Struct(s) => {
-                    at += self.c_leaves(*s, &vals[at..], loc, &mut given);
-                    continue;
-                }
-                _ => {
-                    self.c_leaves_of(*c, &vals[at..], loc, &mut given);
-                }
-            }
-            at += if matches!(c, CType::MaybeText | CType::MaybePointer) { 2 } else { 1 };
+            at += match c {
+                CType::Struct(s) => self.c_leaves(*s, &vals[at..], loc, &mut given, &mut copies),
+                c => self.c_leaves_of(*c, &vals[at..], loc, &mut given, &mut copies),
+            };
         }
         let got = match result {
             CType::Nothing => vec![],
@@ -3687,19 +3668,15 @@ impl<'a> Translator<'a> {
         let raw: Vec<Slots> = kinds.iter().map(|cs| cs.iter().map(|&c| if c == CType::Float { self.new_slots(&Type::Float)[0] } else { self.int_local() }).collect()).collect();
         self.emit(Inst::Extern([got.clone(), raw.concat()].concat(), k, given, loc));
         for ((place, out), (r, cs)) in places.iter().zip(raw.iter().zip(&kinds)) {
-            let v = self.kova_of_leaves(cs, r);
+            let v = self.kova_of_leaves(cs, r, None, loc);
             for (&o, x) in out.iter().zip(v) {
                 self.emit(Inst::Copy(o, x));
             }
             self.write(place, out);
         }
-        for (copy, free) in copies {
-            let done = self.int_local();
-            self.emit(Inst::Str(done, free, vec![copy]));
-        }
         let zero = self.constant(0);
         let v = match result {
-            CType::Nothing => return vec![],
+            CType::Nothing => vec![],
             CType::Bool | CType::MaybePointer => {
                 let present = self.int_local();
                 self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
@@ -3711,14 +3688,15 @@ impl<'a> Translator<'a> {
                 let fault = if matches!(result, CType::Text | CType::WideText) { Fault::NullText } else { Fault::NullPointer };
                 self.emit(Inst::FaultIf(null, fault, loc));
                 match result {
-                    CType::Pointer => return got,
-                    CType::Struct(k) => return self.c_struct_at(k, got[0]),
-                    _ => {}
+                    CType::Pointer => got,
+                    CType::Struct(k) => self.c_struct_at(k, got[0], None, loc),
+                    _ => {
+                        let s = self.int_local();
+                        let op = if result == CType::Text { StrOp::FromCText } else { StrOp::FromCWideText };
+                        self.emit(Inst::Str(s, op, vec![got[0]]));
+                        vec![s]
+                    }
                 }
-                let s = self.int_local();
-                let op = if result == CType::Text { StrOp::FromCText } else { StrOp::FromCWideText };
-                self.emit(Inst::Str(s, op, vec![got[0]]));
-                vec![s]
             }
             CType::MaybeText | CType::MaybeWideText => {
                 let (present, s) = (self.int_local(), self.int_local());
@@ -3731,27 +3709,49 @@ impl<'a> Translator<'a> {
             CType::MaybeStruct(k) => {
                 let present = self.int_local();
                 self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
-                return [vec![present], self.c_struct_at(k, got[0])].concat();
+                [vec![present], self.c_struct_at(k, got[0], Some(present), loc)].concat()
             }
-            _ => return got,
+            _ => got,
         };
+        // Only now: the result may be one of the texts lent to C (`memcpy` gives its target back).
+        for (copy, free) in copies {
+            let done = self.int_local();
+            self.emit(Inst::Str(done, free, vec![copy]));
+        }
         self.track(&v, ty);
         v
     }
 
     /// The Kova slots of C values (`cs` their C types): a `Bool` 0 or 1 (C wrote any `int`), a
-    /// `Pointer?` present if not NULL.
-    fn kova_of_leaves(&mut self, cs: &[CType], raws: &[Local]) -> Slots {
+    /// `Pointer?` present if not NULL, a text copied (C keeps its own; NULL stops the program,
+    /// unless the struct holding it is `none`: `present`).
+    fn kova_of_leaves(&mut self, cs: &[CType], raws: &[Local], present: Option<Local>, loc: Loc) -> Slots {
         let mut out = vec![];
         for (&c, &l) in cs.iter().zip(raws) {
+            let zero = self.constant(0);
             match c {
-                CType::Bool | CType::MaybePointer => {
-                    let (zero, present) = (self.constant(0), self.int_local());
-                    self.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
-                    out.push(present);
-                    if c == CType::MaybePointer {
-                        out.push(l);
+                CType::Bool | CType::MaybePointer | CType::MaybeText | CType::MaybeWideText => {
+                    let there = self.int_local();
+                    self.emit(Inst::Binary(there, Op::Ne, l, zero, NOWHERE));
+                    out.push(there);
+                }
+                _ => {}
+            }
+            match c {
+                CType::Bool => {}
+                CType::Text | CType::WideText | CType::MaybeText | CType::MaybeWideText => {
+                    if matches!(c, CType::Text | CType::WideText) {
+                        let null = self.int_local();
+                        self.emit(Inst::Binary(null, Op::Eq, l, zero, NOWHERE));
+                        if let Some(p) = present {
+                            self.emit(Inst::Binary(null, Op::Times, null, p, NOWHERE));
+                        }
+                        self.emit(Inst::FaultIf(null, Fault::NullText, loc));
                     }
+                    let text = self.int_local();
+                    let op = if matches!(c, CType::Text | CType::MaybeText) { StrOp::FromCText } else { StrOp::FromCWideText };
+                    self.emit(Inst::Str(text, op, vec![l]));
+                    out.push(text);
                 }
                 _ => out.push(l),
             }
@@ -3760,8 +3760,9 @@ impl<'a> Translator<'a> {
     }
 
     /// A copy of the struct `s` C keeps at `address` (PLAN Part 4 "`extern`, step 4"): each leaf
-    /// read (`StrOp::CRead`, 0 at NULL), then made a Kova value.
-    fn c_struct_at(&mut self, s: usize, address: Local) -> Slots {
+    /// read (`StrOp::CRead`, 0 at NULL), then made a Kova value; `present`: whether the address is
+    /// one, for a `T?`.
+    fn c_struct_at(&mut self, s: usize, address: Local, present: Option<Local>, loc: Loc) -> Slots {
         let (leaves, _, _) = c_layout(s, &self.info.c_structs);
         let (mut raws, mut cs) = (vec![], vec![]);
         for (offset, c) in leaves {
@@ -3776,13 +3777,26 @@ impl<'a> Translator<'a> {
             });
             cs.push(c);
         }
-        self.kova_of_leaves(&cs, &raws)
+        self.kova_of_leaves(&cs, &raws, present, loc)
     }
 
     /// The C values of a Kova value of C type `c` (its slots first in `v`): an `Int32` checked,
-    /// `none` the value slot left at 0 (NULL).
-    fn c_leaves_of(&mut self, c: CType, v: &[Local], loc: Loc, given: &mut Slots) {
+    /// `none` the value slot left at 0 (NULL), a text copied for the call (freed after it, by
+    /// `copies`); how many Kova slots it read.
+    fn c_leaves_of(&mut self, c: CType, v: &[Local], loc: Loc, given: &mut Slots, copies: &mut Vec<(Local, StrOp)>) -> usize {
         match c {
+            CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText => {
+                let plain = matches!(c, CType::Text | CType::WideText);
+                let (present, s) = if plain { (self.constant(1), v[0]) } else { (v[0], v[1]) };
+                let (copy, minus, zero) = (self.int_local(), self.constant(-1), self.int_local());
+                let (make, free) = if matches!(c, CType::Text | CType::MaybeText) { (StrOp::CText, StrOp::CFree) } else { (StrOp::CWideText, StrOp::CWideFree) };
+                self.emit(Inst::Str(copy, make, vec![s, present]));
+                self.emit(Inst::Binary(zero, Op::Eq, copy, minus, NOWHERE));
+                self.emit(Inst::FaultIf(zero, Fault::TextWithZero, loc));
+                given.push(copy);
+                copies.push((copy, free));
+                return if plain { 1 } else { 2 };
+            }
             CType::Int32 => {
                 let (low, high, (min, max)) = (self.int_local(), self.int_local(), (self.constant(i32::MIN as i64), self.constant(i32::MAX as i64)));
                 self.emit(Inst::Binary(low, Op::Lt, v[0], min, NOWHERE));
@@ -3791,23 +3805,24 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::FaultIf(high, Fault::Int32Range, loc));
                 given.push(v[0]);
             }
-            CType::MaybePointer => given.push(v[1]),
+            CType::MaybePointer => {
+                given.push(v[1]);
+                return 2;
+            }
             _ => given.push(v[0]),
         }
+        1
     }
 
     /// The C values of each leaf of struct `s` (PLAN Part 4 "`extern`, step 3"), in the order of
     /// `types::c_layout`; how many Kova slots it read.
-    fn c_leaves(&mut self, s: usize, v: &[Local], loc: Loc, given: &mut Slots) -> usize {
+    fn c_leaves(&mut self, s: usize, v: &[Local], loc: Loc, given: &mut Slots, copies: &mut Vec<(Local, StrOp)>) -> usize {
         let mut at = 0;
         for c in self.info.c_structs[s].clone() {
-            match c {
-                CType::Struct(j) => at += self.c_leaves(j, &v[at..], loc, given),
-                c => {
-                    self.c_leaves_of(c, &v[at..], loc, given);
-                    at += if c == CType::MaybePointer { 2 } else { 1 };
-                }
-            }
+            at += match c {
+                CType::Struct(j) => self.c_leaves(j, &v[at..], loc, given, copies),
+                c => self.c_leaves_of(c, &v[at..], loc, given, copies),
+            };
         }
         at
     }
@@ -3837,12 +3852,12 @@ impl<'a> Translator<'a> {
                     let null = t.int_local();
                     t.emit(Inst::Binary(null, Op::Eq, l, zero, NOWHERE));
                     t.emit(Inst::FaultIf(null, Fault::NullPointer, loc));
-                    t.c_struct_at(k, l)
+                    t.c_struct_at(k, l, None, loc)
                 }
                 CType::MaybeStruct(k) => {
                     let present = t.int_local();
                     t.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
-                    [vec![present], t.c_struct_at(k, l)].concat()
+                    [vec![present], t.c_struct_at(k, l, Some(present), loc)].concat()
                 }
                 _ => vec![l],
             };
@@ -4763,6 +4778,11 @@ impl<'a> Translator<'a> {
                 let mut parts: Vec<Slots> = vec![vec![]; members(&ty).len()];
                 for (name, value) in fields {
                     let i = field_index(&ty, &name.text);
+                    // A function C calls: the address of its trampoline (PLAN Part 4 "`extern`, step 5").
+                    if let Some((cs, r)) = self.info.callback_fields.get(&method_name(&ty.owner(), &name.text)).cloned() {
+                        parts[i] = vec![self.callback(value, &cs, r, value.span)];
+                        continue;
+                    }
                     let v = self.owned(value);
                     parts[i] = self.boxing(v, &element(&ty, i));
                 }
