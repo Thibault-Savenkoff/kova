@@ -472,6 +472,73 @@ pub fn random(state: &mut u64, from: i64, to: i64) -> i64 {
     (from as u64).wrapping_add(x % n) as i64
 }
 
+/// `secure.random(from..to)` (PLAN Part 4 "The library after Python, step 3"): like `random`, but
+/// from the system's unguessable chance (`fill` puts 8 such bytes in its array).
+pub fn secure_random(fill: &mut dyn FnMut(&mut [u8; 8]), from: i64, to: i64) -> i64 {
+    let n = (to as u64).wrapping_sub(from as u64);
+    let limit = u64::MAX - u64::MAX % n;
+    let x = loop {
+        let mut b = [0; 8];
+        fill(&mut b);
+        let x = u64::from_le_bytes(b);
+        if x < limit {
+            break x;
+        }
+    };
+    (from as u64).wrapping_add(x % n) as i64
+}
+
+/// `secure.token(n)`: `n` bytes of chance, written in hexadecimal (2 digits each).
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `secure.uuid` from 16 bytes of chance: version 4 (RFC 9562), `3f2b8c1e-9d4a-4f6b-8e21-5c7d0a9b1e34`.
+pub fn uuid(mut b: [u8; 16]) -> String {
+    b[6] = b[6] & 0x0f | 0x40;
+    b[8] = b[8] & 0x3f | 0x80;
+    let h = hex(&b);
+    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
+}
+
+/// `l.mean` of a List that is not empty (src/kir.rs checks it): its slots, Floats as their bits
+/// if `float`. Floats are added with Neumaier's correction, so that `[1e16, 1.0, -1e16]` gives
+/// `1.0 / 3`, not 0.
+pub fn mean(values: &[i64], float: bool) -> f64 {
+    let n = values.len() as f64;
+    if !float {
+        return wide(values.iter().map(|&v| v as i128).sum()) / n;
+    }
+    let (mut sum, mut lost) = (0.0f64, 0.0f64);
+    for &v in values {
+        let x = f64::from_bits(v as u64);
+        let t = sum + x;
+        lost += if sum.abs() >= x.abs() { (sum - t) + x } else { (x - t) + sum };
+        sum = t;
+    }
+    (sum + lost) / n
+}
+
+/// An `i128` as a Float, by its two halves: `as f64` would call `__floattidf`, which the Windows
+/// runtime does not have.
+fn wide(x: i128) -> f64 {
+    (x >> 64) as i64 as f64 * 18446744073709551616.0 + x as u64 as f64
+}
+
+/// `l.median` of a List that is not empty: the middle value once sorted, or halfway between the
+/// two middle ones.
+pub fn median(values: &[i64], float: bool) -> f64 {
+    let mut v = values.to_vec();
+    let m = v.len() / 2;
+    if !float {
+        v.sort_unstable();
+        return if v.len() % 2 == 1 { v[m] as f64 } else { wide(v[m - 1] as i128 + v[m] as i128) / 2.0 };
+    }
+    let mut x: Vec<f64> = v.iter().map(|&b| f64::from_bits(b as u64)).collect();
+    x.sort_unstable_by(f64::total_cmp);
+    if x.len() % 2 == 1 { x[m] } else { x[m - 1] + (x[m] - x[m - 1]) / 2.0 }
+}
+
 /// `KOVA_SEED`'s value, if it is a number (it must start with a digit).
 pub fn seed(value: Option<&str>) -> Option<u64> {
     value.filter(|s| s.starts_with(|c: char| c.is_ascii_digit())).and_then(|s| s.parse().ok())
@@ -691,6 +758,25 @@ pub fn wrapped(s: &str, width: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chance_and_numbers() {
+        assert_eq!(uuid([0xff; 16]), "ffffffff-ffff-4fff-bfff-ffffffffffff");
+        assert_eq!(hex(&[0, 171]), "00ab");
+        let mut k = 0u8;
+        let mut fill = |b: &mut [u8; 8]| {
+            k += 1;
+            *b = [k; 8];
+        };
+        assert!((0..100).all(|_| (1..7).contains(&secure_random(&mut fill, 1, 7))));
+        let f = |x: &[f64]| x.iter().map(|v| v.to_bits() as i64).collect::<Vec<_>>();
+        assert_eq!(mean(&f(&[1e16, 1.0, -1e16]), true), 1.0 / 3.0);
+        assert_eq!(mean(&[1, 2], false), 1.5);
+        assert_eq!(mean(&[i64::MAX, i64::MAX], false), i64::MAX as f64);
+        assert_eq!(median(&[3, 1, 2], false), 2.0);
+        assert_eq!(median(&[4, 1, 3, 2], false), 2.5);
+        assert_eq!(median(&f(&[0.5, -1.0]), true), -0.25);
+    }
 
     #[test]
     fn time_zone_rules() {

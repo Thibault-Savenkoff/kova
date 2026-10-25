@@ -102,6 +102,24 @@ impl Heap {
 }
 
 /// `random(from..to)`: the state is started at the first call.
+/// Fills `b` with the system's unguessable chance (`secure.random`), like `sys::chance` in the
+/// runtime.
+#[cfg(unix)]
+fn chance(b: &mut [u8]) {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(b)).expect("/dev/urandom");
+}
+
+#[cfg(windows)]
+fn chance(b: &mut [u8]) {
+    #[link(name = "bcrypt")]
+    unsafe extern "system" {
+        fn BCryptGenRandom(algorithm: isize, b: *mut u8, n: u32, flags: u32) -> i32;
+    }
+    // BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    assert_eq!(unsafe { BCryptGenRandom(0, b.as_mut_ptr(), b.len() as u32, 2) }, 0, "BCryptGenRandom");
+}
+
 /// `List<Book>.from_csv(text)` (src/csv.rs): a new List, or the problem's code.
 fn csv_read(heap: &mut Heap, text: i64, spec: i64) -> i64 {
     let (text, spec) = (heap.get(text).to_string(), heap.get(spec).to_string());
@@ -860,6 +878,23 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 }
                                 None => 0,
                             }
+                        }
+                        StrOp::Mean | StrOp::Median => {
+                            let (_, length, slots) = heap.list(locals[a[0]]);
+                            let values = slots[..*length].to_vec();
+                            let f = if matches!(op, StrOp::Mean) { crate::shared::mean } else { crate::shared::median };
+                            f(&values, locals[a[1]] == 1).to_bits() as i64
+                        }
+                        StrOp::SecureRandom => crate::shared::secure_random(&mut |b| chance(b), locals[a[0]], locals[a[1]]),
+                        StrOp::SecureToken => {
+                            let mut b = vec![0; locals[a[0]] as usize];
+                            chance(&mut b);
+                            heap.make(crate::shared::hex(&b))
+                        }
+                        StrOp::Uuid => {
+                            let mut b = [0; 16];
+                            chance(&mut b);
+                            heap.make(crate::shared::uuid(b))
                         }
                         StrOp::CsvRead => csv_read(heap, locals[a[0]], locals[a[1]]),
                         StrOp::CsvWrite => csv_write(heap, locals[a[0]], locals[a[1]], locals[a[2]]),

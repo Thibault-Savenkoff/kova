@@ -469,6 +469,15 @@ pub enum StrOp {
     CsvRead,
     /// `books.to_csv`: (the List, `csv_spec`, the separator) → a new String.
     CsvWrite,
+    /// `l.mean`, `l.median` of a List that is not empty: (the List, 1 for Floats) → a Float's bits.
+    Mean,
+    Median,
+    /// `secure.random(from..to)`, `to` excluded and above `from` (checked before).
+    SecureRandom,
+    /// `secure.token(n)`, `n` ≥ 0 (checked before): a new String of `2n` hexadecimal digits.
+    SecureToken,
+    /// `secure.uuid`: a new String.
+    Uuid,
 }
 
 /// What src/csv.rs reads or writes for a List of `elem`: `*` for rows (`List<String>`), else
@@ -629,6 +638,10 @@ pub enum Fault {
     CannotServe,
     /// `serve(8080) workers(0)`.
     BadWorkers,
+    /// `[].mean`, `[].median`.
+    NoElements,
+    /// `secure.token(-1)`.
+    NegativeSize,
 }
 
 impl Fault {
@@ -648,6 +661,8 @@ impl Fault {
             Fault::BadTime => "fault_bad_time",
             Fault::CannotServe => "fault_cannot_serve",
             Fault::BadWorkers => "fault_workers",
+            Fault::NoElements => "fault_no_elements",
+            Fault::NegativeSize => "fault_negative_size",
         }
     }
 }
@@ -4017,6 +4032,57 @@ impl<'a> Translator<'a> {
         vec![src]
     }
 
+    /// `l.shuffled` (PLAN Part 4 "The library after Python, step 3"): a copy, then Fisher and
+    /// Yates: from the end, each element changes place with one drawn among those before it or
+    /// itself (`random`'s chance, so `KOVA_SEED` gives the same order again).
+    fn shuffled(&mut self, list: Local, elem: &Type) -> Slots {
+        let ty = Type::List(Box::new(elem.clone()));
+        let width = scalars(elem).len();
+        let copy = self.clone_value(&[list], &ty)[0];
+        let (i, zero, one) = (self.int_local(), self.constant(0), self.constant(1));
+        self.emit(Inst::ListLength(i, copy));
+        self.emit(Inst::Binary(i, Op::Minus, i, one, NOWHERE));
+        self.repeat(
+            |t| t.compare(Op::Gt, i, zero),
+            |t| {
+                let (to, j) = (t.int_local(), t.int_local());
+                t.emit(Inst::Binary(to, Op::Plus, i, one, NOWHERE));
+                t.emit(Inst::Str(j, StrOp::Random, vec![zero, to]));
+                for slot in 0..width {
+                    let (a, b) = (t.int_local(), t.int_local());
+                    t.emit(Inst::ListLoad(a, copy, i, slot));
+                    t.emit(Inst::ListLoad(b, copy, j, slot));
+                    t.emit(Inst::ListStore(copy, i, slot, b));
+                    t.emit(Inst::ListStore(copy, j, slot, a));
+                }
+                t.emit(Inst::Binary(i, Op::Minus, i, one, NOWHERE));
+            },
+        );
+        self.track(&[copy], &ty);
+        vec![copy]
+    }
+
+    /// `l.chosen`: a copy of an element drawn by `random`'s chance, `none` if `l` is empty.
+    fn chosen(&mut self, list: Local, elem: &Type) -> Slots {
+        let ty = Type::Optional(Box::new(elem.clone()));
+        let v = self.new_slots(&ty);
+        v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
+        let (n, zero) = (self.int_local(), self.constant(0));
+        self.emit(Inst::ListLength(n, list));
+        let (some, yes, done) = (self.int_local(), self.new_block(), self.new_block());
+        self.emit(Inst::Binary(some, Op::Gt, n, zero, NOWHERE));
+        self.go(End::Branch(some, yes, done), yes);
+        let i = self.int_local();
+        self.emit(Inst::Str(i, StrOp::Random, vec![zero, n]));
+        let element = self.load(list, i, elem);
+        let copy = self.clone_value(&element, elem);
+        self.emit(Inst::Const(v[0], 1));
+        self.copy(&v[1..], &copy);
+        self.go(End::Jump(done), done);
+        self.track(&v, &ty);
+        v
+    }
+
     /// `dst := a op b`, a new Bool local.
     fn compare(&mut self, op: Op, a: Local, b: Local) -> Local {
         let dst = self.int_local();
@@ -4520,8 +4586,24 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(done, StrOp::Sleep, vec![bits]));
                     return vec![];
                 }
+                if name.text == "secure.token" {
+                    let (n, zero) = (self.expr1(&args[0]), self.constant(0));
+                    let (below, loc) = (self.int_local(), self.loc(args[0].span));
+                    self.emit(Inst::Binary(below, Op::Lt, n, zero, NOWHERE));
+                    self.emit(Inst::FaultIf(below, Fault::NegativeSize, loc));
+                    let t = self.int_local();
+                    self.emit(Inst::Str(t, StrOp::SecureToken, vec![n]));
+                    self.track(&[t], &Type::String);
+                    return vec![t];
+                }
+                if name.text == "secure.uuid" {
+                    let t = self.int_local();
+                    self.emit(Inst::Str(t, StrOp::Uuid, vec![]));
+                    self.track(&[t], &Type::String);
+                    return vec![t];
+                }
                 // `random(1..=6)`: the end made exclusive, then the range must hold a number.
-                if name.text == "random" {
+                if name.text == "random" || name.text == "secure.random" {
                     let (inclusive, a, b) = args[0].range().expect("a range checked by the type checker");
                     let (from, last) = (self.expr1(a), self.expr1(b));
                     let loc = self.loc(args[0].span);
@@ -4536,7 +4618,8 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Binary(empty, Op::Ge, from, to, NOWHERE));
                     self.emit(Inst::FaultIf(empty, Fault::EmptyRange, loc));
                     let n = self.int_local();
-                    self.emit(Inst::Str(n, StrOp::Random, vec![from, to]));
+                    let op = if name.text == "random" { StrOp::Random } else { StrOp::SecureRandom };
+                    self.emit(Inst::Str(n, op, vec![from, to]));
                     return vec![n];
                 }
                 if let n @ ("files.exists" | "files.is_folder") = name.text.as_str() {
@@ -5124,6 +5207,20 @@ impl<'a> Translator<'a> {
                     "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, list, &elem, &name.text, args),
                     "each workers(…)" | "map workers(…)" => self.parallel(e, list, &elem, &name.text, args),
                     "sorted" => self.sorted(list, &elem, args.last(), e.span),
+                    "shuffled" => self.shuffled(list, &elem),
+                    "chosen" => self.chosen(list, &elem),
+                    "mean" | "median" => {
+                        let (n, zero) = (self.int_local(), self.constant(0));
+                        self.emit(Inst::ListLength(n, list));
+                        let (empty, loc) = (self.int_local(), self.loc(name.span));
+                        self.emit(Inst::Binary(empty, Op::Eq, n, zero, NOWHERE));
+                        self.emit(Inst::FaultIf(empty, Fault::NoElements, loc));
+                        let (float, bits) = (self.constant((*elem == Type::Float) as i64), self.int_local());
+                        self.emit(Inst::Str(bits, if name.text == "mean" { StrOp::Mean } else { StrOp::Median }, vec![list, float]));
+                        let x = self.new_slots(&Type::Float)[0];
+                        self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
+                        vec![x]
+                    }
                     "join" => {
                         let (sep, text) = (self.expr1(&args[0]), self.int_local());
                         self.emit(Inst::Str(text, StrOp::Join, vec![list, sep]));

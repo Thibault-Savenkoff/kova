@@ -63,6 +63,8 @@ pub const RUNTIME: &[&str] = &[
     "stop_with_ctrl_c",
     // `serve(…) workers(0)`.
     "fault_workers",
+    "fault_no_elements",
+    "fault_negative_size",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.

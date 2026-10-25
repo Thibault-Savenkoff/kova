@@ -20,6 +20,7 @@ mod c {
         pub fn getenv(name: *const u8) -> *const u8;
         pub fn isatty(fd: i32) -> i32;
         pub fn clock_gettime(clock: u32, t: *mut [i64; 2]) -> i32;
+        pub fn getentropy(b: *mut u8, n: usize) -> i32;
         pub fn nanosleep(t: *const [i64; 2], rest: *mut [i64; 2]) -> i32;
         pub fn getpid() -> i32;
         // Intel Macs name the versions with 64-bit file numbers so.
@@ -149,6 +150,15 @@ pub fn sleep(s: f64) {
 
 pub fn pid() -> u64 {
     unsafe { c::getpid() as u64 }
+}
+
+/// Fills `b` with the system's unguessable chance (`secure.random`), 256 bytes at a time at most.
+pub fn chance(b: &mut [u8]) {
+    for part in b.chunks_mut(256) {
+        if unsafe { c::getentropy(part.as_mut_ptr(), part.len()) } != 0 {
+            panic!("getentropy");
+        }
+    }
 }
 
 // ---- The network ----

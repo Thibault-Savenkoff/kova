@@ -1288,6 +1288,42 @@ pub extern "C" fn kova_random(from: i64, to: i64) -> i64 {
     })
 }
 
+// ---- PLAN Part 4 "The library after Python, step 3" ----
+
+fn floats_of(l: i64) -> &'static [i64] {
+    let l = list(l);
+    &l.slots[..l.length]
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_list_mean(l: i64, float: i64) -> i64 {
+    shared::mean(floats_of(l), float == 1).to_bits() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_list_median(l: i64, float: i64) -> i64 {
+    shared::median(floats_of(l), float == 1).to_bits() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_secure_random(from: i64, to: i64) -> i64 {
+    shared::secure_random(&mut |b| sys::chance(b), from, to)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_secure_token(n: i64) -> i64 {
+    let mut b = alloc::vec![0; n as usize];
+    sys::chance(&mut b);
+    new_text(shared::hex(&b).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_uuid() -> i64 {
+    let mut b = [0; 16];
+    sys::chance(&mut b);
+    new_text(shared::uuid(b).as_bytes())
+}
+
 // ---- What the generated code and Rust's own code ask the C library for, which a Kova
 // executable doesn't have ----
 

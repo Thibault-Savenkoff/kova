@@ -1,0 +1,61 @@
+// Chance on Lists, means and medians, secure chance (PLAN Part 4 "The library after Python",
+// step 3): only what is sure is printed.
+
+import secure
+
+fn main {
+    let l: List<Int> := [5, 1, 4, 2, 3]
+    let mixed: List<Int> := l.shuffled
+    print(mixed.sorted)
+    print(l)
+    let empty: List<String> := []
+    print(empty.shuffled.length)
+    print(empty.chosen = none)
+    let c: Int? := l.chosen
+    if c != none {
+        print(c >= 1 && c <= 5)
+    }
+    let names: List<String> := ["ana"]
+    print(names.chosen)
+    print(l.mean)
+    print(l.median)
+    print([1, 2, 3, 4].median)
+    print([0.5, 1.0e16, -1.0e16].mean)
+    print([2.5].median)
+    var seen: Set<Int> := Set[]
+    for i in 0..500 {
+        seen.add(secure.random(1..=6))
+    }
+    print(seen.length)
+    print(secure.random(-3..=-3))
+    let token: String := secure.token(16)
+    print(token.length)
+    print(token.matches("[0-9a-f]+"))
+    print(secure.token(0).length)
+    let id: String := secure.uuid
+    print(id.matches("""[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"""))
+    print(id = secure.uuid)
+    let none_yet: List<Float> := []
+    print(none_yet.mean)
+}
+// expect: [1, 2, 3, 4, 5]
+// expect: [5, 1, 4, 2, 3]
+// expect: 0
+// expect: true
+// expect: true
+// expect: "ana"
+// expect: 3.0
+// expect: 3.0
+// expect: 2.5
+// expect: 0.16666666666666666
+// expect: 2.5
+// expect: 6
+// expect: -3
+// expect: 32
+// expect: true
+// expect: 0
+// expect: true
+// expect: false
+// code: 101
+// stderr: error: this List is empty: `mean` and `median` need at least one number
+// stderr: chance_stats.kova:39:20

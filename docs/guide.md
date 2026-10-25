@@ -738,6 +738,37 @@ stderr, `code` its exit code (128 + the signal if one stopped it). A code other 
 `ok`: only a program that could not start is an error (`system.RunError`). The words go to the
 program as they are: no shell reads them, so a space or a `;` in one changes nothing.
 
+```kova
+import secure
+
+fn main {
+    let marks: List<Int> := [12, 15, 9, 18]
+    print(marks.mean)
+    print(marks.median)
+    print(marks.shuffled.length)
+    let pick: Int? := marks.chosen
+    print(pick != none)
+    print(secure.token(16).length)
+    print(secure.uuid.length)
+}
+```
+
+```text
+13.5
+13.5
+4
+true
+32
+36
+```
+
+`l.shuffled` gives a new List in another order, `l.chosen` one element drawn (`none` if the List is
+empty); both use `random`'s chance, so `KOVA_SEED` makes them repeat. `l.mean` and `l.median` of a
+`List<Int>` or a `List<Float>` give a `Float`; an empty List stops the program. For what must not be
+guessed (a password, a session key), `import secure`: `secure.random(1..=6)` draws from the
+system's own chance, `secure.token(16)` gives 16 bytes of it in hexadecimal (32 characters) and
+`secure.uuid` a UUID (version 4).
+
 ## 16. The web
 
 ```kova

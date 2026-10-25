@@ -1,0 +1,11 @@
+import secure
+
+fn main {
+    let words: List<String> := ["a"]
+    print(words.mean)
+    print(secure.random(3))
+    print(secure.token("16"))
+}
+// error: `mean` needs numbers: a `List<Int>` or a `List<Float>`, not a `List<String>`
+// error: `random` draws from a range of `Int`s
+// error: different types: `Int` expected, `String` given

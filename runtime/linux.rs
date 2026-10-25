@@ -51,6 +51,7 @@ mod numbers {
     pub const MKDIRAT: usize = 258;
     pub const UNLINKAT: usize = 263;
     pub const STATX: usize = 332;
+    pub const GETRANDOM: usize = 318;
     pub const RENAMEAT2: usize = 316;
     pub const PIPE2: usize = 293;
     pub const DUP3: usize = 292;
@@ -91,6 +92,7 @@ mod numbers {
     pub const MKDIRAT: usize = 34;
     pub const UNLINKAT: usize = 35;
     pub const STATX: usize = 291;
+    pub const GETRANDOM: usize = 278;
     pub const RENAMEAT2: usize = 276;
     pub const PIPE2: usize = 59;
     pub const DUP3: usize = 24;
@@ -272,6 +274,18 @@ pub fn sleep(s: f64) {
 
 pub fn pid() -> u64 {
     unsafe { call(GETPID, 0, 0, 0, 0, 0, 0) as u64 }
+}
+
+/// Fills `b` with the system's unguessable chance (`secure.random`).
+pub fn chance(mut b: &mut [u8]) {
+    while !b.is_empty() {
+        let n = unsafe { call(GETRANDOM, b.as_mut_ptr() as usize, b.len(), 0, 0, 0, 0) };
+        if n > 0 {
+            b = &mut b[n as usize..];
+        } else if n != -EINTR {
+            panic!("getrandom");
+        }
+    }
 }
 
 // ---- The network: the C library finds the addresses (`getaddrinfo` reads /etc/hosts, asks the

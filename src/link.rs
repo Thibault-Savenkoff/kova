@@ -823,10 +823,11 @@ fn tables_size(imports: &[String], dlls: u64) -> u64 {
 
 /// The DLLs the runtime calls (runtime/windows.rs, src/schannel.rs) and their functions; the
 /// first one has every function not named here.
-const DLLS: [(&str, &[&str]); 3] = [
+const DLLS: [(&str, &[&str]); 4] = [
     ("KERNEL32.dll", &[]),
     ("WS2_32.dll", &["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "setsockopt", "connect", "send", "recv", "closesocket", "bind", "listen", "accept", "WSAPoll", "gethostname"]),
     ("SECUR32.dll", &["AcquireCredentialsHandleW", "InitializeSecurityContextW", "QueryContextAttributesW", "EncryptMessage", "DecryptMessage", "FreeContextBuffer", "DeleteSecurityContext", "FreeCredentialsHandle"]),
+    ("bcrypt.dll", &["BCryptGenRandom"]),
 ];
 
 fn dll(f: &str) -> &'static str {

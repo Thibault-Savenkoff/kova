@@ -4,4 +4,11 @@ fn main {
         write("{random(1..=100)} ")
     }
     print(random(-9223372036854775807..9223372036854775807))
+    and_lists
+}
+
+fn and_lists {
+    let l: List<String> := ["a", "b", "c", "d", "e"]
+    print(l.shuffled)
+    print(l.chosen)
 }

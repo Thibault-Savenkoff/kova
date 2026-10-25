@@ -420,7 +420,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure"];
 /// Their types.
 pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError"];
 
@@ -463,6 +463,9 @@ pub const LIBRARY: &[(&str, &str)] =
         ("now", "fn now -> Float"),
         ("sleep", "fn sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
+        ("secure.random", "fn secure.random(from..to) -> Int"),
+        ("secure.token", "fn secure.token(bytes: Int) -> String"),
+        ("secure.uuid", "fn secure.uuid -> String"),
         ("read_line", "fn read_line -> String?"),
         ("args", "fn args -> List<String>"),
         ("exit", "fn exit(code: Int)"),
@@ -682,7 +685,7 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "join", "clone", "each workers(…)", "map workers(…)"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
 pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
 pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
@@ -1227,6 +1230,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("system.run(…) args(…)".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(string())))], ran()));
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
+    c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
+    c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
@@ -3056,6 +3061,15 @@ impl Checker<'_> {
             }
             "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" | "each workers(…)" | "map workers(…)" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
+            // PLAN Part 4 "The library after Python, step 3".
+            "shuffled" => (vec![], Type::List(Box::new(elem.clone()))),
+            "chosen" => (vec![], Type::Optional(Box::new(elem.clone()))),
+            "mean" | "median" => {
+                if !matches!(elem, Type::Int | Type::Float | Type::Error) {
+                    self.error(name.span, t!("stats_needs_numbers", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
+                }
+                (vec![], Type::Float)
+            }
             "to_json" => {
                 let list = Type::List(Box::new(elem.clone()));
                 self.json_form(&list, &format!("{}.to_json", list.text()), name.span);
@@ -3097,7 +3111,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "join" | "to_json" | "to_csv" | "to_csv separator(…)") {
+        if !matches!(name.text.as_str(), "length" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -4808,7 +4822,7 @@ impl Checker<'_> {
         }
         self.hidden(&name.text, name.span);
         // `random(1..=6)`: a range of `Int`s, written there (a range is not a value of its own).
-        if name.text == "random" && self.lookup("random").is_none() {
+        if (name.text == "random" && self.lookup("random").is_none()) || name.text == "secure.random" {
             match args {
                 [r] if r.range().is_some() => {
                     let (_, a, b) = r.range().unwrap();

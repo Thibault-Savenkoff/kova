@@ -231,6 +231,19 @@ pub fn pid() -> u64 {
     unsafe { GetCurrentProcessId() as u64 }
 }
 
+#[link(name = "bcrypt")]
+unsafe extern "system" {
+    fn BCryptGenRandom(algorithm: Handle, b: *mut u8, n: u32, flags: u32) -> i32;
+}
+
+/// Fills `b` with the system's unguessable chance (`secure.random`).
+pub fn chance(b: &mut [u8]) {
+    // BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    if unsafe { BCryptGenRandom(0, b.as_mut_ptr(), b.len() as u32, 2) } != 0 {
+        panic!("BCryptGenRandom");
+    }
+}
+
 // ---- The network: `ws2_32.dll`, which every Windows has too ----
 
 #[link(name = "ws2_32")]

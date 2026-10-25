@@ -383,7 +383,7 @@ fn leak_counter() {
 fn seeded() {
     let seeded = |c: &mut Command| text(&c.env("KOVA_SEED", "42").output().unwrap().stdout);
     let run = seeded(kova(LANG).args(["run", "tests/seed/seed.kova"]));
-    assert_eq!(run, "14 92 59 65 51 6792609088808213255\n");
+    assert_eq!(run, "14 92 59 65 51 6792609088808213255\n[\"c\", \"d\", \"b\", \"e\", \"a\"]\n\"c\"\n");
     let exe = std::env::temp_dir().join(format!("kova-seed-{}", std::process::id()));
     assert!(kova(LANG).args(["build", "tests/seed/seed.kova", "-o"]).arg(&exe).status().unwrap().success());
     assert_eq!(seeded(&mut program(&exe, LANG)), run);
