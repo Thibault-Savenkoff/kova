@@ -176,7 +176,7 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 
 /// The C runtime functions called by the generated code.
 /// How many `StrOp`s the runtime has (`str_op` numbers them).
-const STR_OPS: usize = 98;
+const STR_OPS: usize = 102;
 
 struct Runtime {
     print: FuncId,
@@ -324,6 +324,10 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::CFree => (95, "kova_c_free", 1),
         StrOp::FromCText => (96, "kova_from_c_text", 1),
         StrOp::ExternAddress => (97, "kova_extern", 5),
+        StrOp::CWideText => (98, "kova_c_wide_text", 2),
+        StrOp::CWideFree => (99, "kova_c_wide_free", 1),
+        StrOp::FromCWideText => (100, "kova_from_c_wide_text", 1),
+        StrOp::CRead => (101, "kova_c_read", 3),
     }
 }
 
@@ -375,7 +379,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel, StrOp::CText, StrOp::CFree, StrOp::FromCText, StrOp::ExternAddress] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::FindAll, StrOp::ReplaceAll, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel, StrOp::CText, StrOp::CFree, StrOp::FromCText, StrOp::ExternAddress, StrOp::CWideText, StrOp::CWideFree, StrOp::FromCWideText, StrOp::CRead] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }

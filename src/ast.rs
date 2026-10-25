@@ -92,6 +92,7 @@ impl Struct {
         fn kova(t: &TypeAst) -> TypeAst {
             match t {
                 TypeAst::Name(n) if n.text == "Int32" => TypeAst::Name(Name { text: "Int".into(), span: n.span }),
+                TypeAst::Name(n) if n.text == "WideString" => TypeAst::Name(Name { text: "String".into(), span: n.span }),
                 TypeAst::Optional(t) => TypeAst::Optional(Box::new(kova(t))),
                 t => t.clone(),
             }

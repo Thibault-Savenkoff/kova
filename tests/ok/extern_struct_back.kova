@@ -1,0 +1,45 @@
+// Structs and texts coming back from C (PLAN Part 4 "`extern`, step 4"): a struct result is the
+// address C gives, copied (`Pair?`: `none` for NULL); a callback receives structs the same way;
+// `WideString` is UTF-16 both ways.
+extern c from "c" {
+    struct Pair { key: Int32, value: Int32 }
+    struct Three { first: Pair, second: Pair, third: Pair }
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    // `memcpy` gives back where it copied to: here, a way to read a struct at `p`.
+    fn put(into: Pointer, source: Three, size: Int) -> Three from "memcpy"
+    fn get(into: var Three, source: Pointer, size: Int) -> Pointer from "memcpy"
+    fn missing(name: String) -> Pair? from "getenv"
+    fn qsort(base: Pointer, count: Int, size: Int, compare: {Pair, Pair -> Int32})
+    fn put_wide(into: Pointer, text: WideString, size: Int) -> Pointer from "memcpy"
+    // `strstr(p, "")` is `p` itself: the text at `p`, read as UTF-16.
+    fn wide_at(p: Pointer, nothing: String) -> WideString from "strstr"
+}
+
+fn by_key(a: c.Pair, b: c.Pair) -> Int {
+    return a.key - b.key
+}
+
+fn main {
+    let p: Pointer := c.calloc(3, 8)
+    let three := c.Three { first := c.Pair { key := 3, value := 30 }, second := c.Pair { key := 1, value := 10 }, third := c.Pair { key := 2, value := 20 } }
+    print(c.put(p, three, 24).first.value)
+    c.qsort(p, 3, 8, by_key)
+    var sorted: c.Three := three
+    c.get(var sorted, p, 24)
+    print("{sorted.first.key} {sorted.second.key} {sorted.third.key}")
+    c.qsort(p, 3, 8) { x: c.Pair, y: c.Pair => y.value - x.value }
+    c.get(var sorted, p, 24)
+    print("{sorted.first.value} {sorted.second.value} {sorted.third.value}")
+    print(c.missing("KOVA_SURELY_NOT_SET"))
+    c.free(p)
+    let w: Pointer := c.calloc(32, 1)
+    c.put_wide(w, "héllo 😀", 18)
+    print(c.wide_at(w, ""))
+    c.free(w)
+}
+// expect: 30
+// expect: 1 2 3
+// expect: 30 20 10
+// expect: none
+// expect: héllo 😀

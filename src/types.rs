@@ -1653,8 +1653,14 @@ pub enum CType {
     /// `ExternFn::callbacks` at this number (PLAN Part 4 "`extern`, step 2").
     Callback(usize),
     /// A struct of an `extern` block, its fields' C types in `Info::c_structs` at this number:
-    /// given to C by its address (PLAN Part 4 "`extern`, step 3").
+    /// given to C by its address (PLAN Part 4 "`extern`, step 3"); as a result or a callback's
+    /// parameter, the address C gives, copied (step 4).
     Struct(usize),
+    /// The same, NULL for `none`: only a result or a callback's parameter.
+    MaybeStruct(usize),
+    /// `WideString`: a `const wchar_t*` of Windows, UTF-16 (PLAN Part 4 "`extern`, step 4").
+    WideText,
+    MaybeWideText,
 }
 
 /// The C structs, each one's fields: where each leaf (a field that is not a struct) lies in it,
@@ -1664,7 +1670,7 @@ pub fn c_layout(k: usize, structs: &[Vec<CType>]) -> (Vec<(usize, CType)>, usize
     let (mut leaves, mut at, mut align) = (vec![], 0usize, 1usize);
     for &c in &structs[k] {
         let (inner, size, a) = match c {
-            CType::Struct(j) => c_layout(j, structs),
+            CType::Struct(j) | CType::MaybeStruct(j) => c_layout(j, structs),
             CType::Int32 | CType::Bool => (vec![(0, c)], 4, 4),
             _ => (vec![(0, c)], 8, 8),
         };
@@ -1699,12 +1705,19 @@ fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>, structs: &CStru
     let simple = |t: &TypeAst| {
         c_type(t, &mut vec![], structs).filter(|(c, _)| matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer))
     };
+    // A callback's parameter may also be a struct C gives by its address.
+    let param = |t: &TypeAst| simple(t).or_else(|| c_type(t, &mut vec![], structs).filter(|(c, _)| matches!(c, CType::Struct(_) | CType::MaybeStruct(_))));
     if let Some((k, ty)) = name(t).and_then(|n| structs.get(&n)) {
         return Some((CType::Struct(*k), ty.clone()));
     }
+    if let TypeAst::Optional(inner) = t
+        && let Some((k, ty)) = name(inner).and_then(|n| structs.get(&n))
+    {
+        return Some((CType::MaybeStruct(*k), Type::Optional(Box::new(ty.clone()))));
+    }
     Some(match t {
         TypeAst::Block(ps, r) => {
-            let params: Vec<(CType, Type)> = ps.iter().map(simple).collect::<Option<_>>()?;
+            let params: Vec<(CType, Type)> = ps.iter().map(param).collect::<Option<_>>()?;
             let (result, ret) = match r {
                 None => (CType::Nothing, Type::Unit),
                 Some(r) => simple(r)?,
@@ -1715,6 +1728,7 @@ fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>, structs: &CStru
         }
         TypeAst::Optional(inner) => match name(inner)?.as_str() {
             "String" => (CType::MaybeText, Type::Optional(Box::new(Type::String))),
+            "WideString" => (CType::MaybeWideText, Type::Optional(Box::new(Type::String))),
             "Pointer" => (CType::MaybePointer, Type::Optional(Box::new(Type::Pointer))),
             _ => return None,
         },
@@ -1724,6 +1738,7 @@ fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>, structs: &CStru
             "Float" => (CType::Float, Type::Float),
             "Bool" => (CType::Bool, Type::Bool),
             "String" => (CType::Text, Type::String),
+            "WideString" => (CType::WideText, Type::String),
             "Pointer" => (CType::Pointer, Type::Pointer),
             _ => return None,
         },
@@ -2528,7 +2543,7 @@ impl Checker<'_> {
                 .fields
                 .iter()
                 .filter_map(|p| match c_type(&p.ty, &mut vec![], &structs) {
-                    Some((c, _)) if !matches!(c, CType::Text | CType::MaybeText | CType::Callback(_)) => Some(c),
+                    Some((c, _)) if !matches!(c, CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText | CType::Callback(_) | CType::MaybeStruct(_)) => Some(c),
                     _ => {
                         self.diags.push(Diag::new(p.name.span, t!("extern_field_type", type = p.ty.text())).help(t!("extern_field_types_help")));
                         None
@@ -2563,6 +2578,10 @@ impl Checker<'_> {
                         self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
                         continue;
                     };
+                    if let CType::MaybeStruct(_) = c {
+                        self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
+                        continue;
+                    }
                     let var = match p.mode {
                         Mode::Read => false,
                         Mode::Var if matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer | CType::Struct(_)) => true,
@@ -2580,8 +2599,8 @@ impl Checker<'_> {
                 }
                 let (result, ret) = match &func.ret {
                     None => (CType::Nothing, Type::Unit),
-                    // A struct comes back by its address, which C keeps: a `Pointer`.
-                    Some(r) => match c_type(r, &mut vec![], &structs).filter(|(c, _)| !matches!(c, CType::Callback(_) | CType::Struct(_))) {
+                    // A struct comes back by its address, copied (C keeps its own).
+                    Some(r) => match c_type(r, &mut vec![], &structs).filter(|(c, _)| !matches!(c, CType::Callback(_))) {
                         Some(found) => found,
                         None => {
                             self.diags.push(Diag::new(func.name.span, t!("extern_type", type = r.text())).help(t!("extern_types_help")));
@@ -2622,6 +2641,9 @@ impl Checker<'_> {
             }
             TypeAst::Name(n) if n.text == "Int32" => {
                 self.diags.push(Diag::new(n.span, t!("int32_outside")).help(t!("int32_outside_help")));
+            }
+            TypeAst::Name(n) if n.text == "WideString" => {
+                self.diags.push(Diag::new(n.span, t!("wide_outside")).help(t!("wide_outside_help")));
             }
             TypeAst::Name(n) if n.text == "Nothing" => {
                 self.diags.push(Diag::new(n.span, t!("nothing_only_in_result")).help(t!("nothing_only_in_result_help")));

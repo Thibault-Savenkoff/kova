@@ -1167,8 +1167,23 @@ fn main {
 ```
 
 Its fields are numbers, `Bool`, `Pointer`, `Pointer?` and the structs declared before it; Kova lays
-them out as C does. A C function giving a struct back by value cannot be declared: most give its
-address, a `Pointer`, which Kova cannot read yet.
+them out as C does. A struct as a result (`-> Time`, or `-> Time?` when C may give NULL) is the
+address C gives, copied, as `localtime` gives a `struct tm*`; a block C calls back may take structs
+the same way (`{Pair, Pair -> Int32}` for `qsort` on an array of structs). A C function giving a
+struct back by value, not by its address, cannot be declared.
+
+Windows' `…W` functions take UTF-16 texts: `WideString` (or `WideString?`) declares one, and the
+program gives and gets ordinary `String`s:
+
+```kova
+extern win from "user32" {
+    fn message(window: Pointer?, text: WideString, title: WideString, kind: Int32) -> Int32 from "MessageBoxW"
+}
+
+fn main {
+    win.message(none, "Bonjour !", "Kova", 0)
+}
+```
 
 A program with `extern` runs as native code, even under `kova run`.
 

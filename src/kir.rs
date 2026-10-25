@@ -530,6 +530,13 @@ pub enum StrOp {
     CFree,
     /// The String a C function gave (copied; NULL gives 0).
     FromCText,
+    /// `CText` for a `WideString` (PLAN Part 4 "`extern`, step 4"): UTF-16, freed by `CWideFree`.
+    CWideText,
+    CWideFree,
+    /// The String a C function gave as UTF-16 (copied; NULL gives 0).
+    FromCWideText,
+    /// A leaf of a C struct: (address, offset, 1 for a 4-byte `int` else 8 bytes); 0 at NULL.
+    CRead,
     /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
     /// library, C name, line, column), found at its first call.
     ExternAddress,
@@ -3640,14 +3647,18 @@ impl<'a> Translator<'a> {
         let (mut given, mut copies, mut at) = (vec![], vec![], 0);
         for (c, _) in &params {
             match c {
-                CType::Text | CType::MaybeText => {
-                    let (present, s) = if *c == CType::Text { (self.constant(1), vals[at]) } else { (vals[at], vals[at + 1]) };
+                CType::Text | CType::MaybeText | CType::WideText | CType::MaybeWideText => {
+                    let plain = matches!(c, CType::Text | CType::WideText);
+                    let (present, s) = if plain { (self.constant(1), vals[at]) } else { (vals[at], vals[at + 1]) };
                     let (copy, minus, zero) = (self.int_local(), self.constant(-1), self.int_local());
-                    self.emit(Inst::Str(copy, StrOp::CText, vec![s, present]));
+                    let (make, free) = if matches!(c, CType::Text | CType::MaybeText) { (StrOp::CText, StrOp::CFree) } else { (StrOp::CWideText, StrOp::CWideFree) };
+                    self.emit(Inst::Str(copy, make, vec![s, present]));
                     self.emit(Inst::Binary(zero, Op::Eq, copy, minus, NOWHERE));
                     self.emit(Inst::FaultIf(zero, Fault::TextWithZero, loc));
                     given.push(copy);
-                    copies.push(copy);
+                    copies.push((copy, free));
+                    at += if plain { 1 } else { 2 };
+                    continue;
                 }
                 CType::Struct(s) => {
                     at += self.c_leaves(*s, &vals[at..], loc, &mut given);
@@ -3676,29 +3687,15 @@ impl<'a> Translator<'a> {
         let raw: Vec<Slots> = kinds.iter().map(|cs| cs.iter().map(|&c| if c == CType::Float { self.new_slots(&Type::Float)[0] } else { self.int_local() }).collect()).collect();
         self.emit(Inst::Extern([got.clone(), raw.concat()].concat(), k, given, loc));
         for ((place, out), (r, cs)) in places.iter().zip(raw.iter().zip(&kinds)) {
-            let mut at = 0;
-            for (&c, &l) in cs.iter().zip(r) {
-                match c {
-                    // C wrote any `int`: Kova's Bool is 0 or 1.
-                    CType::Bool => {
-                        let zero = self.constant(0);
-                        self.emit(Inst::Binary(out[at], Op::Ne, l, zero, NOWHERE));
-                    }
-                    CType::MaybePointer => {
-                        let zero = self.constant(0);
-                        self.emit(Inst::Binary(out[at], Op::Ne, l, zero, NOWHERE));
-                        self.emit(Inst::Copy(out[at + 1], l));
-                        at += 1;
-                    }
-                    _ => self.emit(Inst::Copy(out[at], l)),
-                }
-                at += 1;
+            let v = self.kova_of_leaves(cs, r);
+            for (&o, x) in out.iter().zip(v) {
+                self.emit(Inst::Copy(o, x));
             }
             self.write(place, out);
         }
-        for copy in copies {
+        for (copy, free) in copies {
             let done = self.int_local();
-            self.emit(Inst::Str(done, StrOp::CFree, vec![copy]));
+            self.emit(Inst::Str(done, free, vec![copy]));
         }
         let zero = self.constant(0);
         let v = match result {
@@ -3708,27 +3705,78 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
                 if result == CType::Bool { vec![present] } else { vec![present, got[0]] }
             }
-            CType::Text | CType::Pointer => {
+            CType::Text | CType::WideText | CType::Pointer | CType::Struct(_) => {
                 let null = self.int_local();
                 self.emit(Inst::Binary(null, Op::Eq, got[0], zero, NOWHERE));
-                self.emit(Inst::FaultIf(null, if result == CType::Text { Fault::NullText } else { Fault::NullPointer }, loc));
-                if result == CType::Pointer {
-                    return got;
+                let fault = if matches!(result, CType::Text | CType::WideText) { Fault::NullText } else { Fault::NullPointer };
+                self.emit(Inst::FaultIf(null, fault, loc));
+                match result {
+                    CType::Pointer => return got,
+                    CType::Struct(k) => return self.c_struct_at(k, got[0]),
+                    _ => {}
                 }
                 let s = self.int_local();
-                self.emit(Inst::Str(s, StrOp::FromCText, vec![got[0]]));
+                let op = if result == CType::Text { StrOp::FromCText } else { StrOp::FromCWideText };
+                self.emit(Inst::Str(s, op, vec![got[0]]));
                 vec![s]
             }
-            CType::MaybeText => {
+            CType::MaybeText | CType::MaybeWideText => {
                 let (present, s) = (self.int_local(), self.int_local());
                 self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
-                self.emit(Inst::Str(s, StrOp::FromCText, vec![got[0]]));
+                let op = if result == CType::MaybeText { StrOp::FromCText } else { StrOp::FromCWideText };
+                self.emit(Inst::Str(s, op, vec![got[0]]));
                 vec![present, s]
+            }
+            // Its leaves read 0 at NULL: an empty value under `none`.
+            CType::MaybeStruct(k) => {
+                let present = self.int_local();
+                self.emit(Inst::Binary(present, Op::Ne, got[0], zero, NOWHERE));
+                return [vec![present], self.c_struct_at(k, got[0])].concat();
             }
             _ => return got,
         };
         self.track(&v, ty);
         v
+    }
+
+    /// The Kova slots of C values (`cs` their C types): a `Bool` 0 or 1 (C wrote any `int`), a
+    /// `Pointer?` present if not NULL.
+    fn kova_of_leaves(&mut self, cs: &[CType], raws: &[Local]) -> Slots {
+        let mut out = vec![];
+        for (&c, &l) in cs.iter().zip(raws) {
+            match c {
+                CType::Bool | CType::MaybePointer => {
+                    let (zero, present) = (self.constant(0), self.int_local());
+                    self.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
+                    out.push(present);
+                    if c == CType::MaybePointer {
+                        out.push(l);
+                    }
+                }
+                _ => out.push(l),
+            }
+        }
+        out
+    }
+
+    /// A copy of the struct `s` C keeps at `address` (PLAN Part 4 "`extern`, step 4"): each leaf
+    /// read (`StrOp::CRead`, 0 at NULL), then made a Kova value.
+    fn c_struct_at(&mut self, s: usize, address: Local) -> Slots {
+        let (leaves, _, _) = c_layout(s, &self.info.c_structs);
+        let (mut raws, mut cs) = (vec![], vec![]);
+        for (offset, c) in leaves {
+            let (at, kind, r) = (self.constant(offset as i64), self.constant(matches!(c, CType::Int32 | CType::Bool) as i64), self.int_local());
+            self.emit(Inst::Str(r, StrOp::CRead, vec![address, at, kind]));
+            raws.push(if c == CType::Float {
+                let x = self.new_slots(&Type::Float)[0];
+                self.emit(Inst::Convert(x, Conversion::FromBits, r, NOWHERE));
+                x
+            } else {
+                r
+            });
+            cs.push(c);
+        }
+        self.kova_of_leaves(&cs, &raws)
     }
 
     /// The C values of a Kova value of C type `c` (its slots first in `v`): an `Int32` checked,
@@ -3783,6 +3831,18 @@ impl<'a> Translator<'a> {
                     let present = t.int_local();
                     t.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
                     if c == CType::Bool { vec![present] } else { vec![present, l] }
+                }
+                // A struct C gives by its address: a copy (`MSG*`).
+                CType::Struct(k) => {
+                    let null = t.int_local();
+                    t.emit(Inst::Binary(null, Op::Eq, l, zero, NOWHERE));
+                    t.emit(Inst::FaultIf(null, Fault::NullPointer, loc));
+                    t.c_struct_at(k, l)
+                }
+                CType::MaybeStruct(k) => {
+                    let present = t.int_local();
+                    t.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
+                    [vec![present], t.c_struct_at(k, l)].concat()
                 }
                 _ => vec![l],
             };

@@ -924,7 +924,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             heap.make(t)
                         }
                         // Only before an `Inst::Extern`, which stops the interpreter.
-                        StrOp::CText | StrOp::CFree | StrOp::FromCText | StrOp::ExternAddress => 0,
+                        StrOp::CText | StrOp::CFree | StrOp::FromCText | StrOp::ExternAddress | StrOp::CWideText | StrOp::CWideFree | StrOp::FromCWideText | StrOp::CRead => 0,
                         StrOp::LogLevel => {
                             heap.log_level = Some(locals[a[0]]);
                             0

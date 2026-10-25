@@ -1454,6 +1454,59 @@ pub extern "C" fn kova_from_c_text(p: i64) -> i64 {
     new_text(String::from_utf8_lossy(c_bytes(p as *const u8)).as_bytes())
 }
 
+/// A String as a UTF-16 text ended by a 0, for Windows' `…W` functions (PLAN Part 4 "`extern`,
+/// step 4"); freed by `kova_c_wide_free`. 0 for `none`, -1 if it holds a 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_c_wide_text(s: i64, present: i64) -> i64 {
+    if present == 0 {
+        return 0;
+    }
+    let b = bytes(s);
+    if b.contains(&0) {
+        return -1;
+    }
+    let units: Vec<u16> = String::from_utf8_lossy(b).encode_utf16().chain(core::iter::once(0)).collect();
+    Box::into_raw(units.into_boxed_slice()) as *mut u16 as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_c_wide_free(c: i64) -> i64 {
+    if c > 0 {
+        let n = wide_units(c as *const u16).len() + 1;
+        drop(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(c as *mut u16, n)) });
+    }
+    0
+}
+
+/// The UTF-16 units up to the 0 at `p` (`read_volatile`, as `c_bytes`).
+fn wide_units<'a>(p: *const u16) -> &'a [u16] {
+    let mut n = 0;
+    while unsafe { p.add(n).read_volatile() } != 0 {
+        n += 1;
+    }
+    unsafe { core::slice::from_raw_parts(p, n) }
+}
+
+/// The String a C function gave as UTF-16: a copy, 0 for NULL.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_from_c_wide_text(p: i64) -> i64 {
+    if p == 0 {
+        return 0;
+    }
+    new_text(String::from_utf16_lossy(wide_units(p as *const u16)).as_bytes())
+}
+
+/// A leaf of a C struct at `address` (PLAN Part 4 "`extern`, step 4"): a 4-byte `int` (`kind`
+/// 1, made 64 bits) or 8 bytes; 0 at NULL.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_c_read(address: i64, offset: i64, kind: i64) -> i64 {
+    if address == 0 {
+        return 0;
+    }
+    let p = (address + offset) as *const u8;
+    unsafe { if kind == 1 { (p as *const i32).read_unaligned() as i64 } else { (p as *const i64).read_unaligned() } }
+}
+
 /// The address of each `extern` function, once found (0 before).
 static EXTERNS: Locked<Vec<i64>> = Locked::new(Vec::new());
 
