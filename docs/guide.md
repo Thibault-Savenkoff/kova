@@ -1251,10 +1251,61 @@ closed
 
 ## 21. The tools
 
-- `kova run`, `kova build`, `kova test`: run, build, test.
-- `kova fmt file.kova`: lays the code out the standard way (the editor does it on save).
-- The VSCode / VSCodium extension (`editors/vscode`): colors, errors while typing, completion, types on
-  hover, go to definition, rename, ▶ 🔨 🧪 buttons, and a debugger 🐞 (breakpoints, variables, and the
-  Debug Console evaluates what you type while stopped).
-- Kova speaks English or French: `KOVA_LANG=fr kova run hello.kova`, or `header { lang := fr }` at the top
-  of a program.
+### The command `kova`
+
+| Command | What it does |
+| --- | --- |
+| `kova run file.kova [args]` | Runs the program. The words after the file are its `args`. |
+| `kova build file.kova` | Makes a native executable next to the file (`-o name` chooses its name). |
+| `kova test file.kova` | Runs the `test` blocks (`kova test file "name"` runs one). |
+| `kova fmt file.kova` | Lays the code out the standard way (the editor does it on save). |
+| `kova lsp` | The language server, started by the editor. |
+| `kova debug` | The debugger the editor's 🐞 button uses (Debug Adapter Protocol). |
+
+Options of `kova build`:
+
+- `-o name`: the executable's name.
+- `--boost`: leaves the contracts (`require` / `ensure`) out, for speed (section 13).
+- `--target system`: makes the executable for another system, from any machine, with no other
+  tool installed: `linux`, `linux-arm`, `windows`, `windows-arm`, `mac` (every Mac in one file,
+  the default on a Mac), `mac-arm`, `mac-intel`.
+
+`kova run` and `kova build` print the same thing, digit for digit. A program that stops on a
+runtime error (an index out of bounds, a failed contract) prints where, and its exit code is 101.
+`kova run` runs programs that call C (`extern`) or open windows (`import ui`) as native code.
+
+### Installing
+
+`cargo install --path . --locked` from a clone of the repository installs `kova`. Building an
+executable needs no C compiler, linker or other tool: Kova has its own. Only a program that opens a
+window on Linux needs GTK 4, and one that uses HTTPS on Linux needs OpenSSL, both found when it runs.
+
+### The editor
+
+The VSCode / VSCodium extension (`editors/vscode`) gives colors, errors while typing, completion,
+types on hover, go to definition, rename, formatting on save, tests in the margin, the ▶ 🔨 🧪
+buttons, and a debugger 🐞 (breakpoints, variables, and the Debug Console evaluates what you type
+while stopped). After `cargo install`, run "Developer: Reload Window" so that it starts the new `kova lsp`.
+
+### Languages
+
+Kova speaks English or French: `KOVA_LANG=fr kova run hello.kova`, or `header { lang := fr }` at
+the top of a program. Without either, the system's language (`LC_ALL`, `LC_MESSAGES`, `LANG`), then
+English. A built executable picks its language when it starts.
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `KOVA_LANG` | The language of Kova's messages (`en`, `fr`). |
+| `KOVA_SEED` | Makes `random` repeat the same numbers (not `secure.random`). |
+| `KOVA_LOG` | The level of `log` (`debug`, `info`, `warning`, `error`); it wins over the program. |
+| `NO_COLOR`, `FORCE_COLOR` | No colors / colors even when the output is not a terminal. |
+| `KOVA_UI_SCRIPT` | A `ui` program opens no window: it prints each view and reads the clicks from its input. |
+| `KOVA_UI_HIDDEN` | The window is never shown (to drive it from another program). |
+| `KOVA_LEAKS` | `1`: a text never freed stops the program with code 102 (used by the tests). |
+
+### Where to look
+
+Each section of this guide ends where the next topic starts; the table of contents on the left
+lists them all. The examples are run with the repository's tests, so they print what is shown.
