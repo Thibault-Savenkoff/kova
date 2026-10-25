@@ -180,10 +180,13 @@
     "package": "vsce package --skip-license --allow-missing-repository"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.0",
+    "@vscode/vsce": "^4.0.0",
     "vscode-tmgrammar-test": "^0.1.3"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.2"
+  },
+  "overrides": {
+    "@azure/msal-node": "^7.1.1"
   }
 }
