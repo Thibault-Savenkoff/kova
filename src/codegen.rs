@@ -492,7 +492,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         let lists = rt.lists.map(|id| module.declare_func_in_func(id, b.func));
         let math = module.declare_func_in_func(rt.math, b.func);
         let callbacks = trampolines.iter().map(|(&g, (id, ..))| (g, module.declare_func_in_func(*id, b.func))).collect();
-        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, callbacks }.function(f, &refs, rt_print, config);
+        Generator { b, vars: vec![], types: f.locals.clone(), call_conv, rt_fault, fail, strings, lists, math, externs: &p.externs, c_structs: &p.c_structs, callbacks }.function(f, &refs, rt_print, config);
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
@@ -574,6 +574,7 @@ struct Generator<'a> {
     /// `kova_math(op, x, y)`: `sin`, `pow`… (`shared::math`).
     math: FuncRef,
     externs: &'a [crate::types::ExternFn],
+    c_structs: &'a [Vec<crate::types::CType>],
     /// The trampolines C calls back, by the number of the function each one calls.
     callbacks: HashMap<usize, FuncRef>,
 }
@@ -680,7 +681,27 @@ impl Generator<'_> {
         let narrow = |c: CType| matches!(c, CType::Int32 | CType::Bool);
         let mut sig = Signature::new(self.call_conv);
         let (mut vals, mut slots) = (vec![], vec![]);
-        for (&(c, var), &l) in f.params.iter().zip(args) {
+        let mut args = args.iter();
+        for &(c, var) in &f.params {
+            // A struct: its leaves stored where C reads them, its address given (PLAN Part 4
+            // "`extern`, step 3"); after a `var` one, read back.
+            if let CType::Struct(s) = c {
+                let (leaves, size, align) = crate::types::c_layout(s, self.c_structs);
+                let b = &mut self.b;
+                let slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size as u32, align.trailing_zeros() as u8));
+                for &(offset, c) in &leaves {
+                    let v = b.use_var(self.vars[*args.next().expect("a slot per leaf")]);
+                    let v = if narrow(c) { b.ins().ireduce(I32, v) } else { v };
+                    b.ins().stack_store(I64, v, slot, offset as i32);
+                }
+                vals.push(b.ins().stack_addr(I64, slot, 0));
+                sig.params.push(AbiParam::new(I64));
+                if var {
+                    slots.push((slot, leaves));
+                }
+                continue;
+            }
+            let l = *args.next().expect("a slot per parameter");
             let v = self.b.use_var(self.vars[l]);
             let b = &mut self.b;
             if var {
@@ -689,7 +710,7 @@ impl Generator<'_> {
                 b.ins().stack_store(I64, v, slot, 0);
                 vals.push(b.ins().stack_addr(I64, slot, 0));
                 sig.params.push(AbiParam::new(I64));
-                slots.push((slot, c));
+                slots.push((slot, vec![(0, c)]));
             } else if narrow(c) {
                 vals.push(b.ins().ireduce(I32, v));
                 sig.params.push(AbiParam::new(I32));
@@ -714,22 +735,25 @@ impl Generator<'_> {
             let r = if t == I32 { b.ins().sextend(I64, r) } else { r };
             b.def_var(self.vars[*outs.next().expect("a result slot")], r);
         }
-        for (slot, c) in slots {
-            let v = match c {
-                CType::Float => b.ins().stack_load(I64, F64, slot, 0),
-                CType::Int32 => {
-                    let v = b.ins().stack_load(I64, I32, slot, 0);
-                    b.ins().sextend(I64, v)
-                }
-                // C wrote any `int`: Kova's Bool is 0 or 1.
-                CType::Bool => {
-                    let v = b.ins().stack_load(I64, I32, slot, 0);
-                    let v = b.ins().icmp_imm_s(IntCC::NotEqual, v, 0);
-                    b.ins().uextend(I64, v)
-                }
-                _ => b.ins().stack_load(I64, I64, slot, 0),
-            };
-            b.def_var(self.vars[*outs.next().expect("a slot per var parameter")], v);
+        for (slot, leaves) in slots {
+            for (offset, c) in leaves {
+                let offset = offset as i32;
+                let v = match c {
+                    CType::Float => b.ins().stack_load(I64, F64, slot, offset),
+                    CType::Int32 => {
+                        let v = b.ins().stack_load(I64, I32, slot, offset);
+                        b.ins().sextend(I64, v)
+                    }
+                    // C wrote any `int`: Kova's Bool is 0 or 1.
+                    CType::Bool => {
+                        let v = b.ins().stack_load(I64, I32, slot, offset);
+                        let v = b.ins().icmp_imm_s(IntCC::NotEqual, v, 0);
+                        b.ins().uextend(I64, v)
+                    }
+                    _ => b.ins().stack_load(I64, I64, slot, offset),
+                };
+                b.def_var(self.vars[*outs.next().expect("a slot per var parameter")], v);
+            }
         }
     }
 

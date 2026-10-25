@@ -1,0 +1,40 @@
+// C structs (PLAN Part 4 "`extern`, step 3"): `strftime` reads a `struct tm` given by its
+// address; `memcpy` writes a struct holding another one into a `var`, read back after.
+extern c from "c" {
+    struct Time {
+        second: Int32
+        minute: Int32
+        hour: Int32
+        day: Int32
+        month: Int32
+        year: Int32
+        weekday: Int32
+        yearday: Int32
+        summer: Int32
+    }
+    struct Inner { flag: Bool, ratio: Float }
+    struct Shape { id: Int32, inner: Inner, link: Pointer?, count: Int }
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    fn strftime(into: Pointer, size: Int, format: String, time: Time) -> Int
+    // `strstr(p, "")` is `p` itself: here, a way to read the text at `p`.
+    fn text(p: Pointer, nothing: String) -> String from "strstr"
+    fn duplicate(into: var Shape, source: Shape, size: Int) -> Pointer from "memcpy"
+}
+
+fn main {
+    let t := c.Time { second := 5, minute := 4, hour := 3, day := 25, month := 9, year := 126, weekday := 0, yearday := 0, summer := 0 }
+    let p: Pointer := c.calloc(64, 1)
+    print(c.strftime(p, 64, "%Y-%m-%d %H:%M:%S", t))
+    print(c.text(p, ""))
+    c.free(p)
+    let source := c.Shape { id := -7, inner := c.Inner { flag := true, ratio := 2.5 }, link := none, count := 1099511627776 }
+    var into := c.Shape { id := 0, inner := c.Inner { flag := false, ratio := 0.0 }, link := none, count := 0 }
+    c.duplicate(var into, source, 40)
+    print(into)
+    print(into.inner.ratio * 2.0)
+}
+// expect: 19
+// expect: 2026-10-25 03:04:05
+// expect: c.Shape { id: -7, inner: c.Inner { flag: true, ratio: 2.5 }, link: none, count: 1099511627776 }
+// expect: 5.0

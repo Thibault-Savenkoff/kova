@@ -568,7 +568,10 @@ impl Parser<'_> {
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
                 // Neither is `extern`.
-                Kind::Ident if self.at_extern() => self.extern_().map(|e| externs.push(e)),
+                Kind::Ident if self.at_extern() => self.extern_().map(|e| {
+                    structs.extend(e.structs.iter().map(Struct::kova_view));
+                    externs.push(e)
+                }),
                 _ => {
                     let msg = t!("declaration_expected", found = self.describe());
                     self.error(self.token().span, msg)
@@ -675,11 +678,21 @@ impl Parser<'_> {
         let module = self.imports.get(&name.text).cloned().unwrap_or(name.text.clone());
         self.skip_newlines();
         self.expect("{")?;
-        let mut functions = vec![];
+        let (mut functions, mut structs) = (vec![], vec![]);
         loop {
             self.skip_newlines();
             match self.kind() {
                 Kind::Sym("}") => break,
+                // Its fields are public: C reads them all.
+                Kind::Keyword("struct") => {
+                    self.in_extern = true;
+                    let s = self.struct_();
+                    self.in_extern = false;
+                    match s {
+                        Ok(s) => structs.push(s),
+                        Err(()) => self.skip_statement(),
+                    }
+                }
                 Kind::Keyword("fn") => {
                     self.in_extern = true;
                     let f = self.function(true);
@@ -694,10 +707,10 @@ impl Parser<'_> {
                         Err(()) => self.skip_statement(),
                     }
                 }
-                Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
+                Kind::Eof | Kind::Keyword("test" | "copy" | "enum" | "interface") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
-                    return Ok(Extern { name, library, functions });
+                    break;
                 }
                 _ => {
                     let msg = t!("extern_item", found = self.describe());
@@ -706,8 +719,32 @@ impl Parser<'_> {
                 }
             }
         }
-        self.advance(); // }
-        Ok(Extern { name, library, functions })
+        if self.is_sym("}") {
+            self.advance();
+        }
+        // `Point` inside the block is `win.Point`, like the functions.
+        let own: Vec<String> = structs.iter().map(|s: &Struct| s.name.text.clone()).collect();
+        fn requalify(t: &mut TypeAst, own: &[String], module: &str) {
+            match t {
+                TypeAst::Name(n) if own.contains(&n.text) => n.text = format!("{module}.{}", n.text),
+                TypeAst::Optional(t) => requalify(t, own, module),
+                TypeAst::Block(ps, r) => {
+                    ps.iter_mut().for_each(|t| requalify(t, own, module));
+                    r.iter_mut().for_each(|t| requalify(t, own, module));
+                }
+                _ => {}
+            }
+        }
+        for s in &mut structs {
+            s.name.text = format!("{module}.{}", s.name.text);
+            self.hide(self.public, &s.name);
+            s.fields.iter_mut().for_each(|p| requalify(&mut p.ty, &own, &module));
+        }
+        for (f, _) in &mut functions {
+            f.params.iter_mut().for_each(|p| requalify(&mut p.ty, &own, &module));
+            f.ret.iter_mut().for_each(|t| requalify(t, &own, &module));
+        }
+        Ok(Extern { name, library, functions, structs })
     }
 
     /// A `"…"` without `{code}`: a library's or a C function's name.
@@ -872,7 +909,7 @@ impl Parser<'_> {
         self.expect("{")?;
         let (mut fields, mut methods) = (vec![], vec![]);
         // Fields and methods are private by default too; an enum's variants go with the enum.
-        let mut public = false;
+        let mut public = self.in_extern;
         let member = |name: &Name, m: &Name| Name { text: format!("{}.{}", name.text, m.text), span: m.span };
         loop {
             self.skip_newlines();

@@ -37,7 +37,7 @@ use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKin
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
-use crate::types::{CType, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{CType, c_layout, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -215,6 +215,8 @@ pub struct Program {
     pub tests: Vec<(String, usize)>,
     /// The functions of the `extern` blocks, in the order of `extern_order` (`Inst::Extern`).
     pub externs: Vec<crate::types::ExternFn>,
+    /// The fields' C types of each C struct (`Info::c_structs`).
+    pub c_structs: Vec<Vec<CType>>,
 }
 
 /// The `extern` functions, numbered (`Inst::Extern`).
@@ -967,7 +969,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
     let externs = extern_order(info).into_iter().map(|n| info.externs[n].clone()).collect();
-    Program { functions, main: numbers.get("main").copied(), tests, externs }
+    Program { functions, main: numbers.get("main").copied(), tests, externs, c_structs: info.c_structs.clone() }
 }
 
 struct Translator<'a> {
@@ -3647,18 +3649,13 @@ impl<'a> Translator<'a> {
                     given.push(copy);
                     copies.push(copy);
                 }
-                CType::Int32 => {
-                    let v = vals[at];
-                    let (low, high, (min, max)) = (self.int_local(), self.int_local(), (self.constant(i32::MIN as i64), self.constant(i32::MAX as i64)));
-                    self.emit(Inst::Binary(low, Op::Lt, v, min, NOWHERE));
-                    self.emit(Inst::Binary(high, Op::Gt, v, max, NOWHERE));
-                    self.emit(Inst::FaultIf(low, Fault::Int32Range, loc));
-                    self.emit(Inst::FaultIf(high, Fault::Int32Range, loc));
-                    given.push(v);
+                CType::Struct(s) => {
+                    at += self.c_leaves(*s, &vals[at..], loc, &mut given);
+                    continue;
                 }
-                // `none` leaves its value slot at 0: NULL.
-                CType::MaybePointer => given.push(vals[at + 1]),
-                _ => given.push(vals[at]),
+                _ => {
+                    self.c_leaves_of(*c, &vals[at..], loc, &mut given);
+                }
             }
             at += if matches!(c, CType::MaybeText | CType::MaybePointer) { 2 } else { 1 };
         }
@@ -3667,17 +3664,35 @@ impl<'a> Translator<'a> {
             CType::Float => self.new_slots(&Type::Float),
             _ => vec![self.int_local()],
         };
-        // What C left at each `var` parameter's address, then made a Kova value.
-        let kinds: Vec<CType> = params.iter().filter(|(_, var)| *var).map(|(c, _)| *c).collect();
-        let raw: Slots = kinds.iter().map(|&c| if c == CType::Float { self.new_slots(&Type::Float)[0] } else { self.int_local() }).collect();
-        self.emit(Inst::Extern([got.clone(), raw.clone()].concat(), k, given, loc));
-        for (((place, out), r), c) in places.iter().zip(raw).zip(kinds) {
-            if c == CType::MaybePointer {
-                let zero = self.constant(0);
-                self.emit(Inst::Binary(out[0], Op::Ne, r, zero, NOWHERE));
-                self.emit(Inst::Copy(out[1], r));
-            } else {
-                self.emit(Inst::Copy(out[0], r));
+        // What C left at each `var` parameter's address (each leaf of a struct), then made a Kova value.
+        let kinds: Vec<Vec<CType>> = params
+            .iter()
+            .filter(|(_, var)| *var)
+            .map(|(c, _)| match c {
+                CType::Struct(s) => c_layout(*s, &self.info.c_structs).0.into_iter().map(|(_, c)| c).collect(),
+                c => vec![*c],
+            })
+            .collect();
+        let raw: Vec<Slots> = kinds.iter().map(|cs| cs.iter().map(|&c| if c == CType::Float { self.new_slots(&Type::Float)[0] } else { self.int_local() }).collect()).collect();
+        self.emit(Inst::Extern([got.clone(), raw.concat()].concat(), k, given, loc));
+        for ((place, out), (r, cs)) in places.iter().zip(raw.iter().zip(&kinds)) {
+            let mut at = 0;
+            for (&c, &l) in cs.iter().zip(r) {
+                match c {
+                    // C wrote any `int`: Kova's Bool is 0 or 1.
+                    CType::Bool => {
+                        let zero = self.constant(0);
+                        self.emit(Inst::Binary(out[at], Op::Ne, l, zero, NOWHERE));
+                    }
+                    CType::MaybePointer => {
+                        let zero = self.constant(0);
+                        self.emit(Inst::Binary(out[at], Op::Ne, l, zero, NOWHERE));
+                        self.emit(Inst::Copy(out[at + 1], l));
+                        at += 1;
+                    }
+                    _ => self.emit(Inst::Copy(out[at], l)),
+                }
+                at += 1;
             }
             self.write(place, out);
         }
@@ -3714,6 +3729,39 @@ impl<'a> Translator<'a> {
         };
         self.track(&v, ty);
         v
+    }
+
+    /// The C values of a Kova value of C type `c` (its slots first in `v`): an `Int32` checked,
+    /// `none` the value slot left at 0 (NULL).
+    fn c_leaves_of(&mut self, c: CType, v: &[Local], loc: Loc, given: &mut Slots) {
+        match c {
+            CType::Int32 => {
+                let (low, high, (min, max)) = (self.int_local(), self.int_local(), (self.constant(i32::MIN as i64), self.constant(i32::MAX as i64)));
+                self.emit(Inst::Binary(low, Op::Lt, v[0], min, NOWHERE));
+                self.emit(Inst::Binary(high, Op::Gt, v[0], max, NOWHERE));
+                self.emit(Inst::FaultIf(low, Fault::Int32Range, loc));
+                self.emit(Inst::FaultIf(high, Fault::Int32Range, loc));
+                given.push(v[0]);
+            }
+            CType::MaybePointer => given.push(v[1]),
+            _ => given.push(v[0]),
+        }
+    }
+
+    /// The C values of each leaf of struct `s` (PLAN Part 4 "`extern`, step 3"), in the order of
+    /// `types::c_layout`; how many Kova slots it read.
+    fn c_leaves(&mut self, s: usize, v: &[Local], loc: Loc, given: &mut Slots) -> usize {
+        let mut at = 0;
+        for c in self.info.c_structs[s].clone() {
+            match c {
+                CType::Struct(j) => at += self.c_leaves(j, &v[at..], loc, given),
+                c => {
+                    self.c_leaves_of(c, &v[at..], loc, given);
+                    at += if c == CType::MaybePointer { 2 } else { 1 };
+                }
+            }
+        }
+        at
     }
 
     /// A function C calls back (PLAN Part 4 "`extern`, step 2"): `callback in main` takes the C

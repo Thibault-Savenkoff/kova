@@ -1127,6 +1127,46 @@ voka
 The function sees Kova types (an `Int32` is an `Int`); what it needs from the program goes through
 the `Pointer` most C functions give back to it for that (GTK's `data`).
 
+A C struct is declared in the `extern` block, then used like any struct (`c.Time { … }`, `t.hour`).
+It goes to C by its address: `t: Time` for a `const struct tm*` C only reads, `t: var Time` when C
+fills it in (read back after the call):
+
+```kova
+extern c from "c" {
+    struct Time {
+        second: Int32
+        minute: Int32
+        hour: Int32
+        day: Int32
+        month: Int32
+        year: Int32
+        weekday: Int32
+        yearday: Int32
+        summer: Int32
+    }
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+    fn strftime(into: Pointer, size: Int, format: String, time: Time) -> Int
+    fn text(p: Pointer, nothing: String) -> String from "strstr"
+}
+
+fn main {
+    let t := c.Time { second := 0, minute := 30, hour := 9, day := 1, month := 0, year := 126, weekday := 0, yearday := 0, summer := 0 }
+    let p: Pointer := c.calloc(64, 1)
+    c.strftime(p, 64, "%d/%m/%Y %H:%M", t)
+    print(c.text(p, ""))
+    c.free(p)
+}
+```
+
+```text
+01/01/2026 09:30
+```
+
+Its fields are numbers, `Bool`, `Pointer`, `Pointer?` and the structs declared before it; Kova lays
+them out as C does. A C function giving a struct back by value cannot be declared: most give its
+address, a `Pointer`.
+
 A program with `extern` runs as native code, even under `kova run`.
 
 ## 20. The tools

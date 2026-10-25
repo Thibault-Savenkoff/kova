@@ -488,7 +488,13 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
             detail: Some(heading(f).0),
             ..Default::default()
         });
-        return Some(items.collect());
+        let structs = e.structs.iter().map(|s| CompletionItem {
+            label: s.name.text[prefix.len()..].to_string(),
+            kind: Some(CompletionItemKind::STRUCT),
+            detail: Some(format!("struct {}", s.name.text)),
+            ..Default::default()
+        });
+        return Some(structs.chain(items).collect());
     }
     let module = tree(src).imports.into_iter().find(|i| i.alias.text == parts[0]).map(|i| i.module.text);
     let name = match (&module, parts.as_slice()) {
@@ -1404,10 +1410,10 @@ mod tests {
 
     #[test]
     fn extern_functions() {
-        let src = "extern c from \"c\" {\n    fn abs(n: Int32) -> Int32\n    fn len(s: String) -> Int from \"strlen\"\n}\n";
+        let src = "extern c from \"c\" {\n    struct Pair { a: Int32, b: Int32 }\n    fn abs(n: Int32) -> Int32\n    fn len(s: String) -> Int from \"strlen\"\n}\n";
         let items = statics("/none/main.kova", src, "c").unwrap();
-        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["abs", "len"]);
-        assert_eq!(items[0].detail.as_deref(), Some("fn c.abs(n: Int32) -> Int32"));
+        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Pair", "abs", "len"]);
+        assert_eq!(items[1].detail.as_deref(), Some("fn c.abs(n: Int32) -> Int32"));
     }
 
     #[test]

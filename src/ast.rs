@@ -33,6 +33,9 @@ pub struct Extern {
     pub library: (String, Span),
     /// Each function, named `sqlite.open`, without a body; its C name when it is not the same.
     pub functions: Vec<(Function, Option<(String, Span)>)>,
+    /// Its structs, named `win.Point`, with their C types (PLAN Part 4 "`extern`, step 3"); the
+    /// parser also gives the program each one as a Kova struct (`Struct::c_view`).
+    pub structs: Vec<Struct>,
 }
 
 /// `import geometry` or `import geometry as geo` (PLAN 2.9).
@@ -73,6 +76,30 @@ pub struct Struct {
     pub variants: Option<Vec<Variant>>,
     /// Its methods (`fn sound(self)`) and static functions (`fn create(name: String) -> Dog`).
     pub methods: Vec<Function>,
+}
+
+impl Struct {
+    /// A struct of an `extern` block as the program sees it: a `copy` struct whose `Int32`s are
+    /// `Int`s (not `copy` if a field cannot be one: the type checker says why that field is wrong).
+    pub fn kova_view(&self) -> Struct {
+        fn c_like(t: &TypeAst) -> bool {
+            match t {
+                TypeAst::Name(n) => ["Int", "Int32", "Float", "Bool", "Pointer"].contains(&n.text.as_str()) || n.text.contains('.'),
+                TypeAst::Optional(t) => c_like(t),
+                _ => false,
+            }
+        }
+        fn kova(t: &TypeAst) -> TypeAst {
+            match t {
+                TypeAst::Name(n) if n.text == "Int32" => TypeAst::Name(Name { text: "Int".into(), span: n.span }),
+                TypeAst::Optional(t) => TypeAst::Optional(Box::new(kova(t))),
+                t => t.clone(),
+            }
+        }
+        let fields = self.fields.iter().map(|p| Param { ty: kova(&p.ty), ..p.clone() }).collect();
+        let copy = self.fields.iter().all(|p| c_like(&p.ty));
+        Struct { copy, name: self.name.clone(), generics: vec![], interfaces: vec![], fields, variants: None, methods: vec![] }
+    }
 }
 
 /// `interface Animal { fn sound(self) -> String … }`: what a type promises (PLAN 2.6).

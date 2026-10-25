@@ -1,0 +1,23 @@
+// C structs (PLAN Part 4 "`extern`, step 3"): C fields only, declared before use, no methods;
+// a struct goes to C by its address, never comes back by value.
+extern c from "c" {
+    struct Named { name: String }
+    struct Later { inner: After }
+    struct After { x: Int }
+    struct Busy {
+        x: Int
+        fn get(self) -> Int
+    }
+    struct Fine { x: Int32 }
+    fn back -> Fine
+}
+
+fn main {
+    let f := c.Fine { x := 1 }
+    let n: Int32 := 2
+}
+// error: `String` cannot be a field of a C struct
+// error: `c.After` cannot be a field of a C struct
+// error: `c.Busy` is a C struct: only fields, without methods, type parameters or interfaces
+// error: `c.Fine` cannot cross into C
+// error: `Int32` exists only in an `extern` block, for C's `int`

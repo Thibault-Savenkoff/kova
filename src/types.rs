@@ -857,6 +857,8 @@ pub struct Info {
     pub captures: HashMap<usize, Vec<String>>,
     /// `sqlite.open` → how to call it (PLAN Part 4 "`extern`, step 1").
     pub externs: HashMap<String, ExternFn>,
+    /// The fields' C types of each struct of the `extern` blocks (`CType::Struct`).
+    pub c_structs: Vec<Vec<CType>>,
     /// By the `Expr::id` of an `extern` call's argument: the function given by its name for C to
     /// call back (`clicked` in `gtk.connect(b, "clicked", clicked, none)`; PLAN "`extern`, step 2").
     pub callbacks: HashMap<usize, String>,
@@ -1344,7 +1346,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.functions.insert(name.to_string(), Signature { receiver: None, params, ret, generics });
         }
     }
-    let externs = c.externs(f);
+    let (externs, c_structs) = c.externs(f);
     c.extern_names = externs.keys().cloned().collect();
     for (i, s) in f.structs.iter().enumerate() {
         if decls.get(s.name.text.as_str()) != Some(&i) {
@@ -1624,6 +1626,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         captures: HashMap::new(),
         externs,
         callbacks: c.callbacks,
+        c_structs,
     };
     (info, c.diags)
 }
@@ -1649,6 +1652,28 @@ pub enum CType {
     /// `{Pointer, Int32 -> Int}`: the address of a function C calls back, its C types in
     /// `ExternFn::callbacks` at this number (PLAN Part 4 "`extern`, step 2").
     Callback(usize),
+    /// A struct of an `extern` block, its fields' C types in `Info::c_structs` at this number:
+    /// given to C by its address (PLAN Part 4 "`extern`, step 3").
+    Struct(usize),
+}
+
+/// The C structs, each one's fields: where each leaf (a field that is not a struct) lies in it,
+/// and the struct's size. Every system Kova builds for lays C structs out the same way: each
+/// field at the next multiple of its own size, the struct rounded up to its largest field.
+pub fn c_layout(k: usize, structs: &[Vec<CType>]) -> (Vec<(usize, CType)>, usize, usize) {
+    let (mut leaves, mut at, mut align) = (vec![], 0usize, 1usize);
+    for &c in &structs[k] {
+        let (inner, size, a) = match c {
+            CType::Struct(j) => c_layout(j, structs),
+            CType::Int32 | CType::Bool => (vec![(0, c)], 4, 4),
+            _ => (vec![(0, c)], 8, 8),
+        };
+        at = at.next_multiple_of(a);
+        leaves.extend(inner.into_iter().map(|(o, c)| (at + o, c)));
+        at += size;
+        align = align.max(a);
+    }
+    (leaves, at.next_multiple_of(align), align)
 }
 
 /// A function of an `extern` block: its library, its C name, its parameters (with `var`: the
@@ -1663,14 +1688,20 @@ pub struct ExternFn {
     pub callbacks: Vec<(Vec<CType>, CType)>,
 }
 
+/// The C structs met so far: name → number in `Info::c_structs`, Kova type.
+type CStructs = HashMap<String, (usize, Type)>;
+
 /// The C type an `extern` declaration writes, and what the program sees. A block type is a
 /// function C calls back, whose own types are added to `callbacks`: numbers, `Bool`, `Pointer`
 /// and `Pointer?` only (a text would need freeing after each call).
-fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>) -> Option<(CType, Type)> {
+fn c_type(t: &TypeAst, callbacks: &mut Vec<(Vec<CType>, CType)>, structs: &CStructs) -> Option<(CType, Type)> {
     let name = |t: &TypeAst| if let TypeAst::Name(n) = t { Some(n.text.clone()) } else { None };
     let simple = |t: &TypeAst| {
-        c_type(t, &mut vec![]).filter(|(c, _)| matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer))
+        c_type(t, &mut vec![], structs).filter(|(c, _)| matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer))
     };
+    if let Some((k, ty)) = name(t).and_then(|n| structs.get(&n)) {
+        return Some((CType::Struct(*k), ty.clone()));
+    }
     Some(match t {
         TypeAst::Block(ps, r) => {
             let params: Vec<(CType, Type)> = ps.iter().map(simple).collect::<Option<_>>()?;
@@ -2484,8 +2515,33 @@ impl Checker<'_> {
     }
 
     /// The functions of the `extern` blocks: checked, then known like the others (`sqlite.open`).
-    fn externs(&mut self, f: &File) -> HashMap<String, ExternFn> {
+    fn externs(&mut self, f: &File) -> (HashMap<String, ExternFn>, Vec<Vec<CType>>) {
         let mut made = HashMap::new();
+        // Its structs first, in order: a field may be one declared before it.
+        let (mut structs, mut layouts): (CStructs, Vec<Vec<CType>>) = (HashMap::new(), vec![]);
+        for s in f.externs.iter().flat_map(|e| &e.structs) {
+            if !s.methods.is_empty() || !s.generics.is_empty() || !s.interfaces.is_empty() {
+                self.error(s.name.span, t!("extern_struct_shape", name = s.name.text));
+                continue;
+            }
+            let fields: Vec<CType> = s
+                .fields
+                .iter()
+                .filter_map(|p| match c_type(&p.ty, &mut vec![], &structs) {
+                    Some((c, _)) if !matches!(c, CType::Text | CType::MaybeText | CType::Callback(_)) => Some(c),
+                    _ => {
+                        self.diags.push(Diag::new(p.name.span, t!("extern_field_type", type = p.ty.text())).help(t!("extern_field_types_help")));
+                        None
+                    }
+                })
+                .collect();
+            if fields.len() == s.fields.len()
+                && let Some(ty) = self.structs.get(&s.name.text)
+            {
+                structs.insert(s.name.text.clone(), (layouts.len(), ty.clone()));
+                layouts.push(fields);
+            }
+        }
         for e in &f.externs {
             if MODULES.contains(&e.name.text.as_str()) {
                 self.error(e.name.span, t!("extern_module_taken", name = e.name.text));
@@ -2503,13 +2559,13 @@ impl Checker<'_> {
                 }
                 let (mut params, mut kova, mut callbacks) = (vec![], vec![], vec![]);
                 for p in &func.params {
-                    let Some((c, t)) = c_type(&p.ty, &mut callbacks) else {
+                    let Some((c, t)) = c_type(&p.ty, &mut callbacks, &structs) else {
                         self.diags.push(Diag::new(p.name.span, t!("extern_type", type = p.ty.text())).help(t!("extern_types_help")));
                         continue;
                     };
                     let var = match p.mode {
                         Mode::Read => false,
-                        Mode::Var if matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer) => true,
+                        Mode::Var if matches!(c, CType::Int | CType::Int32 | CType::Float | CType::Bool | CType::Pointer | CType::MaybePointer | CType::Struct(_)) => true,
                         Mode::Var => {
                             self.error(p.name.span, t!("extern_var", type = p.ty.text()));
                             continue;
@@ -2524,7 +2580,8 @@ impl Checker<'_> {
                 }
                 let (result, ret) = match &func.ret {
                     None => (CType::Nothing, Type::Unit),
-                    Some(r) => match c_type(r, &mut vec![]).filter(|(c, _)| !matches!(c, CType::Callback(_))) {
+                    // A struct comes back by its address, which C keeps: a `Pointer`.
+                    Some(r) => match c_type(r, &mut vec![], &structs).filter(|(c, _)| !matches!(c, CType::Callback(_) | CType::Struct(_))) {
                         Some(found) => found,
                         None => {
                             self.diags.push(Diag::new(func.name.span, t!("extern_type", type = r.text())).help(t!("extern_types_help")));
@@ -2545,7 +2602,7 @@ impl Checker<'_> {
                 made.insert(name, ExternFn { library: e.library.0.clone(), symbol, params, result, callbacks });
             }
         }
-        made
+        (made, layouts)
     }
 
     fn report_unknown(&mut self, t: &TypeAst) {
