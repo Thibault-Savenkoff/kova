@@ -25,6 +25,9 @@ mod c {
         // Intel Macs name the versions with 64-bit file numbers so.
         #[cfg_attr(target_arch = "x86_64", link_name = "stat$INODE64")]
         pub fn stat(path: *const u8, st: *mut u8) -> i32;
+        #[cfg_attr(target_arch = "x86_64", link_name = "lstat$INODE64")]
+        pub fn lstat(path: *const u8, st: *mut u8) -> i32;
+        pub fn rename(a: *const u8, b: *const u8) -> i32;
         pub fn mkdir(path: *const u8, mode: u16) -> i32;
         pub fn unlink(path: *const u8) -> i32;
         #[cfg_attr(target_arch = "x86_64", link_name = "opendir$INODE64")]
@@ -55,6 +58,17 @@ mod c {
         pub fn pthread_attr_setstacksize(attributes: *mut [u64; 8], n: usize) -> i32;
         pub fn pthread_create(thread: *mut usize, attributes: *const [u64; 8], start: extern "C" fn(*mut u8) -> *mut u8, arg: *mut u8) -> i32;
         pub fn pthread_join(thread: usize, result: *mut *mut u8) -> i32;
+        pub fn pipe(fds: *mut [i32; 2]) -> i32;
+        pub fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        pub fn _NSGetEnviron() -> *const *const *const u8;
+        pub fn posix_spawn(pid: *mut i32, path: *const u8, actions: *const usize, attributes: *const usize, argv: *const *const u8, envp: *const *const u8) -> i32;
+        pub fn posix_spawn_file_actions_init(actions: *mut usize) -> i32;
+        pub fn posix_spawn_file_actions_adddup2(actions: *mut usize, fd: i32, to: i32) -> i32;
+        pub fn posix_spawn_file_actions_addopen(actions: *mut usize, fd: i32, path: *const u8, flags: i32, mode: u16) -> i32;
+        pub fn posix_spawn_file_actions_destroy(actions: *mut usize) -> i32;
+        pub fn posix_spawnattr_init(attributes: *mut usize) -> i32;
+        pub fn posix_spawnattr_setflags(attributes: *mut usize, flags: i16) -> i32;
+        pub fn posix_spawnattr_destroy(attributes: *mut usize) -> i32;
     }
 }
 
@@ -340,6 +354,26 @@ pub fn kind(path: &str) -> Result<bool, i64> {
     Ok(u16::from_ne_bytes([st[4], st[5]]) & 0o170000 == 0o040000)
 }
 
+/// What `files.size` and `files.modified` say; `follow` = a link's target rather than the link.
+pub fn info(path: &str, follow: bool) -> Result<crate::Info, i64> {
+    let mut st = [0u8; 256];
+    let p = c_path(path);
+    if unsafe { if follow { c::stat(p.as_ptr(), st.as_mut_ptr()) } else { c::lstat(p.as_ptr(), st.as_mut_ptr()) } } != 0 {
+        return Err(failure());
+    }
+    let kind = u16::from_ne_bytes([st[4], st[5]]) & 0o170000;
+    let number = |at: usize| i64::from_ne_bytes(st[at..at + 8].try_into().unwrap());
+    Ok(crate::Info { folder: kind == 0o040000, link: kind == 0o120000, size: number(96), modified: number(48) })
+}
+
+/// `a` named `b` from now on; Err(0) if they are on two disks (EXDEV).
+pub fn rename(a: &str, b: &str) -> Result<(), i64> {
+    if unsafe { c::rename(c_path(a).as_ptr(), c_path(b).as_ptr()) } == 0 {
+        return Ok(());
+    }
+    if errno() == 18 { Err(0) } else { Err(failure()) }
+}
+
 pub fn read_file(path: &str) -> Result<Vec<u8>, i64> {
     let fd = open(path, 0)?;
     let mut bytes = Vec::new();
@@ -404,6 +438,79 @@ pub fn list_dir(path: &str) -> Result<Vec<String>, i64> {
     };
     unsafe { c::closedir(d) };
     r
+}
+
+// ---- Other programs ----
+
+/// `system.run`: runs `program` (a path) with `args`, its input empty, and gives what it wrote,
+/// what it wrote on stderr, and its exit status (`shared::exit_code`); or the `RunError` variant
+/// + 1. The new process keeps only its three first files (POSIX_SPAWN_CLOEXEC_DEFAULT): a pipe
+/// made meanwhile by another thread does not stay open in it.
+pub fn run(program: &str, args: &[&str]) -> Result<(Vec<u8>, Vec<u8>, i64), i64> {
+    let words: Vec<Vec<u8>> = [program].iter().chain(args).map(|w| c_path(w)).collect();
+    let mut argv: Vec<*const u8> = words.iter().map(|w| w.as_ptr()).collect();
+    argv.push(core::ptr::null());
+    let (mut out, mut err) = ([0i32; 2], [0i32; 2]);
+    if unsafe { c::pipe(&mut out) } != 0 {
+        return Err(3);
+    }
+    if unsafe { c::pipe(&mut err) } != 0 {
+        unsafe { c::close(out[0]) };
+        unsafe { c::close(out[1]) };
+        return Err(3);
+    }
+    let (mut actions, mut attributes, mut pid) = (0usize, 0usize, 0i32);
+    let e = unsafe {
+        c::posix_spawn_file_actions_init(&mut actions);
+        c::posix_spawn_file_actions_addopen(&mut actions, 0, c"/dev/null".as_ptr() as *const u8, 0, 0);
+        c::posix_spawn_file_actions_adddup2(&mut actions, out[1], 1);
+        c::posix_spawn_file_actions_adddup2(&mut actions, err[1], 2);
+        c::posix_spawnattr_init(&mut attributes);
+        c::posix_spawnattr_setflags(&mut attributes, 0x4000); // POSIX_SPAWN_CLOEXEC_DEFAULT
+        let e = c::posix_spawn(&mut pid, argv[0], &actions, &attributes, argv.as_ptr(), *c::_NSGetEnviron());
+        c::posix_spawn_file_actions_destroy(&mut actions);
+        c::posix_spawnattr_destroy(&mut attributes);
+        c::close(out[1]);
+        c::close(err[1]);
+        e
+    };
+    if e != 0 {
+        unsafe { c::close(out[0]) };
+        unsafe { c::close(err[0]) };
+        return Err(match e {
+            2 | 20 => 1, // ENOENT, ENOTDIR
+            1 | 13 => 2, // EPERM, EACCES
+            _ => 3,
+        });
+    }
+    // Both at once: a program filling one pipe while this one waits on the other would stop.
+    let mut texts = [Vec::new(), Vec::new()];
+    let mut open = [true, true];
+    let mut buffer = [0u8; 1 << 14];
+    while open.contains(&true) {
+        let mut fds: Vec<[i32; 2]> = [out[0], err[0]].iter().zip(open).filter(|(_, o)| *o).map(|(&fd, _)| [fd, 1]).collect();
+        let n = unsafe { c::poll(fds.as_mut_ptr(), fds.len() as u32, -1) };
+        if n < 0 && errno() == EINTR {
+            continue;
+        }
+        for p in &fds {
+            if p[1] >> 16 == 0 && n >= 0 {
+                continue;
+            }
+            let k = if p[0] == out[0] { 0 } else { 1 };
+            match unsafe { c::read(p[0], buffer.as_mut_ptr(), buffer.len()) } {
+                r if r > 0 => texts[k].extend_from_slice(&buffer[..r as usize]),
+                r if r < 0 && errno() == EINTR => {}
+                _ => open[k] = false,
+            }
+        }
+    }
+    unsafe { c::close(out[0]) };
+    unsafe { c::close(err[0]) };
+    let mut status = 0i32;
+    while unsafe { c::waitpid(pid, &mut status, 0) } < 0 && errno() == EINTR {}
+    let [output, errors] = texts;
+    Ok((output, errors, crate::shared::exit_code(status)))
 }
 
 // ---- Memory: the system's (its blocks are aligned on 16 bytes, enough for the runtime) ----

@@ -420,9 +420,9 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files"];
+pub const MODULES: &[&str] = &["web", "files", "system"];
 /// Their types.
-pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError"];
+pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError"];
 
 /// `web` written without `import web`, `get` or `Request` without `web.`, or a name from before
 /// the modules (`read_file`): what to write instead.
@@ -451,6 +451,15 @@ pub const LIBRARY: &[(&str, &str)] =
         ("files.list", "fn files.list(path: String) -> List<String> or files.IoError"),
         ("files.make_dir", "fn files.make_dir(path: String) -> Nothing or files.IoError"),
         ("files.remove", "fn files.remove(path: String) -> Nothing or files.IoError"),
+        ("files.copy(…) to(…)", "fn files.copy(path: String) to(destination: String) -> Nothing or files.IoError"),
+        ("files.move(…) to(…)", "fn files.move(path: String) to(destination: String) -> Nothing or files.IoError"),
+        ("files.size", "fn files.size(path: String) -> Int or files.IoError"),
+        ("files.modified", "fn files.modified(path: String) -> DateTime or files.IoError"),
+        ("files.is_folder", "fn files.is_folder(path: String) -> Bool"),
+        ("files.matching", "fn files.matching(pattern: String) -> List<String> or files.IoError"),
+        ("system.env", "fn system.env(name: String) -> String?"),
+        ("system.run", "fn system.run(program: String) -> system.Finished or system.RunError"),
+        ("system.run(…) args(…)", "fn system.run(program: String) args(words: List<String>) -> system.Finished or system.RunError"),
         ("now", "fn now -> Float"),
         ("sleep", "fn sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
@@ -482,6 +491,22 @@ pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
     let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
     Type::Enum(EnumDef::with_variants("files.IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
+}
+
+/// `system.Finished`, what `system.run` gives (PLAN Part 4 "The library after Python"): what
+/// the program wrote, what it wrote on stderr, its exit code; kir.rs reads them in this order.
+pub fn finished() -> Type {
+    let d = StructDef::new("system.Finished".into(), vec![], false);
+    d.set_fields(vec![("output".into(), Type::String), ("errors".into(), Type::String), ("code".into(), Type::Int)]);
+    Type::Struct(d)
+}
+
+/// `system.RunError`, why `system.run` could not start the program, which it names; numbered
+/// like the failures of `kova_run` (runtime/kova.rs): number = variant + 1.
+pub fn run_error() -> Type {
+    let program = || vec![("program".to_string(), Type::String)];
+    let names = ["NotFound", "Denied", "Other"];
+    Type::Enum(EnumDef::with_variants("system.RunError".into(), names.iter().map(|n| (n.to_string(), program())).collect()))
 }
 
 /// `WebError`, why `get` or `post` has no answer (PLAN Part 4 "The web"), each with the address
@@ -1099,6 +1124,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // 1. The structs, then the signatures: what is written further down can be used.
     c.structs.insert("files.IoError".into(), io_error());
+    c.structs.insert("system.Finished".into(), finished());
+    c.structs.insert("system.RunError".into(), run_error());
     c.structs.insert("Weekday".into(), weekday());
     c.structs.insert("web.Log".into(), log_mode());
     c.structs.insert("web.WebError".into(), web_error());
@@ -1154,9 +1181,19 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         ("files.list", 1, io(Type::List(Box::new(string())))),
         ("files.make_dir", 1, io(Type::Unit)),
         ("files.remove", 1, io(Type::Unit)),
+        ("files.copy(…) to(…)", 2, io(Type::Unit)),
+        ("files.move(…) to(…)", 2, io(Type::Unit)),
+        ("files.size", 1, io(Type::Int)),
+        ("files.modified", 1, io(Type::DateTime)),
+        ("files.is_folder", 1, Type::Bool),
+        ("files.matching", 1, io(Type::List(Box::new(string())))),
+        ("system.env", 1, Type::Optional(Box::new(string()))),
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
     }
+    let ran = || Type::Result(Box::new(finished()), Box::new(run_error()));
+    c.functions.insert("system.run".into(), Signature::new(None, paths(1), ran()));
+    c.functions.insert("system.run(…) args(…)".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(string())))], ran()));
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
@@ -1770,7 +1807,7 @@ impl Checker<'_> {
             }
             Type::Struct(d) => self.follows(&d.name, interface),
             // `"today is {d.weekday}"`: `Friday`, as a `Date` shows `2026-10-23`.
-            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() || *t == json_error() => interface == "Display",
+            Type::Enum(_) if *t == weekday() || *t == io_error() || *t == web_error() || *t == json_error() || *t == run_error() => interface == "Display",
             Type::Enum(d) => self.follows(&d.name, interface),
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,

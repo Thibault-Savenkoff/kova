@@ -348,6 +348,25 @@ pub enum StrOp {
     ListDir,
     /// `exists(path)`: 1 or 0.
     Exists,
+    /// `files.copy(a) to(b)`, `files.move(a) to(b)`: 0, or minus the number of the failure, plus
+    /// 16 when it is `b`'s (`io_result` then names `b`).
+    CopyFile,
+    MoveFile,
+    /// `files.size(path)`: the bytes, or minus the number of the failure.
+    FileSize,
+    /// `files.modified(path)`: a List of one Int, the local time in seconds since 1970 (it may be
+    /// below 0), or minus the number of the failure.
+    Modified,
+    /// `files.is_folder(path)`: 1 or 0.
+    IsFolder,
+    /// `files.matching(pattern)` (`shared::matching`): a new `List<String>` or minus the number of
+    /// the failure.
+    Matching,
+    /// `system.env(name)`: a new String, or 0 if the variable is not there.
+    Env,
+    /// `system.run(program) args(words)` (the words: a `List<String>`, or 0 for none): a List of
+    /// one `system.Finished` (output, errors, code), or minus the `RunError` variant + 1.
+    Run,
     /// `s.to_upper`, `s.to_lower`: a new String (`case_of`).
     ToUpper,
     ToLower,
@@ -1671,7 +1690,7 @@ impl<'a> Translator<'a> {
             } else if *ty == crate::types::weekday() {
                 // Built in, for people: `Friday`.
                 pieces.push(Piece::Text(name.clone()));
-            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error() || *ty == crate::types::json_error(), &fields[..]) {
+            } else if let (true, [(_, t)]) = (*ty == crate::types::io_error() || *ty == crate::types::web_error() || *ty == crate::types::json_error() || *ty == crate::types::run_error(), &fields[..]) {
                 // Built in, for people: `NotFound("notes.txt")`.
                 pieces.push(Piece::Text(format!("{name}(")));
                 self.value_pieces(&v[at..at + 1], t, &mut pieces);
@@ -1712,7 +1731,8 @@ impl<'a> Translator<'a> {
         let Type::Result(value, error) = ty else { unreachable!("a result checked by the type checker") };
         let Type::Enum(d) = &**error else { unreachable!("IoError is an enum") };
         let d = d.clone();
-        let p = vals[0];
+        let (p, to) = (vals[0], vals.get(1).copied());
+        let (boxed, two) = (matches!(op, StrOp::Modified), matches!(op, StrOp::CopyFile | StrOp::MoveFile));
         let r = self.int_local();
         self.emit(Inst::Str(r, op, vals));
         // Slots: tag, IoError's tag, one path per variant, then the value (if any).
@@ -1725,9 +1745,10 @@ impl<'a> Translator<'a> {
         self.go(End::Branch(good, ok, err), ok);
         self.emit(Inst::Const(v[0], 1));
         let n = scalars(value).len();
-        if n == 1 {
+        // A time may be below 0: it comes in a List too.
+        if n == 1 && !boxed {
             self.emit(Inst::Copy(*v.last().unwrap(), r));
-        } else if n > 1 {
+        } else if n > 0 {
             let zero = self.constant(0);
             for k in 0..n {
                 self.emit(Inst::ListLoad(v[v.len() - n + k], r, zero, k));
@@ -1738,6 +1759,20 @@ impl<'a> Translator<'a> {
         // Variant = failure − 1 = −r − 1.
         let minus_one = self.constant(-1);
         self.emit(Inst::Binary(v[1], Op::Minus, minus_one, r, NOWHERE));
+        // `copy(a) to(b)`: past 16, the failure is `b`'s.
+        let p = if two {
+            let (sixteen, second, which) = (self.constant(16), self.int_local(), self.int_local());
+            self.emit(Inst::Binary(second, Op::Ge, v[1], sixteen, NOWHERE));
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.emit(Inst::Copy(which, p));
+            self.go(End::Branch(second, yes, no), yes);
+            self.emit(Inst::Binary(v[1], Op::Minus, v[1], sixteen, NOWHERE));
+            self.emit(Inst::Copy(which, to.unwrap()));
+            self.go(End::Jump(no), no);
+            which
+        } else {
+            p
+        };
         for i in 0..d.variants().len() {
             let (yes, no) = (self.new_block(), self.new_block());
             let (number, test) = (self.constant(i as i64), self.int_local());
@@ -4316,6 +4351,11 @@ impl<'a> Translator<'a> {
                     "files.list" => Some(StrOp::ListDir),
                     "files.make_dir" => Some(StrOp::MakeDir),
                     "files.remove" => Some(StrOp::RemoveFile),
+                    "files.copy(…) to(…)" => Some(StrOp::CopyFile),
+                    "files.move(…) to(…)" => Some(StrOp::MoveFile),
+                    "files.size" => Some(StrOp::FileSize),
+                    "files.modified" => Some(StrOp::Modified),
+                    "files.matching" => Some(StrOp::Matching),
                     _ => None,
                 };
                 if let Some(op) = io {
@@ -4360,6 +4400,15 @@ impl<'a> Translator<'a> {
                         false => self.serve(given[0], log, everyone, args.last(), None, workers, loc),
                     };
                 }
+                if matches!(name.text.as_str(), "system.run" | "system.run(…) args(…)") {
+                    let ty = self.ty(e);
+                    let program = self.expr1(&args[0]);
+                    let words = match args.get(1) {
+                        Some(w) => self.expr1(w),
+                        None => self.constant(0),
+                    };
+                    return self.io_result(StrOp::Run, vec![program, words], &ty);
+                }
                 // `send(r)`: a `Request`'s fields (`types::request`), in `StrOp::Web`'s order.
                 if name.text == "web.send" {
                     let ty = self.ty(e);
@@ -4399,10 +4448,19 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(n, StrOp::Random, vec![from, to]));
                     return vec![n];
                 }
-                if name.text == "files.exists" {
+                if let n @ ("files.exists" | "files.is_folder") = name.text.as_str() {
                     let (p, d) = (self.expr1(&args[0]), self.int_local());
-                    self.emit(Inst::Str(d, StrOp::Exists, vec![p]));
+                    self.emit(Inst::Str(d, if n == "files.exists" { StrOp::Exists } else { StrOp::IsFolder }, vec![p]));
                     return vec![d];
+                }
+                if name.text == "system.env" {
+                    let (n, value) = (self.expr1(&args[0]), self.int_local());
+                    self.emit(Inst::Str(value, StrOp::Env, vec![n]));
+                    let (zero, present) = (self.constant(0), self.int_local());
+                    self.emit(Inst::Binary(present, Op::Ne, value, zero, NOWHERE));
+                    let v = vec![present, value];
+                    self.track(&v, &self.ty(e));
+                    return v;
                 }
                 if name.text == "args" {
                     let l = self.int_local();

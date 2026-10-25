@@ -57,6 +57,7 @@ fn prelude() -> Vec<Interface> {
         ids: 0,
         no_params: HashSet::new(),
         no_literal: false,
+        from_start: false,
         in_interface: false,
         bodiless: false,
         public: false,
@@ -138,6 +139,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         ids: first_id,
         no_params,
         no_literal: false,
+        from_start: false,
         in_interface: false,
         bodiless: false,
         public: false,
@@ -162,6 +164,8 @@ struct Parser<'a> {
     no_params: HashSet<String>,
     /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
     no_literal: bool,
+    /// In the start of `from i := … to …`: there `to` ends the start, it is not a part.
+    from_start: bool,
     /// The name of this file when it is imported (`geometry`), and the names it declares:
     /// inside it, `Point` is `geometry.Point`.
     module: Option<String>,
@@ -297,6 +301,27 @@ impl Parser<'_> {
             return None;
         }
         self.imports.get(&self.text(t.span)).cloned()
+    }
+
+    /// A name after a dot: a reserved word is one too there (`r.header(…)`, `files.copy(…)`),
+    /// since nothing else can follow a dot.
+    fn member_name(&mut self, key: &str) -> R<Name> {
+        match self.kind() {
+            Kind::Keyword(k) => {
+                let span = self.advance().span;
+                Ok(Name { text: k.into(), span })
+            }
+            _ => self.value_name(key),
+        }
+    }
+
+    /// A part of a keyword message: `to` is one too (`files.copy(a) to(b)`).
+    fn part_name(&mut self) -> R<Name> {
+        if self.is_keyword("to") {
+            let span = self.advance().span;
+            return Ok(Name { text: "to".into(), span });
+        }
+        self.value_name("what_function")
     }
 
     /// A type name: uppercase required. `Point` declared here, or `geo.Point` from an import,
@@ -476,7 +501,9 @@ impl Parser<'_> {
     /// An expression between delimiters (`( )`, `{ }`): struct literals are allowed again.
     fn inner_expr(&mut self) -> R<Expr> {
         let saved = std::mem::replace(&mut self.no_literal, false);
+        let from = std::mem::replace(&mut self.from_start, false);
         let e = self.expression();
+        self.from_start = from;
         self.no_literal = saved;
         e
     }
@@ -926,7 +953,7 @@ impl Parser<'_> {
         let mut breaks = vec![];
         while self.next_part(self.t[self.pos - 1].span) && self.kind_at(1) == Kind::Sym("(") {
             breaks.push(params.len());
-            let part = self.value_name("what_function")?;
+            let part = self.part_name()?;
             let open = self.advance().span;
             let before = params.len();
             self.params(&mut params)?;
@@ -969,11 +996,12 @@ impl Parser<'_> {
 
     /// `at(` (or `then {` at a call) on the same line as the `)` ending at `end`: the next part
     /// of a keyword message.
-    /// A reserved word there (`between(1) and(3)`) is one too, refused by `value_name`;
-    /// but not `to` and `else`, which may follow an expression (`from i := f(1) to (n)`).
+    /// A reserved word there (`between(1) and(3)`) is one too, refused by `part_name`;
+    /// but not `else`, which may follow an expression, nor `to` in `from i := f(1) to (n)`.
     fn next_part(&self, end: Span) -> bool {
         matches!(self.kind(), Kind::Ident | Kind::Keyword(_))
-            && !matches!(self.kind(), Kind::Keyword("to" | "else"))
+            && !matches!(self.kind(), Kind::Keyword("else"))
+            && !(self.from_start && self.is_keyword("to"))
             && (self.kind_at(1) == Kind::Sym("(") || self.kind_at(1) == Kind::Sym("{") && !self.no_literal)
             && !self.src[end.end..self.token().span.start].contains('\n')
     }
@@ -984,12 +1012,12 @@ impl Parser<'_> {
         while self.next_part(*end) {
             // `Dog.named("Rex") then { … }`: a block alone needs no `()`, as in `l.each { … }`.
             if self.kind_at(1) == Kind::Sym("{") {
-                let part = self.value_name("what_function")?;
+                let part = self.part_name()?;
                 *end = self.trailing_block(args)?.expect("a `{` outside a heading");
                 add_part(name, &part.text);
                 break;
             }
-            let part = self.value_name("what_function")?;
+            let part = self.part_name()?;
             let open = self.advance().span;
             let more = self.arguments()?;
             *end = self.advance().span;
@@ -1316,7 +1344,10 @@ impl Parser<'_> {
                 self.advance();
                 let counter = self.value_name("what_variable")?;
                 self.expect(":=")?;
-                let start = self.heading_expr()?;
+                self.from_start = true;
+                let start = self.heading_expr();
+                self.from_start = false;
+                let start = start?;
                 if !self.is_keyword("to") {
                     let msg = t!("expected_symbol", symbol = "to", found = self.describe());
                     return self.error(self.token().span, msg);
@@ -1585,13 +1616,7 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Field(Box::new(e), i as usize));
                 continue;
             }
-            // `r.header("Content-Type")`: after a dot, `header` is a Response's method.
-            let mut name = if self.kind() == Kind::Keyword("header") {
-                let span = self.advance().span;
-                Name { text: "header".into(), span }
-            } else {
-                self.value_name("what_method")?
-            };
+            let mut name = self.member_name("what_method")?;
             let (mut args, mut end) = (vec![], name.span);
             if self.is_sym("(") {
                 let open = self.advance().span;
@@ -1740,7 +1765,7 @@ impl Parser<'_> {
                 let module = self.import_prefix().unwrap();
                 self.advance();
                 self.advance(); // .
-                let mut name = self.value_name("what_function")?;
+                let mut name = self.member_name("what_function")?;
                 name = Name { text: format!("{module}.{}", name.text), span: t.span.to(name.span) };
                 return self.call_rest(name);
             }

@@ -51,6 +51,11 @@ mod numbers {
     pub const MKDIRAT: usize = 258;
     pub const UNLINKAT: usize = 263;
     pub const STATX: usize = 332;
+    pub const RENAMEAT2: usize = 316;
+    pub const PIPE2: usize = 293;
+    pub const DUP3: usize = 292;
+    pub const EXECVE: usize = 59;
+    pub const WAIT4: usize = 61;
     pub const SOCKET: usize = 41;
     pub const SETSOCKOPT: usize = 54;
     pub const CONNECT: usize = 42;
@@ -86,6 +91,11 @@ mod numbers {
     pub const MKDIRAT: usize = 34;
     pub const UNLINKAT: usize = 35;
     pub const STATX: usize = 291;
+    pub const RENAMEAT2: usize = 276;
+    pub const PIPE2: usize = 59;
+    pub const DUP3: usize = 24;
+    pub const EXECVE: usize = 221;
+    pub const WAIT4: usize = 260;
     pub const SOCKET: usize = 198;
     pub const SETSOCKOPT: usize = 208;
     pub const CONNECT: usize = 203;
@@ -476,6 +486,32 @@ pub fn kind(path: &str) -> Result<bool, i64> {
     }
 }
 
+/// What `files.size` and `files.modified` say; `follow` = a link's target rather than the link.
+pub fn info(path: &str, follow: bool) -> Result<crate::Info, i64> {
+    let p = c_path(path);
+    let mut st = [0u8; 256];
+    // STATX_TYPE | STATX_MODE | STATX_MTIME | STATX_SIZE, AT_SYMLINK_NOFOLLOW.
+    let flags = if follow { 0 } else { 0x100 };
+    match unsafe { call(STATX, AT_FDCWD, p.as_ptr() as usize, flags, 0x243, st.as_mut_ptr() as usize, 0) } {
+        0 => {
+            let kind = u16::from_ne_bytes([st[0x1C], st[0x1D]]) & 0o170000;
+            let number = |at: usize| i64::from_ne_bytes(st[at..at + 8].try_into().unwrap());
+            Ok(crate::Info { folder: kind == 0o040000, link: kind == 0o120000, size: number(0x28), modified: number(0x70) })
+        }
+        e => Err(failure(e)),
+    }
+}
+
+/// `a` named `b` from now on; Err(0) if they are on two disks (EXDEV).
+pub fn rename(a: &str, b: &str) -> Result<(), i64> {
+    let (a, b) = (c_path(a), c_path(b));
+    match unsafe { call(RENAMEAT2, AT_FDCWD, a.as_ptr() as usize, AT_FDCWD, b.as_ptr() as usize, 0, 0) } {
+        0 => Ok(()),
+        -18 => Err(0),
+        e => Err(failure(e)),
+    }
+}
+
 pub fn read_file(path: &str) -> Result<Vec<u8>, i64> {
     let fd = open(path, 0)?;
     let mut bytes = Vec::new();
@@ -565,6 +601,89 @@ pub fn list_dir(path: &str) -> Result<Vec<String>, i64> {
     };
     close(fd);
     r
+}
+
+// ---- Other programs ----
+
+/// `system.run`: runs `program` (a path) with `args`, its input empty, and gives what it wrote,
+/// what it wrote on stderr, and its exit status (`shared::exit_code`); or the `RunError` variant
+/// + 1. Everything the new process needs is made before it exists: it then only calls the
+/// system, never the memory functions, whose lock another thread may have held at that moment.
+pub fn run(program: &str, args: &[&str]) -> Result<(Vec<u8>, Vec<u8>, i64), i64> {
+    const O_CLOEXEC: usize = 0o2000000;
+    let words: Vec<Vec<u8>> = [program].iter().chain(args).map(|w| c_path(w)).collect();
+    let mut argv: Vec<*const u8> = words.iter().map(|w| w.as_ptr()).collect();
+    argv.push(null());
+    let mut envp: Vec<*const u8> = ENVIRONMENT.get().to_vec();
+    envp.push(null());
+    let null = open("/dev/null", 0).map_err(|_| 3i64)?;
+    // What it writes, what it writes on stderr, and whether `execve` failed (closed if not).
+    let mut pipes = [[0i32; 2]; 3];
+    for p in &mut pipes {
+        if unsafe { call(PIPE2, p.as_mut_ptr() as usize, O_CLOEXEC, 0, 0, 0, 0) } != 0 {
+            return Err(3);
+        }
+    }
+    let [out, err, failed] = pipes.map(|[r, w]| (r as usize, w as usize));
+    // A copy of this process (fork), which becomes the program.
+    let pid = unsafe { call(CLONE, 17, 0, 0, 0, 0, 0) }; // SIGCHLD
+    if pid == 0 {
+        unsafe {
+            call(DUP3, null, 0, 0, 0, 0, 0);
+            call(DUP3, out.1, 1, 0, 0, 0, 0);
+            call(DUP3, err.1, 2, 0, 0, 0, 0);
+            let e = call(EXECVE, argv[0] as usize, argv.as_ptr() as usize, envp.as_ptr() as usize, 0, 0, 0);
+            call(WRITE, failed.1, &e as *const isize as usize, 8, 0, 0, 0);
+            call(EXIT_GROUP, 127, 0, 0, 0, 0, 0);
+        }
+    }
+    for fd in [null, out.1, err.1, failed.1] {
+        close(fd);
+    }
+    if pid < 0 {
+        for fd in [out.0, err.0, failed.0] {
+            close(fd);
+        }
+        return Err(3);
+    }
+    let mut e = 0isize;
+    let started = unsafe { call(READ, failed.0, &mut e as *mut isize as usize, 8, 0, 0, 0) } != 8;
+    close(failed.0);
+    // Both at once: a program filling one pipe while this one waits on the other would stop.
+    let mut texts = [Vec::new(), Vec::new()];
+    let mut open = [started, started];
+    let mut buffer = [0u8; 1 << 14];
+    while open.contains(&true) {
+        let mut fds: Vec<[i32; 2]> = [out.0, err.0].iter().zip(open).filter(|(_, o)| *o).map(|(&fd, _)| [fd as i32, 1]).collect();
+        let n = unsafe { call(PPOLL, fds.as_mut_ptr() as usize, fds.len(), 0, 0, 8, 0) };
+        if n == -EINTR {
+            continue;
+        }
+        for p in &fds {
+            if p[1] >> 16 == 0 && n >= 0 {
+                continue;
+            }
+            let k = if p[0] as usize == out.0 { 0 } else { 1 };
+            match unsafe { call(READ, p[0] as usize, buffer.as_mut_ptr() as usize, buffer.len(), 0, 0, 0) } {
+                r if r > 0 => texts[k].extend_from_slice(&buffer[..r as usize]),
+                r if r == -EINTR => {}
+                _ => open[k] = false,
+            }
+        }
+    }
+    close(out.0);
+    close(err.0);
+    let mut status = 0i32;
+    while unsafe { call(WAIT4, pid as usize, &mut status as *mut i32 as usize, 0, 0, 0, 0) } == -EINTR {}
+    if !started {
+        return Err(match -e {
+            2 | 20 => 1,     // ENOENT, ENOTDIR
+            1 | 13 => 2,     // EPERM, EACCES
+            _ => 3,
+        });
+    }
+    let [output, errors] = texts;
+    Ok((output, errors, crate::shared::exit_code(status)))
 }
 
 // ---- Memory ----

@@ -684,3 +684,155 @@ mod tests {
         }
     }
 }
+
+/// `files.matching(pattern)`: the paths that `pattern` describes, sorted, with `/` between the
+/// names. In each name `*` stands for any characters and `?` for one; a name `**` for any number
+/// of folders (none included). A wildcard does not reach names starting with `.` unless the name
+/// written starts with `.` too, as in a shell. `list` gives a folder's names, `kind` says of a
+/// path whether it is there (`None`), a folder, and a link: `**` does not go through links, which
+/// could make it turn round forever. The folder before the first wildcard must be there (failure
+/// 1, `NotFound`); folders that cannot be read further down are left out.
+pub fn matching(pattern: &str, list: &dyn Fn(&str) -> Option<Vec<String>>, kind: &dyn Fn(&str) -> Option<(bool, bool)>) -> Result<Vec<String>, i64> {
+    let absolute = pattern.starts_with('/');
+    let names: Vec<&str> = pattern.split(['/', '\\']).filter(|n| !n.is_empty()).collect();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let wild = |n: &str| n.contains(['*', '?']);
+    let fixed = names.iter().take_while(|n| !wild(n)).count();
+    let mut base = String::from(if absolute { "/" } else { "" });
+    let start = fixed.min(names.len() - 1);
+    for n in &names[..start] {
+        base = joined(&base, n);
+    }
+    if fixed < names.len() && !base.is_empty() && kind(&base).is_none_or(|(folder, _)| !folder) {
+        return Err(1);
+    }
+    let rest = &names[start..];
+    let mut found = Vec::new();
+    walk(&base, rest, list, kind, &mut found);
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+fn joined(folder: &str, name: &str) -> String {
+    match folder {
+        "" => name.into(),
+        f if f.ends_with('/') => format!("{f}{name}"),
+        f => format!("{f}/{name}"),
+    }
+}
+
+fn walk(folder: &str, names: &[&str], list: &dyn Fn(&str) -> Option<Vec<String>>, kind: &dyn Fn(&str) -> Option<(bool, bool)>, found: &mut Vec<String>) {
+    let Some((&name, rest)) = names.split_first() else {
+        found.push(folder.into());
+        return;
+    };
+    let inside = || list(if folder.is_empty() { "." } else { folder }).unwrap_or_default();
+    // A path that is there: the end, or a folder to go on in.
+    let reach = |path: String, found: &mut Vec<String>| match kind(&path) {
+        Some(_) if rest.is_empty() => found.push(path),
+        Some((true, _)) => walk(&path, rest, list, kind, found),
+        _ => {}
+    };
+    if name == "**" {
+        walk(folder, rest, list, kind, found);
+        for n in inside().iter().filter(|n| !n.starts_with('.')) {
+            let path = joined(folder, n);
+            if kind(&path) == Some((true, false)) {
+                walk(&path, names, list, kind, found);
+            }
+        }
+    } else if !name.contains(['*', '?']) {
+        reach(joined(folder, name), found);
+    } else {
+        for n in inside().iter().filter(|n| fits(name, n) && (!n.starts_with('.') || name.starts_with('.'))) {
+            reach(joined(folder, n), found);
+        }
+    }
+}
+
+/// `name` fits `pattern`, whose `*` stands for any characters and `?` for one.
+fn fits(pattern: &str, name: &str) -> bool {
+    let (p, n): (Vec<char>, Vec<char>) = (pattern.chars().collect(), name.chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while j < n.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == n[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some(i);
+            mark = j;
+            i += 1;
+        } else if let Some(s) = star {
+            i = s + 1;
+            mark += 1;
+            j = mark;
+        } else {
+            return false;
+        }
+    }
+    p[i..].iter().all(|&c| c == '*')
+}
+
+/// `system.run`'s program: as written if it names a folder (`./tool`, `C:\tools\tool`), else the
+/// first one of that name in the folders of `path` (`$PATH`). On Windows a name without an
+/// extension gets `.exe`, and a `.bat` or `.cmd` is refused (failure 2, `Denied`): Windows would
+/// run it through `cmd.exe`, which reads its arguments its own way. Failure 1 if it is nowhere.
+pub fn find_program(name: &str, path: Option<&str>, windows: bool, is_file: &dyn Fn(&str) -> bool) -> Result<String, i64> {
+    let slash: &[char] = if windows { &['/', '\\'] } else { &['/'] };
+    let last = name.rsplit(slash).next().unwrap_or(name);
+    let name = if windows && !last.contains('.') { format!("{name}.exe") } else { name.into() };
+    let lower = name.to_ascii_lowercase();
+    if windows && (lower.ends_with(".bat") || lower.ends_with(".cmd")) {
+        return Err(2);
+    }
+    if name.contains(slash) {
+        return if is_file(&name) { Ok(name) } else { Err(1) };
+    }
+    let folders = path.unwrap_or("").split(if windows { ';' } else { ':' }).filter(|f| !f.is_empty());
+    folders.map(|f| format!("{}{}{name}", f.trim_end_matches(slash), if windows { '\\' } else { '/' })).find(|p| is_file(p)).ok_or(1)
+}
+
+/// The command line Windows gives a program (`CreateProcessW`), cut back into words by the
+/// program the usual way: as Rust's own `std::process::Command` writes it, so that `kova run`
+/// (which uses it) and a built program (runtime/windows.rs) give the same words.
+#[allow(dead_code)] // by runtime/windows.rs only: `kova run` lets Rust write it
+pub fn command_line(program: &str, args: &[&str]) -> String {
+    let mut line = format!("\"{program}\"");
+    for a in args {
+        line.push(' ');
+        let quote = a.is_empty() || a.contains([' ', '\t']);
+        if quote {
+            line.push('"');
+        }
+        let mut backslashes = 0;
+        for c in a.chars() {
+            if c == '\\' {
+                backslashes += 1;
+            } else {
+                if c == '"' {
+                    line.extend(core::iter::repeat_n('\\', backslashes + 1));
+                }
+                backslashes = 0;
+            }
+            line.push(c);
+        }
+        if quote {
+            line.extend(core::iter::repeat_n('\\', backslashes));
+            line.push('"');
+        }
+    }
+    line
+}
+
+/// A program's exit status as `system.run` gives it: its code, or 128 + the signal that
+/// stopped it (as shells say it). `status` is what `wait4` / `waitpid` wrote.
+#[cfg_attr(windows, allow(dead_code))] // Windows gives the code itself
+pub fn exit_code(status: i32) -> i64 {
+    match status & 0x7f {
+        0 => ((status >> 8) & 0xff) as i64,
+        signal => 128 + signal as i64,
+    }
+}

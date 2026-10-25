@@ -795,6 +795,136 @@ pub extern "C" fn kova_remove_file(p: i64) -> i64 {
     }
 }
 
+/// What `sys::info` knows of a file; `modified` in seconds since 1970 (UTC).
+pub struct Info {
+    pub folder: bool,
+    pub link: bool,
+    pub size: i64,
+    pub modified: i64,
+}
+
+/// Read whole then written, so that copying a file onto itself loses nothing (as interp.rs).
+/// ponytail: the whole file in memory, and its permissions are not copied (a copied program
+/// cannot be run); a piece at a time, with the permissions, when someone needs it.
+fn copy_file(a: &str, b: &str) -> i64 {
+    if is_dir(a) {
+        return -3;
+    }
+    if is_dir(b) {
+        return -(3 + 16);
+    }
+    match sys::read_file(a) {
+        Ok(bytes) => sys::write_file(b, &bytes, false).err().map_or(0, |f| -(f + 16)),
+        Err(f) => -f,
+    }
+}
+
+/// `files.copy(a) to(b)`: a failure past 16 is `b`'s (src/kir.rs `io_result`).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_copy_file(a: i64, b: i64) -> i64 {
+    match (path(a), path(b)) {
+        (Some(a), Some(b)) => copy_file(a, b),
+        (None, _) => -5,
+        _ => -(5 + 16),
+    }
+}
+
+/// `files.move(a) to(b)`: renamed, or copied then removed when `b` is on another disk.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_move_file(a: i64, b: i64) -> i64 {
+    let Some(a) = path(a) else { return -5 };
+    let Some(b) = path(b) else { return -(5 + 16) };
+    if let Err(f) = sys::kind(a) {
+        return -f;
+    }
+    if is_dir(b) {
+        return -(3 + 16);
+    }
+    match sys::rename(a, b) {
+        Ok(()) => 0,
+        Err(0) => match copy_file(a, b) {
+            0 => result(sys::remove_file(a)),
+            f => f,
+        },
+        Err(f) => -(f + 16),
+    }
+}
+
+/// `files.size(path)`: a folder has none.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_file_size(p: i64) -> i64 {
+    match path(p).map(|p| sys::info(p, true)) {
+        None => -5,
+        Some(Ok(i)) if i.folder => -3,
+        Some(Ok(i)) => i.size,
+        Some(Err(f)) => -f,
+    }
+}
+
+/// `files.modified(path)`: the local time, in a List of one (it may be below 0).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_modified(p: i64) -> i64 {
+    match path(p).map(|p| sys::info(p, true)) {
+        None => -5,
+        Some(Ok(i)) => numbers([local_at(i.modified)].into_iter()),
+        Some(Err(f)) => -f,
+    }
+}
+
+/// The local time at `utc`, by the rules of that day.
+fn local_at(utc: i64) -> i64 {
+    #[cfg(not(windows))]
+    return utc + shared::local_offset(utc, sys::var("TZ").as_deref(), &|p| sys::read_file(p).ok());
+    #[cfg(windows)]
+    sys::local_at(utc)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_is_folder(p: i64) -> i64 {
+    path(p).is_some_and(is_dir) as i64
+}
+
+/// `files.matching(pattern)` (`shared::matching`).
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_matching(p: i64) -> i64 {
+    let Some(p) = path(p) else { return -5 };
+    let kind = |p: &str| sys::info(p, false).ok().map(|i| (if i.link { is_dir(p) } else { i.folder }, i.link));
+    match shared::matching(p, &|d| sys::list_dir(d).ok(), &kind) {
+        Ok(found) => texts(found.iter().map(String::as_str)),
+        Err(f) => -f,
+    }
+}
+
+/// `system.env(name)`: its value (made UTF-8 if it is not), or 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_env(n: i64) -> i64 {
+    match path(n).filter(|n| !n.is_empty() && !n.contains('=')).and_then(sys::var) {
+        Some(v) => new_text(v.as_bytes()),
+        None => 0,
+    }
+}
+
+/// `system.run(program) args(words)`: a List of one `system.Finished`, or minus the `RunError`
+/// variant + 1 (`types::run_error`). The program is found as `kova run` finds it
+/// (`shared::find_program`); what it writes is made UTF-8 if it is not.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_run(p: i64, words: i64) -> i64 {
+    let words: Vec<&str> = if words == 0 { Vec::new() } else { list(words).slots.iter().map(|&w| text_of(w)).collect() };
+    let Some(name) = path(p).filter(|_| words.iter().all(|w| !w.contains('\0'))) else { return -3 };
+    let is_file = |p: &str| sys::info(p, true).is_ok_and(|i| !i.folder);
+    let program = match shared::find_program(name, sys::var("PATH").as_deref(), cfg!(windows), &is_file) {
+        Ok(program) => program,
+        Err(f) => return -f,
+    };
+    match sys::run(&program, &words) {
+        Ok((output, errors, code)) => {
+            let slots = alloc::vec![new_text(String::from_utf8_lossy(&output).as_bytes()), new_text(String::from_utf8_lossy(&errors).as_bytes()), code];
+            new_list(List { length: 1, width: 3, slots, index: 0 })
+        }
+        Err(f) => -f,
+    }
+}
+
 /// What was read from the input and not given to `read_line` yet, from `.1` on.
 static INPUT: Locked<(Vec<u8>, usize)> = Locked::new((Vec::new(), 0));
 

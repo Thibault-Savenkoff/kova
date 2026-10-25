@@ -1,0 +1,27 @@
+// `system.run` (PLAN Part 4 "The library after Python", step 1), given the path of the program
+// `child.kova` built (tests/kova.rs `run_programs`).
+
+import system
+
+fn show(r: system.Finished or system.RunError) {
+    match r {
+        ok(done) => {
+            write(done.output)
+            print("errors: {done.errors.length > 0}, code {done.code}")
+        }
+        err(e) => print(e)
+    }
+}
+
+fn main {
+    let child: String := args[0].clone
+    show(system.run(child))
+    show(system.run(child) args(["a b", "", "say \"hi\"", "back\\", "tab\there"]))
+    show(system.run(child) args(["fail"]))
+    match system.run(child) args(["fail"]) {
+        ok(done) => print(done.errors.contains("division by zero"))
+        err(e) => print(e)
+    }
+    show(system.run(child) args(["three"]))
+    show(system.run("kova-no-such-program") args(["x"]))
+}

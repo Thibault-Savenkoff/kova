@@ -123,6 +123,64 @@ fn failure(e: &std::io::Error) -> i64 {
     }
 }
 
+/// `system.run`, as runtime/kova.rs `kova_run`: the program found the same way, its input empty.
+fn run_program(name: &str, words: &[String]) -> Result<(String, String, i64), i64> {
+    if name.contains('\0') || words.iter().any(|w| w.contains('\0')) {
+        return Err(3);
+    }
+    let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
+    let is_file = |p: &str| std::fs::metadata(p).is_ok_and(|m| !m.is_dir());
+    let program = crate::shared::find_program(name, path.as_deref(), cfg!(windows), &is_file)?;
+    let ran = std::process::Command::new(&program).args(words).stdin(std::process::Stdio::null()).output();
+    let ran = ran.map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => 1,
+        std::io::ErrorKind::PermissionDenied => 2,
+        _ => 3,
+    })?;
+    #[cfg(unix)]
+    let code = {
+        use std::os::unix::process::ExitStatusExt;
+        crate::shared::exit_code(ran.status.into_raw())
+    };
+    #[cfg(windows)]
+    let code = ran.status.code().unwrap_or(0) as u32 as i64;
+    Ok((String::from_utf8_lossy(&ran.stdout).into_owned(), String::from_utf8_lossy(&ran.stderr).into_owned(), code))
+}
+
+/// `files.copy(a) to(b)`, as runtime/kova.rs `copy_file`: a failure past 16 is `b`'s.
+fn copy_file(a: &str, b: &str) -> i64 {
+    if std::path::Path::new(a).is_dir() {
+        return -3;
+    }
+    if std::path::Path::new(b).is_dir() {
+        return -(3 + 16);
+    }
+    match std::fs::read(a) {
+        Ok(bytes) => std::fs::write(b, bytes).map_or_else(|e| -(failure(&e) + 16), |()| 0),
+        Err(e) => -failure(&e),
+    }
+}
+
+/// `files.move(a) to(b)`, as runtime/kova.rs `kova_move_file`.
+fn move_file(a: &str, b: &str) -> i64 {
+    if let Err(e) = std::fs::metadata(a) {
+        return -failure(&e);
+    }
+    if std::path::Path::new(b).is_dir() {
+        return -(3 + 16);
+    }
+    // EXDEV, ERROR_NOT_SAME_DEVICE: on another disk.
+    let elsewhere = if cfg!(windows) { 17 } else { 18 };
+    match std::fs::rename(a, b) {
+        Ok(()) => 0,
+        Err(e) if e.raw_os_error() == Some(elsewhere) => match copy_file(a, b) {
+            0 => std::fs::remove_file(a).map_or_else(|e| -failure(&e), |()| 0),
+            f => f,
+        },
+        Err(e) => -(failure(&e) + 16),
+    }
+}
+
 /// `Inst::Mix`: the same in src/codegen.rs.
 fn mix(a: i64, b: i64) -> i64 {
     // splitmix64's finalizer: every bit counts in the low ones that `% cap` reads (keys like
@@ -480,6 +538,54 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             }
                         }
                         StrOp::Exists => (!s(0).contains('\0') && std::path::Path::new(s(0)).exists()) as i64,
+                        StrOp::IsFolder => (!s(0).contains('\0') && std::path::Path::new(s(0)).is_dir()) as i64,
+                        StrOp::CopyFile => copy_file(s(0), s(1)),
+                        StrOp::MoveFile => move_file(s(0), s(1)),
+                        StrOp::FileSize => match std::fs::metadata(s(0)) {
+                            Ok(m) if m.is_dir() => -3,
+                            Ok(m) => m.len() as i64,
+                            Err(e) => -failure(&e),
+                        },
+                        StrOp::Modified => match std::fs::metadata(s(0)).and_then(|m| m.modified()) {
+                            Ok(t) => {
+                                let utc = t.duration_since(std::time::UNIX_EPOCH).map_or_else(|e| -(e.duration().as_secs() as i64), |d| d.as_secs() as i64);
+                                heap.add(Object::List { width: 1, length: 1, slots: vec![local_at(utc)], index: 0 })
+                            }
+                            Err(e) => -failure(&e),
+                        },
+                        StrOp::Matching => {
+                            let list = |d: &str| std::fs::read_dir(d).ok()?.map(|e| e.ok()?.file_name().into_string().ok()).collect::<Option<Vec<String>>>();
+                            let kind = |p: &str| {
+                                let m = std::fs::symlink_metadata(p).ok()?;
+                                Some((if m.is_symlink() { std::path::Path::new(p).is_dir() } else { m.is_dir() }, m.is_symlink()))
+                            };
+                            match crate::shared::matching(s(0), &list, &kind) {
+                                Ok(found) => {
+                                    let slots: Vec<i64> = found.into_iter().map(|n| heap.make(n)).collect();
+                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                }
+                                Err(f) => -f,
+                            }
+                        }
+                        StrOp::Run => {
+                            let name = s(0).to_string();
+                            let words: Vec<String> = match locals[a[1]] {
+                                0 => vec![],
+                                l => heap.list(l).2.clone().into_iter().map(|w| heap.get(w).to_string()).collect(),
+                            };
+                            match run_program(&name, &words) {
+                                Ok((output, errors, code)) => {
+                                    let slots = vec![heap.make(output), heap.make(errors), code];
+                                    heap.add(Object::List { width: 3, length: 1, slots, index: 0 })
+                                }
+                                Err(f) => -f,
+                            }
+                        }
+                        StrOp::Env if s(0).is_empty() || s(0).contains(['=', '\0']) => 0,
+                        StrOp::Env => match std::env::var_os(s(0)) {
+                            Some(v) => heap.make(v.to_string_lossy().into_owned()),
+                            None => 0,
+                        },
                         StrOp::ListDir => match std::fs::read_dir(s(0)) {
                             Err(e) => -failure(&e),
                             Ok(entries) => {
@@ -850,7 +956,32 @@ fn compute(op: Op, a: i64, b: i64) -> Result<i64, Fault> {
 #[cfg(not(windows))]
 fn local_now() -> i64 {
     let utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_secs() as i64);
+    local_at(utc)
+}
+
+/// The local time at `utc` (seconds since 1970), as runtime/kova.rs `local_at`.
+#[cfg(not(windows))]
+fn local_at(utc: i64) -> i64 {
     utc + crate::shared::local_offset(utc, std::env::var("TZ").ok().as_deref(), &|p| std::fs::read(p).ok())
+}
+
+/// By the rules of that day, as runtime/windows.rs `local_at`.
+#[cfg(windows)]
+fn local_at(utc: i64) -> i64 {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn FileTimeToSystemTime(t: *const u64, s: *mut [u16; 8]) -> i32;
+        fn SystemTimeToTzSpecificLocalTime(zone: *const u8, utc: *const [u16; 8], local: *mut [u16; 8]) -> i32;
+        fn SystemTimeToFileTime(s: *const [u16; 8], t: *mut u64) -> i32;
+    }
+    let t = ((utc + 11_644_473_600) * 10_000_000) as u64;
+    let (mut s, mut local, mut back) = ([0u16; 8], [0u16; 8], 0u64);
+    unsafe {
+        if FileTimeToSystemTime(&t, &mut s) == 0 || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &s, &mut local) == 0 || SystemTimeToFileTime(&local, &mut back) == 0 {
+            return utc;
+        }
+    }
+    (back / 10_000_000) as i64 - 11_644_473_600
 }
 
 /// By the time zone of Windows' settings.

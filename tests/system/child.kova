@@ -1,0 +1,14 @@
+// The program `run.kova` runs (tests/kova.rs `run_programs`): it shows the words it is given,
+// fails on `fail` (a message on stderr, code 101), and ends with code 3 on `three`.
+
+fn main {
+    print(args)
+    print("é ok")
+    let zero: Int := args.length - args.length
+    if args.length > 0 && args[0] = "fail" {
+        print(1 / zero)
+    }
+    if args.length > 0 && args[0] = "three" {
+        exit(3)
+    }
+}

@@ -35,6 +35,11 @@ unsafe extern "system" {
     fn CreateFileW(path: *const u16, access: u32, share: u32, security: *const u8, how: u32, flags: u32, model: Handle) -> Handle;
     fn CloseHandle(h: Handle) -> i32;
     fn GetFileAttributesW(path: *const u16) -> u32;
+    fn GetFileAttributesExW(path: *const u16, level: u32, data: *mut u32) -> i32;
+    fn MoveFileExW(a: *const u16, b: *const u16, flags: u32) -> i32;
+    fn FileTimeToSystemTime(t: *const u64, s: *mut [u16; 8]) -> i32;
+    fn SystemTimeToTzSpecificLocalTime(zone: *const u8, utc: *const [u16; 8], local: *mut [u16; 8]) -> i32;
+    fn SystemTimeToFileTime(s: *const [u16; 8], t: *mut u64) -> i32;
     fn CreateDirectoryW(path: *const u16, security: *const u8) -> i32;
     fn DeleteFileW(path: *const u16) -> i32;
     fn FindFirstFileW(pattern: *const u16, found: *mut u32) -> Handle;
@@ -48,6 +53,10 @@ unsafe extern "system" {
     fn ReleaseSRWLockExclusive(lock: *mut usize);
     fn CreateThread(security: *const u8, stack: usize, start: extern "system" fn(*mut u8) -> u32, arg: *mut u8, flags: u32, id: *mut u32) -> Handle;
     fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
+    fn CreatePipe(read: *mut Handle, write: *mut Handle, security: *const usize, size: u32) -> i32;
+    fn SetHandleInformation(h: Handle, mask: u32, flags: u32) -> i32;
+    fn CreateProcessW(application: *const u16, line: *mut u16, process: *const u8, thread: *const u8, inherit: i32, flags: u32, environment: *const u8, folder: *const u16, start: *const usize, made: *mut usize) -> i32;
+    fn GetExitCodeProcess(h: Handle, code: *mut u32) -> i32;
 }
 
 /// The program starts here.
@@ -433,6 +442,40 @@ pub fn kind(path: &str) -> Result<bool, i64> {
     }
 }
 
+/// What `files.size` and `files.modified` say, of the link itself if it is one (`follow`
+/// unused: ponytail, links are rare on Windows; open the file to follow them).
+pub fn info(path: &str, _follow: bool) -> Result<crate::Info, i64> {
+    // WIN32_FILE_ATTRIBUTE_DATA: attributes, 3 times (creation, access, writing), size high, low.
+    let mut d = [0u32; 9];
+    if unsafe { GetFileAttributesExW(wide(path).as_ptr(), 0, d.as_mut_ptr()) } == 0 {
+        return Err(failure());
+    }
+    let written = (d[6] as u64) << 32 | d[5] as u64; // a FILETIME: low half first
+    let modified = (written / 10_000_000) as i64 - 11_644_473_600;
+    let size = ((d[7] as u64) << 32 | d[8] as u64) as i64;
+    Ok(crate::Info { folder: d[0] & 0x10 != 0, link: d[0] & 0x400 != 0, size, modified })
+}
+
+/// The local time at `utc` (seconds since 1970), by the rules of that day (summer time or not).
+pub fn local_at(utc: i64) -> i64 {
+    let t = ((utc + 11_644_473_600) * 10_000_000) as u64;
+    let (mut s, mut local, mut back) = ([0u16; 8], [0u16; 8], 0u64);
+    unsafe {
+        if FileTimeToSystemTime(&t, &mut s) == 0 || SystemTimeToTzSpecificLocalTime(null(), &s, &mut local) == 0 || SystemTimeToFileTime(&local, &mut back) == 0 {
+            return utc;
+        }
+    }
+    (back / 10_000_000) as i64 - 11_644_473_600
+}
+
+/// `a` named `b` from now on (replacing a file `b`); Err(0) if they are on two disks.
+pub fn rename(a: &str, b: &str) -> Result<(), i64> {
+    if unsafe { MoveFileExW(wide(a).as_ptr(), wide(b).as_ptr(), 1) } != 0 {
+        return Ok(());
+    }
+    if unsafe { GetLastError() } == 17 { Err(0) } else { Err(failure()) } // ERROR_NOT_SAME_DEVICE
+}
+
 /// `access`, `how` as CreateFileW wants them; other programs may read, write or delete it meanwhile.
 fn open(path: &str, access: u32, how: u32) -> Result<Handle, i64> {
     match unsafe { CreateFileW(wide(path).as_ptr(), access, 7, null(), how, 0x80, 0) } {
@@ -505,6 +548,83 @@ pub fn list_dir(path: &str) -> Result<Vec<String>, i64> {
     };
     unsafe { FindClose(h) };
     r
+}
+
+// ---- Other programs ----
+
+/// Held while a process is made: the pipe ends it inherits must be only its own.
+static SPAWNING: Lock = Lock::new();
+
+/// `system.run`: runs `program` (a path) with `args`, its input empty, and gives what it wrote,
+/// what it wrote on stderr, and its exit code; or the `RunError` variant + 1. The command line
+/// is written as `kova run` (Rust's `std::process::Command`) writes it.
+pub fn run(program: &str, args: &[&str]) -> Result<(Vec<u8>, Vec<u8>, i64), i64> {
+    let mut line = wide(&crate::shared::command_line(program, args));
+    let path = wide(program);
+    // SECURITY_ATTRIBUTES: its length, no descriptor, inherited.
+    let inherit: [usize; 3] = [24, 0, 1];
+    let mut pipes = [(INVALID, INVALID); 2];
+    SPAWNING.lock();
+    let made = pipes.iter_mut().all(|(r, w)| unsafe { CreatePipe(r, w, inherit.as_ptr(), 0) != 0 && SetHandleInformation(*r, 1, 0) != 0 });
+    // GENERIC_READ, shared, OPEN_EXISTING.
+    let nothing = unsafe { CreateFileW(wide("NUL").as_ptr(), 0x8000_0000, 7, inherit.as_ptr() as *const u8, 3, 0, 0) };
+    // STARTUPINFOW (104 bytes): its length, STARTF_USESTDHANDLES, the three handles.
+    let mut start = [0usize; 13];
+    start[0] = 104;
+    start[7] = 0x100 << 32;
+    start[10..13].copy_from_slice(&[nothing as usize, pipes[0].1 as usize, pipes[1].1 as usize]);
+    let mut process = [0usize; 3];
+    let ok = made && nothing != INVALID && unsafe { CreateProcessW(path.as_ptr(), line.as_mut_ptr(), null(), null(), 1, 0, null(), null(), start.as_ptr(), process.as_mut_ptr()) } != 0;
+    let e = unsafe { GetLastError() };
+    for h in [nothing, pipes[0].1, pipes[1].1] {
+        unsafe { CloseHandle(h) };
+    }
+    SPAWNING.unlock();
+    if !ok {
+        for (r, _) in pipes {
+            unsafe { CloseHandle(r) };
+        }
+        return Err(match e {
+            2 | 3 => 1, // ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND
+            5 => 2,     // ERROR_ACCESS_DENIED
+            _ => 3,
+        });
+    }
+    // stderr read by another thread meanwhile: a program filling one pipe while this one waits
+    // on the other would stop.
+    extern "C" fn drain(p: i64) {
+        let (h, bytes) = unsafe { &mut *(p as *mut (Handle, Vec<u8>)) };
+        read_all(*h, bytes);
+    }
+    let mut errors = alloc::boxed::Box::new((pipes[1].0, Vec::new()));
+    let reader = spawn(drain, &mut *errors as *mut (Handle, Vec<u8>) as i64);
+    let mut output = Vec::new();
+    read_all(pipes[0].0, &mut output);
+    match reader {
+        Some(t) => join(t),
+        None => read_all(pipes[1].0, &mut errors.1),
+    }
+    let mut code = 0u32;
+    unsafe {
+        WaitForSingleObject(process[0] as Handle, u32::MAX);
+        GetExitCodeProcess(process[0] as Handle, &mut code);
+        for h in [process[0], process[1]].iter().map(|&h| h as Handle).chain([pipes[0].0, pipes[1].0]) {
+            CloseHandle(h);
+        }
+    }
+    Ok((output, errors.1, code as i64))
+}
+
+/// Everything until the other end is closed.
+fn read_all(h: Handle, bytes: &mut Vec<u8>) {
+    let mut buffer = [0u8; 1 << 14];
+    loop {
+        let mut done = 0;
+        if unsafe { ReadFile(h, buffer.as_mut_ptr(), buffer.len() as u32, &mut done, null_mut()) } == 0 || done == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..done as usize]);
+    }
 }
 
 // ---- Memory: Windows' own heap ----

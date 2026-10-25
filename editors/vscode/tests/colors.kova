@@ -126,6 +126,16 @@ fn put(var self, v: Int) at(i: Int) {
 //           ^^ entity.name.function.call.kova
 }
 
+fn sauver {
+    files.copy("a") to("b")
+//                  ^^ entity.name.function.call.kova
+    files.move("a") to("b")
+//        ^^^^ - storage.modifier.kova
+    from i := 1 to 3 {
+//              ^^ keyword.control.kova
+    }
+}
+
 fn grand(f: BigInt) -> BigInt {
 //          ^^^^^^ support.type.primitive.kova
     return f * 123456789012345678901234567890

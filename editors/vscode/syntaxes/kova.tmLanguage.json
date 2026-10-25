@@ -131,7 +131,7 @@
           "match": "\\b(else)\\s+(skip)\\b",
           "captures": { "1": { "name": "keyword.control.kova" }, "2": { "name": "keyword.control.kova" } }
         },
-        { "name": "keyword.control.kova", "match": "\\b(if|else|while|for|in|from|to|match|return|break|continue)\\b" },
+        { "name": "keyword.control.kova", "match": "\\b(if|else|while|for|in|from|match|return|break|continue)\\b|\\bto\\b(?!\\()" },
         {
           "match": "\\b(import)\\s+(\\w+)\\s+(as)\\b",
           "captures": { "1": { "name": "keyword.control.import.kova" }, "3": { "name": "keyword.control.import.kova" } }

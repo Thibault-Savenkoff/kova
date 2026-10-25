@@ -667,6 +667,45 @@ Files are in Kova's own module `files`, reached after `import files` (no file to
 `files.remove`. `import files as fs` gives it another name. `kova run` and `kova build` print exactly the
 same digits on every system: Kova has its own maths.
 
+```kova
+import files
+import system
+
+fn main {
+    let made: Nothing or files.IoError := files.write("a.txt", "hello")
+    let copied: Nothing or files.IoError := files.copy("a.txt") to("b.txt")
+    print(files.size("b.txt"))
+    let moved: Nothing or files.IoError := files.move("b.txt") to("c.txt")
+    print(files.matching("*.txt"))
+    let home: String? := system.env("KOVA_NO_SUCH_NAME")
+    print(home)
+    match system.run("kova-no-such-program") args(["--version"]) {
+        ok(done) => print("{done.output} (code {done.code})")
+        err(e) => print(e)
+    }
+    for f in ["a.txt", "c.txt"] {
+        let gone: Nothing or files.IoError := files.remove(f)
+    }
+}
+```
+
+```text
+ok(5)
+ok(["a.txt", "c.txt"])
+none
+NotFound("kova-no-such-program")
+```
+
+`files.copy(a) to(b)` and `files.move(a) to(b)` (also to rename) replace a file `b`. `files.size`,
+`files.modified` (a local `DateTime`) and `files.is_folder` tell about a file. In
+`files.matching("photos/**/*.jpg")`, `*` stands for any characters of a name, `?` for one, and `**`
+for any number of folders; the paths come sorted. `system.env(name)` reads an environment variable.
+`system.run(program) args(words)` runs a program, found in the `PATH` folders if no folder is
+written, its input empty, and waits for it: `output` is what it wrote, `errors` what it wrote on
+stderr, `code` its exit code (128 + the signal if one stopped it). A code other than 0 is still
+`ok`: only a program that could not start is an error (`system.RunError`). The words go to the
+program as they are: no shell reads them, so a space or a `;` in one changes nothing.
+
 ## 16. The web
 
 ```kova

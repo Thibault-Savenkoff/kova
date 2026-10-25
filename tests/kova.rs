@@ -1186,3 +1186,25 @@ fn https() {
     let _ = std::fs::remove_file(&exe);
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
+
+/// `system.run` (PLAN Part 4 "The library after Python", step 1): `run.kova` runs the built
+/// `child.kova`, in run and in build: words to quote (Windows' command line), what the child
+/// writes on stderr, its exit code, and a program that is nowhere.
+#[test]
+fn run_programs() {
+    let id = std::process::id();
+    let child = std::env::temp_dir().join(format!("kova-child-{id}{EXE}"));
+    let parent = std::env::temp_dir().join(format!("kova-parent-{id}{EXE}"));
+    for (source, exe) in [("tests/system/child.kova", &child), ("tests/system/run.kova", &parent)] {
+        let out = kova(LANG).arg("build").arg(source).arg("-o").arg(exe).output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+    }
+    let run = kova(LANG).arg("run").arg("tests/system/run.kova").arg(&child).output().unwrap();
+    let built = program(&parent, LANG).arg(&child).output().unwrap();
+    let _ = std::fs::remove_file(&child);
+    let _ = std::fs::remove_file(&parent);
+    let expected = "[]\né ok\nerrors: false, code 0\n[\"a b\", \"\", \"say \"hi\"\", \"back\\\", \"tab\there\"]\né ok\nerrors: false, code 0\n\
+        [\"fail\"]\né ok\nerrors: true, code 101\ntrue\n[\"three\"]\né ok\nerrors: false, code 3\nNotFound(\"kova-no-such-program\")\n";
+    assert_eq!(text(&run.stdout), expected, "run: {}", text(&run.stderr));
+    assert_eq!(text(&built.stdout), expected, "build: {}", text(&built.stderr));
+}
