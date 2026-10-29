@@ -109,8 +109,8 @@ program and puts it inside the executable: the image file is not needed afterwar
 - **Where it shows:**
   - Windows: the executable's icon in Explorer, and the window's in the title bar and the taskbar;
   - Mac: the Dock, while a program with [windows](/guide/windows/) runs;
-  - Linux: the window's icon, when the desktop reads it from the program (GNOME and KDE may still
-    show a generic one: they look for a `.desktop` file, which Kova does not install).
+  - Linux: the window's icon in the taskbar, on desktops that take it from the program (KDE does;
+    GNOME looks for a `.desktop` file instead, which Kova does not install).
 
 ```plaintext
 error: the icon `logo.png` is 640×480: it must be square (512×512 is best)

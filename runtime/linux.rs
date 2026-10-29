@@ -1034,20 +1034,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             }
             let new: extern "C" fn() -> P = t(f("gtk_window_new"));
             let w = new();
-            // The `header`'s icon. GTK 4 takes an icon by name only: the image is written as
-            // `<program>.png` in a folder of its own, which the icon theme then searches.
+            // The `header`'s icon, given to the window itself once it exists: on Wayland, GTK
+            // sends it to the desktop (protocol `xdg_toplevel_icon_v1`, KDE and others).
             let icon = crate::icon();
-            // Only in the user's own runtime folder: nobody else may write there.
-            if let (false, false, Some(runtime)) = (icon.is_empty(), program.is_empty(), var("XDG_RUNTIME_DIR")) {
-                let dir = format!("{runtime}/kova-icon-{program}");
-                let _ = make_dir(&dir);
-                if write_file(&format!("{dir}/{program}.png"), icon, false).is_ok() {
-                    let display: extern "C" fn() -> P = t(f("gdk_display_get_default"));
-                    let theme: extern "C" fn(P) -> P = t(f("gtk_icon_theme_get_for_display"));
-                    let add: extern "C" fn(P, *const u8) = t(f("gtk_icon_theme_add_search_path"));
-                    add(theme(display()), c_string(&dir).as_ptr());
-                    let set_icon: extern "C" fn(P, *const u8) = t(f("gtk_window_set_icon_name"));
-                    set_icon(w, c_string(program).as_ptr());
+            if !icon.is_empty() {
+                let bytes: extern "C" fn(*const u8, usize) -> P = t(f("g_bytes_new"));
+                let texture: extern "C" fn(P, *mut P) -> P = t(f("gdk_texture_new_from_bytes"));
+                let image = texture(bytes(icon.as_ptr(), icon.len()), null_mut());
+                if !image.is_null() {
+                    let realize: extern "C" fn(P) = t(f("gtk_widget_realize"));
+                    let surface: extern "C" fn(P) -> P = t(f("gtk_native_get_surface"));
+                    let append: extern "C" fn(P, P) -> P = t(f("g_list_append"));
+                    let set_icons: extern "C" fn(P, P) = t(f("gdk_toplevel_set_icon_list"));
+                    realize(w);
+                    set_icons(surface(w), append(null_mut(), image));
                 }
             }
             // The size the program asked for, else at least 320 pixels wide, as on Windows and
