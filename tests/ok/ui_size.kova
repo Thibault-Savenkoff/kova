@@ -1,0 +1,22 @@
+// `ui.run(…) width(…) height(…)`: the window's first size, each part optional (both run and
+// build go through the parts and their defaults; the tests open no window).
+import ui
+
+struct App {
+    clicks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.button("{app.clicks}", 1)
+}
+
+fn update(app: var App, e: Int) {
+    app.clicks := app.clicks + e
+}
+
+fn main {
+    ui.run("Both", App { clicks := 0 }, view, update) width(400) height(250)
+}
+// stdin: 0
+// expect: [Both] button "0"
+// expect: [Both] button "1"

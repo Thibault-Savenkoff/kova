@@ -609,7 +609,7 @@ mod dl {
 /// the window stays, its content is made again from `view` each time (`NSStackView`s). The
 /// program runs its own event loop until a click: the button's number, or -1 once the window
 /// is closed. `KOVA_UI_HIDDEN` never shows the window.
-pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
     use crate::Global;
     static KIT: Global<Option<Kit>> = Global::new(None);
     // -2: nothing yet, -1: the window closed.
@@ -684,11 +684,13 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
     let root = mac_make(kit, view);
     (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
     (kit.send_two)(w, kit.sel("setContentView:"), root);
-    // The window first fits its content, at least 320 points wide. Later the stack view's own
-    // constraints make it grow when the content needs more room, so a size the user chose stays.
+    // The window first takes the size the program asked for, else fits its content, at least 320
+    // points wide; never smaller than the content. Later the stack view's own constraints make it
+    // grow when the content needs more room, so a size the user chose stays.
     if fresh {
         let size = (kit.fitting)(root, kit.sel("fittingSize"));
-        (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(320.0), height: size.height });
+        let asked = Size { width: if width > 0 { width as f64 } else { 320.0 }, height: height.max(0) as f64 };
+        (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(asked.width), height: size.height.max(asked.height) });
     }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));

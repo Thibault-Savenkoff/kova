@@ -1507,11 +1507,12 @@ pub extern "C" fn kova_c_read(address: i64, offset: i64, kind: i64) -> i64 {
     unsafe { if kind == 1 { (p as *const i32).read_unaligned() as i64 } else { (p as *const i64).read_unaligned() } }
 }
 
-/// `ui.show(title, view)` (src/ui.rs): the window shows the view; the number of the button
+/// `ui.show(title, view, width, height)` (src/ui.rs): the window shows the view, first at that
+/// size (0: fit the content); the number of the button
 /// clicked, or -1 once the window is closed. With `KOVA_UI_SCRIPT`, no window (the tests): the
 /// view is printed, and the button to click read from the input (end of input = closed).
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_ui_show(title: i64, view: i64) -> i64 {
+pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -> i64 {
     let (title, view) = (text_of(title), text_of(view));
     if sys::var("KOVA_UI_SCRIPT").is_some() {
         OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
@@ -1524,7 +1525,7 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64) -> i64 {
         return clicked;
     }
     flush();
-    sys::ui_show(title, &shared::ui_tree(view))
+    sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32)
 }
 
 /// The address of each `extern` function, once found (0 before).

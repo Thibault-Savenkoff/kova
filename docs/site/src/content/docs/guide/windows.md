@@ -53,6 +53,10 @@ fn main {
 the button's event goes to `update`, which changes the state, and the window is drawn again from
 `view`.
 
+The window opens at the size of its content. To choose its first size, add `width(…)` and
+`height(…)`, together or alone: `ui.run("Counter", App { clicks := 0 }, view, update) width(400)`.
+It never becomes smaller than its content, and the person using it can resize it.
+
 Nothing else ever changes the window. There is no label to find and change, no button to
 enable from somewhere else: what is on the screen is always `view(state)`. A window that shows
 something wrong is a `view` to read, or an `update` to fix, never a forgotten change somewhere.

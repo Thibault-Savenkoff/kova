@@ -1,7 +1,8 @@
 // `import ui` (PLAN Part 4 "Native windows: `import ui`"): the module is Kova source made for
 // each program, with its state and event types and its `view` / `update` functions written in.
 // The checker, ownership, KIR and both backends then see ordinary Kova; the only primitive is
-// `ui.show(title, text)`, which shows a view and waits for a click (`StrOp::UiShow`).
+// `ui.show(title, text, width, height)`, which shows a view and waits for a click (`StrOp::UiShow`;
+// a size of 0 = fit the content).
 
 use crate::ast::{File, Mode};
 use crate::diag::Diag;
@@ -37,11 +38,11 @@ fn row(items: List<View>) -> View {
     return group("R", items)
 }
 
-fn run(title: String, state: STATE) {
+fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
     var s: STATE := state.clone
     while true {
         let v: View := VIEW(s)
-        let clicked: Int := ui.show(title, v.text)
+        let clicked: Int := ui.show(title, v.text, w, h)
         if clicked < 0 {
             return
         }

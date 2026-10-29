@@ -54,6 +54,11 @@ fn main {
 chaque clic, l'événement du bouton va à `update`, qui change l'état, et la fenêtre est redessinée
 à partir de `view`.
 
+La fenêtre s'ouvre à la taille de son contenu. Pour choisir sa taille de départ, ajoute
+`width(…)` et `height(…)`, ensemble ou seuls : `ui.run("Counter", App { clicks := 0 }, view, update) width(400)`.
+Elle ne devient jamais plus petite que son contenu, et la personne qui s'en sert peut la
+redimensionner.
+
 Rien d'autre ne change jamais la fenêtre. Il n'y a pas d'étiquette à retrouver pour la changer, pas
 de bouton à activer depuis ailleurs : ce qui est à l'écran est toujours `view(état)`. Une fenêtre
 qui montre quelque chose de faux, c'est une `view` à relire, ou un `update` à corriger, jamais un

@@ -1,0 +1,21 @@
+// `ui.run(…) width(…)` alone: `height` keeps its default (fit the content).
+import ui
+
+struct App {
+    clicks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.button("{app.clicks}", 1)
+}
+
+fn update(app: var App, e: Int) {
+    app.clicks := app.clicks + e
+}
+
+fn main {
+    ui.run("Width", App { clicks := 5 }, view, update) width(200)
+}
+// stdin: 0
+// expect: [Width] button "5"
+// expect: [Width] button "6"

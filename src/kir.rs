@@ -537,7 +537,7 @@ pub enum StrOp {
     FromCWideText,
     /// A leaf of a C struct: (address, offset, 1 for a 4-byte `int` else 8 bytes); 0 at NULL.
     CRead,
-    /// `ui.show(title, view)`: the button clicked, -1 once the window is closed (src/ui.rs).
+    /// `ui.show(title, view, width, height)`: the button clicked, -1 once the window is closed (src/ui.rs).
     UiShow,
     /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
     /// library, C name, line, column), found at its first call.

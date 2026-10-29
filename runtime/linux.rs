@@ -976,7 +976,7 @@ mod dl {
 /// `ui.show` (src/ui.rs) with GTK 4, found at the first call like an `extern` library: the
 /// window stays, its content is made again from `view` each time. The button clicked, or -1
 /// once the window is closed (or when GTK is missing or there is no display).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
     // The library (0 = not looked for yet, 1 = missing), the window, what was clicked (-2: nothing
     // yet, -1: the window closed).
     static GTK: Global<usize> = Global::new(0);
@@ -1014,9 +1014,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
             }
             let new: extern "C" fn() -> P = t(f("gtk_window_new"));
             let w = new();
-            // At least 320 pixels wide, as on Windows and macOS, so the title shows.
+            // The size the program asked for, else at least 320 pixels wide, as on Windows and
+            // macOS, so the title shows. GTK never makes it smaller than the content.
             let default_size: extern "C" fn(P, i32, i32) = t(f("gtk_window_set_default_size"));
-            default_size(w, 320, -1);
+            default_size(w, if width > 0 { width } else { 320 }, if height > 0 { height } else { -1 });
             (g.connect)(w, c"close-request".as_ptr() as *const u8, closing as usize, null_mut(), null_mut(), 0);
             *WINDOW.get() = w as usize;
         }

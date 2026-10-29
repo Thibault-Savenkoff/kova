@@ -336,7 +336,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::CWideFree => (99, "kova_c_wide_free", 1),
         StrOp::FromCWideText => (100, "kova_from_c_wide_text", 1),
         StrOp::CRead => (101, "kova_c_read", 3),
-        StrOp::UiShow => (102, "kova_ui_show", 2),
+        StrOp::UiShow => (102, "kova_ui_show", 4),
     }
 }
 

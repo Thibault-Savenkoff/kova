@@ -1861,22 +1861,23 @@ impl Parser<'_> {
             self.more_parts(&mut name, &mut args, &mut end)?;
         }
         end = self.trailing_block(&mut args)?.unwrap_or(end);
-        if name.text == "ui.run" {
+        if name.text == "ui.run" || name.text.starts_with("ui.run(…) ") {
             self.ui_run(name.span.to(end), &mut args);
         }
         Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
     }
 
-    /// `ui.run(title, state, view, update)`: the two functions, named, go into `File::ui_runs`.
+    /// `ui.run(title, state, view, update)`, perhaps followed by `width(…) height(…)`: the two
+    /// functions, named, go into `File::ui_runs` and leave the call.
     fn ui_run(&mut self, call: Span, args: &mut Vec<Expr>) {
         let named = |e: &Expr| match &e.kind {
             ExprKind::Var(n) => Some(Name { text: n.clone(), span: e.span }),
             _ => None,
         };
-        match args.get(2..).map(|a| a.iter().map(named).collect::<Vec<_>>()).as_deref() {
+        match args.get(2..4).map(|a| a.iter().map(named).collect::<Vec<_>>()).as_deref() {
             Some([Some(view), Some(update)]) => {
                 self.ui_runs.push(UiRun { call, view: view.clone(), update: update.clone() });
-                args.truncate(2);
+                args.drain(2..4);
             }
             _ => self.diags.push(Diag::new(call, t!("ui_run_shape"))),
         }

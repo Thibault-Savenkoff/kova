@@ -744,7 +744,7 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
 /// and `win_place` put a column's parts under each other, a row's side by side. The button
 /// clicked, or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
 /// from another program).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
     static WIN: Global<Option<Win32>> = Global::new(None);
     static WINDOW: Global<Handle> = Global::new(0);
     static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
@@ -840,9 +840,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
         let (width, height) = win_size(win, dc, view);
         win_place(win, dc, w, view, 16, 16, CONTROLS.get());
         (win.release_dc)(w, dc);
-        // The window first fits its content, 16 pixels around it, at least 320 pixels wide. Later it
-        // only grows when the content needs more room, so a size the user chose stays.
-        let (mut cw, mut ch) = (320, 0);
+        // The window first takes the size the program asked for, else fits its content, 16 pixels
+        // around it, at least 320 pixels wide; never smaller than the content. Later it only grows
+        // when the content needs more room, so a size the user chose stays.
+        let (mut cw, mut ch) = (if width > 0 { width } else { 320 }, height.max(0));
         if !fresh {
             let mut now = [0; 4];
             (win.client)(w, &mut now);

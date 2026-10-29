@@ -15,6 +15,7 @@ lists what `ui` has.
 | Written | Does |
 | --- | --- |
 | `ui.run(title, state, view, update)` | shows a window titled `title`, drawn by `view(state)`, until it is closed. At each click, `update(var state, event)` runs, and the window is drawn again. |
+| `ui.run(…) width(w) height(h)` | the same, the window opening `w` pixels wide and `h` high; each part may be left out. |
 | `ui.text(s: String) -> ui.View` | a line of text. |
 | `ui.button(label: String, event: E) -> ui.View` | a button; a click sends `event` to `update`. |
 | `ui.column(items: List<ui.View>) -> ui.View` | the views one under the other. |
@@ -41,6 +42,6 @@ every button's event is an `Event`.
 | `KOVA_UI_SCRIPT=1` | no window: each view is printed as text, and the button to click (its number from 0, in the order they are written) is read from the input; the end of the input closes the window. For tests. |
 | `KOVA_UI_HIDDEN=1` | the window exists but is never shown (Windows, macOS), for a program that drives it. |
 
-The window opens at the size of its content, at least 320 pixels wide, and whoever uses it can resize it: a click never puts back the size Kova chose, it only makes the window grow when the content needs more room.
+Without `width` and `height`, the window opens at the size of its content, at least 320 pixels wide. It is never smaller than its content, whatever size is asked, and whoever uses it can resize it: a click never puts back the first size, it only makes the window grow when the content needs more room.
 
 A `ui` program runs as native code, even under `kova run`.
