@@ -10,15 +10,20 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Kova',
+      defaultLocale: 'root',
+      locales: {
+        root: { label: 'English', lang: 'en' },
+        fr: { label: 'Français', lang: 'fr' },
+      },
       logo: { src: './src/assets/kova.svg' },
       favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Thibault-Savenkoff/kova' }],
       expressiveCode: { shiki: { langs: [kova] } },
       sidebar: [
-        { label: 'Getting started', items: [{ autogenerate: { directory: 'start' } }] },
-        { label: 'Language guide', items: [{ autogenerate: { directory: 'guide' } }] },
-        { label: 'Library', items: [{ autogenerate: { directory: 'library' } }] },
-        { label: 'Tools', items: [{ autogenerate: { directory: 'tools' } }] },
+        { label: 'Getting started', translations: { fr: 'Démarrer' }, items: [{ autogenerate: { directory: 'start' } }] },
+        { label: 'Language guide', translations: { fr: 'Guide du langage' }, items: [{ autogenerate: { directory: 'guide' } }] },
+        { label: 'Library', translations: { fr: 'Bibliothèque' }, items: [{ autogenerate: { directory: 'library' } }] },
+        { label: 'Tools', translations: { fr: 'Outils' }, items: [{ autogenerate: { directory: 'tools' } }] },
       ],
     }),
   ],

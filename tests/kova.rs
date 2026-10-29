@@ -155,7 +155,9 @@ fn guide_examples() {
                     for (name, code) in &files {
                         std::fs::write(tmp.join(name), code).unwrap();
                     }
-                    let out = kova(LANG).arg("run").arg(&files[0].0).current_dir(&tmp).env("NO_COLOR", "1").output().unwrap();
+                    // The French pages show Kova's French messages.
+                    let speaks = if path.components().any(|c| c.as_os_str() == "fr") { "fr" } else { LANG };
+                    let out = kova(speaks).arg("run").arg(&files[0].0).current_dir(&tmp).env("NO_COLOR", "1").output().unwrap();
                     // An error block loses the empty line that ends the message.
                     let (shown, fine) = if lang == "text" { (text(&out.stdout), out.status.success()) } else { (text(&out.stderr).trim_end().to_string() + "\n", !out.status.success()) };
                     if shown != body || !fine {

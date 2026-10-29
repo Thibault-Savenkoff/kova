@@ -1,0 +1,73 @@
+---
+title: Kova
+description: Un langage compilé aux types stricts, à la mémoire gérée sans ramasse-miettes, et aux mêmes résultats sur chaque système.
+template: splash
+hero:
+  tagline: Un langage compilé aux types écrits, à la mémoire gérée sans ramasse-miettes ni durées de vie, et aux mêmes résultats sous Linux, Windows et macOS.
+  image:
+    file: ../../../assets/kova.svg
+  actions:
+    - text: Démarrer
+      link: /fr/start/install/
+      icon: right-arrow
+    - text: Guide du langage
+      link: /fr/guide/values/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+```kova
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn describe(d: Dog) -> String {
+    return match d.age {
+        0..=1 => "{d.name} is a puppy"
+        _ => "{d.name} is {d.age}"
+    }
+}
+
+fn main {
+    let dogs: List<Dog> := [Dog { name := "Rex", age := 3 }, Dog { name := "Pip", age := 1 }]
+    for d in dogs {
+        print(describe(d))
+    }
+}
+```
+
+```text
+Rex is 3
+Pip is a puppy
+```
+
+<CardGrid>
+  <Card title="Se lit comme il s'exécute" icon="open-book">
+    Les types sont écrits là où un nom naît. `:=` donne une valeur et `=` compare : impossible de
+    confondre les deux. Une fonction qui change son argument le dit à l'appel : `sort(var names)`.
+  </Card>
+  <Card title="La mémoire, gérée" icon="approve-check">
+    Chaque valeur a un seul propriétaire et disparaît avec lui. Aucun ramasse-miettes ne met le
+    programme en pause, et il n'y a pas de durées de vie à écrire : un emprunt ne quitte jamais son
+    bloc.
+  </Card>
+  <Card title="Rien n'échoue en secret" icon="warning">
+    Une valeur qui peut manquer est un `T?`, une opération qui peut échouer donne un `T or E`, et
+    un `Int` qui déborde arrête le programme avec un message clair au lieu de repartir à zéro.
+  </Card>
+  <Card title="Un fichier, n'importe quel système" icon="laptop">
+    `kova build` crée un petit exécutable natif, sans compilateur C ni éditeur de liens à
+    installer, pour Linux, Windows ou macOS depuis n'importe lequel. `kova run` et l'exécutable
+    affichent les mêmes chiffres.
+  </Card>
+  <Card title="Tout est fourni" icon="puzzle">
+    Fichiers, web (client et serveur, HTTPS), JSON, CSV, expressions régulières, dates,
+    chiffrement, fenêtres natives et appels aux bibliothèques C viennent avec le langage.
+  </Card>
+  <Card title="Un éditeur qui aide" icon="pencil">
+    L'extension VSCode / VSCodium montre les erreurs pendant la frappe, complète, renomme, met en
+    forme à l'enregistrement, lance les tests dans la marge et débogue pas à pas.
+  </Card>
+</CardGrid>
