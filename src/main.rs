@@ -12,6 +12,7 @@ mod debug;
 mod diag;
 mod format;
 mod http;
+mod icon;
 mod json;
 #[cfg(target_os = "macos")]
 mod network_framework;
@@ -124,7 +125,7 @@ fn main() {
     let contracts = !matches!(command, Command::Build { boost: true, .. });
     let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
 
-    program.icon = icon(file, &tree).and_then(Result::ok).unwrap_or_default();
+    program.icon = icon(file, &tree).and_then(Result::ok);
     match command {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
@@ -343,28 +344,16 @@ pub fn program_folder(path: &str, imports: &[ast::Import]) -> std::path::PathBuf
     above.unwrap_or(own)
 }
 
-/// `header { icon := "counter.png" }`: the image's bytes, from the program's folder; a square
-/// PNG, or the error to show on the setting.
-fn icon(path: &str, tree: &ast::File) -> Option<Result<Vec<u8>, diag::Diag>> {
+/// `header { icon := "counter.svg" }`: the image, from the program's folder (src/icon.rs), or
+/// the error to show on the setting.
+fn icon(path: &str, tree: &ast::File) -> Option<Result<icon::Icon, diag::Diag>> {
     let (written, span) = types::program_icon(tree)?;
-    // Not a `.png`: the type checker says what to write.
-    if !written.to_ascii_lowercase().ends_with(".png") {
+    // Not a known format: the type checker says what to write.
+    if !types::ICON_FORMATS.iter().any(|f| written.to_ascii_lowercase().ends_with(&format!(".{f}"))) {
         return None;
     }
-    let file = std::path::Path::new(path).with_file_name(&written);
-    let bytes = match std::fs::read(&file) {
-        Ok(b) => b,
-        Err(e) => return Some(Err(diag::Diag::new(span, t!("icon_unreadable", file = written, error = e)))),
-    };
-    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() < 24 {
-        return Some(Err(diag::Diag::new(span, t!("icon_not_png", file = written))));
-    }
-    let number = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
-    let (width, height) = (number(16), number(20));
-    if width != height {
-        return Some(Err(diag::Diag::new(span, t!("icon_not_square", file = written, width = width, height = height))));
-    }
-    Some(Ok(bytes))
+    let read = std::fs::read(std::path::Path::new(path).with_file_name(&written)).map_err(|e| t!("icon_unreadable", file = written, error = e));
+    Some(read.and_then(|bytes| icon::read(&written, bytes)).map_err(|msg| diag::Diag::new(span, msg)))
 }
 
 fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::Sources) {

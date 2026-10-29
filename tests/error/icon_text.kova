@@ -1,7 +1,7 @@
 header {
-    icon := "counter.jpg"
+    icon := "counter.gif"
 }
 
 fn main {
 }
-// error: `icon` takes the path of a PNG image, from the program's folder: `icon := "counter.png"`
+// error: `icon` takes the path of an image (PNG, SVG, JPEG, `.ico`, `.icns`), from the program's folder: `icon := "counter.png"`

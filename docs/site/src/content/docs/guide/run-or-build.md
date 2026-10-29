@@ -91,9 +91,30 @@ fn main {
 | `lock` | `false` (default), `true` | `true`: the other command is refused, for a program meant only to be built (or only run) |
 | `lang` | `auto` (default), `en`, `fr` | the language of Kova's messages for this program |
 | `name` | a text: `name := "Counter"` | the program's name: the executable `kova build` makes, and the name the Dock, the taskbar and the list of programs show (by default, the file's name) |
+| `icon` | an image: `icon := "counter.svg"` | the program's icon: PNG, SVG, JPEG, `.ico` or `.icns`, square, from the program's folder ([below](#the-icon)) |
 
 With `mode := build`, `kova app.kova` builds the program, and with `lock := true`, `kova run
 app.kova` explains that this program is meant to be built.
+
+## The icon
+
+`icon := "counter.svg"` gives the program its icon. Kova reads the image when it builds the
+program and puts it inside the executable: the image file is not needed afterwards.
+
+- **Formats:** PNG, SVG (drawn at 512×512), JPEG, Windows' `.ico` and the Mac's `.icns`. A
+  `.ico` keeps all its sizes on Windows, a `.icns` all its sizes on the Mac; on the other systems,
+  their largest image is used.
+- **Square:** an image that is not square is refused (an SVG is centered in a square instead).
+  512×512 is the best size: the Dock shows it sharp on a Retina screen.
+- **Where it shows:**
+  - Windows: the executable's icon in Explorer, and the window's in the title bar and the taskbar;
+  - Mac: the Dock, while a program with [windows](/guide/windows/) runs;
+  - Linux: the window's icon, when the desktop reads it from the program (GNOME and KDE may still
+    show a generic one: they look for a `.desktop` file, which Kova does not install).
+
+```plaintext
+error: the icon `logo.png` is 640×480: it must be square (512×512 is best)
+```
 
 ## The executable
 

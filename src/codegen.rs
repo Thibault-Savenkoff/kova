@@ -162,12 +162,21 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
     let exe = match target {
         Target::Linux => crate::link::elf(&object, runtime, false),
         Target::LinuxArm => crate::link::elf(&object, runtime, true),
-        Target::Windows => crate::link::pe(&object, runtime, false, &p.icon),
-        Target::WindowsArm => crate::link::pe(&object, runtime, true, &p.icon),
+        Target::Windows => crate::link::pe(&object, runtime, false, &icon_images(p)),
+        Target::WindowsArm => crate::link::pe(&object, runtime, true, &icon_images(p)),
         Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
         Target::MacIntel => crate::link::macho(&object, runtime, name, false),
     };
     exe.map_err(|e| t!("codegen_failed", error = e))
+}
+
+/// The images of a Windows executable's icon: a .ico's own, else the PNG.
+fn icon_images(p: &Program) -> Vec<(u32, u32, u16, &[u8])> {
+    let Some(icon) = &p.icon else { return vec![] };
+    crate::icon::ico_images(&icon.original).unwrap_or_else(|| {
+        let (w, h) = crate::icon::side(&icon.png);
+        vec![(w, h, 32, &icon.png)]
+    })
 }
 
 /// The executable, which may be run.
@@ -515,7 +524,13 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
-    runtime_texts(&mut module, lang, files, &p.icon)?;
+    // The runtime's icon: a Mac takes its own .icns as it is (all its sizes), else the PNG.
+    let icon = match &p.icon {
+        None => &[][..],
+        Some(i) if system == "mac" && i.original.starts_with(b"icns") => &i.original,
+        Some(i) => &i.png,
+    };
+    runtime_texts(&mut module, lang, files, icon)?;
     Ok(module.finish().emit()?)
 }
 

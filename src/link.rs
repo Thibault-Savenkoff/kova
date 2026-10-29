@@ -572,7 +572,7 @@ const FILE_ALIGN: u64 = 0x200;
 /// The executable of `main` and `runtime`, for Windows x86-64: three sections, `.text` (code, then
 /// the jumps to the system's functions), `.rdata` (constants, then the import table, which Windows
 /// fills with the addresses of the DLLs' functions) and `.data` (data then zeros).
-pub fn pe(main: &[u8], runtime: &[u8], arm: bool, icon: &[u8]) -> Result<Vec<u8>, String> {
+pub fn pe(main: &[u8], runtime: &[u8], arm: bool, icon: &[(u32, u32, u16, &[u8])]) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("kova_start", |_| false)?;
     inputs.sorted(&mut r)?;
@@ -828,11 +828,12 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool, icon: &[u8]) -> Result<Vec<u8>
     Ok(out)
 }
 
-/// The `.rsrc` section holding one icon (a PNG, as Windows Vista and later read them), number 1
-/// (`LoadIconW(module, 1)` in runtime/windows.rs), at `at` (its address from the image's start).
-/// Three levels of directories: kind (3 = an image, 14 = the group naming it), number, language.
-fn resources(png: &[u8], at: u32) -> Vec<u8> {
-    let mut r = vec![];
+/// The `.rsrc` section holding the icon's images (PNGs or Windows bitmaps, as in a .ico),
+/// numbered from 1, and the group naming them, number 1 (`LoadImageW(module, 1, …)` in
+/// runtime/windows.rs), at `at` (its address from the image's start). Three levels of
+/// directories: kind (3 = an image, 14 = a group), number, language.
+fn resources(images: &[(u32, u32, u16, &[u8])], at: u32) -> Vec<u8> {
+    let n = images.len() as u32;
     let le16 = |r: &mut Vec<u8>, v: u16| r.extend_from_slice(&v.to_le_bytes());
     let le32 = |r: &mut Vec<u8>, v: u32| r.extend_from_slice(&v.to_le_bytes());
     // A directory of `entries` (number, place: a directory below when the high bit is set).
@@ -846,31 +847,46 @@ fn resources(png: &[u8], at: u32) -> Vec<u8> {
         }
     };
     const BELOW: u32 = 0x8000_0000;
-    directory(&mut r, &[(3, BELOW | 32), (14, BELOW | 56)]); // 0..32
-    directory(&mut r, &[(1, BELOW | 80)]); // 32..56
-    directory(&mut r, &[(1, BELOW | 104)]); // 56..80
-    directory(&mut r, &[(0x409, 128)]); // 80..104
-    directory(&mut r, &[(0x409, 144)]); // 104..128
-    // The data: where (from the image's start) and how long.
-    for (place, size) in [(184, png.len() as u32), (160, 20)] {
-        le32(&mut r, at + place);
-        le32(&mut r, size);
-        le32(&mut r, 0);
-        le32(&mut r, 0);
+    // Where each part starts: the kinds, the images' numbers, the group's, a language per
+    // resource, then the data entries, the group's bytes and the images'.
+    let numbers = 32;
+    let group_numbers = numbers + 16 + 8 * n;
+    let languages = group_numbers + 24;
+    let entries = languages + 24 * (n + 1);
+    let group = entries + 16 * (n + 1);
+    let mut data = (group + 6 + 14 * n).next_multiple_of(8);
+    let mut r = vec![];
+    directory(&mut r, &[(3, BELOW | numbers), (14, BELOW | group_numbers)]);
+    directory(&mut r, &(0..n).map(|k| (k + 1, BELOW | (languages + 24 * k))).collect::<Vec<_>>());
+    directory(&mut r, &[(1, BELOW | (languages + 24 * n))]);
+    for k in 0..=n {
+        directory(&mut r, &[(0x409, entries + 16 * k)]);
     }
-    // The group: one image, its width and height (0 = 256 or more), 32 bits per pixel.
-    let side = u32::from_be_bytes(png[16..20].try_into().unwrap());
-    let side = if side >= 256 { 0 } else { side as u8 };
+    for (.., bytes) in images {
+        for v in [at + data, bytes.len() as u32, 0, 0] {
+            le32(&mut r, v);
+        }
+        data = (data + bytes.len() as u32).next_multiple_of(8);
+    }
+    for v in [at + group, 6 + 14 * n, 0, 0] {
+        le32(&mut r, v);
+    }
+    // The group: each image's width and height (0 = 256 or more), its bits per pixel, its size.
     le16(&mut r, 0);
     le16(&mut r, 1);
-    le16(&mut r, 1);
-    r.extend_from_slice(&[side, side, 0, 0]);
-    le16(&mut r, 1);
-    le16(&mut r, 32);
-    le32(&mut r, png.len() as u32);
-    le16(&mut r, 1);
-    r.resize(184, 0);
-    r.extend_from_slice(png);
+    le16(&mut r, n as u16);
+    for (k, (w, h, bits, bytes)) in images.iter().enumerate() {
+        let side = |v: u32| if v >= 256 { 0 } else { v as u8 };
+        r.extend_from_slice(&[side(*w), side(*h), 0, 0]);
+        le16(&mut r, 1);
+        le16(&mut r, *bits);
+        le32(&mut r, bytes.len() as u32);
+        le16(&mut r, k as u16 + 1);
+    }
+    for (.., bytes) in images {
+        r.resize(r.len().next_multiple_of(8), 0);
+        r.extend_from_slice(bytes);
+    }
     r
 }
 

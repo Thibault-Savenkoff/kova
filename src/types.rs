@@ -422,6 +422,9 @@ pub fn program_name(f: &File) -> Option<String> {
     Some(v.text.strip_prefix('"')?.strip_suffix('"')?.to_string())
 }
 
+/// The images `icon` takes (src/icon.rs), by extension.
+pub const ICON_FORMATS: &[&str] = &["png", "svg", "jpg", "jpeg", "ico", "icns"];
+
 /// `header { icon := "counter.png" }`: the image's path as written, and where it is written.
 pub fn program_icon(f: &File) -> Option<(String, Span)> {
     let (_, v) = f.header.as_ref()?.settings.iter().find(|(k, _)| k.text == "icon")?;
@@ -1223,7 +1226,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         } else if key.text == "icon" {
             // The image's file, from the program's folder (read by `main::icon`).
             let inside = value.text.strip_prefix('"').and_then(|v| v.strip_suffix('"')).filter(|v| !v.starts_with('"'));
-            if !inside.is_some_and(|v| v.to_ascii_lowercase().ends_with(".png") && !v.contains(['{', '}'])) {
+            let known = |v: &str| ICON_FORMATS.iter().any(|f| v.to_ascii_lowercase().ends_with(&format!(".{f}")));
+            if !inside.is_some_and(|v| known(v) && !v.contains(['{', '}'])) {
                 c.error(value.span, t!("setting_icon_text"));
             }
         } else if !allowed.contains(&value.text.as_str()) {

@@ -95,12 +95,35 @@ fn main {
 | `lock` | `false` (par défaut), `true` | `true` : l'autre commande est refusée, pour un programme fait pour être seulement compilé (ou seulement lancé) |
 | `lang` | `auto` (par défaut), `en`, `fr` | la langue des messages de Kova pour ce programme |
 | `name` | un texte : `name := "Compteur"` | le nom du programme : l'exécutable que fait `kova build`, et le nom que montrent le Dock, la barre des tâches et la liste des programmes (par défaut, le nom du fichier) |
+| `icon` | une image : `icon := "compteur.svg"` | l'icône du programme : PNG, SVG, JPEG, `.ico` ou `.icns`, carrée, depuis le dossier du programme ([plus bas](#licône)) |
 
 Avec `mode := build`, `kova app.kova` compile le programme, et avec `lock := true`,
 `kova run app.kova` répond :
 
 ```console
 erreur: ce programme est réservé à `kova build` (header ligne 3)
+```
+
+## L'icône
+
+`icon := "compteur.svg"` donne son icône au programme. Kova lit l'image quand il construit le
+programme et la met dans l'exécutable : le fichier de l'image n'est plus utile ensuite.
+
+- **Formats :** PNG, SVG (dessiné en 512×512), JPEG, le `.ico` de Windows et le `.icns` du Mac. Un
+  `.ico` garde toutes ses tailles sous Windows, un `.icns` toutes les siennes sur Mac ; sur les
+  autres systèmes, c'est leur plus grande image qui sert.
+- **Carrée :** une image qui n'est pas carrée est refusée (un SVG est, lui, centré dans un carré).
+  512×512 est la meilleure taille : le Dock la montre nette sur un écran Retina.
+- **Où elle se voit :**
+  - Windows : l'icône de l'exécutable dans l'Explorateur, et celle de la fenêtre dans sa barre de
+    titre et la barre des tâches ;
+  - Mac : le Dock, pendant qu'un programme à [fenêtres](/fr/guide/windows/) tourne ;
+  - Linux : l'icône de la fenêtre, quand le bureau la lit dans le programme (GNOME et KDE peuvent
+    encore montrer une icône générique : ils cherchent un fichier `.desktop`, que Kova n'installe
+    pas).
+
+```plaintext
+erreur: l'icône `logo.png` fait 640×480 : elle doit être carrée (512×512 de préférence)
 ```
 
 ## L'exécutable
