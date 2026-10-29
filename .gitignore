@@ -1,6 +1,4 @@
 /target
-docs/book/src/
-docs/book/book/
 docs/site/node_modules/
 docs/site/dist/
 docs/site/.astro/

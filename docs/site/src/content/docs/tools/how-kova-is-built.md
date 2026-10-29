@@ -1,4 +1,9 @@
-# How Kova is built
+---
+title: How Kova is built
+description: The compiler, the runtime and the tests, for those who want to read or change them.
+sidebar:
+  order: 4
+---
 
 For people who want to read or change the compiler. Everything is in the repository's `src/` and
 `runtime/` folders, written in Rust.
@@ -15,8 +20,8 @@ text ─ lexer.rs ─ parser.rs ─ types.rs ─ ownership.rs ─ kir.rs ─┬�
    several at once.
 3. **`types.rs`** is the checker: it types every expression and records what the later passes need
    (`Info`). Types are mostly written by the programmer; almost nothing is inferred.
-4. **`ownership.rs`** is the only judge of moves and borrows (the "mutable value semantics" of
-   chapter 7: no lifetimes, markers `var` / `move` at each call).
+4. **`ownership.rs`** is the only judge of moves and borrows ([Ownership](/guide/ownership/): no lifetimes, markers `var` / `move`
+   at each call).
 5. **`kir.rs`** turns the checked tree into KIR, a small typed instruction set shared by both
    backends. It also makes copies of generic functions and builds the helper functions (drop, clone,
    show, equal) of each type.
@@ -50,8 +55,8 @@ written into each executable, which picks its language when it starts.
 ## Tests
 
 - `cargo test` runs the unit tests and `tests/kova.rs`: every `tests/ok/*.kova` (with `// expect:`
-  lines, run **and** built), every `tests/error/*.kova` (with `// error:` lines), the guide's
-  examples, the language server and the debugger.
+  lines, run **and** built), every `tests/error/*.kova` (with `// error:` lines), every example of
+  this site, the language server and the debugger.
 - A program of several files is a folder `tests/ok/<name>/main.kova`. `// stdin:` and `// args:` feed
   the program.
 - Code behind `cfg(target_os = …)` is checked from any machine with

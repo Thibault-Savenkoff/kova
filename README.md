@@ -3,7 +3,7 @@
 Kova is a compiled programming language with strict types and memory managed without a garbage collector.
 Run a program at once with `kova run`, or build a small native executable with `kova build`.
 
-Documentation: [the guide](docs/guide.md), also as a website made with [mdBook](https://rust-lang.github.io/mdBook/): `cargo install mdbook --locked`, then `python3 docs/build_site.py`, and open `docs/book/book/index.html` (or publish that folder on any static host).
+Documentation: a website in [`docs/site`](docs/site/src/content/docs) (getting started, the language guide, the library, the tools). To read it locally: `cd docs/site && npm install && npm run build && npm run preview`.
 
 ```kova
 struct Dog {
@@ -53,7 +53,7 @@ Pip is a puppy
   and macOS: Kova brings its own maths.
 - **Kova speaks English and French** (`KOVA_LANG=fr`), and its programs can be translated too.
 
-The [guide](docs/guide.md) shows the whole language through small programs.
+The [language guide](docs/site/src/content/docs/guide) explains the whole language, chapter by chapter.
 
 ## Install
 
