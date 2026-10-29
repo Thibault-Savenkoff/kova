@@ -17,6 +17,20 @@ export default defineConfig({
       },
       logo: { src: './src/assets/kova.svg' },
       favicon: '/favicon.svg',
+      // First visit only: a browser set to French opens the French pages. After that, the
+      // language picker decides, so someone who switches back to English stays there.
+      head: [{
+        tag: 'script',
+        content: `try {
+  if (!localStorage.getItem('kova-lang-seen')) {
+    localStorage.setItem('kova-lang-seen', '1');
+    const p = location.pathname;
+    if (!p.startsWith('/fr/') && p !== '/fr' && (navigator.language || '').toLowerCase().startsWith('fr')) {
+      location.replace('/fr' + p + location.search + location.hash);
+    }
+  }
+} catch (e) {}`,
+      }],
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Thibault-Savenkoff/kova' }],
       expressiveCode: { shiki: { langs: [kova] } },
       sidebar: [
