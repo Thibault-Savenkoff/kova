@@ -31,7 +31,7 @@ true
 - `map` gives a list of what the block gives for each element.
 - `any` and `all` tell whether the block gives `true` for one element, or for all of them.
 - `fold(start)` carries a value from element to element: here, a running total.
-- `each` runs the block on each element; `sorted { a, b => … }` sorts with the block as the order.
+- `each` runs the block on each element; `sorted { a: Int, b: Int => … }` sorts with the block as the order.
 
 The last line of a block is its value. A block that gives nothing, as with `each`, may hold any
 statements.

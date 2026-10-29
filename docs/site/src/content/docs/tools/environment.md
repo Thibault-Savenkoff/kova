@@ -28,9 +28,10 @@ The language is chosen, in this order, by:
 A built executable carries every language and picks its own when it starts, so the same file
 speaks French on a French computer and English elsewhere.
 
-The messages live in `locales/en.kova` and `locales/fr.kova`, written in Kova itself. To add a
-language, copy `en.kova`, translate it, and run `kova run xx.kova`: instead of running anything, it
-lists the messages still missing.
+The messages live in `locales/en.kova` and `locales/fr.kova`, written in Kova itself. Running a
+translation file, `kova run locales/fr.kova`, runs nothing: it lists the messages still missing
+compared with the other languages. A new language is a new file there, plus one line in the
+compiler's list of languages (`LANGUAGES` in `src/locale.rs`).
 
 ## Environment variables
 

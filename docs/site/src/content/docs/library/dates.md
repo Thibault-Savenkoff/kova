@@ -100,7 +100,7 @@ system's setting).
 fn main {
     let start: Float := now
     sleep(0.1)
-    print(now - start >= 0.1)
+    print(now - start >= 0.05)
 }
 ```
 
