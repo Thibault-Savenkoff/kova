@@ -168,7 +168,7 @@ fn main() {
             }
             // One line on stderr, never mixed with what the program prints: `✓ hello.exe
             // (Windows, 22 KB) in 12 ms` (user, 2026-10-23).
-            let system = target.or(codegen::Target::host()).map_or(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH), |t| t.title().to_string());
+            let system = target.or(codegen::Target::host()).map_or(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH), |t| t.made().title().to_string());
             let size = std::fs::metadata(&output).map_or(0, |m| m.len()).div_ceil(1024);
             let ms = started.elapsed().as_millis();
             let time = if ms < 1000 { format!("{ms} ms") } else { format!("{}{}{} s", ms / 1000, t!("decimal_mark"), ms % 1000 / 100) };

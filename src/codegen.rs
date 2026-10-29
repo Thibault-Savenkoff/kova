@@ -75,6 +75,15 @@ impl Target {
         }
     }
 
+    /// What `kova build` really makes for it: every Mac, unless this `kova` has only one half.
+    pub fn made(self) -> Target {
+        match (self, Target::MacIntel.runtime().is_empty(), Target::MacArm.runtime().is_empty()) {
+            (Target::Mac, true, false) => Target::MacArm,
+            (Target::Mac, false, true) => Target::MacIntel,
+            (t, ..) => t,
+        }
+    }
+
     /// The machine `kova` runs on, if it is one of them; on a Mac, every Mac (user, 2026-10-23: the
     /// executable can be given to anyone).
     pub fn host() -> Option<Target> {
@@ -146,6 +155,14 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, t
 
 fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, target: Target) -> Result<Vec<u8>, String> {
     if target == Target::Mac {
+        // One half missing (its Rust library was not installed when kova was built): the other
+        // half alone, said in one line, rather than nothing.
+        let made = target.made();
+        if made != Target::Mac {
+            let missing = if made == Target::MacArm { Target::MacIntel } else { Target::MacArm };
+            eprintln!("{}", t!("mac_one_half", made = made.title(), missing = missing.title(), triple = missing.triple()));
+            return executable(p, files, name, lang, made);
+        }
         let intel = executable(p, files, name, lang, Target::MacIntel)?;
         return Ok(crate::link::fat(&[(0x0100_0007, 3, &intel), (0x0100_000C, 0, &executable(p, files, name, lang, Target::MacArm)?)]));
     }

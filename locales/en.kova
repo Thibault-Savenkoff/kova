@@ -28,6 +28,7 @@ lang en {
     reserved_for := "this program is reserved for `kova {mode}` (header line {line})"
     output_overwrites := "the executable would overwrite `{file}`; choose another name with `-o`"
     codegen_failed := "code generation: {error}"
+    mac_one_half := "note: made for {made} only, not every Mac: this `kova` has no {missing} part. For both: `rustup target add {triple}`, then `cargo install --path . --locked`"
     no_runtime := "this `kova` cannot make executables for {target}: Rust's library for it was not installed when kova was built. Install it with `rustup target add {triple}`, then build kova again (`cargo install --path . --locked`)"
     unknown_target := "unknown system `{name}` after `--target`: Kova knows {names}"
     installed := "✓ {name} installed:"
