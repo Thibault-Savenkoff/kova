@@ -70,6 +70,7 @@ changement oublié quelque part.
 | --- | --- |
 | `ui.text(s)` | une ligne de texte |
 | `ui.button(étiquette, événement)` | un bouton ; un clic envoie `événement` à `update` |
+| `ui.input(valeur) { s: String => événement }` | un champ de texte qui contient `valeur` ; chaque changement envoie l'événement du bloc à `update` |
 | `ui.column([…])` | des vues l'une sous l'autre |
 | `ui.row([…])` | des vues côte à côte |
 
@@ -79,11 +80,58 @@ arriver. Il peut porter des valeurs : `Named(name: String)`, `Remove(index: Int)
 Le compilateur vérifie les formes : `view` prend l'état et donne un `ui.View`, `update` prend l'état
 en `var` et un événement, et l'événement de chaque bouton a le bon type.
 
+## Les champs de texte
+
+Un champ montre une valeur de l'état, et chaque changement fait par l'utilisateur, lettre par
+lettre, devient un événement : le bloc reçoit le texte que contient maintenant le champ et donne
+l'événement.
+
+```kova
+import ui
+
+enum Event {
+    Renamed(name: String)
+}
+
+struct App {
+    name: String
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.input(app.name) { s: String => Event.Renamed(s.clone) },
+        ui.text("Hello {app.name}"),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Renamed(name) => app.name := name.clone
+    }
+}
+
+fn main {
+    ui.run("Greeting", App { name := "" }, view, update)
+}
+```
+
+```text
+[Greeting] column(input "", text "Hello ")
+```
+
+En [mode test](#tester-une-fenêtre), il affiche la vue ci-dessus. Dans une fenêtre, « Hello … » suit le champ pendant qu'on tape. Le bloc prête `s` ([La possession](/fr/guide/ownership/)),
+donc l'événement en prend une copie : `s.clone`.
+
+Le champ montre toujours l'état. Si `update` ne prend pas un changement (un champ d'âge qui refuse
+une lettre, par exemple), le champ revient à ce que contient l'état, donc l'écran ne montre jamais
+une valeur que le programme n'a pas.
+
 ## Tester une fenêtre
 
 Un test ne peut pas regarder une fenêtre. Avec `KOVA_UI_SCRIPT=1`, aucune fenêtre ne s'ouvre :
 chaque vue est affichée en texte, et le numéro du bouton à cliquer (compté à partir de 0, dans
-l'ordre où ils sont écrits) est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Sans
+l'ordre où ils sont écrits) est lu sur l'entrée, ou `k=texte` pour taper `texte` dans le champ `k`
+(les champs sont comptés à part, eux aussi à partir de 0) ; la fin de l'entrée ferme la fenêtre. Sans
 entrée :
 
 ```text
@@ -97,6 +145,6 @@ même sans écran.
 
 ## La suite
 
-`import ui` a aujourd'hui du texte, des boutons, des lignes et des colonnes. Les champs de texte et
-d'autres éléments sont prévus. Pour un élément qu'il n'a pas encore, un programme peut appeler la
+`import ui` a aujourd'hui du texte, des boutons, des champs de texte, des lignes et des colonnes.
+D'autres éléments sont prévus. Pour un élément qu'il n'a pas encore, un programme peut appeler la
 bibliothèque du système elle-même avec [`extern`](/fr/guide/calling-c/).

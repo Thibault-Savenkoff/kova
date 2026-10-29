@@ -1,0 +1,52 @@
+// `ui.input(value) { s: String => event }`: a text field; each change the user makes becomes an
+// event, made by the block from the text the field now holds (`0=Ada` in the input types `Ada`
+// into field 0).
+import ui
+
+enum Event {
+    Renamed(name: String)
+    Aged(text: String)
+    Clear
+}
+
+struct App {
+    name: String
+    age: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.input(app.name) { s: String => Event.Renamed(s.clone) },
+        ui.input("{app.age}") { s: String => Event.Aged(s.clone) },
+        ui.text("{app.name} is {app.age}"),
+        ui.button("Clear", Event.Clear),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Renamed(name) => app.name := name.clone
+        Aged(text) => match text.to_int {
+            none => {}
+            n => app.age := n
+        }
+        Clear => app.name := ""
+    }
+}
+
+fn main {
+    ui.run("Form", App { name := "", age := 0 }, view, update)
+    print("closed")
+}
+// stdin: 0=Ad
+// stdin: 0=Ada
+// stdin: 1=36
+// stdin: 1=x
+// stdin: 0
+// expect: [Form] column(input "", input "0", text " is 0", button "Clear")
+// expect: [Form] column(input "Ad", input "0", text "Ad is 0", button "Clear")
+// expect: [Form] column(input "Ada", input "0", text "Ada is 0", button "Clear")
+// expect: [Form] column(input "Ada", input "36", text "Ada is 36", button "Clear")
+// expect: [Form] column(input "Ada", input "36", text "Ada is 36", button "Clear")
+// expect: [Form] column(input "", input "36", text " is 36", button "Clear")
+// expect: closed

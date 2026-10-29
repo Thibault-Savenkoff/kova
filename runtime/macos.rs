@@ -606,17 +606,31 @@ mod dl {
 }
 
 /// `ui.show` (src/ui.rs) with AppKit, through the Objective-C runtime (found at the first call):
-/// the window stays, its content is made again from `view` each time (`NSStackView`s). The
-/// program runs its own event loop until a click: the button's number, or -1 once the window
-/// is closed. `KOVA_UI_HIDDEN` never shows the window.
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
+/// the window stays, its content is made again from `view` (`NSStackView`s) when the view's shape
+/// changed, else its views only take the new texts, so a field being typed into keeps its
+/// cursor. The program runs its own event loop until something happens: the button clicked, a
+/// field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is closed.
+/// `KOVA_UI_HIDDEN` never shows the window.
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
     use crate::Global;
     static KIT: Global<Option<Kit>> = Global::new(None);
-    // -2: nothing yet, -1: the window closed.
-    static CLICKED: Global<i64> = Global::new(-2);
+    // `WAITING`: nothing yet, -1: the window closed.
+    static CLICKED: Global<i64> = Global::new(WAITING);
+    static TYPED: Global<String> = Global::new(String::new());
+    // The view's shape and its texts, buttons and fields, to change them in place.
+    static SHAPE: Global<String> = Global::new(String::new());
+    static MADE: Global<Vec<Id>> = Global::new(Vec::new());
+    const WAITING: i64 = i64::MIN;
     extern "C" fn clicked(_me: Id, _message: Id, sender: Id) {
         let kit = KIT.get().as_ref().expect("made before the window");
         *CLICKED.get() = (kit.send_int)(sender, kit.sel("tag"));
+    }
+    // A field's delegate hears each change the user makes (`setStringValue:` says nothing).
+    extern "C" fn changed(_me: Id, _message: Id, note: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        let field = kit.send(note, "object");
+        *TYPED.get() = mac_text(kit, kit.send(field, "stringValue"));
+        *CLICKED.get() = crate::shared::ui_changed((kit.send_int)(field, kit.sel("tag")) as usize);
     }
     extern "C" fn closing(_me: Id, _message: Id, _note: Id) {
         *CLICKED.get() = -1;
@@ -624,7 +638,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     if *CLICKED.get() == -1 {
         return -1;
     }
-    *CLICKED.get() = -2;
+    *CLICKED.get() = WAITING;
     let fresh = KIT.get().is_none();
     if fresh {
         let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return -1 };
@@ -655,13 +669,15 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let app = kit.send(kit.class("NSApplication"), "sharedApplication");
             (kit.send_id)(app, kit.sel("setActivationPolicy:"), 0); // Regular: in the Dock, with a menu bar
             kit.send(app, "finishLaunching");
-            // A class of its own: `clicked:` for the buttons, `windowWillClose:` for the window.
+            // A class of its own: `clicked:` for the buttons, `windowWillClose:` for the window,
+            // `controlTextDidChange:` for the fields.
             let new_class: extern "C" fn(Id, *const u8, usize) -> Id = t(f("objc_allocateClassPair"));
             let add: extern "C" fn(Id, Id, usize, *const u8) -> bool = t(f("class_addMethod"));
             let register: extern "C" fn(Id) = t(f("objc_registerClassPair"));
             let class = new_class(kit.class("NSObject"), c"KovaUiTarget".as_ptr() as *const u8, 0);
             add(class, kit.sel("clicked:"), clicked as usize, c"v@:@".as_ptr() as *const u8);
             add(class, kit.sel("windowWillClose:"), closing as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("controlTextDidChange:"), changed as usize, c"v@:@".as_ptr() as *const u8);
             register(class);
             kit.target = kit.send(kit.send(class, "alloc"), "init");
             // Titled, closable, miniaturizable, resizable; buffered.
@@ -681,9 +697,30 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     let pool = (kit.push)();
     let w = kit.window;
     (kit.send_two)(w, kit.sel("setTitle:"), kit.text(title));
-    let root = mac_make(kit, view);
-    (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
-    (kit.send_two)(w, kit.sel("setContentView:"), root);
+    let shape = crate::shared::ui_shape(view);
+    if shape == *SHAPE.get() {
+        // The same views: only the texts that differ change.
+        for (leaf, &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
+            use crate::shared::UiNode::*;
+            let (s, setter) = match leaf {
+                Text(s) | Input(s, _) => (s, "setStringValue:"),
+                Button(s, _) => (s, "setTitle:"),
+                _ => continue,
+            };
+            let now = kit.send(v, if setter == "setTitle:" { "title" } else { "stringValue" });
+            if mac_text(kit, now) != *s {
+                (kit.send_two)(v, kit.sel(setter), kit.text(s));
+            }
+        }
+    } else {
+        let made = MADE.get();
+        made.clear();
+        let root = mac_make(kit, view, made);
+        (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
+        (kit.send_two)(w, kit.sel("setContentView:"), root);
+        *SHAPE.get() = shape;
+    }
+    let root = kit.send(w, "contentView");
     // The window first takes the size the program asked for, else fits its content, at least 320
     // points wide; never smaller than the content. Later the stack view's own constraints make it
     // grow when the content needs more room, so a size the user chose stays.
@@ -694,7 +731,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
-    while *CLICKED.get() == -2 {
+    while *CLICKED.get() == WAITING {
         let e = (kit.event)(app, kit.sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64::MAX, future, mode, true);
         if !e.is_null() {
             (kit.send_two)(app, kit.sel("sendEvent:"), e);
@@ -702,7 +739,23 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         kit.send(app, "updateWindows");
     }
     (kit.pop)(pool);
+    if *CLICKED.get() <= -2 {
+        *typed = TYPED.get().clone();
+    }
     *CLICKED.get()
+}
+
+/// An `NSString`'s text, copied (its bytes read one by one: no `strlen`).
+fn mac_text(kit: &Kit, s: Id) -> String {
+    if s.is_null() {
+        return String::new();
+    }
+    let p = kit.send(s, "UTF8String") as *const u8;
+    let mut bytes = Vec::new();
+    while !p.is_null() && unsafe { p.add(bytes.len()).read_volatile() } != 0 {
+        bytes.push(unsafe { p.add(bytes.len()).read_volatile() });
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 type Id = *mut u8;
@@ -769,16 +822,26 @@ impl Kit {
     }
 }
 
-/// The views of a view: a button's tag is its number, `clicked:` reads it.
-fn mac_make(kit: &Kit, node: &crate::shared::UiNode) -> Id {
+/// The views of a view: a button's tag is its number, `clicked:` reads it; a field's too, for
+/// `controlTextDidChange:`. Each text, button and field goes into `made`, in order.
+fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>) -> Id {
     use crate::shared::UiNode::*;
-    match node {
+    let leaf = match node {
         Text(s) => (kit.send_two)(kit.class("NSTextField"), kit.sel("labelWithString:"), kit.text(s)),
         Button(s, n) => {
             let make: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
             let b = make(kit.class("NSButton"), kit.sel("buttonWithTitle:target:action:"), kit.text(s), kit.target, kit.sel("clicked:"));
             (kit.send_id)(b, kit.sel("setTag:"), *n as i64);
             b
+        }
+        // At least 200 points wide, even empty.
+        Input(s, n) => {
+            let field = (kit.send_two)(kit.class("NSTextField"), kit.sel("textFieldWithString:"), kit.text(s));
+            (kit.send_id)(field, kit.sel("setTag:"), *n as i64);
+            (kit.send_two)(field, kit.sel("setDelegate:"), kit.target);
+            let wide = (kit.send_float)(kit.send(field, "widthAnchor"), kit.sel("constraintGreaterThanOrEqualToConstant:"), 200.0);
+            (kit.send_id)(wide, kit.sel("setActive:"), 1);
+            field
         }
         // NSUserInterfaceLayoutOrientationHorizontal = 0, Vertical = 1; a column's parts on the
         // left (NSLayoutAttributeLeading = 5).
@@ -791,9 +854,11 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode) -> Id {
             }
             (kit.send_float)(stack, kit.sel("setSpacing:"), 8.0);
             for p in parts {
-                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), mac_make(kit, p));
+                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), mac_make(kit, p, made));
             }
-            (kit.send)(stack, kit.sel("autorelease"))
+            return (kit.send)(stack, kit.sel("autorelease"));
         }
-    }
+    };
+    made.push(leaf);
+    leaf
 }

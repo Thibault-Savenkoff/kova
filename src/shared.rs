@@ -823,12 +823,14 @@ pub fn library_files(name: &str, system: &str) -> Vec<String> {
 }
 
 /// A view of `import ui` (src/ui.rs), read back from its text: `T5:hello` a text, `B2:Go` a
-/// button (numbered in the order they come), `C2:` a column then its 2 parts, `R…` a row. The
-/// lengths count characters, as Kova's `length` does.
+/// button, `I3:Ada` a text field holding `Ada`, `C2:` a column then its 2 parts, `R…` a row.
+/// Buttons are numbered in the order they come, fields too, apart. The lengths count
+/// characters, as Kova's `length` does.
 #[allow(dead_code)] // a button's number: the runtime's
 pub enum UiNode {
     Text(String),
     Button(String, usize),
+    Input(String, usize),
     Column(Vec<UiNode>),
     Row(Vec<UiNode>),
 }
@@ -836,10 +838,56 @@ pub enum UiNode {
 #[allow(dead_code)] // the interpreter only uses `ui_describe`
 pub fn ui_tree(text: &str) -> UiNode {
     let mut chars = text.chars();
-    ui_node(&mut chars, &mut 0)
+    ui_node(&mut chars, &mut [0, 0])
 }
 
-fn ui_node(chars: &mut core::str::Chars, buttons: &mut usize) -> UiNode {
+/// What `ui.show` gives back (src/ui.rs): `-1` the window closed, `n` button `n` clicked,
+/// `-2 - k` field `k` changed, its text then given by `ui.typed`.
+#[allow(dead_code)]
+pub fn ui_changed(field: usize) -> i64 {
+    -2 - field as i64
+}
+
+/// A view's shape, `C2(T,R2(B,B))`: when it has not changed, a window keeps its widgets and only
+/// changes their texts, so a field being typed into keeps its cursor.
+#[allow(dead_code)]
+pub fn ui_shape(node: &UiNode) -> String {
+    match node {
+        UiNode::Text(_) => "T".into(),
+        UiNode::Button(..) => "B".into(),
+        UiNode::Input(..) => "I".into(),
+        UiNode::Column(parts) | UiNode::Row(parts) => {
+            let inside: Vec<String> = parts.iter().map(ui_shape).collect();
+            let kind = if matches!(node, UiNode::Row(_)) { 'R' } else { 'C' };
+            format!("{kind}{}({})", parts.len(), inside.join(","))
+        }
+    }
+}
+
+/// The texts, buttons and fields of a view, in order.
+#[allow(dead_code)]
+pub fn ui_leaves(node: &UiNode) -> Vec<&UiNode> {
+    match node {
+        UiNode::Column(parts) | UiNode::Row(parts) => parts.iter().flat_map(ui_leaves).collect(),
+        leaf => alloc::vec![leaf],
+    }
+}
+
+/// A line of `KOVA_UI_SCRIPT`'s input: `3` clicks button 3, `0=Ada` types `Ada` into field 0;
+/// anything else closes the window.
+#[allow(dead_code)]
+pub fn ui_answer(line: &str) -> (i64, Option<String>) {
+    let line = line.trim_end_matches(['\n', '\r']);
+    match line.split_once('=') {
+        Some((k, text)) => match k.trim().parse() {
+            Ok(k) => (ui_changed(k), Some(text.into())),
+            Err(_) => (-1, None),
+        },
+        None => (line.trim().parse().unwrap_or(-1), None),
+    }
+}
+
+fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
     let kind = chars.next().unwrap_or('C');
     let mut n = 0usize;
     for c in chars.by_ref() {
@@ -849,16 +897,17 @@ fn ui_node(chars: &mut core::str::Chars, buttons: &mut usize) -> UiNode {
         }
     }
     match kind {
-        'T' | 'B' => {
+        'T' | 'B' | 'I' => {
             let label: String = chars.by_ref().take(n).collect();
             if kind == 'T' {
                 return UiNode::Text(label);
             }
-            *buttons += 1;
-            UiNode::Button(label, *buttons - 1)
+            let count = &mut counts[(kind == 'I') as usize];
+            *count += 1;
+            if kind == 'I' { UiNode::Input(label, *count - 1) } else { UiNode::Button(label, *count - 1) }
         }
         _ => {
-            let parts = (0..n).map(|_| ui_node(chars, buttons)).collect();
+            let parts = (0..n).map(|_| ui_node(chars, counts)).collect();
             if kind == 'R' { UiNode::Row(parts) } else { UiNode::Column(parts) }
         }
     }
@@ -881,6 +930,7 @@ pub fn ui_describe(text: &str) -> String {
         match node {
             UiNode::Text(t) => out.push_str(&format!("text {t:?}")),
             UiNode::Button(t, _) => out.push_str(&format!("button {t:?}")),
+            UiNode::Input(t, _) => out.push_str(&format!("input {t:?}")),
             UiNode::Column(parts) => group("column", parts, out),
             UiNode::Row(parts) => group("row", parts, out),
         }

@@ -1287,6 +1287,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
     // What `ui.run` calls (src/ui.rs): shows a view, gives the button clicked, -1 once closed.
     c.functions.insert("ui.show".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, string()), (Mode::Read, Type::Int), (Mode::Read, Type::Int)], Type::Int));
+    c.functions.insert("ui.typed".into(), Signature::new(None, vec![], string()));
     c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
     c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));
     c.functions.insert("secure.key".into(), Signature::new(None, vec![], string()));

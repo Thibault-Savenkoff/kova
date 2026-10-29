@@ -67,6 +67,7 @@ something wrong is a `view` to read, or an `update` to fix, never a forgotten ch
 | --- | --- |
 | `ui.text(s)` | a line of text |
 | `ui.button(label, event)` | a button; a click sends `event` to `update` |
+| `ui.input(value) { s: String => event }` | a text field holding `value`; each change sends the block's event to `update` |
 | `ui.column([…])` | views one under the other |
 | `ui.row([…])` | views side by side |
 
@@ -76,11 +77,57 @@ may carry values: `Named(name: String)`, `Remove(index: Int)`.
 The compiler checks the shapes: `view` takes the state and gives a `ui.View`, `update` takes the
 state as `var` and an event, and every button's event has the right type.
 
+## Text fields
+
+A field shows a value of the state, and each change the user makes, letter by letter, becomes an
+event: the block receives the text the field now holds and gives the event.
+
+```kova
+import ui
+
+enum Event {
+    Renamed(name: String)
+}
+
+struct App {
+    name: String
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.input(app.name) { s: String => Event.Renamed(s.clone) },
+        ui.text("Hello {app.name}"),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Renamed(name) => app.name := name.clone
+    }
+}
+
+fn main {
+    ui.run("Greeting", App { name := "" }, view, update)
+}
+```
+
+```text
+[Greeting] column(input "", text "Hello ")
+```
+
+In [test mode](#testing-a-window), it prints the view above. In a window, "Hello …" follows the field as the user types. The block lends `s` ([Ownership](/guide/ownership/)),
+so the event takes a copy: `s.clone`.
+
+The field always shows the state. If `update` does not take a change (an age field refusing a
+letter, say), the field goes back to what the state holds, so the screen never shows a value the
+program does not have.
+
 ## Testing a window
 
 A window cannot be looked at by a test. With `KOVA_UI_SCRIPT=1`, no window opens: each view is
 printed as text, and the number of the button to click (counted from 0, in the order they are
-written) is read from the input; the end of the input closes the window. With no input:
+written) is read from the input, or `k=text` to type `text` into field `k` (fields are counted
+apart, from 0 too); the end of the input closes the window. With no input:
 
 ```text
 [Counter] column(text "0 clicks", row(button "+1", button "-1"))
@@ -92,6 +139,6 @@ so drive a window program through every case, on any machine, even without a scr
 
 ## What comes next
 
-`import ui` has text, buttons, rows and columns today. Text fields and more widgets are planned.
+`import ui` has texts, buttons, text fields, rows and columns today. More widgets are planned.
 For a widget it does not have yet, a program can call the system's own library through
 [`extern`](/guide/calling-c/).

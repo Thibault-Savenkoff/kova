@@ -1518,14 +1518,31 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
         OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
         flush();
         let line = INPUT.with(|(input, at)| read_line(input, at));
-        let clicked = if line > 0 { text_of(line).trim().parse().unwrap_or(-1) } else { -1 };
-        if line > 0 {
-            kova_str_free(line);
+        if line <= 0 {
+            return -1;
+        }
+        let (clicked, typed) = shared::ui_answer(text_of(line));
+        kova_str_free(line);
+        if let Some(t) = typed {
+            UI_TYPED.with(|now| *now = t);
         }
         return clicked;
     }
     flush();
-    sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32)
+    let mut typed = String::new();
+    let clicked = sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32, &mut typed);
+    if clicked <= -2 {
+        UI_TYPED.with(|now| *now = typed);
+    }
+    clicked
+}
+
+/// What the field that changed last holds (`ui.typed`).
+static UI_TYPED: Locked<String> = Locked::new(String::new());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_typed() -> i64 {
+    UI_TYPED.with(|now| new_text(now.as_bytes()))
 }
 
 /// The address of each `extern` function, once found (0 before).

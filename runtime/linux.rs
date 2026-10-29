@@ -973,17 +973,29 @@ mod dl {
     }
 }
 
-/// `ui.show` (src/ui.rs) with GTK 4, found at the first call like an `extern` library: the
-/// window stays, its content is made again from `view` each time. The button clicked, or -1
-/// once the window is closed (or when GTK is missing or there is no display).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
-    // The library (0 = not looked for yet, 1 = missing), the window, what was clicked (-2: nothing
-    // yet, -1: the window closed).
+/// `ui.show` (src/ui.rs) with GTK 4, found at the first call like an `extern` library. The
+/// window stays; its content is made again from `view` when the view's shape changed, else its
+/// widgets only take the new texts, so a field being typed into keeps its cursor. The button
+/// clicked, a field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is
+/// closed (or when GTK is missing or there is no display).
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
+    // The library (0 = not looked for yet, 1 = missing), the window, what happened (`WAITING`:
+    // nothing yet, -1: the window closed), the text of the field that changed.
     static GTK: Global<usize> = Global::new(0);
     static WINDOW: Global<usize> = Global::new(0);
-    static CLICKED: Global<i64> = Global::new(-2);
+    static CLICKED: Global<i64> = Global::new(WAITING);
+    static TYPED: Global<String> = Global::new(String::new());
+    // The view's shape and its widgets (with each field's `changed` handler), to change them in place.
+    static SHAPE: Global<String> = Global::new(String::new());
+    static MADE: Global<Vec<(P, u64)>> = Global::new(Vec::new());
+    const WAITING: i64 = i64::MIN;
     extern "C" fn clicked(_button: P, number: P) {
         *CLICKED.get() = number as i64;
+    }
+    extern "C" fn changed(field: P, number: P) {
+        let get: extern "C" fn(P) -> *const u8 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_editable_get_text").unwrap_or(0)) };
+        *TYPED.get() = gtk_text(get(field));
+        *CLICKED.get() = crate::shared::ui_changed(number as usize);
     }
     extern "C" fn closing(_window: P, _data: P) -> i32 {
         *CLICKED.get() = -1;
@@ -995,18 +1007,21 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     if *GTK.get() == 1 || *CLICKED.get() == -1 {
         return -1;
     }
-    *CLICKED.get() = -2;
+    *CLICKED.get() = WAITING;
     let f = |name: &str| symbol(*GTK.get(), name).unwrap_or(0);
     unsafe {
         use core::mem::transmute as t;
         let g = Gtk {
             label: t(f("gtk_label_new")),
             button: t(f("gtk_button_new_with_label")),
+            entry: t(f("gtk_entry_new")),
+            set_text: t(f("gtk_editable_set_text")),
             boxed: t(f("gtk_box_new")),
             append: t(f("gtk_box_append")),
             halign: t(f("gtk_widget_set_halign")),
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
+            changed: changed as usize,
         };
         if *WINDOW.get() == 0 {
             let init: extern "C" fn() -> i32 = t(f("gtk_init_check"));
@@ -1025,22 +1040,59 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let w = *WINDOW.get() as P;
         let set_title: extern "C" fn(P, *const u8) = t(f("gtk_window_set_title"));
         set_title(w, c_string(title).as_ptr());
-        let root = gtk_make(&g, view);
-        // 16 pixels around it.
-        for side in ["top", "bottom", "start", "end"] {
-            let margin: extern "C" fn(P, i32) = t(f(&format!("gtk_widget_set_margin_{side}")));
-            margin(root, 16);
+        let shape = crate::shared::ui_shape(view);
+        if shape == *SHAPE.get() {
+            // The same widgets: only the texts that differ change.
+            let label_text: extern "C" fn(P) -> *const u8 = t(f("gtk_label_get_text"));
+            let set_label: extern "C" fn(P, *const u8) = t(f("gtk_label_set_text"));
+            let button_text: extern "C" fn(P) -> *const u8 = t(f("gtk_button_get_label"));
+            let set_button: extern "C" fn(P, *const u8) = t(f("gtk_button_set_label"));
+            let field_text: extern "C" fn(P) -> *const u8 = t(f("gtk_editable_get_text"));
+            let block: extern "C" fn(P, u64) = t(f("g_signal_handler_block"));
+            let unblock: extern "C" fn(P, u64) = t(f("g_signal_handler_unblock"));
+            for (leaf, &(widget, handler)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
+                use crate::shared::UiNode::*;
+                match leaf {
+                    Text(s) if gtk_text(label_text(widget)) != *s => set_label(widget, c_string(s).as_ptr()),
+                    Button(s, _) if gtk_text(button_text(widget)) != *s => set_button(widget, c_string(s).as_ptr()),
+                    // Set from here, a field must not tell `changed` it was typed into.
+                    Input(s, _) if gtk_text(field_text(widget)) != *s => {
+                        block(widget, handler);
+                        (g.set_text)(widget, c_string(s).as_ptr());
+                        unblock(widget, handler);
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            let made = MADE.get();
+            made.clear();
+            let root = gtk_make(&g, view, made);
+            // 16 pixels around it.
+            for side in ["top", "bottom", "start", "end"] {
+                let margin: extern "C" fn(P, i32) = t(f(&format!("gtk_widget_set_margin_{side}")));
+                margin(root, 16);
+            }
+            let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
+            set_child(w, root);
+            *SHAPE.get() = shape;
         }
-        let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
-        set_child(w, root);
         let present: extern "C" fn(P) = t(f("gtk_window_present"));
         present(w);
         let iteration: extern "C" fn(P, i32) -> i32 = t(f("g_main_context_iteration"));
-        while *CLICKED.get() == -2 {
+        while *CLICKED.get() == WAITING {
             iteration(null_mut(), 1);
+        }
+        if *CLICKED.get() <= -2 {
+            *typed = TYPED.get().clone();
         }
         *CLICKED.get()
     }
+}
+
+/// A text C gives (ended by a 0 byte), copied.
+fn gtk_text(p: *const u8) -> String {
+    if p.is_null() { String::new() } else { String::from_utf8_lossy(unsafe { c_text(p) }).into_owned() }
 }
 
 type P = *mut u8;
@@ -1049,36 +1101,51 @@ type P = *mut u8;
 struct Gtk {
     label: extern "C" fn(*const u8) -> P,
     button: extern "C" fn(*const u8) -> P,
+    entry: extern "C" fn() -> P,
+    set_text: extern "C" fn(P, *const u8),
     boxed: extern "C" fn(i32, i32) -> P,
     halign: extern "C" fn(P, i32),
     append: extern "C" fn(P, P),
     connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
     clicked: usize,
+    changed: usize,
 }
 
-/// The widgets of a view: a button gives its number to `clicked`.
-fn gtk_make(g: &Gtk, node: &crate::shared::UiNode) -> P {
+/// The widgets of a view: a button gives its number to `clicked`, a field to `changed`. Each
+/// text, button and field goes into `made`, in order, with its `changed` handler (0 if none).
+fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>) -> P {
     use crate::shared::UiNode::*;
-    // Everything on the left (GTK_ALIGN_START = 1), as Win32 and AppKit place it: GTK would centre
-    // a text alone on its line.
-    let made = match node {
+    let mut handler = 0;
+    let widget = match node {
         Text(s) => (g.label)(c_string(s).as_ptr()),
         Button(s, n) => {
             let b = (g.button)(c_string(s).as_ptr());
             (g.connect)(b, c"clicked".as_ptr() as *const u8, g.clicked, *n as P, null_mut(), 0);
             b
         }
+        // Its text first: `changed` only hears the user.
+        Input(s, n) => {
+            let e = (g.entry)();
+            (g.set_text)(e, c_string(s).as_ptr());
+            handler = (g.connect)(e, c"changed".as_ptr() as *const u8, g.changed, *n as P, null_mut(), 0);
+            e
+        }
         // GTK_ORIENTATION_HORIZONTAL = 0, VERTICAL = 1; 8 pixels between the parts.
         Column(parts) | Row(parts) => {
             let b = (g.boxed)(matches!(node, Column(_)) as i32, 8);
             for p in parts {
-                (g.append)(b, gtk_make(g, p));
+                (g.append)(b, gtk_make(g, p, made));
             }
             b
         }
     };
-    (g.halign)(made, 1);
-    made
+    if !matches!(node, Column(_) | Row(_)) {
+        made.push((widget, handler));
+    }
+    // Everything on the left (GTK_ALIGN_START = 1), as Win32 and AppKit place it: GTK would centre
+    // a text alone on its line.
+    (g.halign)(widget, 1);
+    widget
 }
 
 /// A text for C, ended by a 0 byte.

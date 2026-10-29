@@ -741,23 +741,36 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
 
 /// `ui.show` (src/ui.rs) with Win32 (`user32.dll`, `gdi32.dll`, found at the first call): the
 /// window stays, its controls are made again from `view` each time. Win32 has no layout: `win_size`
-/// and `win_place` put a column's parts under each other, a row's side by side. The button
-/// clicked, or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
+/// and `win_place` put a column's parts under each other, a row's side by side. When the view's
+/// shape has not changed, the controls stay and only move and take their new texts, so a field
+/// being typed into keeps its cursor. The button clicked, a field changed (`shared::ui_changed`,
+/// its text in `typed`), or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
 /// from another program).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
     static WIN: Global<Option<Win32>> = Global::new(None);
     static WINDOW: Global<Handle> = Global::new(0);
     static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
-    // -2: nothing yet, -1: the window closed.
-    static CLICKED: Global<i64> = Global::new(-2);
+    static SHAPE: Global<String> = Global::new(String::new());
+    // `WAITING`: nothing yet, -1: the window closed.
+    static CLICKED: Global<i64> = Global::new(WAITING);
+    static TYPED: Global<String> = Global::new(String::new());
+    const WAITING: i64 = i64::MIN;
     extern "system" fn procedure(h: Handle, message: u32, w: usize, l: isize) -> isize {
         let win = WIN.get().as_ref().expect("made before the window");
+        let id = w & 0xffff;
         match message {
             // WM_COMMAND from a button (BN_CLICKED = 0): its number + 1 is its id.
-            0x0111 if w >> 16 == 0 && w & 0xffff > 0 => {
-                *CLICKED.get() = (w & 0xffff) as i64 - 1;
+            0x0111 if w >> 16 == 0 && id > 0 && id < FIELD => {
+                *CLICKED.get() = id as i64 - 1;
                 // A message sent by another program is handled inside `GetMessageW`, which then
                 // waits for a posted one: WM_NULL, posted to the thread (the window may be gone), wakes it.
+                (win.post)(0, 0, 0, 0);
+                0
+            }
+            // From a field (EN_CHANGE), unless its text was set from here.
+            0x0111 if w >> 16 == 0x0300 && id >= FIELD && !*SETTING.get() => {
+                *TYPED.get() = win_text(win, l as Handle);
+                *CLICKED.get() = crate::shared::ui_changed(id - FIELD);
                 (win.post)(0, 0, 0, 0);
                 0
             }
@@ -776,7 +789,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         return -1;
     }
     // Before the controls are made: a click or a close may come while they are.
-    *CLICKED.get() = -2;
+    *CLICKED.get() = WAITING;
     unsafe {
         let fresh = WIN.get().is_none();
         if fresh {
@@ -787,6 +800,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 create: t(f(user, "CreateWindowExW")),
                 destroy: t(f(user, "DestroyWindow")),
                 set_text: t(f(user, "SetWindowTextW")),
+                get_text: t(f(user, "GetWindowTextW")),
+                text_length: t(f(user, "GetWindowTextLengthW")),
                 send: t(f(user, "SendMessageW")),
                 post: t(f(user, "PostMessageW")),
                 default: t(f(user, "DefWindowProcW")),
@@ -832,13 +847,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let win = WIN.get().as_ref().unwrap();
         let w = *WINDOW.get();
         (win.set_text)(w, wide(title).as_ptr());
-        for c in CONTROLS.get().drain(..) {
-            (win.destroy)(c);
+        let shape = crate::shared::ui_shape(view);
+        let same = shape == *SHAPE.get();
+        if !same {
+            for c in CONTROLS.get().drain(..) {
+                (win.destroy)(c);
+            }
+            *SHAPE.get() = shape;
         }
         let dc = (win.get_dc)(w);
         (win.select)(dc, win.font);
         let (width, height) = win_size(win, dc, view);
-        win_place(win, dc, w, view, 16, 16, CONTROLS.get());
+        *SETTING.get() = true;
+        win_place(win, dc, w, view, 16, 16, CONTROLS.get(), same, &mut 0);
+        *SETTING.get() = false;
         (win.release_dc)(w, dc);
         // The window first takes the size the program asked for, else fits its content, 16 pixels
         // around it, at least 320 pixels wide; never smaller than the content. Later it only grows
@@ -857,15 +879,32 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         }
         // `MSG`, 48 bytes.
         let mut m = [0u64; 6];
-        while *CLICKED.get() == -2 {
+        while *CLICKED.get() == WAITING {
             if (win.message)(m.as_mut_ptr(), 0, 0, 0) <= 0 {
                 *CLICKED.get() = -1;
             }
             (win.translate)(m.as_ptr());
             (win.dispatch)(m.as_ptr());
         }
+        if *CLICKED.get() <= -2 {
+            *typed = TYPED.get().clone();
+        }
         *CLICKED.get()
     }
+}
+
+/// While controls are made or given their texts: their EN_CHANGE is not the user typing.
+static SETTING: Global<bool> = Global::new(false);
+
+/// A field's id is `FIELD` + its number (a button's, its number + 1).
+const FIELD: usize = 0x8000;
+
+/// A control's text.
+fn win_text(win: &Win32, control: Handle) -> String {
+    let n = (win.text_length)(control);
+    let mut buffer = alloc::vec![0u16; n.max(0) as usize + 1];
+    let got = (win.get_text)(control, buffer.as_mut_ptr(), buffer.len() as i32);
+    String::from_utf16_lossy(&buffer[..got.max(0) as usize])
 }
 
 /// `WNDCLASSEXW`.
@@ -889,6 +928,8 @@ struct Win32 {
     create: extern "system" fn(u32, *const u16, *const u16, u32, i32, i32, i32, i32, Handle, Handle, Handle, *mut u8) -> Handle,
     destroy: extern "system" fn(Handle) -> i32,
     set_text: extern "system" fn(Handle, *const u16) -> i32,
+    get_text: extern "system" fn(Handle, *mut u16, i32) -> i32,
+    text_length: extern "system" fn(Handle) -> i32,
     send: extern "system" fn(Handle, u32, usize, isize) -> isize,
     post: extern "system" fn(Handle, u32, usize, isize) -> i32,
     default: extern "system" fn(Handle, u32, usize, isize) -> isize,
@@ -924,16 +965,33 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
             let (w, h) = text(s);
             (w + 24, h + 12)
         }
+        // Room for about 24 characters, more if its text is longer.
+        Input(s, _) => {
+            let (w, h) = text(s);
+            let (wide, _) = text("abcdefghijklmnopqrstuvwx");
+            (w.max(wide) + 12, h + 10)
+        }
         Column(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
         Row(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
     }
 }
 
-/// Makes a view's controls in `window`, from (x, y).
-fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, made: &mut Vec<Handle>) {
+/// Makes a view's controls in `window`, from (x, y). With `same`, the controls are already
+/// there (in `made`, the `at`-th next): they only move and take the texts that changed.
+#[allow(clippy::too_many_arguments)]
+fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, made: &mut Vec<Handle>, same: bool, at: &mut usize) {
     use crate::shared::UiNode::*;
     let (w, h) = win_size(win, dc, node);
     let mut control = |class: &str, s: &str, id: usize, style: u32| {
+        if same {
+            let c = made[*at];
+            *at += 1;
+            (win.set_pos)(c, 0, x, y, w, h, 0x4 | 0x10); // SWP_NOZORDER | SWP_NOACTIVATE
+            if win_text(win, c) != s {
+                (win.set_text)(c, wide(s).as_ptr());
+            }
+            return;
+        }
         // WS_CHILD | WS_VISIBLE
         let c = (win.create)(0, wide(class).as_ptr(), wide(s).as_ptr(), 0x5000_0000 | style, x, y, w, h, window, id as Handle, 0, null_mut());
         (win.send)(c, 0x0030, win.font as usize, 1); // WM_SETFONT
@@ -942,11 +1000,13 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
     match node {
         Text(s) => control("STATIC", s, 0, 0),
         Button(s, n) => control("BUTTON", s, n + 1, 0),
+        // WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL
+        Input(s, n) => control("EDIT", s, FIELD + n, 0x0080_0000 | 0x0001_0000 | 0x80),
         Column(parts) | Row(parts) => {
             let (mut x, mut y) = (x, y);
             for p in parts {
                 let (pw, ph) = win_size(win, dc, p);
-                win_place(win, dc, window, p, x, y, made);
+                win_place(win, dc, window, p, x, y, made, same, at);
                 if matches!(node, Column(_)) {
                     y += ph + GAP;
                 } else {

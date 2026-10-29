@@ -18,6 +18,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.run(…) width(w) height(h)` | pareil, la fenêtre s'ouvrant avec `w` pixels de large et `h` de haut ; chaque partie peut être omise. |
 | `ui.text(s: String) -> ui.View` | une ligne de texte. |
 | `ui.button(label: String, event: E) -> ui.View` | un bouton ; un clic envoie `event` à `update`. |
+| `ui.input(value: String) { s: String => E } -> ui.View` | un champ de texte qui contient `value` ; à chaque changement fait par l'utilisateur, l'événement du bloc, fait à partir du texte que contient maintenant le champ, va à `update` ([Les champs de texte](/fr/guide/windows/#les-champs-de-texte)). |
 | `ui.column(items: List<ui.View>) -> ui.View` | les vues l'une sous l'autre. |
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 
@@ -41,7 +42,7 @@ formes, et que l'événement de chaque bouton est un `Event`.
 
 | Variable | Effet |
 | --- | --- |
-| `KOVA_UI_SCRIPT=1` | pas de fenêtre : chaque vue est affichée en texte, et le bouton à cliquer (son numéro à partir de 0, dans l'ordre où ils sont écrits) est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Pour les tests. |
+| `KOVA_UI_SCRIPT=1` | pas de fenêtre : chaque vue est affichée en texte, et le bouton à cliquer (son numéro à partir de 0, dans l'ordre où ils sont écrits), ou `k=texte` pour taper dans le champ `k`, est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Pour les tests. |
 | `KOVA_UI_HIDDEN=1` | la fenêtre existe mais n'est jamais montrée (Windows, macOS), pour un programme qui la pilote. |
 
 Sans `width` ni `height`, la fenêtre s'ouvre à la taille de son contenu, avec au moins 320 pixels de large. Elle n'est jamais plus petite que son contenu, quelle que soit la taille demandée, et qui s'en sert peut la redimensionner : un clic ne remet jamais la première taille, il fait seulement grandir la fenêtre quand le contenu a besoin de plus de place.

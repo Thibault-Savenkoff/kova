@@ -1,8 +1,8 @@
 // `import ui` (PLAN Part 4 "Native windows: `import ui`"): the module is Kova source made for
 // each program, with its state and event types and its `view` / `update` functions written in.
 // The checker, ownership, KIR and both backends then see ordinary Kova; the only primitive is
-// `ui.show(title, text, width, height)`, which shows a view and waits for a click (`StrOp::UiShow`;
-// a size of 0 = fit the content).
+// `ui.show(title, text, width, height)`, which shows a view and waits for a click or a change
+// (`StrOp::UiShow`; a size of 0 = fit the content), and `ui.typed`, the text a field now holds.
 
 use crate::ast::{File, Mode};
 use crate::diag::Diag;
@@ -10,7 +10,7 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 7] = ["text", "button", "column", "row", "run", "group", "View"];
+const OWN: [&str; 8] = ["text", "button", "input", "column", "row", "run", "group", "View"];
 
 const SOURCE: &str = r#"import ui
 IMPORTS
@@ -20,14 +20,20 @@ struct View {
 private:
     text: String
     events: List<EVENT>
+    typed: List<EVENT>
 }
 
 fn text(s: String) -> View {
-    return View { text := "T{s.length}:{s}", events := [] }
+    return View { text := "T{s.length}:{s}", events := [], typed := [] }
 }
 
 fn button(label: String, event: EVENT) -> View {
-    return View { text := "B{label.length}:{label}", events := [event.clone] }
+    return View { text := "B{label.length}:{label}", events := [event.clone], typed := [] }
+}
+
+fn input(value: String, changed: {String -> EVENT}) -> View {
+    let typed: String := ui.typed
+    return View { text := "I{value.length}:{value}", events := [], typed := [changed(typed)] }
 }
 
 fn column(items: List<View>) -> View {
@@ -43,10 +49,16 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
     while true {
         let v: View := VIEW(s)
         let clicked: Int := ui.show(title, v.text, w, h)
-        if clicked < 0 {
+        if clicked = -1 {
             return
         }
-        UPDATE(var s, v.events[clicked].clone)
+        if clicked >= 0 {
+            UPDATE(var s, v.events[clicked].clone)
+        } else {
+            // A field changed: the view again, now that `ui.typed` gives its text.
+            let again: View := VIEW(s)
+            UPDATE(var s, again.typed[-2 - clicked].clone)
+        }
     }
 }
 
@@ -55,13 +67,17 @@ private:
 fn group(kind: String, items: List<View>) -> View {
     var out: String := "{kind}{items.length}:"
     var events: List<EVENT> := []
+    var typed: List<EVENT> := []
     for v in items {
         out := out + v.text
         for e in v.events {
             events.add(e.clone)
         }
+        for e in v.typed {
+            typed.add(e.clone)
+        }
     }
-    return View { text := out, events := events }
+    return View { text := out, events := events, typed := typed }
 }
 "#;
 
