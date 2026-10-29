@@ -1004,6 +1004,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             button: t(f("gtk_button_new_with_label")),
             boxed: t(f("gtk_box_new")),
             append: t(f("gtk_box_append")),
+            halign: t(f("gtk_widget_set_halign")),
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
         };
@@ -1049,6 +1050,7 @@ struct Gtk {
     label: extern "C" fn(*const u8) -> P,
     button: extern "C" fn(*const u8) -> P,
     boxed: extern "C" fn(i32, i32) -> P,
+    halign: extern "C" fn(P, i32),
     append: extern "C" fn(P, P),
     connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
     clicked: usize,
@@ -1057,7 +1059,9 @@ struct Gtk {
 /// The widgets of a view: a button gives its number to `clicked`.
 fn gtk_make(g: &Gtk, node: &crate::shared::UiNode) -> P {
     use crate::shared::UiNode::*;
-    match node {
+    // Everything on the left (GTK_ALIGN_START = 1), as Win32 and AppKit place it: GTK would centre
+    // a text alone on its line.
+    let made = match node {
         Text(s) => (g.label)(c_string(s).as_ptr()),
         Button(s, n) => {
             let b = (g.button)(c_string(s).as_ptr());
@@ -1072,7 +1076,9 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode) -> P {
             }
             b
         }
-    }
+    };
+    (g.halign)(made, 1);
+    made
 }
 
 /// A text for C, ended by a 0 byte.

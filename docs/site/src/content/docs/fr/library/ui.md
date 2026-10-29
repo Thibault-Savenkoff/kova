@@ -21,6 +21,8 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.column(items: List<ui.View>) -> ui.View` | les vues l'une sous l'autre. |
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 
+Tout est placé en partant d'en haut à gauche, sur chaque système.
+
 Le programme écrit les deux fonctions que prend `ui.run` :
 
 - `fn view(app: App) -> ui.View`, où `App` est le type de l'état ;

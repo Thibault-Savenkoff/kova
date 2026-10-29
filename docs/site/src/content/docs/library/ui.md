@@ -21,6 +21,8 @@ lists what `ui` has.
 | `ui.column(items: List<ui.View>) -> ui.View` | the views one under the other. |
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
 
+Everything is placed from the top left, on every system.
+
 The program writes the two functions `ui.run` takes:
 
 - `fn view(app: App) -> ui.View`, where `App` is the type of the state;
