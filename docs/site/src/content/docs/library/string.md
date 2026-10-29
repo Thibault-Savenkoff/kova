@@ -27,8 +27,9 @@ Ada Lovelace
 
 ## Writing texts
 
-- `{…}` inside a text puts a value there: a name, a call, any expression (`"{a + b}"`). Every type
-  can be shown this way: numbers, lists, structs (see [Display](/guide/interfaces-and-generics/)).
+- `{…}` inside a text puts a value there: a name, a call, a calculation (`"{a + b}"`). The value
+  must have a text for people: numbers, `Bool`, `Char`, `String`, dates, and types that follow
+  [`Display`](/guide/interfaces-and-generics/#built-in-interfaces) ([Texts](/guide/texts/)).
 - `\n` is a line break, `\t` a tab, `\"` a quote, `\\` a backslash, and `\{` a brace that does not
   open a value.
 - A **raw text**, between `"""`, keeps everything as written, braces and backslashes included:
