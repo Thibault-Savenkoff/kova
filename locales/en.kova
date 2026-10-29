@@ -273,7 +273,7 @@ lang en {
     loop_move_help := "use `{name}.clone`, or give `{name}` a new value before the end of the loop"
     workers_block := "`workers(…)` needs its block written here, not given by its name"
     workers_change := "`{name}` cannot change inside `workers(…)`"
-    workers_change_help := "several questions run this block at the same time"
+    workers_change_help := "several threads run this block at the same time: each would change its own copy"
     block_move := "`{name}` is moved in a block: the block may run several times, or never"
     block_move_help := "use `{name}.clone`"
     block_frozen := "`{name}` is walked by this method: its block cannot change or move it"

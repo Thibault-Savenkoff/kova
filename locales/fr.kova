@@ -273,7 +273,7 @@ lang fr {
     loop_move_help := "utilise `{name}.clone`, ou redonne une valeur à `{name}` avant la fin de la boucle"
     workers_block := "`workers(…)` veut son bloc écrit ici, pas donné par son nom"
     workers_change := "`{name}` ne peut pas changer dans `workers(…)`"
-    workers_change_help := "plusieurs questions passent dans ce bloc en même temps"
+    workers_change_help := "plusieurs fils d'exécution passent dans ce bloc en même temps : chacun changerait sa propre copie"
     block_move := "`{name}` est déplacé dans un bloc : le bloc peut tourner plusieurs fois, ou jamais"
     block_move_help := "utilise `{name}.clone`"
     block_frozen := "`{name}` est parcouru par cette méthode : son bloc ne peut ni le changer ni le déplacer"
