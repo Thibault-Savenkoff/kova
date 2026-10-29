@@ -41,7 +41,8 @@ pub fn install(p: &Program, files: &[String], lang: Option<usize>, name: &str, w
     let (exe, others) = places(name, windowed).ok_or_else(|| crate::locale::t!("install_no_home"))?;
     let made = |e: std::io::Error| e.to_string();
     std::fs::create_dir_all(exe.parent().unwrap()).map_err(made)?;
-    crate::codegen::build(p, files, &exe.to_string_lossy(), lang, Target::host())?;
+    // Only this machine: a Mac installs its own kind (arm or Intel), not both.
+    crate::codegen::build(p, files, &exe.to_string_lossy(), lang, Target::native())?;
     let icon = p.icon.as_ref();
     let mut written = vec![exe.clone()];
     for other in &others {
