@@ -177,8 +177,13 @@ fn discreet(tree: &ast::File) -> bool {
 /// cannot be built or started here: the interpreter runs it.
 fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, given: &[String]) -> Option<i32> {
     let target = codegen::Target::native()?;
-    let dir = std::env::temp_dir();
-    let exe = dir.join(format!("kova-run-{}{}", std::process::id(), target.suffix()));
+    // `kova-run-123/counter`: the program keeps its file's name, which the Dock, the taskbar and
+    // the process list show.
+    let temp = std::env::temp_dir();
+    let dir = temp.join(format!("kova-run-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let name = std::path::Path::new(files.first()?).file_stem()?.to_string_lossy().into_owned();
+    let exe = dir.join(format!("{name}{}", target.suffix()));
     codegen::build(program, files, exe.to_str()?, lang, Some(target)).ok()?;
     let mut command = std::process::Command::new(&exe);
     command.args(given);
@@ -187,15 +192,16 @@ fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, giv
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let old = |name: &str| name.starts_with("kova-run-") && !exe.ends_with(name);
-        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let old = |name: &str| name.starts_with("kova-run-") && !dir.ends_with(name);
+        for e in std::fs::read_dir(&temp).into_iter().flatten().flatten() {
             let a_while = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 10));
             if old(&e.file_name().to_string_lossy()) && a_while {
-                let _ = std::fs::remove_file(e.path());
+                // Folders since 2026-10-29, single files before.
+                let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path()));
             }
         }
         let _ = command.exec(); // returns only if it could not start
-        let _ = std::fs::remove_file(&exe);
+        let _ = std::fs::remove_dir_all(&dir);
         None
     }
     // Windows: the program is in a job that ends with `kova`, so stopping `kova` stops it too.
@@ -206,7 +212,7 @@ fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, giv
             windows_job::tie(&c);
             c.wait()
         });
-        let _ = std::fs::remove_file(&exe);
+        let _ = std::fs::remove_dir_all(&dir);
         status?.ok()?.code()
     }
 }

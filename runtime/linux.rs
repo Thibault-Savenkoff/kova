@@ -1024,6 +1024,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             changed: changed as usize,
         };
         if *WINDOW.get() == 0 {
+            // The program's name, for the taskbar (on Wayland, the window's app id).
+            let program = crate::ARGS.get().first().map_or("", |a| a.rsplit('/').next().unwrap_or(a));
+            let set_name: extern "C" fn(*const u8) = t(f("g_set_prgname"));
+            set_name(c_string(program).as_ptr());
             let init: extern "C" fn() -> i32 = t(f("gtk_init_check"));
             if init() == 0 {
                 return -1;
