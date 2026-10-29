@@ -94,6 +94,7 @@ fn main {
 | `mode` | `run` (par défaut), `build` | ce que fait `kova app.kova`, sans commande |
 | `lock` | `false` (par défaut), `true` | `true` : l'autre commande est refusée, pour un programme fait pour être seulement compilé (ou seulement lancé) |
 | `lang` | `auto` (par défaut), `en`, `fr` | la langue des messages de Kova pour ce programme |
+| `name` | un texte : `name := "Compteur"` | le nom du programme : l'exécutable que fait `kova build`, et le nom que montrent le Dock, la barre des tâches et la liste des programmes (par défaut, le nom du fichier) |
 
 Avec `mode := build`, `kova app.kova` compile le programme, et avec `lock := true`,
 `kova run app.kova` répond :

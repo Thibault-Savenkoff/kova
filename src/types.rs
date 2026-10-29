@@ -410,7 +410,16 @@ pub const SETTINGS: &[(&str, &[&str], &str)] = &[
     ("lock", &["false", "true"], "setting_lock"),
     // `auto`, then the codes of `locale::LANGUAGES` (checked by a test).
     ("lang", &["auto", "en", "fr"], "setting_lang"),
+    // A text, not a word: no values to choose from.
+    ("name", &[], "setting_name"),
 ];
+
+/// `header { name := "Counter" }`: the name the program goes by (its executable, the Dock, the
+/// taskbar), without its quotes; `None` if not given.
+pub fn program_name(f: &File) -> Option<String> {
+    let (_, v) = f.header.as_ref()?.settings.iter().find(|(k, _)| k.text == "name")?;
+    Some(v.text.strip_prefix('"')?.strip_suffix('"')?.to_string())
+}
 
 /// The value of a (checked) `header` setting, and its line; `None` if absent.
 pub fn setting<'a>(f: &'a File, src: &str, key: &str) -> Option<(&'a str, usize)> {
@@ -1197,7 +1206,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             let (line, _) = line_col(src, first.start);
             c.error(key.span, t!("setting_twice", key = key.text, line = line));
         }
-        if !allowed.contains(&value.text.as_str()) {
+        if key.text == "name" {
+            // A file name on every system: none of `/ \ : * ? " < > |`, no `{…}`, not empty.
+            let inside = value.text.strip_prefix('"').and_then(|v| v.strip_suffix('"')).filter(|v| !v.starts_with('"'));
+            let fits = inside.is_some_and(|v| !v.trim().is_empty() && !v.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '{', '}']));
+            if !fits {
+                c.error(value.span, t!("setting_name_text"));
+            }
+        } else if !allowed.contains(&value.text.as_str()) {
             let allowed: Vec<String> = allowed.iter().map(|a| format!("`{a}`")).collect();
             let allowed = allowed.join(&format!(" {} ", t!("word_or")));
             c.error(value.span, t!("setting_bad_value", key = key.text, allowed = allowed, value = value.text));

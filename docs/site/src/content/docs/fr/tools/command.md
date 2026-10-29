@@ -25,7 +25,7 @@ projet.
 
 | Option | Fait |
 | --- | --- |
-| `-o nom` | nomme l'exécutable (par défaut : le nom du fichier, avec `.exe` ajouté sous Windows) |
+| `-o nom` | nomme l'exécutable (par défaut : le [`name`](/fr/guide/run-or-build/#le-header) du header, sinon le nom du fichier ; `.exe` ajouté sous Windows) |
 | `--boost` | laisse de côté les contrats (`require`, `ensure`, `check`), pour la vitesse |
 | `--target système` | compile pour un autre système (ci-dessous) |
 

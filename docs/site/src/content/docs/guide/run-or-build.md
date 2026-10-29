@@ -90,6 +90,7 @@ fn main {
 | `mode` | `run` (default), `build` | what `kova app.kova`, without a command, does |
 | `lock` | `false` (default), `true` | `true`: the other command is refused, for a program meant only to be built (or only run) |
 | `lang` | `auto` (default), `en`, `fr` | the language of Kova's messages for this program |
+| `name` | a text: `name := "Counter"` | the program's name: the executable `kova build` makes, and the name the Dock, the taskbar and the list of programs show (by default, the file's name) |
 
 With `mode := build`, `kova app.kova` builds the program, and with `lock := true`, `kova run
 app.kova` explains that this program is meant to be built.

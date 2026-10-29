@@ -24,7 +24,7 @@ Every command reads the files the program imports by itself. There is no project
 
 | Option | Does |
 | --- | --- |
-| `-o name` | names the executable (default: the file's name, `.exe` added on Windows) |
+| `-o name` | names the executable (default: the header's [`name`](/guide/run-or-build/#the-header), else the file's name; `.exe` added on Windows) |
 | `--boost` | leaves the contracts (`require`, `ensure`, `check`) out, for speed |
 | `--target system` | builds for another system (below) |
 

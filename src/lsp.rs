@@ -1093,12 +1093,23 @@ fn complete_header(before: &str) -> Vec<CompletionItem> {
     }
     types::SETTINGS
         .iter()
-        .map(|(key, values, help)| CompletionItem {
-            label: key.to_string(),
-            kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some(t!("completion_setting", values = values.join(" | "), help = locale::text(help, &[]))),
-            insert_text: Some(format!("{key} := ")),
-            ..Default::default()
+        .map(|(key, values, help)| match values.is_empty() {
+            // `name := "…"`: a text, the cursor between its quotes.
+            true => CompletionItem {
+                label: key.to_string(),
+                kind: Some(CompletionItemKind::PROPERTY),
+                detail: Some(locale::text(help, &[])),
+                insert_text: Some(format!("{key} := \"$1\"")),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
+            },
+            false => CompletionItem {
+                label: key.to_string(),
+                kind: Some(CompletionItemKind::PROPERTY),
+                detail: Some(t!("completion_setting", values = values.join(" | "), help = locale::text(help, &[]))),
+                insert_text: Some(format!("{key} := ")),
+                ..Default::default()
+            },
         })
         .collect()
 }
@@ -1367,7 +1378,7 @@ mod tests {
         let src = "header {\n    mode := b\n    \n}\nfn main {}";
         let labels = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
         assert_eq!(labels(complete(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
-        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang"]);
+        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang", "name"]);
         // `}` not typed yet.
         let src = "header {\n  lock := ";
         assert_eq!(labels(complete(src, src.len())), ["false", "true"]);

@@ -1,0 +1,7 @@
+header {
+    name := "tools/sum"
+}
+
+fn main {
+}
+// error: `name` takes a text that can be a file name: `name := "Counter"` (none of `/ \ : * ? " < > |`, no `{…}`)

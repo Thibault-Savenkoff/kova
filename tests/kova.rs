@@ -335,6 +335,7 @@ fn command_line() {
     extern_faults();
     static_executable();
     cross_build();
+    named_program();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
 }
@@ -353,6 +354,20 @@ fn static_executable() {
     let number = |at: usize, n: usize| elf[at..at + n].iter().rev().fold(0usize, |v, &b| v << 8 | b as usize);
     let (start, size, count) = (number(0x20, 8), number(0x36, 2), number(0x38, 2));
     assert!((0..count).all(|i| number(start + i * size, 4) != 3), "the executable needs the system's loader");
+}
+
+/// `header { name := "Sum Tool" }`: `kova build` names the executable so, next to the file.
+fn named_program() {
+    let dir = std::env::temp_dir().join(format!("kova-named-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("sum.kova");
+    std::fs::write(&source, "header {\n    name := \"Sum Tool\"\n}\n\nfn main {\n    print(1 + 2)\n}\n").unwrap();
+    let out = kova(LANG).arg("build").arg(&source).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let exe = dir.join(format!("Sum Tool{EXE}"));
+    let ran = Command::new(&exe).output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(text(&ran.stdout), "3\n");
 }
 
 /// `kova build --target`: an executable for each system, from any machine (PLAN Part 4

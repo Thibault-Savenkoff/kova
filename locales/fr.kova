@@ -156,6 +156,8 @@ lang fr {
     setting_mode := "ce que fait `kova fichier.kova`"
     setting_lock := "true : l'autre commande est refusée"
     setting_lang := "langue des messages (auto : celle du système)"
+    setting_name := "le nom du programme : son exécutable, le Dock, la barre des tâches"
+    setting_name_text := "`name` prend un texte qui peut être un nom de fichier : `name := \"Compteur\"` (aucun de `/ \\ : * ? \" < > |`, pas de `\{…\}`)"
     builtin_function := "`{name}` est une fonction prédéfinie"
     function_exists := "la fonction `{name}` existe déjà"
     main_missing := "il manque la fonction `main`"

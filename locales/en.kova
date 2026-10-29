@@ -156,6 +156,8 @@ lang en {
     setting_mode := "what `kova file.kova` does"
     setting_lock := "true: the other command is refused"
     setting_lang := "language of the messages (auto: the system's)"
+    setting_name := "the program's name: its executable, the Dock, the taskbar"
+    setting_name_text := "`name` takes a text that can be a file name: `name := \"Counter\"` (none of `/ \\ : * ? \" < > |`, no `\{…\}`)"
     builtin_function := "`{name}` is a built-in function"
     function_exists := "the function `{name}` already exists"
     main_missing := "the `main` function is missing"

@@ -125,13 +125,13 @@ fn main() {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
             let given: Vec<String> = args[skip..].iter().map(|a| a.to_string()).collect();
-            if let Some(code) = discreet(&tree).then(|| native_run(&program, &files, lang(), &given)).flatten() {
+            if let Some(code) = discreet(&tree).then(|| native_run(&program, &files, lang(), &given, types::program_name(&tree))).flatten() {
                 exit(code)
             }
             // `extern` (PLAN Part 4 "`extern`, step 1"): C is called by native code only; so
             // are the system's windows (`import ui`).
             if !tree.externs.is_empty() || tree.ui_from.is_some() {
-                match native_run(&program, &files, lang(), &given) {
+                match native_run(&program, &files, lang(), &given, types::program_name(&tree)) {
                     Some(code) => exit(code),
                     None => fail(t!("extern_no_native", file = file)),
                 }
@@ -146,7 +146,9 @@ fn main() {
         }
         Command::Build { output, target, .. } => {
             let suffix = target.or(codegen::Target::host()).map_or(std::env::consts::EXE_SUFFIX, |t| t.suffix());
-            let output = output.unwrap_or_else(|| format!("{}{suffix}", file.trim_end_matches(".kova")));
+            // `header { name := "Counter" }` names the executable, next to the file.
+            let named = types::program_name(&tree).map(|n| std::path::Path::new(&file).with_file_name(format!("{n}{suffix}")).to_string_lossy().into_owned());
+            let output = output.or(named).unwrap_or_else(|| format!("{}{suffix}", file.trim_end_matches(".kova")));
             if output == file {
                 fail(t!("output_overwrites", file = file));
             }
@@ -175,14 +177,17 @@ fn discreet(tree: &ast::File) -> bool {
 /// for `kova run` (its `mode = run` branches, its `else`s), runs as native code, which prints the
 /// same as the interpreter (PLAN Part 4 "Run or build, discreet functions"). `None` when it
 /// cannot be built or started here: the interpreter runs it.
-fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, given: &[String]) -> Option<i32> {
+fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, given: &[String], named: Option<String>) -> Option<i32> {
     let target = codegen::Target::native()?;
-    // `kova-run-123/counter`: the program keeps its file's name, which the Dock, the taskbar and
+    // `kova-run-123/counter`: the program keeps its `header` name or its file's name, which the Dock, the taskbar and
     // the process list show.
     let temp = std::env::temp_dir();
     let dir = temp.join(format!("kova-run-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
-    let name = std::path::Path::new(files.first()?).file_stem()?.to_string_lossy().into_owned();
+    let name = match named {
+        Some(n) => n,
+        None => std::path::Path::new(files.first()?).file_stem()?.to_string_lossy().into_owned(),
+    };
     let exe = dir.join(format!("{name}{}", target.suffix()));
     codegen::build(program, files, exe.to_str()?, lang, Some(target)).ok()?;
     let mut command = std::process::Command::new(&exe);

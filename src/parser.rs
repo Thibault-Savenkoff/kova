@@ -643,12 +643,13 @@ impl Parser<'_> {
         Ok(Header { open, close, settings })
     }
 
-    /// `mode := build`: a key, `:=`, a single word.
+    /// `mode := build`: a key, `:=`, a single word, or a text (`name := "Counter"`, kept with its
+    /// quotes: the checker says which keys take one).
     fn setting(&mut self) -> R<(Name, Name)> {
         let key = self.value_name("what_setting")?;
         self.expect(":=")?;
         let t = self.token();
-        if !matches!(t.kind, Kind::Ident | Kind::Keyword(_)) {
+        if !matches!(t.kind, Kind::Ident | Kind::Type | Kind::Keyword(_) | Kind::Str) {
             let msg = t!("setting_value_expected", found = self.describe());
             return self.error(t.span, msg);
         }
