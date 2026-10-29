@@ -625,7 +625,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
         return -1;
     }
     *CLICKED.get() = -2;
-    if KIT.get().is_none() {
+    let fresh = KIT.get().is_none();
+    if fresh {
         let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return -1 };
         let f = |name: &str| symbol(objc, name).unwrap_or(0);
         let send = f("objc_msgSend");
@@ -683,8 +684,12 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
     let root = mac_make(kit, view);
     (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
     (kit.send_two)(w, kit.sel("setContentView:"), root);
-    let size = (kit.fitting)(root, kit.sel("fittingSize"));
-    (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(240.0), height: size.height });
+    // The window first fits its content, at least 320 points wide. Later the stack view's own
+    // constraints make it grow when the content needs more room, so a size the user chose stays.
+    if fresh {
+        let size = (kit.fitting)(root, kit.sel("fittingSize"));
+        (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(320.0), height: size.height });
+    }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
     while *CLICKED.get() == -2 {

@@ -41,4 +41,6 @@ formes, et que l'événement de chaque bouton est un `Event`.
 | `KOVA_UI_SCRIPT=1` | pas de fenêtre : chaque vue est affichée en texte, et le bouton à cliquer (son numéro à partir de 0, dans l'ordre où ils sont écrits) est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Pour les tests. |
 | `KOVA_UI_HIDDEN=1` | la fenêtre existe mais n'est jamais montrée (Windows, macOS), pour un programme qui la pilote. |
 
+La fenêtre s'ouvre à la taille de son contenu, avec au moins 320 pixels de large, et qui s'en sert peut la redimensionner : un clic ne remet jamais la taille choisie par Kova, il fait seulement grandir la fenêtre quand le contenu a besoin de plus de place.
+
 Un programme `ui` tourne en code natif, même sous `kova run`.

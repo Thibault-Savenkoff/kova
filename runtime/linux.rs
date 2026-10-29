@@ -1014,6 +1014,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
             }
             let new: extern "C" fn() -> P = t(f("gtk_window_new"));
             let w = new();
+            // At least 320 pixels wide, as on Windows and macOS, so the title shows.
+            let default_size: extern "C" fn(P, i32, i32) = t(f("gtk_window_set_default_size"));
+            default_size(w, 320, -1);
             (g.connect)(w, c"close-request".as_ptr() as *const u8, closing as usize, null_mut(), null_mut(), 0);
             *WINDOW.get() = w as usize;
         }

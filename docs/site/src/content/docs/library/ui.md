@@ -41,4 +41,6 @@ every button's event is an `Event`.
 | `KOVA_UI_SCRIPT=1` | no window: each view is printed as text, and the button to click (its number from 0, in the order they are written) is read from the input; the end of the input closes the window. For tests. |
 | `KOVA_UI_HIDDEN=1` | the window exists but is never shown (Windows, macOS), for a program that drives it. |
 
+The window opens at the size of its content, at least 320 pixels wide, and whoever uses it can resize it: a click never puts back the size Kova chose, it only makes the window grow when the content needs more room.
+
 A `ui` program runs as native code, even under `kova run`.

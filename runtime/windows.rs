@@ -778,7 +778,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
     // Before the controls are made: a click or a close may come while they are.
     *CLICKED.get() = -2;
     unsafe {
-        if WIN.get().is_none() {
+        let fresh = WIN.get().is_none();
+        if fresh {
             let (Some(user), Some(gdi), Some(kernel)) = (library("user32.dll"), library("gdi32.dll"), library("kernel32.dll")) else { return -1 };
             let f = |l: usize, name: &str| symbol(l, name).unwrap_or(0);
             use core::mem::transmute as t;
@@ -795,6 +796,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
                 select: t(f(gdi, "SelectObject")),
                 extent: t(f(gdi, "GetTextExtentPoint32W")),
                 adjust: t(f(user, "AdjustWindowRect")),
+                client: t(f(user, "GetClientRect")),
                 set_pos: t(f(user, "SetWindowPos")),
                 message: t(f(user, "GetMessageW")),
                 translate: t(f(user, "TranslateMessage")),
@@ -838,10 +840,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode) -> i64 {
         let (width, height) = win_size(win, dc, view);
         win_place(win, dc, w, view, 16, 16, CONTROLS.get());
         (win.release_dc)(w, dc);
-        // The window fits its content, 16 pixels around it.
-        let mut r = [0, 0, (width + 32).max(240), height + 32];
-        (win.adjust)(&mut r, 0xCF0000, 0);
-        (win.set_pos)(w, 0, 0, 0, r[2] - r[0], r[3] - r[1], 0x2 | 0x4); // SWP_NOMOVE | SWP_NOZORDER
+        // The window first fits its content, 16 pixels around it, at least 320 pixels wide. Later it
+        // only grows when the content needs more room, so a size the user chose stays.
+        let (mut cw, mut ch) = (320, 0);
+        if !fresh {
+            let mut now = [0; 4];
+            (win.client)(w, &mut now);
+            (cw, ch) = (now[2] - now[0], now[3] - now[1]);
+        }
+        let (want_w, want_h) = ((width + 32).max(cw), (height + 32).max(ch));
+        if fresh || want_w > cw || want_h > ch {
+            let mut r = [0, 0, want_w, want_h];
+            (win.adjust)(&mut r, 0xCF0000, 0);
+            (win.set_pos)(w, 0, 0, 0, r[2] - r[0], r[3] - r[1], 0x2 | 0x4); // SWP_NOMOVE | SWP_NOZORDER
+        }
         // `MSG`, 48 bytes.
         let mut m = [0u64; 6];
         while *CLICKED.get() == -2 {
@@ -885,6 +897,7 @@ struct Win32 {
     select: extern "system" fn(Handle, Handle) -> Handle,
     extent: extern "system" fn(Handle, *const u16, i32, *mut [i32; 2]) -> i32,
     adjust: extern "system" fn(*mut [i32; 4], u32, i32) -> i32,
+    client: extern "system" fn(Handle, *mut [i32; 4]) -> i32,
     set_pos: extern "system" fn(Handle, Handle, i32, i32, i32, i32, u32) -> i32,
     message: extern "system" fn(*mut u64, Handle, u32, u32) -> i32,
     translate: extern "system" fn(*const u64) -> i32,
