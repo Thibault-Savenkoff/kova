@@ -162,8 +162,8 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
     let exe = match target {
         Target::Linux => crate::link::elf(&object, runtime, false),
         Target::LinuxArm => crate::link::elf(&object, runtime, true),
-        Target::Windows => crate::link::pe(&object, runtime, false),
-        Target::WindowsArm => crate::link::pe(&object, runtime, true),
+        Target::Windows => crate::link::pe(&object, runtime, false, &p.icon),
+        Target::WindowsArm => crate::link::pe(&object, runtime, true, &p.icon),
         Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
         Target::MacIntel => crate::link::macho(&object, runtime, name, false),
     };
@@ -515,7 +515,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         module.define_function(ids[i], &mut ctx)?;
         module.clear_context(&mut ctx);
     }
-    runtime_texts(&mut module, lang, files)?;
+    runtime_texts(&mut module, lang, files, &p.icon)?;
     Ok(module.finish().emit()?)
 }
 
@@ -523,7 +523,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
 /// `kova_nb_texts` texts per language, in the order of `locale::RUNTIME`; the languages' codes;
 /// the source files' paths; the `header`'s language (`kova_forced_lang`), or -1. Each text ends
 /// with a 0 byte, as C wants it.
-fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[String], icon: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let mut made = 0;
     let mut table = |module: &mut ObjectModule, name: &str, items: Vec<String>| -> Result<(), Box<dyn std::error::Error>> {
         let mut d = DataDescription::new();
@@ -564,6 +564,12 @@ fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[Stri
         let id = module.declare_data(name, Linkage::Export, false, false)?;
         module.define_data(id, &d)?;
     }
+    // The `header`'s icon (a PNG), for the windows of `import ui`; its size first.
+    let mut d = DataDescription::new();
+    d.define([&(icon.len() as u64).to_le_bytes()[..], icon].concat().into());
+    d.set_align(8);
+    let id = module.declare_data("kova_icon", Linkage::Export, false, false)?;
+    module.define_data(id, &d)?;
     Ok(())
 }
 

@@ -1034,6 +1034,22 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             }
             let new: extern "C" fn() -> P = t(f("gtk_window_new"));
             let w = new();
+            // The `header`'s icon. GTK 4 takes an icon by name only: the image is written as
+            // `<program>.png` in a folder of its own, which the icon theme then searches.
+            let icon = crate::icon();
+            // Only in the user's own runtime folder: nobody else may write there.
+            if let (false, false, Some(runtime)) = (icon.is_empty(), program.is_empty(), var("XDG_RUNTIME_DIR")) {
+                let dir = format!("{runtime}/kova-icon-{program}");
+                let _ = make_dir(&dir);
+                if write_file(&format!("{dir}/{program}.png"), icon, false).is_ok() {
+                    let display: extern "C" fn() -> P = t(f("gdk_display_get_default"));
+                    let theme: extern "C" fn(P) -> P = t(f("gtk_icon_theme_get_for_display"));
+                    let add: extern "C" fn(P, *const u8) = t(f("gtk_icon_theme_add_search_path"));
+                    add(theme(display()), c_string(&dir).as_ptr());
+                    let set_icon: extern "C" fn(P, *const u8) = t(f("gtk_window_set_icon_name"));
+                    set_icon(w, c_string(program).as_ptr());
+                }
+            }
             // The size the program asked for, else at least 320 pixels wide, as on Windows and
             // macOS, so the title shows. GTK never makes it smaller than the content.
             let default_size: extern "C" fn(P, i32, i32) = t(f("gtk_window_set_default_size"));

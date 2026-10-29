@@ -823,18 +823,24 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let register: extern "system" fn(*const WindowClass) -> u16 = t(f(user, "RegisterClassExW"));
             let class = wide("KovaWindow");
             let instance = module(null());
+            // The `header`'s icon, resource number 1 of the executable (src/link.rs `resources`).
+            let image: extern "system" fn(Handle, usize, u32, i32, i32, u32) -> Handle = t(f(user, "LoadImageW"));
+            let (icon, small_icon) = match crate::icon().is_empty() {
+                true => (0, 0),
+                false => (image(instance, 1, 1, 0, 0, 0x40), image(instance, 1, 1, 16, 16, 0)), // IMAGE_ICON, LR_DEFAULTSIZE
+            };
             register(&WindowClass {
                 size: core::mem::size_of::<WindowClass>() as u32,
                 style: 0,
                 procedure: procedure as usize,
                 extra: [0, 0],
                 instance,
-                icon: 0,
+                icon,
                 cursor: cursor(0, 32512), // IDC_ARROW
                 background: 16,           // COLOR_BTNFACE + 1
                 menu: null(),
                 class: class.as_ptr(),
-                small_icon: 0,
+                small_icon,
             });
             // WS_OVERLAPPEDWINDOW; CW_USEDEFAULT for the place.
             let w = (win.create)(0, class.as_ptr(), wide(title).as_ptr(), 0xCF0000, i32::MIN, i32::MIN, 320, 200, 0, 0, instance, null_mut());

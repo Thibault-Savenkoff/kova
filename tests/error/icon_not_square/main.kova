@@ -1,0 +1,7 @@
+header {
+    icon := "wide.png"
+}
+
+fn main {
+}
+// error: the icon `wide.png` is 4×2: it must be square (512×512 is best)

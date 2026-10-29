@@ -412,6 +412,7 @@ pub const SETTINGS: &[(&str, &[&str], &str)] = &[
     ("lang", &["auto", "en", "fr"], "setting_lang"),
     // A text, not a word: no values to choose from.
     ("name", &[], "setting_name"),
+    ("icon", &[], "setting_icon"),
 ];
 
 /// `header { name := "Counter" }`: the name the program goes by (its executable, the Dock, the
@@ -419,6 +420,12 @@ pub const SETTINGS: &[(&str, &[&str], &str)] = &[
 pub fn program_name(f: &File) -> Option<String> {
     let (_, v) = f.header.as_ref()?.settings.iter().find(|(k, _)| k.text == "name")?;
     Some(v.text.strip_prefix('"')?.strip_suffix('"')?.to_string())
+}
+
+/// `header { icon := "counter.png" }`: the image's path as written, and where it is written.
+pub fn program_icon(f: &File) -> Option<(String, Span)> {
+    let (_, v) = f.header.as_ref()?.settings.iter().find(|(k, _)| k.text == "icon")?;
+    Some((v.text.strip_prefix('"')?.strip_suffix('"')?.to_string(), v.span))
 }
 
 /// The value of a (checked) `header` setting, and its line; `None` if absent.
@@ -1212,6 +1219,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             let fits = inside.is_some_and(|v| !v.trim().is_empty() && !v.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '{', '}']));
             if !fits {
                 c.error(value.span, t!("setting_name_text"));
+            }
+        } else if key.text == "icon" {
+            // The image's file, from the program's folder (read by `main::icon`).
+            let inside = value.text.strip_prefix('"').and_then(|v| v.strip_suffix('"')).filter(|v| !v.starts_with('"'));
+            if !inside.is_some_and(|v| v.to_ascii_lowercase().ends_with(".png") && !v.contains(['{', '}'])) {
+                c.error(value.span, t!("setting_icon_text"));
             }
         } else if !allowed.contains(&value.text.as_str()) {
             let allowed: Vec<String> = allowed.iter().map(|a| format!("`{a}`")).collect();

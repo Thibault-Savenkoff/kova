@@ -217,6 +217,8 @@ pub struct Program {
     pub externs: Vec<crate::types::ExternFn>,
     /// The fields' C types of each C struct (`Info::c_structs`).
     pub c_structs: Vec<Vec<CType>>,
+    /// `header { icon := "…" }`: the PNG image's bytes (filled by `main`), or nothing.
+    pub icon: Vec<u8>,
 }
 
 /// The `extern` functions, numbered (`Inst::Extern`).
@@ -980,7 +982,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
     let externs = extern_order(info).into_iter().map(|n| info.externs[n].clone()).collect();
-    Program { functions, main: numbers.get("main").copied(), tests, externs, c_structs: info.c_structs.clone() }
+    Program { functions, main: numbers.get("main").copied(), tests, externs, c_structs: info.c_structs.clone(), icon: vec![] }
 }
 
 struct Translator<'a> {

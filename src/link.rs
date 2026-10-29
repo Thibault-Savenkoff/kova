@@ -572,7 +572,7 @@ const FILE_ALIGN: u64 = 0x200;
 /// The executable of `main` and `runtime`, for Windows x86-64: three sections, `.text` (code, then
 /// the jumps to the system's functions), `.rdata` (constants, then the import table, which Windows
 /// fills with the addresses of the DLLs' functions) and `.data` (data then zeros).
-pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
+pub fn pe(main: &[u8], runtime: &[u8], arm: bool, icon: &[u8]) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("kova_start", |_| false)?;
     inputs.sorted(&mut r)?;
@@ -580,7 +580,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     r.imports.sort_by_key(|f| DLLS.iter().position(|(d, _)| *d == dll(f)));
     let mut dlls: Vec<&str> = r.imports.iter().map(|f| dll(f)).collect();
     dlls.dedup();
-    let headers = align(0x40 + 4 + 20 + 240 + 40 * 4, FILE_ALIGN);
+    let headers = align(0x40 + 4 + 20 + 240 + 40 * 5, FILE_ALIGN);
     let n = r.imports.len() as u64;
     // A jump to a function of Windows, through its address in the IAT.
     let thunk = if arm { 12 } else { 6 };
@@ -747,6 +747,14 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     out.extend(&relocs);
     out.resize((reloc_raw.0 + reloc_raw.1) as usize, 0);
 
+    // A fifth section, `.rsrc`, with the `header`'s icon: what Explorer and the taskbar show.
+    let rsrc_at = align(reloc_at + relocs.len() as u64, PAGE);
+    let rsrc = if icon.is_empty() { vec![] } else { resources(icon, rva(rsrc_at) as u32) };
+    let rsrc_raw = (out.len() as u64, align(rsrc.len() as u64, FILE_ALIGN));
+    out.extend(&rsrc);
+    out.resize((rsrc_raw.0 + rsrc_raw.1) as usize, 0);
+    let image_end = if rsrc.is_empty() { reloc_at + relocs.len() as u64 } else { rsrc_at + rsrc.len() as u64 };
+
     // The headers: MS-DOS's (which only says where the next one is), PE's, the "optional" one
     // (which every executable has), then the three sections'.
     let mut h = vec![0u8; 0x40];
@@ -757,7 +765,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let le32 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&(v as u32).to_le_bytes());
     let le64 = |h: &mut Vec<u8>, v: u64| h.extend_from_slice(&v.to_le_bytes());
     le16(&mut h, if arm { 0xAA64 } else { 0x8664 }); // arm64 or x86-64
-    le16(&mut h, 4); // sections
+    le16(&mut h, if rsrc.is_empty() { 4 } else { 5 }); // sections
     for _ in 0..3 {
         le32(&mut h, 0); // date, no symbols
     }
@@ -766,7 +774,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     le16(&mut h, 0x20B); // PE32+
     h.extend_from_slice(&[14, 0]); // "linker version"
     le32(&mut h, sizes[0]);
-    le32(&mut h, sizes[1] + sizes[2] + reloc_raw.1);
+    le32(&mut h, sizes[1] + sizes[2] + reloc_raw.1 + rsrc_raw.1);
     le32(&mut h, end - zeros);
     le32(&mut h, rva(address[&r.entry.0] + r.entry.1));
     le32(&mut h, rva(starts[0]));
@@ -777,7 +785,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         le16(&mut h, v); // Windows Vista and later
     }
     le32(&mut h, 0);
-    le32(&mut h, rva(align(reloc_at + relocs.len() as u64, PAGE))); // size of the image
+    le32(&mut h, rva(align(image_end, PAGE))); // size of the image
     le32(&mut h, headers);
     le32(&mut h, 0); // checksum
     le16(&mut h, 3); // a console program
@@ -790,6 +798,7 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     for k in 0..16 {
         let (at, size) = match k {
             1 => (rva(directory), 40),     // the imports
+            2 if !rsrc.is_empty() => (rva(rsrc_at), rsrc.len() as u64), // the icon
             5 => (rva(reloc_at), relocs.len() as u64), // the places holding an address
             12 => (rva(iat), 8 * (n + 1)), // their addresses
             _ => (0, 0),
@@ -797,9 +806,14 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         le32(&mut h, at);
         le32(&mut h, size);
     }
-    let sections = [(*b".text\0\0\0", 0x6000_0020), (*b".rdata\0\0", 0x4000_0040), (*b".data\0\0\0", 0xC000_0040), (*b".reloc\0\0", 0x4200_0040)];
-    for (k, (name, flags)) in sections.into_iter().enumerate() {
-        let (start, size, file) = if k < 3 { (starts[k], ends[k] - starts[k], raw(k)) } else { (reloc_at, relocs.len() as u64, reloc_raw) };
+    let sections = [(*b".text\0\0\0", 0x6000_0020), (*b".rdata\0\0", 0x4000_0040), (*b".data\0\0\0", 0xC000_0040), (*b".reloc\0\0", 0x4200_0040), (*b".rsrc\0\0\0", 0x4000_0040)];
+    let count = if rsrc.is_empty() { 4 } else { 5 };
+    for (k, (name, flags)) in sections.into_iter().take(count).enumerate() {
+        let (start, size, file) = match k {
+            0..3 => (starts[k], ends[k] - starts[k], raw(k)),
+            3 => (reloc_at, relocs.len() as u64, reloc_raw),
+            _ => (rsrc_at, rsrc.len() as u64, rsrc_raw),
+        };
         h.extend_from_slice(&name);
         le32(&mut h, size);
         le32(&mut h, rva(start));
@@ -812,6 +826,52 @@ pub fn pe(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     }
     out[..h.len()].copy_from_slice(&h);
     Ok(out)
+}
+
+/// The `.rsrc` section holding one icon (a PNG, as Windows Vista and later read them), number 1
+/// (`LoadIconW(module, 1)` in runtime/windows.rs), at `at` (its address from the image's start).
+/// Three levels of directories: kind (3 = an image, 14 = the group naming it), number, language.
+fn resources(png: &[u8], at: u32) -> Vec<u8> {
+    let mut r = vec![];
+    let le16 = |r: &mut Vec<u8>, v: u16| r.extend_from_slice(&v.to_le_bytes());
+    let le32 = |r: &mut Vec<u8>, v: u32| r.extend_from_slice(&v.to_le_bytes());
+    // A directory of `entries` (number, place: a directory below when the high bit is set).
+    let directory = |r: &mut Vec<u8>, entries: &[(u32, u32)]| {
+        r.extend_from_slice(&[0; 12]);
+        le16(r, 0);
+        le16(r, entries.len() as u16);
+        for (id, place) in entries {
+            le32(r, *id);
+            le32(r, *place);
+        }
+    };
+    const BELOW: u32 = 0x8000_0000;
+    directory(&mut r, &[(3, BELOW | 32), (14, BELOW | 56)]); // 0..32
+    directory(&mut r, &[(1, BELOW | 80)]); // 32..56
+    directory(&mut r, &[(1, BELOW | 104)]); // 56..80
+    directory(&mut r, &[(0x409, 128)]); // 80..104
+    directory(&mut r, &[(0x409, 144)]); // 104..128
+    // The data: where (from the image's start) and how long.
+    for (place, size) in [(184, png.len() as u32), (160, 20)] {
+        le32(&mut r, at + place);
+        le32(&mut r, size);
+        le32(&mut r, 0);
+        le32(&mut r, 0);
+    }
+    // The group: one image, its width and height (0 = 256 or more), 32 bits per pixel.
+    let side = u32::from_be_bytes(png[16..20].try_into().unwrap());
+    let side = if side >= 256 { 0 } else { side as u8 };
+    le16(&mut r, 0);
+    le16(&mut r, 1);
+    le16(&mut r, 1);
+    r.extend_from_slice(&[side, side, 0, 0]);
+    le16(&mut r, 1);
+    le16(&mut r, 32);
+    le32(&mut r, png.len() as u32);
+    le16(&mut r, 1);
+    r.resize(184, 0);
+    r.extend_from_slice(png);
+    r
 }
 
 /// The size of the import table of `imports`, from `dlls` DLLs (see `pe`).

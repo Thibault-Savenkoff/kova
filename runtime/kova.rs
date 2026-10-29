@@ -115,6 +115,13 @@ unsafe extern "C" {
     static kova_nb_langs: i32;
     static kova_nb_texts: i32;
     static kova_forced_lang: i32;
+    static kova_icon: u64;
+}
+
+/// `header { icon := "…" }`: the PNG image's bytes, empty without one.
+pub fn icon() -> &'static [u8] {
+    let at = &raw const kova_icon;
+    unsafe { core::slice::from_raw_parts(at.add(1) as *const u8, core::ptr::read_volatile(at) as usize) }
 }
 
 /// Entry `i` of one of the tables above, without its final 0.

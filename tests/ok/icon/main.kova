@@ -1,0 +1,10 @@
+// A program with an icon: it is checked and put into the executable.
+header {
+    name := "Counter"
+    icon := "counter.png"
+}
+
+fn main {
+    print("ok")
+}
+// expect: ok

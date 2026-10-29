@@ -1378,7 +1378,7 @@ mod tests {
         let src = "header {\n    mode := b\n    \n}\nfn main {}";
         let labels = |items: Vec<CompletionItem>| items.into_iter().map(|i| i.label).collect::<Vec<_>>();
         assert_eq!(labels(complete(src, src.find(" b").unwrap() + 2)), ["run", "build"]);
-        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang", "name"]);
+        assert_eq!(labels(complete(src, src.find("    \n").unwrap() + 4)), ["mode", "lock", "lang", "name", "icon"]);
         // `}` not typed yet.
         let src = "header {\n  lock := ";
         assert_eq!(labels(complete(src, src.len())), ["false", "true"]);

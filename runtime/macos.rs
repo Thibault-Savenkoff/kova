@@ -668,6 +668,16 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let kit = KIT.get().as_mut().unwrap();
             let app = kit.send(kit.class("NSApplication"), "sharedApplication");
             (kit.send_id)(app, kit.sel("setActivationPolicy:"), 0); // Regular: in the Dock, with a menu bar
+            // The `header`'s icon, in the Dock while the program runs.
+            let icon = crate::icon();
+            if !icon.is_empty() {
+                let data_with: extern "C" fn(Id, Id, *const u8, u64) -> Id = t(send);
+                let data = data_with(kit.class("NSData"), kit.sel("dataWithBytes:length:"), icon.as_ptr(), icon.len() as u64);
+                let image = (kit.send_two)(kit.send(kit.class("NSImage"), "alloc"), kit.sel("initWithData:"), data);
+                if !image.is_null() {
+                    (kit.send_two)(app, kit.sel("setApplicationIconImage:"), image);
+                }
+            }
             kit.send(app, "finishLaunching");
             // A class of its own: `clicked:` for the buttons, `windowWillClose:` for the window,
             // `controlTextDidChange:` for the fields.

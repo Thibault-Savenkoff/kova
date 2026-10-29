@@ -1,0 +1,7 @@
+header {
+    icon := "counter.jpg"
+}
+
+fn main {
+}
+// error: `icon` takes the path of a PNG image, from the program's folder: `icon := "counter.png"`

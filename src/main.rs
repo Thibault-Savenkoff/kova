@@ -122,8 +122,9 @@ fn main() {
     // The `header`'s language, written into an executable.
     let lang = || types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
+    let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
 
+    program.icon = icon(file, &tree).and_then(Result::ok).unwrap_or_default();
     match command {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
@@ -342,12 +343,39 @@ pub fn program_folder(path: &str, imports: &[ast::Import]) -> std::path::PathBuf
     above.unwrap_or(own)
 }
 
+/// `header { icon := "counter.png" }`: the image's bytes, from the program's folder; a square
+/// PNG, or the error to show on the setting.
+fn icon(path: &str, tree: &ast::File) -> Option<Result<Vec<u8>, diag::Diag>> {
+    let (written, span) = types::program_icon(tree)?;
+    // Not a `.png`: the type checker says what to write.
+    if !written.to_ascii_lowercase().ends_with(".png") {
+        return None;
+    }
+    let file = std::path::Path::new(path).with_file_name(&written);
+    let bytes = match std::fs::read(&file) {
+        Ok(b) => b,
+        Err(e) => return Some(Err(diag::Diag::new(span, t!("icon_unreadable", file = written, error = e)))),
+    };
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() < 24 {
+        return Some(Err(diag::Diag::new(span, t!("icon_not_png", file = written))));
+    }
+    let number = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    let (width, height) = (number(16), number(20));
+    if width != height {
+        return Some(Err(diag::Diag::new(span, t!("icon_not_square", file = written, width = width, height = height))));
+    }
+    Some(Ok(bytes))
+}
+
 fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::Sources) {
     let mut sources = diag::Sources::new();
     sources.add(path, source);
     let (tokens, mut diags) = lexer::lex(source);
     let (mut root, mut ids, d) = parser::parse(tokens, source);
     diags.extend(d);
+    if let Some(Err(d)) = icon(path, &root) {
+        diags.push(d);
+    }
     let dir = program_folder(path, &root.imports);
     let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let mut loaded: Vec<ast::File> = vec![];
