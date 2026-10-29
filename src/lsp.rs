@@ -432,6 +432,7 @@ fn is_word(c: char) -> bool {
 /// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
 fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
     let mut items = (import_files(path, src, cursor))
+        .or_else(|| next_parts(path, src, cursor))
         .or_else(|| members(path, src, cursor))
         .or_else(|| literal_fields(path, src, cursor))
         .or_else(|| match_cases(path, src, cursor))
@@ -451,6 +452,59 @@ fn parts_snippets(items: &mut [CompletionItem]) {
         // No `(` is typed: the parameter bubble is asked for, it then follows the cursor.
         item.command = Some(Command::new(String::new(), "editor.action.triggerParameterHints".into(), None));
     }
+}
+
+/// `ui.run(…) ` or `web.serve(8080) w`: the parts that may follow those written, optional ones
+/// included (`width(…)`, `height(…)`; `workers(…)`, `log(…)`). `None` when the cursor does not
+/// follow a call's `)` on the same line.
+fn next_parts(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let start = src[..cursor].trim_end_matches(is_word).len();
+    let call = src[..start].trim_end_matches([' ', '\t']);
+    if call.len() == start || !call.ends_with(')') {
+        return None;
+    }
+    // A name typed after the `)` stands for the next part: its parts already written lead to it.
+    let tokens = lex(&format!("{call} x")).0;
+    let mut k = tokens.iter().rposition(|t| t.kind == Kind::Ident && t.span.start == call.len() + 1)?;
+    let mut written = vec![];
+    while let Some((previous, _)) = previous_part(&tokens, k) {
+        k = previous;
+        written.insert(0, &call[tokens[k].span.start..tokens[k].span.end]);
+    }
+    if written.is_empty() {
+        return None;
+    }
+    // `web.serve(`: the module's own name, whatever alias the file gives it.
+    let alias = k.checked_sub(2).filter(|&j| tokens[j + 1].kind == Kind::Sym(".")).map(|j| &call[tokens[j].span.start..tokens[j].span.end]);
+    let module = alias.and_then(|a| tree(src).imports.into_iter().find(|i| i.alias.text == a)).map(|i| i.module.text);
+    let first = module.map_or(written[0].to_string(), |m| format!("{m}.{}", written[0]));
+    // Every message starting with that name, as the list of its parts, and how it is shown.
+    let end = cursor + src[cursor..].len() - src[cursor..].trim_start_matches(is_word).len();
+    let (file, _, _, _) = analyze(path, &format!("{}{}", &src[..start], &src[end..]));
+    let mut messages: Vec<(Vec<String>, String)> = (types::LIBRARY.iter())
+        .map(|(n, text)| (n.trim_end_matches("(…)").split("(…) ").map(String::from).collect(), text.to_string()))
+        .collect();
+    let methods = file.structs.iter().flat_map(|s| &s.methods).chain(file.interfaces.iter().flat_map(|i| i.methods.iter().map(|(m, _)| m)));
+    for f in file.functions.iter().chain(methods) {
+        messages.push((f.parts().into_iter().map(|(n, _)| n.to_string()).collect(), heading(f).0));
+    }
+    let mut items: Vec<CompletionItem> = vec![];
+    for (parts, text) in messages.iter().filter(|(p, _)| p[0] == first) {
+        // The written parts, in this order, perhaps with optional ones left out between them.
+        let mut at = 0;
+        let fits = written[1..].iter().all(|w| parts[at + 1..].iter().position(|p| p == w).map(|i| at += i + 1).is_some());
+        for part in parts.iter().skip(at + 1).filter(|_| fits) {
+            if !items.iter().any(|i| i.label == format!("{part}(…)")) {
+                items.push(CompletionItem {
+                    label: format!("{part}(…)"),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some(text.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    Some(items)
 }
 
 fn members(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
@@ -1271,6 +1325,25 @@ mod tests {
         assert_eq!(names(&complete(src, after_if)), ["n", "a"]);
         // Functions are always offered.
         assert!(complete(src, here).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_of_the_next_parts() {
+        let labels = |src: &str| {
+            let at = src.find('|').unwrap();
+            let src = src.replace('|', "");
+            let items = completion("/tmp/kova-parts.kova", &src, at);
+            items.into_iter().map(|i| i.label).collect::<Vec<_>>()
+        };
+        let ui = "import ui\nstruct App {\n    n: Int\n}\nfn view(a: App) -> ui.View {\n    return ui.text(\"x\")\n}\nfn update(a: var App, e: Int) {\n}\nfn main {\n    ui.run(\"T\", App { n := 0 }, view, update) RUN\n}\n";
+        assert_eq!(labels(&ui.replace("RUN", "|")), ["width(…)", "height(…)"]);
+        assert_eq!(labels(&ui.replace("RUN", "width(400) he|")), ["height(…)"]);
+        assert_eq!(labels(&ui.replace("RUN", "width(400) height(9) |")), Vec::<String>::new());
+        let web = "import web\nfn main {\n    web.serve(8080) |\n}\n";
+        let offered = labels(web);
+        assert!(offered.contains(&"workers(…)".to_string()) && offered.contains(&"log(…)".to_string()), "{offered:?}");
+        // A call that has no more parts: nothing.
+        assert!(labels("fn main {\n    print(1) |\n}\n").is_empty());
     }
 
     #[test]
