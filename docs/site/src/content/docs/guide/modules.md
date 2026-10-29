@@ -125,3 +125,45 @@ import (`print`, `args`, `random`, texts, lists, dates, JSON…) is listed in
 
 A module has no `main`: it is not run on its own. `kova test geometry.kova` runs its tests, and
 the editor checks it like any file.
+
+## Packages
+
+A **package** is a module someone else wrote, published as a git repository. The `import` names
+it by its address and an exact version:
+
+```kova
+import json from "github.com/ada/kova-json" version "1.2.0"
+
+fn main {
+    print(json.pretty("[1, 2]"))
+}
+```
+
+How it behaves:
+
+- **The first `kova run`, `kova build` or `kova test`** downloads it with `git` (which must be
+  installed): the tag `v1.2.0`, or else `1.2.0`, of `https://github.com/ada/kova-json`. It is
+  kept in a cache every program shares (`~/.cache/kova/packages` on Linux,
+  `~/Library/Caches/kova/packages` on a Mac, `%LOCALAPPDATA%\kova\packages` on Windows; the
+  variable `KOVA_PACKAGES` chooses another folder). After that, no network is needed.
+- **`kova.lock`**, written next to the program, notes each package's commit and a SHA-256 of its
+  files. If those files are ever different (the tag moved, the cache was edited), the program is
+  refused:
+
+  ```plaintext
+  error: `github.com/ada/kova-json` 1.2.0 is not what it was when `kova.lock` noted it: its files changed. If that is expected, remove its line from `kova.lock`
+  ```
+
+  Put `kova.lock` in your own repository: whoever builds your program gets exactly your packages.
+- **The editor never downloads**: until the first `kova run`, it says the package is not
+  downloaded yet.
+- **A program uses one version of a package.** Importing it twice with two versions is an error.
+
+A package's repository holds a `package.kova`: that is what `import` reads. Its other files are
+its own modules (`import words` inside it reads its `words.kova`), and like any module it shows
+only what is under `public:`.
+
+:::caution[A package runs with your rights]
+A package's code is code your program runs: it can read and write your files, run programs
+(`system.run`) and call C (`extern`). Import only packages you trust, at a version you have read.
+:::

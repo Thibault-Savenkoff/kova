@@ -336,6 +336,7 @@ fn command_line() {
     static_executable();
     cross_build();
     named_program();
+    packages();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
 }
@@ -368,6 +369,45 @@ fn named_program() {
     let ran = Command::new(&exe).output().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(text(&ran.stdout), "3\n");
+}
+
+/// `import greet from "…" version "1.0.0"`: downloaded once with git, noted in `kova.lock`, then
+/// read from the cache even offline, and refused once its files change.
+fn packages() {
+    let dir = std::env::temp_dir().join(format!("kova-packages-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let repo = dir.join("from/example.com/ada/greet");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("package.kova"), "import words\n\npublic:\n\nfn greet(name: String) -> String {\n    return \"{words.hello} {name}\"\n}\n").unwrap();
+    std::fs::write(repo.join("words.kova"), "public:\n\nfn hello -> String {\n    return \"hello\"\n}\n").unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=k", "-c", "user.email=k@k"]).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "first"]);
+    git(&["tag", "v1.0.0"]);
+    let program = dir.join("main.kova");
+    std::fs::write(&program, "import greet from \"example.com/ada/greet\" version \"1.0.0\"\n\nfn main {\n    print(greet.greet(\"Ada\"))\n}\n").unwrap();
+    let cache = dir.join("cache");
+    let run = |from: &Path| {
+        let mut c = kova(LANG);
+        c.arg("run").arg(&program).env("KOVA_PACKAGES", &cache).env("KOVA_PACKAGES_FROM", format!("file://{}/", from.display()));
+        c.output().unwrap()
+    };
+    let out = run(&dir.join("from"));
+    assert_eq!(text(&out.stdout), "hello Ada\n", "{}", text(&out.stderr));
+    let lock = std::fs::read_to_string(dir.join("kova.lock")).unwrap();
+    assert!(lock.contains("example.com/ada/greet 1.0.0 "), "{lock}");
+    // Offline: the cache is enough.
+    let out = run(&dir.join("nowhere"));
+    assert_eq!(text(&out.stdout), "hello Ada\n", "{}", text(&out.stderr));
+    // Changed in the cache: refused.
+    std::fs::write(cache.join("example.com/ada/greet/1.0.0/words.kova"), "public:\n\nfn hello -> String {\n    return \"bye\"\n}\n").unwrap();
+    let out = run(&dir.join("from"));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!out.status.success() && text(&out.stderr).contains("its files changed"), "{}", text(&out.stderr));
 }
 
 /// `kova build --target`: an executable for each system, from any machine (PLAN Part 4

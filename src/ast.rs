@@ -20,7 +20,8 @@ pub struct File {
     pub private: Vec<(String, Span)>,
     /// The modules the program reads, as written after `import` (`geometry`, `shapes.circle`):
     /// filled in the root file once they are all read.
-    pub modules: Vec<String>,
+    /// With each one its file, as messages name it (`shapes/circle.kova`).
+    pub modules: Vec<(String, String)>,
     /// `extern sqlite from "sqlite3" { … }`: functions of the system's libraries.
     pub externs: Vec<Extern>,
     /// `ui.run(title, state, view, update)`: the call keeps the title and the state; the two
@@ -60,10 +61,23 @@ pub struct CName {
 
 /// `import geometry` or `import geometry as geo` (PLAN 2.9).
 pub struct Import {
-    /// The file's name: `geometry` for `geometry.kova`, next to this file.
+    /// The file's name: `geometry` for `geometry.kova`, next to this file. For a package, its own
+    /// name (`package_name`).
     pub module: Name,
     /// The name used in this file: `geo` (the module's own name without `as`).
     pub alias: Name,
+    /// `import json from "github.com/ada/kova-json" version "1.2.0"`: the address and the
+    /// version, without their quotes.
+    pub package: Option<(Name, Name)>,
+}
+
+/// A package's own name, whatever name a file gives it: its address's last part, with `_` for
+/// what a name cannot hold (`github.com/ada/kova-json` → `kova_json`). No `.`: qualified names
+/// are cut at dots.
+pub fn package_name(address: &str) -> String {
+    let last = address.trim_end_matches('/').rsplit('/').next().unwrap_or(address);
+    let name: String = last.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+    if name.starts_with(|c: char| c.is_ascii_alphabetic()) { name } else { format!("p_{name}") }
 }
 
 /// `lang fr { already_exists := "`{name}` existe déjà" }`.

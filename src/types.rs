@@ -1084,7 +1084,7 @@ struct Checker<'a> {
     /// See `File::ui_from`.
     ui_from: Option<usize>,
     /// The modules read (`shapes.circle`), to name the file a name comes from.
-    modules: Vec<String>,
+    modules: Vec<(String, String)>,
     /// The `ages["Rex"]` targets met (`target`), to refuse `ages["Rex"] += 1`.
     map_entries: Vec<Span>,
     /// Name → where it is declared and what hovering it shows (`places`).
@@ -4052,11 +4052,10 @@ impl Checker<'_> {
 
     /// The file a module's name comes from: `shapes.circle.Circle` → `shapes/circle.kova`.
     fn file_of(&self, name: &str) -> String {
-        let module = (self.modules.iter())
-            .filter(|m| name.strip_prefix(m.as_str()).is_some_and(|rest| rest.starts_with('.')))
-            .max_by_key(|m| m.len())
-            .map_or_else(|| name.split('.').next().unwrap_or(name).to_string(), |m| m.clone());
-        format!("{}.kova", module.replace('.', "/"))
+        (self.modules.iter())
+            .filter(|(m, _)| name.strip_prefix(m.as_str()).is_some_and(|rest| rest.starts_with('.')))
+            .max_by_key(|(m, _)| m.len())
+            .map_or_else(|| format!("{}.kova", name.split('.').next().unwrap_or(name)), |(_, file)| file.clone())
     }
 
     /// Notes for the editor that `name` (`geometry.Point.x`) is written at `span`.

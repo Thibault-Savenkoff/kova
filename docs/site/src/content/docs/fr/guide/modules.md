@@ -128,3 +128,47 @@ Sans l'`import`, le compilateur dit lequel écrire. Ce que chaque programme a sa
 
 Un module n'a pas de `main` : il ne se lance pas seul. `kova test geometry.kova` lance ses tests,
 et l'éditeur le vérifie comme n'importe quel fichier.
+
+## Les paquets
+
+Un **paquet** est un module écrit par quelqu'un d'autre et publié comme dépôt git. L'`import` le
+nomme par son adresse et une version exacte :
+
+```kova
+import json from "github.com/ada/kova-json" version "1.2.0"
+
+fn main {
+    print(json.pretty("[1, 2]"))
+}
+```
+
+Comment ça se passe :
+
+- **Le premier `kova run`, `kova build` ou `kova test`** le télécharge avec `git` (qui doit être
+  installé) : l'étiquette `v1.2.0`, sinon `1.2.0`, de `https://github.com/ada/kova-json`. Il est
+  gardé dans un cache commun à tous les programmes (`~/.cache/kova/packages` sous Linux,
+  `~/Library/Caches/kova/packages` sur Mac, `%LOCALAPPDATA%\kova\packages` sous Windows ; la
+  variable `KOVA_PACKAGES` choisit un autre dossier). Ensuite, plus besoin du réseau.
+- **`kova.lock`**, écrit à côté du programme, note le commit de chaque paquet et un SHA-256 de ses
+  fichiers. Si ces fichiers changent un jour (l'étiquette a bougé, le cache a été modifié), le
+  programme est refusé :
+
+  ```plaintext
+  erreur: `github.com/ada/kova-json` 1.2.0 n'est plus ce qu'il était quand `kova.lock` l'a noté : ses fichiers ont changé. Si c'est voulu, retire sa ligne de `kova.lock`
+  ```
+
+  Mets `kova.lock` dans ton propre dépôt : qui construit ton programme a exactement tes paquets.
+- **L'éditeur ne télécharge jamais** : jusqu'au premier `kova run`, il dit que le paquet n'est pas
+  encore téléchargé.
+- **Un programme utilise une seule version d'un paquet.** L'importer deux fois avec deux versions
+  est une erreur.
+
+Le dépôt d'un paquet contient un `package.kova` : c'est lui que l'`import` lit. Ses autres fichiers
+sont ses propres modules (`import words` à l'intérieur lit son `words.kova`), et comme tout module
+il ne montre que ce qui est sous `public:`.
+
+:::caution[Un paquet a tes droits]
+Le code d'un paquet est du code que ton programme lance : il peut lire et écrire tes fichiers,
+lancer des programmes (`system.run`) et appeler du C (`extern`). N'importe que des paquets de
+confiance, à une version que tu as lue.
+:::

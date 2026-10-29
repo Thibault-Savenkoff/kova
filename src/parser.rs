@@ -69,6 +69,7 @@ fn prelude() -> Vec<Interface> {
         module: None,
         own: HashSet::new(),
         imports: HashMap::new(),
+        package: None,
     };
     let mut interfaces = p.file().interfaces;
     debug_assert!(p.diags.is_empty() && p.ids == 0, "the prelude has no expressions");
@@ -77,13 +78,14 @@ fn prelude() -> Vec<Interface> {
 }
 
 pub fn parse(tokens: Vec<Token>, source: &str) -> (File, usize, Vec<Diag>) {
-    parse_in(tokens, source, 0, None)
+    parse_in(tokens, source, 0, None, None)
 }
 
 /// Reads one file of a program. `first_id`: the number of its first expression (the numbers
 /// go on from file to file). `module`: the file's name when it is imported (`geometry`); its
 /// own names are then written with it (`geometry.Point`), so that two files never share one.
-pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Option<&str>) -> (File, usize, Vec<Diag>) {
+/// `package`: the package the file belongs to (`kova_json`), whose files its own imports name.
+pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Option<&str>, package: Option<&str>) -> (File, usize, Vec<Diag>) {
     // The functions without parameters, wherever they are declared: a bare `main` calls `fn main`.
     // ponytail: a scan of `fn name` tokens outside any `{ }` (a struct's methods are not in it).
     let mut depth = 0;
@@ -121,6 +123,13 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
             last += 2;
             module = format!("{module}.{}", text(&tokens[last]));
         }
+        // `import json from "github.com/ada/kova-json" version "…"`: the package's own name.
+        if kind(last + 1) == Some(Kind::Keyword("from")) && kind(last + 2) == Some(Kind::Str) {
+            imports.insert(module, crate::ast::package_name(&crate::lexer::string_content(&text(&tokens[last + 2]))));
+            continue;
+        }
+        // Inside a package, its other files: `import util` is `kova_json.util`.
+        let module = package.map_or(module.clone(), |p| format!("{p}.{module}"));
         let renamed = kind(last + 1) == Some(Kind::Ident) && text(&tokens[last + 1]) == "as" && kind(last + 2) == Some(Kind::Ident);
         imports.insert(text(&tokens[if renamed { last + 2 } else { last }]), module);
     }
@@ -143,6 +152,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         .map(|i| text(&tokens[i + 1]))
         .collect();
     let module = module.map(str::to_string);
+    let package = package.map(str::to_string);
     let mut p = Parser {
         t: tokens,
         pos: 0,
@@ -162,6 +172,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
         module,
+        package,
         imports,
     };
     let mut file = p.file();
@@ -186,6 +197,8 @@ struct Parser<'a> {
     /// inside it, `Point` is `geometry.Point`.
     module: Option<String>,
     own: HashSet<String>,
+    /// The package this file belongs to: see `parse_in`.
+    package: Option<String>,
     /// `import geometry as geo`: `geo` → `geometry`.
     imports: HashMap<String, String>,
     /// In an `interface`: a method may have no body (`function_rest` then sets `bodiless`).
@@ -609,13 +622,46 @@ impl Parser<'_> {
             last = self.value_name("what_module")?;
             module = Name { text: format!("{}.{}", module.text, last.text), span: module.span.to(last.span) };
         }
+        // `import json from "github.com/ada/kova-json" version "1.2.0"`.
+        if self.is_keyword("from") {
+            if module.text.contains('.') {
+                return self.error(module.span, t!("package_dotted_name"));
+            }
+            self.advance();
+            let address = self.text_value(true)?;
+            if !(self.kind() == Kind::Ident && self.text(self.token().span) == "version") {
+                let msg = t!("package_version_expected", found = self.describe());
+                return self.error(self.token().span, msg);
+            }
+            self.advance();
+            let version = self.text_value(false)?;
+            let own = Name { text: crate::ast::package_name(&address.text), span: address.span };
+            return Ok(Import { module: own, alias: module, package: Some((address, version)) });
+        }
+        if let Some(p) = &self.package {
+            module.text = format!("{p}.{}", module.text);
+        }
         let alias = if self.kind() == Kind::Ident && self.text(self.token().span) == "as" {
             self.advance();
             self.value_name("what_module")?
         } else {
             last
         };
-        Ok(Import { module, alias })
+        Ok(Import { module, alias, package: None })
+    }
+
+    /// A text written as is (`"…"`, no `{…}` inside): its content, without the quotes.
+    /// `address`: the package's address is expected, else its version.
+    fn text_value(&mut self, address: bool) -> R<Name> {
+        let t = self.token();
+        let raw = self.text(t.span);
+        if t.kind != Kind::Str || raw.contains('{') {
+            let found = self.describe();
+            let msg = if address { t!("package_address_expected", found = found) } else { t!("package_version_expected", found = found) };
+            return self.error(t.span, msg);
+        }
+        self.advance();
+        Ok(Name { text: crate::lexer::string_content(&raw), span: t.span })
     }
 
     /// `header { key := value ... }`; keys and values are checked by the type checker.

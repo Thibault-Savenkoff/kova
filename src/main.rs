@@ -26,6 +26,7 @@ mod link;
 mod locale;
 mod lsp;
 mod ownership;
+mod packages;
 mod parser;
 mod regex;
 mod shared;
@@ -81,6 +82,8 @@ fn main() {
         Err(e) => fail(t!("cannot_read", file = file, error = e)),
     };
 
+    // Only here may packages be downloaded (never by the editor).
+    packages::DOWNLOAD.store(true, std::sync::atomic::Ordering::Relaxed);
     let (tree, info, diags, sources) = analyze(file, &source);
     let (Some(info), true) = (info, diags.is_empty()) else {
         for d in &diags {
@@ -326,7 +329,7 @@ fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<dia
 /// where every file it imports exists (`shapes/circle.kova` opened alone, importing `shapes.point`).
 pub fn program_folder(path: &str, imports: &[ast::Import]) -> std::path::PathBuf {
     let own = std::path::Path::new(path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
-    let files: Vec<String> = (imports.iter().map(|i| &i.module.text))
+    let files: Vec<String> = (imports.iter().filter(|i| i.package.is_none()).map(|i| &i.module.text))
         .filter(|m| !types::MODULES.contains(&m.as_str()))
         .map(|m| format!("{}.kova", m.replace('.', std::path::MAIN_SEPARATOR_STR)))
         .collect();
@@ -356,10 +359,14 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
         chain: &mut Vec<String>,
         done: &mut std::collections::HashSet<String>,
         dir: &std::path::Path,
+        // Where `kova.lock` is: the root program's folder.
+        root_dir: &std::path::Path,
         sources: &mut diag::Sources,
         ids: &mut usize,
         diags: &mut Vec<diag::Diag>,
         loaded: &mut Vec<ast::File>,
+        // A package's name → (address, version, its folder).
+        packs: &mut std::collections::HashMap<String, (String, String, std::path::PathBuf)>,
     ) {
         let mut aliases: std::collections::HashMap<&str, diag::Span> = std::collections::HashMap::new();
         for imp in imports {
@@ -373,6 +380,34 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             if types::MODULES.contains(&m.as_str()) {
                 continue;
             }
+            if let Some((address, version)) = &imp.package {
+                match packs.get(m) {
+                    Some((a, v, _)) if (a, v) == (&address.text, &version.text) => continue,
+                    Some((a, v, _)) => {
+                        let msg = t!("package_two_versions", name = m, first = format!("{a} {v}"), second = format!("{} {}", address.text, version.text));
+                        diags.push(diag::Diag::new(address.span, msg));
+                        continue;
+                    }
+                    None if done.contains(m) => {
+                        diags.push(diag::Diag::new(address.span, t!("package_name_taken", name = m)));
+                        continue;
+                    }
+                    None => {}
+                }
+                let download = packages::DOWNLOAD.load(std::sync::atomic::Ordering::Relaxed);
+                match packages::locate(&address.text, &version.text, root_dir, download) {
+                    Ok(d) => {
+                        packs.insert(m.clone(), (address.text.clone(), version.text.clone(), d));
+                    }
+                    Err(msg) => {
+                        diags.push(diag::Diag::new(address.span, msg));
+                        continue;
+                    }
+                }
+            } else if packs.contains_key(m) {
+                diags.push(diag::Diag::new(imp.module.span, t!("package_name_taken", name = m)));
+                continue;
+            }
             if chain.contains(m) {
                 let cycle = [&chain[chain.iter().position(|c| c == m).unwrap()..], std::slice::from_ref(m)].concat();
                 diags.push(diag::Diag::new(imp.module.span, t!("import_cycle", cycle = cycle.join(" → "))));
@@ -383,10 +418,19 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             }
             // Written with the separator the importing file's path uses (`/`, or Windows' `\`),
             // so that run and build show the same path everywhere.
-            let dir_text = dir.to_string_lossy();
+            // A package's files are in its folder: `kova_json` = `package.kova`, `kova_json.util` =
+            // `util.kova` there.
+            let (first, rest) = m.split_once('.').unwrap_or((m, ""));
+            let pack = packs.get(first).map(|(.., d)| d.clone());
+            let here = pack.as_deref().unwrap_or(dir);
+            let dir_text = here.to_string_lossy();
             let sep = dir_text.chars().rev().find(|c| matches!(c, '/' | '\\')).unwrap_or('/');
             // `shapes.circle` = `shapes/circle.kova`, from the program's folder.
-            let path = m.replace('.', &sep.to_string());
+            let path = match &pack {
+                Some(_) if rest.is_empty() => packages::ENTRY.trim_end_matches(".kova").to_string(),
+                Some(_) => rest.replace('.', &sep.to_string()),
+                None => m.replace('.', &sep.to_string()),
+            };
             let shown = if dir_text.is_empty() { format!("{path}.kova") } else { format!("{dir_text}{sep}{path}.kova") };
             let file = std::path::PathBuf::from(&shown);
             let Ok(text) = std::fs::read_to_string(&file) else {
@@ -400,23 +444,37 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             let shift = |s: diag::Span| diag::Span::new(s.start + base, s.end + base);
             tokens.iter_mut().for_each(|t| t.span = shift(t.span));
             diags.extend(d.into_iter().map(|d| diag::Diag { span: shift(d.span), ..d }));
-            let (tree, next, d) = parser::parse_in(tokens, &sources.text, *ids, Some(m));
+            let package = pack.is_some().then_some(first);
+            let (tree, next, d) = parser::parse_in(tokens, &sources.text, *ids, Some(m), package);
             *ids = next;
             diags.extend(d);
             for l in &tree.langs {
                 diags.push(diag::Diag::new(l.name.span, t!("import_lang_later")));
             }
             chain.push(m.clone());
-            visit(&tree.imports, Some(origin), chain, done, dir, sources, ids, diags, loaded);
+            visit(&tree.imports, Some(origin), chain, done, dir, root_dir, sources, ids, diags, loaded, packs);
             chain.pop();
             loaded.push(tree);
         }
     }
     let mut chain = vec![stem];
     let imports = std::mem::take(&mut root.imports);
-    visit(&imports, None, &mut chain, &mut done, &dir, &mut sources, &mut ids, &mut diags, &mut loaded);
+    let root_dir = std::path::Path::new(path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let mut packs = std::collections::HashMap::new();
+    visit(&imports, None, &mut chain, &mut done, &dir, &root_dir, &mut sources, &mut ids, &mut diags, &mut loaded, &mut packs);
     root.imports = imports;
-    root.modules = done.into_iter().collect();
+    // With the file each one is read from, as messages name it: a package's under its address.
+    root.modules = (done.into_iter())
+        .map(|m| {
+            let (first, rest) = m.split_once('.').unwrap_or((&m, ""));
+            let file = match packs.get(first) {
+                Some((address, ..)) if rest.is_empty() => format!("{address}/{}", packages::ENTRY),
+                Some((address, ..)) => format!("{address}/{}.kova", rest.replace('.', "/")),
+                None => format!("{}.kova", m.replace('.', "/")),
+            };
+            (m, file)
+        })
+        .collect();
     // `import ui`: its module, made for this program (src/ui.rs).
     let files: Vec<&ast::File> = std::iter::once(&root).chain(&loaded).collect();
     // After a syntax error, nothing is checked further: the module would only add errors.
@@ -427,7 +485,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             let (mut tokens, d) = lexer::lex(&text);
             tokens.iter_mut().for_each(|t| t.span = diag::Span::new(t.span.start + base, t.span.end + base));
             diags.extend(d);
-            let (tree, next, d) = parser::parse_in(tokens, &sources.text, ids, Some("ui"));
+            let (tree, next, d) = parser::parse_in(tokens, &sources.text, ids, Some("ui"), None);
             ids = next;
             diags.extend(d);
             loaded.push(tree);
