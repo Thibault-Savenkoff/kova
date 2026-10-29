@@ -108,9 +108,10 @@ program and puts it inside the executable: the image file is not needed afterwar
   512×512 is the best size: the Dock shows it sharp on a Retina screen.
 - **Where it shows:**
   - Windows: the executable's icon in Explorer, and the window's in the title bar and the taskbar;
-  - Mac: the Dock, while a program with [windows](/guide/windows/) runs;
-  - Linux: the window's icon in the taskbar, on desktops that take it from the program (KDE does;
-    GNOME looks for a `.desktop` file instead, which Kova does not install).
+  - Mac: the Dock, while a program with [windows](/guide/windows/) runs, and the Finder once it is
+    [installed](/tools/command/#kova-install);
+  - Linux: the window's icon in the taskbar on KDE; GNOME and wlroots desktops (Sway, Hyprland)
+    only take it from an installed program: [`kova install`](/tools/command/#kova-install).
 
 ```plaintext
 error: the icon `logo.png` is 640×480: it must be square (512×512 is best)

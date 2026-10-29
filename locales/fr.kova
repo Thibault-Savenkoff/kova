@@ -20,7 +20,7 @@ lang fr {
     what_field := "champ"
 
     // ---- Command line ----
-    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|windows-arm|mac-arm|mac-intel]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
+    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|windows-arm|mac-arm|mac-intel]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova install <fichier.kova>          installe le programme pour toi : menu des applications, icône (uninstall : le retire)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
     cannot_read := "impossible de lire `{file}` : {error}"
     cannot_write := "impossible d'écrire `{file}` : {error}"
     fmt_unreadable := "`{file}` n'est pas mis en forme : il ne se lit pas (un texte ou un commentaire jamais fermé, un caractère inconnu) ; `kova run` dit où"
@@ -30,6 +30,11 @@ lang fr {
     codegen_failed := "génération du code : {error}"
     no_runtime := "ce `kova` ne sait pas faire d'exécutables pour {target} : la bibliothèque de Rust pour ce système n'était pas installée quand kova a été construit. Installe-la avec `rustup target add {triple}`, puis reconstruis kova (`cargo install --path . --locked`)"
     unknown_target := "système `{name}` inconnu après `--target` : Kova connaît {names}"
+    installed := "✓ {name} installé :"
+    uninstalled := "✓ {name} désinstallé :"
+    not_installed := "{name} n'est pas installé"
+    install_no_home := "impossible de trouver ton dossier personnel (`HOME`, ou `LOCALAPPDATA` sous Windows)"
+    install_not_in_path := "note : {folder} n'est pas dans ton PATH : ajoute-le pour lancer le programme par son nom"
     built := "✓ {file} ({system}, {size} Ko) en {time}"
     decimal_mark := ","
     unknown_system := "`kova build` ne connaît pas ce système : il fabrique des exécutables pour Linux (x86-64, arm64), Windows (x86-64, arm64) et macOS (puces Apple, Intel). Choisis-en un avec `--target`"

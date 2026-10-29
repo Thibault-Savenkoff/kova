@@ -57,6 +57,20 @@ Chaque cible a besoin d'un petit morceau de Kova compilé pour elle, ajouté à 
 Kova ([Installation](/fr/start/install/#3-compiler-pour-dautres-systèmes-facultatif)) ; sinon
 `kova build` dit lequel manque.
 
+## `kova install`
+
+`kova install compteur.kova` construit le programme et l'installe pour toi, là où ton système
+cherche les programmes. `kova uninstall compteur.kova` retire tout ce qu'il a écrit. Rien ne
+demande les droits d'administrateur.
+
+| Système | Le programme | Avec des [fenêtres](/fr/guide/windows/), en plus |
+| --- | --- | --- |
+| Linux | `~/.local/bin/<nom>` | un fichier `.desktop` et l'icône dans `~/.local/share` : le programme est dans le menu des applications, avec son icône sous GNOME, KDE et les autres |
+| Mac | `~/.local/bin/<nom>` | à la place, `~/Applications/<nom>.app` : le Launchpad, le Dock et le Finder le montrent avec son icône |
+| Windows | `%LOCALAPPDATA%\Programs\<nom>\<nom>.exe` | un raccourci dans le menu Démarrer |
+
+`<nom>` est le [`name`](/fr/guide/run-or-build/#le-header) du header, sinon le nom du fichier.
+
 ## `kova test`
 
 Lance chaque bloc `test` du fichier séparément, et écrit ✅ ou ❌ avec le message du premier

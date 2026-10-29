@@ -12,6 +12,7 @@ mod debug;
 mod diag;
 mod format;
 mod http;
+mod install;
 mod icon;
 mod json;
 #[cfg(target_os = "macos")]
@@ -44,6 +45,9 @@ enum Command {
     Build { output: Option<String>, boost: bool, target: Option<codegen::Target> },
     /// `kova test file.kova "name"`: only that test.
     Test { only: Option<String> },
+    /// `kova install file.kova` / `kova uninstall file.kova` (src/install.rs).
+    Install,
+    Uninstall,
 }
 
 fn main() {
@@ -69,6 +73,8 @@ fn main() {
         ["run", f, ..] => (Some(Command::Run), *f),
         ["test", f] => (Some(Command::Test { only: None }), *f),
         ["test", f, name] => (Some(Command::Test { only: Some(name.to_string()) }), *f),
+        ["install", f] => (Some(Command::Install), *f),
+        ["uninstall", f] => (Some(Command::Uninstall), *f),
         ["build", f, options @ ..] => match build_options(options) {
             Some((output, boost, target)) => (Some(Command::Build { output, boost, target }), *f),
             None => usage_error(),
@@ -123,7 +129,7 @@ fn main() {
     // The `header`'s language, written into an executable.
     let lang = || types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
     let contracts = !matches!(command, Command::Build { boost: true, .. });
-    let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. }), false);
+    let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. } | Command::Install), false);
 
     program.icon = icon(file, &tree).and_then(Result::ok);
     match command {
@@ -169,6 +175,23 @@ fn main() {
             eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));
         }
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
+        Command::Install | Command::Uninstall => {
+            let name = types::program_name(&tree).unwrap_or_else(|| std::path::Path::new(file).file_stem().map_or("program".into(), |s| s.to_string_lossy().into_owned()));
+            let windowed = tree.ui_from.is_some();
+            let installing = matches!(command, Command::Install);
+            let done = if installing { install::install(&program, &files, lang(), &name, windowed) } else { install::uninstall(&name, windowed) };
+            let places = done.unwrap_or_else(|e| fail(e));
+            if places.is_empty() {
+                fail(t!("not_installed", name = name));
+            }
+            eprintln!("{}", if installing { t!("installed", name = name) } else { t!("uninstalled", name = name) });
+            for p in &places {
+                eprintln!("  {}", p.display());
+            }
+            if installing && !windowed && !install::reachable(&places[0]) {
+                eprintln!("{}", t!("install_not_in_path", folder = places[0].parent().unwrap().display()));
+            }
+        }
     }
 }
 

@@ -157,6 +157,28 @@ fn icns(b: &[u8]) -> Option<Vec<u8>> {
     best.map(<[u8]>::to_vec)
 }
 
+/// The PNG drawn again at `side` × `side` pixels (`kova install`: the size each system wants).
+pub fn sized(png: &[u8], side: u32) -> Option<Vec<u8>> {
+    let image = tiny_skia::Pixmap::decode_png(png).ok()?;
+    if image.width() == side {
+        return Some(png.to_vec());
+    }
+    let mut out = tiny_skia::Pixmap::new(side, side)?;
+    let scale = side as f32 / image.width() as f32;
+    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() };
+    out.draw_pixmap(0, 0, image.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale), None);
+    out.encode_png().ok()
+}
+
+/// A Mac's `.icns`: the one given, else one holding the image at 512 pixels (`ic09`).
+pub fn icns_of(icon: &Icon) -> Vec<u8> {
+    if icon.original.starts_with(b"icns") {
+        return icon.original.clone();
+    }
+    let png = sized(&icon.png, 512).unwrap_or_else(|| icon.png.clone());
+    [&b"icns"[..], &(16 + png.len() as u32).to_be_bytes(), b"ic09", &(8 + png.len() as u32).to_be_bytes(), &png].concat()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

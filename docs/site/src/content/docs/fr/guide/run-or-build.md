@@ -117,9 +117,11 @@ programme et la met dans l'exécutable : le fichier de l'image n'est plus utile 
 - **Où elle se voit :**
   - Windows : l'icône de l'exécutable dans l'Explorateur, et celle de la fenêtre dans sa barre de
     titre et la barre des tâches ;
-  - Mac : le Dock, pendant qu'un programme à [fenêtres](/fr/guide/windows/) tourne ;
-  - Linux : l'icône de la fenêtre dans la barre des tâches, sur les bureaux qui la prennent dans le
-    programme (KDE le fait ; GNOME cherche plutôt un fichier `.desktop`, que Kova n'installe pas).
+  - Mac : le Dock, pendant qu'un programme à [fenêtres](/fr/guide/windows/) tourne, et le Finder
+    une fois [installé](/fr/tools/command/#kova-install) ;
+  - Linux : l'icône de la fenêtre dans la barre des tâches sous KDE ; GNOME et les bureaux wlroots
+    (Sway, Hyprland) ne la prennent que d'un programme installé :
+    [`kova install`](/fr/tools/command/#kova-install).
 
 ```plaintext
 erreur: l'icône `logo.png` fait 640×480 : elle doit être carrée (512×512 de préférence)

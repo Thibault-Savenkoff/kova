@@ -56,6 +56,20 @@ Each target needs a small piece of Kova compiled for it, added to Rust before in
 ([Installing](/start/install/#3-build-for-other-systems-optional)); `kova build` says which one is
 missing otherwise.
 
+## `kova install`
+
+`kova install counter.kova` builds the program and installs it for you, where your system looks
+for programs. `kova uninstall counter.kova` removes everything it wrote. Nothing needs
+administrator rights.
+
+| System | The program | With [windows](/guide/windows/), also |
+| --- | --- | --- |
+| Linux | `~/.local/bin/<name>` | a `.desktop` file and the icon in `~/.local/share`: the program is in the applications menu, with its icon in GNOME, KDE and the others |
+| Mac | `~/.local/bin/<name>` | instead, `~/Applications/<name>.app`: Launchpad, the Dock and the Finder show it with its icon |
+| Windows | `%LOCALAPPDATA%\Programs\<name>\<name>.exe` | a shortcut in the Start menu |
+
+`<name>` is the header's [`name`](/guide/run-or-build/#the-header), else the file's name.
+
 ## `kova test`
 
 Runs each `test` block of the file on its own, and writes ✅ or ❌ with the message of the first

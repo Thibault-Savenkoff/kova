@@ -337,6 +337,7 @@ fn command_line() {
     cross_build();
     named_program();
     packages();
+    install();
 
     assert_eq!(expectations("// expect: 3\nx\n  // expect:  a b\n// error: z", "expect"), ["3", " a b"]);
 }
@@ -408,6 +409,35 @@ fn packages() {
     let out = run(&dir.join("from"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!out.status.success() && text(&out.stderr).contains("its files changed"), "{}", text(&out.stderr));
+}
+
+/// `kova install`: on Linux, the program in `~/.local/bin`, a program with windows also in the
+/// applications menu with its icon; `kova uninstall` removes all of it.
+fn install() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kova-install-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = dir.join("count.kova");
+    let window = std::fs::read_to_string("tests/ok/ui_input.kova").unwrap();
+    std::fs::write(&program, format!("header {{\n    name := \"Tally\"\n    icon := \"tally.png\"\n}}\n\n{window}")).unwrap();
+    std::fs::copy("tests/ok/icon/counter.png", dir.join("tally.png")).unwrap();
+    let kova_in = |command: &str| kova(LANG).arg(command).arg(&program).env("HOME", &dir).env_remove("XDG_DATA_HOME").output().unwrap();
+    let out = kova_in("install");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let desktop = std::fs::read_to_string(dir.join(".local/share/applications/Tally.desktop")).unwrap();
+    assert!(desktop.contains("StartupWMClass=Tally") && desktop.contains(".local/share/icons/hicolor/512x512/apps/Tally.png"), "{desktop}");
+    let icon = std::fs::read(dir.join(".local/share/icons/hicolor/512x512/apps/Tally.png")).unwrap();
+    assert_eq!(u32::from_be_bytes(icon[16..20].try_into().unwrap()), 512);
+    assert!(dir.join(".local/bin/Tally").is_file());
+    let out = kova_in("uninstall");
+    let left = dir.join(".local/bin/Tally").exists() || dir.join(".local/share/applications/Tally.desktop").exists();
+    let again = kova_in("uninstall");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success() && !left, "{}", text(&out.stderr));
+    assert!(!again.status.success() && text(&again.stderr).contains("Tally is not installed"), "{}", text(&again.stderr));
 }
 
 /// `kova build --target`: an executable for each system, from any machine (PLAN Part 4
