@@ -1,0 +1,42 @@
+# Builds the documentation website and puts it on GitHub Pages, at each push that may change it.
+# Only in the public repository: there, Actions minutes cost nothing.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/site/**', 'src/**', 'runtime/**', 'locales/**', 'editors/vscode/syntaxes/**', '.github/workflows/site.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  site:
+    if: github.repository == 'Thibault-Savenkoff/kova'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      # check.py asks `kova` which methods exist.
+      - run: cargo install --path . --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm run build
+        working-directory: docs/site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/site/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

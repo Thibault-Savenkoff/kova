@@ -6,7 +6,24 @@ import { readFileSync } from 'node:fs';
 const kova = JSON.parse(readFileSync(new URL('../../editors/vscode/syntaxes/kova.tmLanguage.json', import.meta.url)));
 kova.name = 'kova';
 
+// The site is served from GitHub Pages under /kova/. Pages link to each other as `/guide/…`, so
+// every such link gets the base in front, wherever it was written.
+const base = '/kova';
+function withBase() {
+  const visit = (node) => {
+    const href = node.properties?.href;
+    if (typeof href === 'string' && href.startsWith('/') && !href.startsWith('//') && !href.startsWith(base + '/')) {
+      node.properties.href = base + href;
+    }
+    node.children?.forEach(visit);
+  };
+  return visit;
+}
+
 export default defineConfig({
+  site: 'https://thibault-savenkoff.github.io',
+  base,
+  markdown: { rehypePlugins: [withBase] },
   integrations: [
     starlight({
       title: 'Kova',
@@ -24,9 +41,9 @@ export default defineConfig({
         content: `try {
   if (!localStorage.getItem('kova-lang-seen')) {
     localStorage.setItem('kova-lang-seen', '1');
-    const p = location.pathname;
+    const p = location.pathname.slice('${base}'.length);
     if (!p.startsWith('/fr/') && p !== '/fr' && (navigator.language || '').toLowerCase().startsWith('fr')) {
-      location.replace('/fr' + p + location.search + location.hash);
+      location.replace('${base}/fr' + p + location.search + location.hash);
     }
   }
 } catch (e) {}`,
