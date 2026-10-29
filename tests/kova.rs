@@ -107,20 +107,37 @@ fn ok_programs() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
-/// The examples of the README and of docs/guide.md: a ```kova block followed by a ```text block
-/// prints exactly that. A block starting with `// geometry.kova` is a file of the program before it.
+/// The examples of the README and of the website (docs/site/src/content/docs): a ```kova block
+/// followed by a ```text block prints exactly that; followed by a ```txt block, it is refused with
+/// exactly that error. A block starting with `// geometry.kova` is a file of the program before it.
 #[test]
 fn guide_examples() {
     let tmp = std::env::temp_dir().join(format!("kova-guide-{}", std::process::id()));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut docs = vec![root.join("README.md")];
+    let mut folders = vec![root.join("docs/site/src/content/docs")];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            match path.extension().and_then(|e| e.to_str()) {
+                _ if path.is_dir() => folders.push(path),
+                Some("md" | "mdx") => docs.push(path),
+                _ => {}
+            }
+        }
+    }
+    docs.sort();
     let mut failures = vec![];
-    for doc in ["README.md", "docs/guide.md"] {
-        let page = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(doc)).unwrap();
+    for path in &docs {
+        let doc = path.strip_prefix(root).unwrap().display();
+        let page = std::fs::read_to_string(path).unwrap();
         // (language, text) of each fenced block.
         let mut blocks: Vec<(String, String)> = vec![];
         let mut open: Option<(String, String)> = None;
         for line in page.lines() {
-            match (line.strip_prefix("```"), open.take()) {
-                (Some(lang), None) => open = Some((lang.to_string(), String::new())),
+            match (line.trim_start().strip_prefix("```"), open.take()) {
+                // Only the language: ```kova title="main.kova" is a kova block.
+                (Some(info), None) => open = Some((info.split_whitespace().next().unwrap_or("").to_string(), String::new())),
                 (Some(_), Some(block)) => blocks.push(block),
                 (None, Some((lang, body))) => open = Some((lang, body + line + "\n")),
                 (None, None) => {}
@@ -132,14 +149,16 @@ fn guide_examples() {
             match (lang.as_str(), named) {
                 ("kova", Some(name)) => files.push((name.to_string(), body)),
                 ("kova", None) => files = vec![("main.kova".to_string(), body)],
-                ("text", _) if !files.is_empty() => {
+                ("text" | "txt", _) if !files.is_empty() => {
                     let _ = std::fs::remove_dir_all(&tmp);
                     std::fs::create_dir_all(&tmp).unwrap();
                     for (name, code) in &files {
                         std::fs::write(tmp.join(name), code).unwrap();
                     }
-                    let out = kova(LANG).arg("run").arg(&files[0].0).current_dir(&tmp).output().unwrap();
-                    if text(&out.stdout) != body || !out.status.success() {
+                    let out = kova(LANG).arg("run").arg(&files[0].0).current_dir(&tmp).env("NO_COLOR", "1").output().unwrap();
+                    // An error block loses the empty line that ends the message.
+                    let (shown, fine) = if lang == "text" { (text(&out.stdout), out.status.success()) } else { (text(&out.stderr).trim_end().to_string() + "\n", !out.status.success()) };
+                    if shown != body || !fine {
                         failures.push(format!("{doc}, {}:\n{}{}", files[0].1.lines().next().unwrap_or(""), text(&out.stdout), text(&out.stderr)));
                     }
                     files.clear();

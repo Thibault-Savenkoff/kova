@@ -1,0 +1,71 @@
+---
+title: Kova
+description: A compiled language with strict types, memory without a garbage collector, and the same results on every system.
+template: splash
+hero:
+  tagline: A compiled language with written types, memory without a garbage collector and without lifetimes, and the same results on Linux, Windows and macOS.
+  image:
+    file: ../../assets/kova.svg
+  actions:
+    - text: Get started
+      link: /start/install/
+      icon: right-arrow
+    - text: Language guide
+      link: /guide/ownership/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+```kova
+struct Dog {
+    name: String
+    age: Int
+}
+
+fn describe(d: Dog) -> String {
+    return match d.age {
+        0..=1 => "{d.name} is a puppy"
+        _ => "{d.name} is {d.age}"
+    }
+}
+
+fn main {
+    let dogs: List<Dog> := [Dog { name := "Rex", age := 3 }, Dog { name := "Pip", age := 1 }]
+    for d in dogs {
+        print(describe(d))
+    }
+}
+```
+
+```text
+Rex is 3
+Pip is a puppy
+```
+
+<CardGrid>
+  <Card title="Read like it runs" icon="open-book">
+    Types are written where a name is made. `:=` gives a value and `=` compares, so the two can
+    never be confused. A function that changes its argument says so at the call: `sort(var names)`.
+  </Card>
+  <Card title="Memory, handled" icon="approve-check">
+    Every value has one owner and is freed when its owner goes away. No garbage collector pauses
+    the program, and there are no lifetimes to write: a borrow never leaves its block.
+  </Card>
+  <Card title="Nothing fails in secret" icon="warning">
+    A value that may be missing is a `T?`, an operation that may fail gives a `T or E`, and an
+    `Int` that overflows stops the program with a clear message instead of wrapping around.
+  </Card>
+  <Card title="One file, any system" icon="laptop">
+    `kova build` makes a small native executable, with no C compiler or linker to install, for
+    Linux, Windows or macOS from any of them. `kova run` and the executable print the same digits.
+  </Card>
+  <Card title="Batteries included" icon="puzzle">
+    Files, the web (client and server, HTTPS), JSON, CSV, regular expressions, dates, encryption,
+    native windows and calls to C libraries come with the language.
+  </Card>
+  <Card title="An editor that helps" icon="pencil">
+    The VSCode / VSCodium extension shows errors while you type, completes, renames, formats on
+    save, runs the tests in the margin and debugs step by step.
+  </Card>
+</CardGrid>
