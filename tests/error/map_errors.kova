@@ -22,7 +22,7 @@ fn main {
     print(counts = counts)
     for k in counts {
     }
-    let l: List<Int> := [1]
+    let l: Set<Int> := Set[1]
     for i, x in l {
     }
     let e: Map<String, Int> := Map<String, Int>.empty
@@ -42,7 +42,7 @@ fn main {
 // error: a value inside a Map is changed as a whole
 // error: `=` does not compare Maps yet
 // error: a Map is walked over with two names
-// error: two names after `for` walk over a Map (its keys and values), not over `List<Int>`
+// error: or a List (each place and element), not over `Set<Int>`
 // error: `Map` has no function `Map.empty`
 // error: `Int` expected, `Int?` given
 // error: `fixed` is declared with let

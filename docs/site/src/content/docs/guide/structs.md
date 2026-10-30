@@ -27,11 +27,41 @@ Dog { name: "Rex", age: 4 }
 ```
 
 - `Dog { name := "Rex", age := 3 }` makes a value: every field is given, in any order. A missing
-  one is an error, since a field never holds "nothing" by accident (a field that may be empty is
-  declared `T?`, see [Missing values](/guide/errors/)).
+  one is an error, unless it has a value of its own, since a field never holds "nothing" by
+  accident (a field that may be empty is declared `T?`, see [Missing values](/guide/errors/)).
 - `rex.age` reads a field; on a `var`, `rex.age := 5` changes it.
 - Type names start with a capital, field names with a small letter.
 - Since the type's name is written on the right, `let rex := Dog { … }` needs no `: Dog`.
+
+### Shorter ways to write a value
+
+A field may have a value of its own, used when a literal leaves it out. A variable with the field's
+name is written once. `...` takes the other fields from another value:
+
+```kova
+struct Dog {
+    name: String
+    age: Int := 1
+}
+
+fn main {
+    let rex: Dog := Dog { name := "Rex" }
+    print(rex)
+    let name: String := "Fido"
+    let fido: Dog := Dog { name, age := 3 }
+    print(fido)
+    let older: Dog := Dog { ...fido, age := 4 }
+    print(older)
+}
+```
+
+```text
+Dog { name: "Rex", age: 1 }
+Dog { name: "Fido", age: 3 }
+Dog { name: "Fido", age: 4 }
+```
+
+`...fido` copies its fields, so `fido` stays usable. A field's own value reads no variable.
 
 ## Methods
 

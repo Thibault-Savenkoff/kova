@@ -183,7 +183,7 @@ fn space(a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in
     let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
-        (_, Kind::Sym("," | ")" | "]" | "?" | "." | ".." | "..=")) | (Kind::Sym("(" | "[" | "." | ".." | "..="), _) => false,
+        (_, Kind::Sym("," | ")" | "]" | "?" | "." | ".." | "..=")) | (Kind::Sym("(" | "[" | "." | ".." | "..=" | "..."), _) => false,
         // `struct Dog : Animal`, but `x: Int` and `<T: Comparable>`.
         (_, Kind::Sym(":")) => heading && !in_generics,
         // `print(x)`, `ok(value)`, `List<Int>()`; `l[0]`, `self.items[0]`.

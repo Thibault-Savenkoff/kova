@@ -1,0 +1,67 @@
+// What a developer writes without thinking: constants, `else`, field values, `P { x }`, `...p`,
+// `for i, x in l`.
+let limit: Int := 3
+let MAX: Int := limit * 2
+let names: List<String> := ["a", "b"]
+
+struct Dog {
+    name: String
+    age: Int := 1
+    tags: List<String> := ["new"]
+}
+
+fn age_of(ages: Map<String, Int>, who: String) -> Int {
+    return ages[who] else -1
+}
+
+fn main {
+    print(limit)
+    print(MAX)
+    print(names)
+    let ages: Map<String, Int> := ["Rex" := 3]
+    print(age_of(ages, "Rex"))
+    print(age_of(ages, "Fido"))
+    print(ages["x"] else ages["Rex"] else 0)
+    print("x1".to_int else 0)
+    let word: String? := none
+    print(word else "nobody")
+    let kept: String? := "Ada"
+    print(kept else "nobody")
+    print(kept)
+    let rex: Dog := Dog { name := "Rex" }
+    print(rex)
+    let name: String := "Fido"
+    let age: Int := 5
+    let fido: Dog := Dog { name, age }
+    print(fido)
+    let older: Dog := Dog { ...fido, age := 6 }
+    print(older)
+    print(fido)
+    for i, x in ["a", "b"] {
+        print("{i} {x}")
+    }
+    for i, x in names {
+        print(i + 1)
+        print(x)
+    }
+}
+// expect: 3
+// expect: 6
+// expect: ["a", "b"]
+// expect: 3
+// expect: -1
+// expect: 3
+// expect: 0
+// expect: nobody
+// expect: Ada
+// expect: "Ada"
+// expect: Dog { name: "Rex", age: 1, tags: ["new"] }
+// expect: Dog { name: "Fido", age: 5, tags: ["new"] }
+// expect: Dog { name: "Fido", age: 6, tags: ["new"] }
+// expect: Dog { name: "Fido", age: 5, tags: ["new"] }
+// expect: 0 a
+// expect: 1 b
+// expect: 1
+// expect: a
+// expect: 2
+// expect: b

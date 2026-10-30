@@ -874,6 +874,11 @@ impl Owner<'_> {
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
             ExprKind::Outcome { value, .. } => self.give(value),
             ExprKind::Is(x, _) => self.borrow(x),
+            // The value inside is copied (`Translator::value`).
+            ExprKind::Else(x, fallback) => {
+                self.borrow(x);
+                self.give(fallback);
+            }
             // `x?` takes its value; on `none` it leaves the function, like a `return`.
             ExprKind::Try(x) => {
                 match &x.kind {

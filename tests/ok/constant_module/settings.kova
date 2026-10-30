@@ -1,0 +1,4 @@
+public:
+
+let limit: Int := 10
+let twice: Int := limit * 2

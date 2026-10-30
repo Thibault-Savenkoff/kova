@@ -144,6 +144,21 @@ Alan
   calculées une fois, avant le premier tour.
 - `write` affiche sans passer à la ligne ; `print` passe à la ligne.
 
+Avec deux noms, `for` donne aussi la place de chaque élément, comptée depuis 0 :
+
+```kova
+fn main {
+    for i, name in ["Ada", "Alan"] {
+        print("{i}: {name}")
+    }
+}
+```
+
+```text
+0: Ada
+1: Alan
+```
+
 ## `break` et `continue`
 
 `break` quitte la boucle tout de suite, `continue` passe au tour suivant :

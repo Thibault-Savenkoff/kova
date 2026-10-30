@@ -33,6 +33,37 @@ Dog { name: "Rex", age: 4 }
 - Les noms de types commencent par une majuscule, les noms de champs par une minuscule.
 - Comme le nom du type est écrit à droite, `let rex := Dog { … }` n'a pas besoin de `: Dog`.
 
+### Écrire une valeur plus court
+
+Un champ peut avoir sa propre valeur, utilisée quand le littéral le laisse de côté. Une variable qui
+porte le nom du champ ne s'écrit qu'une fois. `...` prend les autres champs d'une autre valeur :
+
+```kova
+struct Dog {
+    name: String
+    age: Int := 1
+}
+
+fn main {
+    let rex: Dog := Dog { name := "Rex" }
+    print(rex)
+    let name: String := "Fido"
+    let fido: Dog := Dog { name, age := 3 }
+    print(fido)
+    let older: Dog := Dog { ...fido, age := 4 }
+    print(older)
+}
+```
+
+```text
+Dog { name: "Rex", age: 1 }
+Dog { name: "Fido", age: 3 }
+Dog { name: "Fido", age: 4 }
+```
+
+`...fido` copie ses champs, donc `fido` reste utilisable. La valeur propre d'un champ ne lit aucune
+variable.
+
 ## Les méthodes
 
 Les fonctions écrites dans la struct sont ses **méthodes**. Elles atteignent la valeur par

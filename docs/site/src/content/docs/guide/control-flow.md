@@ -142,6 +142,21 @@ Alan
   before the first turn.
 - `write` prints without going to the next line; `print` goes to the next line.
 
+With two names, `for` also gives each element's place, counted from 0:
+
+```kova
+fn main {
+    for i, name in ["Ada", "Alan"] {
+        print("{i}: {name}")
+    }
+}
+```
+
+```text
+0: Ada
+1: Alan
+```
+
 ## `break` and `continue`
 
 `break` leaves the loop at once, `continue` goes to its next turn:

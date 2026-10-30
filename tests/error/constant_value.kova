@@ -1,0 +1,6 @@
+let started: Float := now
+
+fn main {
+    print(started)
+}
+// error: a constant is made of written values

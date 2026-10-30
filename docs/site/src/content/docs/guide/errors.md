@@ -192,13 +192,18 @@ can leave from any call. It works on `T?` too, in a function that returns a `T?`
 returned at once.
 
 The function's own result must allow it, and the compiler says so when it does not, as in a
-`main` that returns nothing:
+function that returns nothing:
 
 ```kova
 import files
 
-fn main {
+fn show {
     let text: String := files.read("note.txt")?
+    print(text)
+}
+
+fn main {
+    show
 }
 ```
 
@@ -210,6 +215,46 @@ error: `?` gives the error (`files.IoError`) back to the caller: the function mu
   |                         ^^^^^^^^^^^^^^^^^^^^^^^
   = help: or handle the error yourself: `match … { ok(v) => …, err(e) => … }`
 ```
+
+`main` and tests have nobody to give the error to, so there `?` stops the program and says why.
+A small script can read its file in one line:
+
+```kova
+import files
+
+fn main {
+    let text: String := files.read("note.txt")?
+    print(text)
+}
+```
+
+```txt
+error: NotFound("note.txt")
+  --> main.kova:4:25
+```
+
+## `else`: a value to fall back on
+
+`else` after an optional or a result gives the value inside it, or the one on its right when
+there is none. It says in one line what the program does when the value is missing:
+
+```kova
+fn main {
+    let ages: Map<String, Int> := ["Rex" := 3]
+    print(ages["Rex"] else 0)
+    print(ages["Fido"] else 0)
+    print("12x".to_int else -1)
+}
+```
+
+```text
+3
+0
+-1
+```
+
+The right side is only computed when it is needed. `x` stays usable afterwards: `else` reads it
+and copies the value out.
 
 ### Errors of your own
 

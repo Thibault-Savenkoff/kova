@@ -1,0 +1,5 @@
+fn main {
+    let x: Int := 1
+    print(x else 2)
+}
+// error: `else` gives a value when an optional or a result has none, and `Int` always has one

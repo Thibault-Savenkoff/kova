@@ -39,6 +39,29 @@ Préfère `let` : une valeur qui ne peut pas changer, c'est une chose de moins �
 code. Le compilateur refuse de changer un `let`, et propose de le déclarer avec `var` si c'était
 voulu.
 
+### Les constantes
+
+Un `let` en haut d'un fichier est une constante, pour une valeur qui a un seul sens dans tout le
+programme. Elle est faite de valeurs écrites et d'autres constantes, et son nom est libre : `limit`
+ou `LIMIT`.
+
+```kova
+let LIMIT: Int := 3
+let double: Int := LIMIT * 2
+
+fn main {
+    print(LIMIT)
+    print(double)
+}
+```
+
+```text
+3
+6
+```
+
+Sous `public:`, un autre fichier la lit avec `settings.limit`.
+
 ## Les types sont écrits
 
 Chaque nom est introduit avec son type : `name: String`, `age: Int`. Le compilateur vérifie chaque

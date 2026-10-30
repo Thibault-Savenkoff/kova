@@ -56,7 +56,9 @@ fn prelude() -> Vec<Interface> {
         diags: vec![],
         ids: 0,
         no_params: HashSet::new(),
+        constants: HashSet::new(),
         no_literal: false,
+        no_else: false,
         from_start: false,
         in_interface: false,
         bodiless: false,
@@ -106,8 +108,15 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
         .filter(|(w, _)| !matches!(w[2].kind, Kind::Sym("(" | "<")) || w[3].kind == Kind::Sym(")"))
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
-        .chain(["read_line".to_string(), "args".to_string(), "now".to_string()])
+        .chain(["read_line".to_string(), "args".to_string(), "now".to_string()]);
+    // A constant is a function without parameters (`Parser::constant`).
+    let constants: HashSet<String> = tokens
+        .windows(2)
+        .enumerate()
+        .filter(|(i, w)| (*i == 0 || outside[*i - 1]) && w[0].kind == Kind::Keyword("let") && matches!(w[1].kind, Kind::Ident | Kind::Type))
+        .map(|(_, w)| source[w[1].span.start..w[1].span.end].to_string())
         .collect();
+    let no_params = no_params.chain(constants.iter().cloned()).collect();
     let text = |t: &Token| source[t.span.start..t.span.end].to_string();
     let at_top = |i: usize| i == 0 || outside[i - 1];
     // `import geometry as geo`: `geo.Point` means `geometry.Point` in this file.
@@ -145,7 +154,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
     let own = (0..tokens.len().saturating_sub(1))
         .filter(|&i| at_top(i))
         .filter(|&i| match (tokens[i].kind, tokens[i + 1].kind) {
-            (Kind::Keyword("fn"), Kind::Ident) => true,
+            (Kind::Keyword("fn"), Kind::Ident) | (Kind::Keyword("let"), Kind::Ident | Kind::Type) => true,
             (Kind::Keyword("struct" | "enum" | "interface"), Kind::Type) => true,
             _ => false,
         })
@@ -160,7 +169,9 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         diags: vec![],
         ids: first_id,
         no_params,
+        constants,
         no_literal: false,
+        no_else: false,
         from_start: false,
         in_interface: false,
         bodiless: false,
@@ -189,6 +200,10 @@ struct Parser<'a> {
     diags: Vec<Diag>,
     ids: usize,
     no_params: HashSet<String>,
+    /// See `Parser::constant`.
+    constants: HashSet<String>,
+    /// In a contract's condition: its `else` starts the message, it gives no value.
+    no_else: bool,
     /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
     no_literal: bool,
     /// In the start of `from i := … to …`: there `to` ends the start, it is not a part.
@@ -604,6 +619,10 @@ impl Parser<'_> {
                     self.hide(self.public, &f.name);
                     functions.push(f)
                 }),
+                Kind::Keyword("let") => self.constant().map(|f| {
+                    self.hide(self.public, &f.name);
+                    functions.push(f)
+                }),
                 Kind::Keyword("struct" | "copy" | "enum") => self.struct_().map(|s| {
                     self.hide(self.public, &s.name);
                     structs.push(s)
@@ -730,9 +749,46 @@ impl Parser<'_> {
         Ok((key, Name { text: self.text(t.span), span: t.span }))
     }
 
+    /// `let limit: Int := 10` at the top of a file: a function without parameters, so it has what
+    /// a function has (`public:`, imports). Made of written values, it is the same at each use.
+    fn constant(&mut self) -> R<Function> {
+        let open = self.advance().span;
+        let t = self.advance();
+        if !matches!(t.kind, Kind::Ident | Kind::Type) {
+            let msg = t!("name_expected", what = crate::locale::text("what_variable", &[]), found = format!("`{}`", self.text(t.span)));
+            return self.error(t.span, msg);
+        }
+        let name = Name { text: self.qualified(self.text(t.span)), span: t.span };
+        self.expect(":")?;
+        let ty = self.type_()?;
+        self.expect(":=")?;
+        let value = self.expression()?;
+        if !self.is_constant(&value) {
+            self.diags.push(Diag::new(value.span, t!("constant_value")).help(t!("constant_value_help")));
+        }
+        let span = value.span;
+        let body = Block { open, stmts: vec![Stmt::Return { value: Some(value), span }], close: span };
+        Ok(Function { name, generics: vec![], receiver: None, params: vec![], breaks: vec![], ret: Some(ty), contracts: vec![], only: None, body })
+    }
+
+    /// Whether `e` is made only of written values and other constants.
+    fn is_constant(&self, e: &Expr) -> bool {
+        let all = |l: &[Expr]| l.iter().all(|x| self.is_constant(x));
+        match &e.kind {
+            ExprKind::Int(_) | ExprKind::BigInt(_) | ExprKind::Float(_) | ExprKind::Char(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::None => true,
+            ExprKind::Unary(_, a) => self.is_constant(a),
+            ExprKind::Binary(_, a, b) => self.is_constant(a) && self.is_constant(b),
+            ExprKind::Tuple(l) | ExprKind::List(l) | ExprKind::SetLit(l) | ExprKind::Variant { args: l, .. } => all(l),
+            ExprKind::MapLit(l) => l.iter().all(|(k, v)| self.is_constant(k) && self.is_constant(v)),
+            ExprKind::StructLit { fields, .. } => fields.iter().all(|(_, v)| self.is_constant(v)),
+            ExprKind::Call { name, args } => args.is_empty() && self.constants.iter().any(|c| name.text == *c || name.text.ends_with(&format!(".{c}"))),
+            _ => false,
+        }
+    }
+
     fn skip_to_next_fn(&mut self) {
         self.advance();
-        while !matches!(self.kind(), Kind::Keyword("fn" | "test" | "struct" | "copy" | "enum" | "interface") | Kind::Eof)
+        while !matches!(self.kind(), Kind::Keyword("fn" | "let" | "test" | "struct" | "copy" | "enum" | "interface") | Kind::Eof)
             && !self.at_lang()
             && !self.at_extern()
         {
@@ -1122,6 +1178,15 @@ impl Parser<'_> {
         let name = self.value_name("what_field")?;
         self.expect(":")?;
         let ty = self.type_()?;
+        // `age: Int := 0`: the value of a literal that leaves it out.
+        let default = if self.is_sym(":=") {
+            self.advance();
+            let e = self.expression()?;
+            let text = self.src[e.span.start..e.span.end].to_string();
+            Some((e, text))
+        } else {
+            None
+        };
         // `tricks: List<String>` at the end of a line: the lexer took `>` for an operator
         // that continues the line, so the line break is only in the source.
         let line_break = self.src[self.t[self.pos - 1].span.end..self.token().span.start].contains('\n');
@@ -1131,7 +1196,7 @@ impl Parser<'_> {
             let msg = t!("expected_symbol", symbol = ",", found = self.describe());
             return self.error(self.token().span, msg);
         }
-        Ok(Param { name, mode: Mode::Read, ty, default: None })
+        Ok(Param { name, mode: Mode::Read, ty, default })
     }
 
     fn test(&mut self) -> R<Test> {
@@ -1433,7 +1498,10 @@ impl Parser<'_> {
     fn contract(&mut self, kind: ContractKind) -> R<Contract> {
         self.advance(); // require, ensure or check
         // `require` and `ensure` come right before the body's `{`.
-        let cond = if kind == ContractKind::Check { self.expression()? } else { self.heading_expr()? };
+        let saved = std::mem::replace(&mut self.no_else, true);
+        let cond = if kind == ContractKind::Check { self.expression() } else { self.heading_expr() };
+        self.no_else = saved;
+        let cond = cond?;
         // `else` may be on the next line.
         let before = self.pos;
         self.skip_newlines();
@@ -1785,7 +1853,13 @@ impl Parser<'_> {
     // ---- Expressions ----
 
     fn expression(&mut self) -> R<Expr> {
-        self.level(0)
+        let e = self.level(0)?;
+        if self.no_else || !self.is_keyword("else") {
+            return Ok(e);
+        }
+        self.advance();
+        let fallback = self.expression()?;
+        Ok(self.expr(e.span.to(fallback.span), ExprKind::Else(Box::new(e), Box::new(fallback))))
     }
 
     fn level(&mut self, n: usize) -> R<Expr> {
@@ -2073,6 +2147,13 @@ impl Parser<'_> {
                 name.text = self.qualified(name.text);
                 return self.call_rest(name);
             }
+            // `MAX`: a constant whose name is in capitals.
+            Kind::Type if self.constants.contains(&self.text(t.span)) && self.kind_at(1) != Kind::Sym(".") => {
+                let mut name = Name { text: self.text(t.span), span: t.span };
+                self.advance();
+                name.text = self.qualified(name.text);
+                return self.call_rest(name);
+            }
             Kind::Keyword("if") => return self.if_expr(),
             // `ok` alone: the success of a `Nothing or E`.
             Kind::Keyword("ok") if self.kind_at(1) != Kind::Sym("(") => {
@@ -2209,21 +2290,32 @@ impl Parser<'_> {
         let saved = std::mem::replace(&mut self.no_literal, false);
         let fields = self.literal_fields();
         self.no_literal = saved;
-        let (fields, end) = fields?;
-        Ok(self.expr(ty.span.to(end), ExprKind::StructLit { ty, types, fields }))
+        let (fields, base, end) = fields?;
+        Ok(self.expr(ty.span.to(end), ExprKind::StructLit { ty, types, fields, base }))
     }
 
     /// `name := "Rex", age := 3 }`: separated by `,` or a line break. Returns the `}` too.
-    fn literal_fields(&mut self) -> R<(Vec<(Name, Expr)>, Span)> {
-        let mut fields = vec![];
+    fn literal_fields(&mut self) -> R<(Vec<(Name, Expr)>, Option<Box<Expr>>, Span)> {
+        let (mut fields, mut base) = (vec![], None);
         loop {
             self.skip_newlines();
             if self.is_sym("}") {
-                return Ok((fields, self.advance().span));
+                return Ok((fields, base, self.advance().span));
             }
-            let name = self.value_name("what_field")?;
-            self.expect(":=")?;
-            fields.push((name, self.expression()?));
+            if self.is_sym("...") {
+                self.advance();
+                base = Some(Box::new(self.expression()?));
+            } else {
+                let name = self.value_name("what_field")?;
+                // `Dog { name }`: the variable of that name.
+                let value = if matches!(self.kind(), Kind::Sym("," | "}") | Kind::Newline) {
+                    self.expr(name.span, ExprKind::Var(name.text.clone()))
+                } else {
+                    self.expect(":=")?;
+                    self.expression()?
+                };
+                fields.push((name, value));
+            }
             if self.is_sym(",") {
                 self.advance();
             } else if !matches!(self.kind(), Kind::Newline | Kind::Sym("}")) {

@@ -1,0 +1,8 @@
+struct Dog {
+    age: Int := "old"
+}
+
+fn main {
+    print(Dog {})
+}
+// error: different types: `Int` expected, `String` given

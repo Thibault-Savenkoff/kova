@@ -539,8 +539,11 @@ pub enum ExprKind {
     Index(Box<Expr>, Box<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
-    /// `Dog { name := "Rex", age := 3 }`: the fields in the written order.
-    StructLit { ty: Name, types: Vec<TypeAst>, fields: Vec<(Name, Expr)> },
+    /// `Dog { name := "Rex", age := 3 }`: the fields in the written order. `base`: the value of
+    /// `Dog { ...rex, age := 4 }`, which gives the fields not written.
+    StructLit { ty: Name, types: Vec<TypeAst>, fields: Vec<(Name, Expr)>, base: Option<Box<Expr>> },
+    /// `ages["Rex"] else 0`: the value of an optional or a result, or else the value on the right.
+    Else(Box<Expr>, Box<Expr>),
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.
     If { cond: Box<Expr>, then: Block, otherwise: Block },
     /// `match` giving a value: the last line of the chosen arm.

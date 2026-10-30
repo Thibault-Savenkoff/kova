@@ -1170,6 +1170,10 @@ struct Checker<'a> {
     /// A call's name without some parts (`connect`, `Dog.walk`) → the function's full name, its own
     /// name, and before which written argument each left-out part's default values go.
     shortened: HashMap<String, (String, String, Vec<(usize, Vec<Expr>)>)>,
+    /// By struct: the fields with a value of their own (`age: Int := 0`).
+    field_defaults: HashMap<String, Vec<(Name, Expr)>>,
+    /// In `main` or a `test`: there is nowhere to go up, `?` stops the program.
+    may_stop: bool,
     filled: HashMap<usize, Expr>,
     diags: Vec<Diag>,
 }
@@ -1243,11 +1247,19 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         tested: HashMap::new(),
         shortened: HashMap::new(),
         filled: HashMap::new(),
+        field_defaults: HashMap::new(),
+        may_stop: false,
         diags: vec![],
     };
     // Hovering a declaration shows it too.
     c.seen = c.places.values().map(|(decl, text)| Seen { span: *decl, decl: *decl, text: text.clone() }).collect();
     // A method that an interface promises is reached through the interface: it stays visible.
+    for s in &f.structs {
+        let own: Vec<(Name, Expr)> = s.fields.iter().filter_map(|p| Some((p.name.clone(), p.default.as_ref()?.0.clone()))).collect();
+        if !own.is_empty() {
+            c.field_defaults.insert(s.name.text.clone(), own);
+        }
+    }
     for s in &f.structs {
         let promised = s.interfaces.iter().filter_map(|n| f.interfaces.iter().find(|i| i.name.text == n.text));
         for (m, _) in promised.flat_map(|i| &i.methods) {
@@ -1642,12 +1654,23 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
 
     // 4. Tests: checked even by `kova run`, so that errors show up right away.
     let mut names: HashMap<&str, Span> = HashMap::new();
+    // A field's own value reads no variable, like a parameter's.
+    for s in f.structs.iter().filter(|s| s.generics.is_empty()) {
+        for p in &s.fields {
+            if let Some((e, _)) = &p.default {
+                c.scopes = vec![HashMap::new()];
+                let ty = type_of(&p.ty, &c.structs);
+                c.expect(e, &ty);
+            }
+        }
+    }
     for t in &f.tests {
         if let Some(first) = names.insert(&t.name, t.span) {
             let (line, _) = line_col(src, first.start);
             c.error(t.span, t!("test_exists", name = t.name, line = line));
         }
         c.ret = Type::Unit;
+        c.may_stop = true;
         c.scopes = vec![];
         c.block(&t.body, vec![]);
     }
@@ -2024,6 +2047,7 @@ pub fn changes_in(e: &Expr, name: &str) -> bool {
         ExprKind::Mark(mode, x) => (*mode != Mode::Read && written_root(x) == Some(name)) || changes_in(x, name),
         ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } => any(args),
         ExprKind::Method { receiver, args, .. } => changes_in(receiver, name) || any(args),
+        ExprKind::Else(a, b) => changes_in(a, name) || changes_in(b, name),
         ExprKind::Unary(_, a) | ExprKind::Try(a) | ExprKind::Is(a, _) | ExprKind::Outcome { value: a, .. } | ExprKind::Field(a, _) => {
             changes_in(a, name)
         }
@@ -2466,6 +2490,7 @@ impl Checker<'_> {
         }
         self.scopes = saved;
         self.ret = func.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &self.structs));
+        self.may_stop = func.name.text == "main" && owner.is_none();
         let mut params = HashMap::new();
         if let (Some(ty), Some(r)) = (owner, func.receiver) {
             params.insert("self".to_string(), Variable { ty: ty.clone(), kind: VarKind::Receiver(r), span: func.name.span });
@@ -4341,6 +4366,8 @@ impl Checker<'_> {
                 }
                 let (k, v) = match self.expr(list) {
                     Type::Map(k, v) => (*k, *v),
+                    // `for i, x in l`: its place, from 0, then the element.
+                    Type::List(elem) => (Type::Int, *elem),
                     Type::Error => (Type::Error, Type::Error),
                     t => {
                         self.error(value.span, t!("for_two_names", type = t.text()));
@@ -4348,7 +4375,8 @@ impl Checker<'_> {
                     }
                 };
                 self.loops += 1;
-                self.block(body, vec![(name, k, kind), (value, v, kind)]);
+                let name_kind = if k == Type::Int && matches!(self.types[list.id], Type::List(_)) { VarKind::Counter } else { kind };
+                self.block(body, vec![(name, k, name_kind), (value, v, kind)]);
                 self.loops -= 1;
             }
             Stmt::Each { name, value: None, mode: Mode::Var, list, body } => {
@@ -4589,7 +4617,13 @@ impl Checker<'_> {
                     }
                 }
             }
-            ExprKind::StructLit { ty, types, fields } => self.struct_literal(ty, types, fields),
+            ExprKind::StructLit { .. } if self.literal_completed(e).is_some() => {
+                let c = self.literal_completed(e).unwrap();
+                let t = self.expr_kind(&c);
+                self.filled.insert(e.id, c);
+                t
+            }
+            ExprKind::StructLit { ty, types, fields, .. } => self.struct_literal(ty, types, fields),
             ExprKind::Call { .. } | ExprKind::Static { .. } if self.completed(e, &call_key(e)).is_some() => {
                 let c = self.completed(e, &call_key(e)).unwrap();
                 let t = self.expr_kind(&c);
@@ -4641,7 +4675,7 @@ impl Checker<'_> {
                         self.error(e.span, t!("try_in_contract"));
                     } else if let Some(k) = into {
                         self.converts.insert(e.id, k);
-                    } else if !matches!(&self.ret, Type::Result(_, r) if *r == er) && self.ret != Type::Error {
+                    } else if !matches!(&self.ret, Type::Result(_, r) if *r == er) && self.ret != Type::Error && !self.may_stop {
                         let ret = if self.ret == Type::Unit { self.ret.text() } else { format!("`{}`", self.ret.text()) };
                         // Returning `… or AppError`: a case of `AppError` holding the error lets `?` put it there.
                         let help = match &self.ret {
@@ -4655,7 +4689,7 @@ impl Checker<'_> {
                 Type::Optional(inner) => {
                     if self.in_contract {
                         self.error(e.span, t!("try_in_contract"));
-                    } else if !matches!(self.ret, Type::Optional(_) | Type::Error) {
+                    } else if !matches!(self.ret, Type::Optional(_) | Type::Error) && !self.may_stop {
                         let ret = if self.ret == Type::Unit { self.ret.text() } else { format!("`{}`", self.ret.text()) };
                         self.diags.push(Diag::new(e.span, t!("try_needs_optional", type = ret)).help(t!("try_needs_optional_help")));
                     }
@@ -4667,6 +4701,21 @@ impl Checker<'_> {
                     Type::Error
                 }
             },
+            ExprKind::Else(x, fallback) => {
+                let inner = match self.expr(x) {
+                    Type::Optional(t) | Type::Result(t, _) => *t,
+                    Type::Error => Type::Error,
+                    t => {
+                        self.error(x.span, t!("else_not_optional", type = t.text()));
+                        Type::Error
+                    }
+                };
+                if inner == Type::Error {
+                    return self.expr(fallback);
+                }
+                self.expect(fallback, &inner);
+                inner
+            }
             ExprKind::Match(m) => self.match_(m, None, true),
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
@@ -4931,6 +4980,42 @@ impl Checker<'_> {
     }
 
     /// `Dog { name := "Rex", age := 3 }`: every field exactly once, in any order.
+    /// A new id for an expression the checker writes itself.
+    fn fresh(&mut self, span: Span, kind: ExprKind) -> Expr {
+        self.types.push(Type::Error);
+        self.spans.push(span);
+        self.boxes.push(None);
+        self.wraps.push(false);
+        Expr { id: self.types.len() - 1, span, kind }
+    }
+
+    /// `Dog { name := "Rex" }` with the fields it leaves out: from `...rex`, else their own values.
+    fn literal_completed(&mut self, e: &Expr) -> Option<Expr> {
+        let ExprKind::StructLit { ty, fields, base, .. } = &e.kind else { return None };
+        let mut added = vec![];
+        if let Some(b) = base {
+            let Some(Type::Struct(d)) = self.structs.get(&ty.text).cloned() else { return None };
+            for (field, _) in d.fields().iter().filter(|(n, _)| !fields.iter().any(|(g, _)| *g.text == **n)) {
+                let name = Name { text: field.clone(), span: b.span };
+                let read = self.fresh(b.span, ExprKind::Method { receiver: b.clone(), name: name.clone(), args: vec![] });
+                let clone = Name { text: "clone".into(), span: b.span };
+                let copy = self.fresh(b.span, ExprKind::Method { receiver: Box::new(read), name: clone, args: vec![] });
+                added.push((name, copy));
+            }
+        } else {
+            let known = self.field_defaults.get(&ty.text)?;
+            added.extend(known.iter().filter(|(n, _)| !fields.iter().any(|(g, _)| g.text == n.text)).cloned());
+            if added.is_empty() {
+                return None;
+            }
+        }
+        let mut c = e.clone();
+        let ExprKind::StructLit { fields, base, .. } = &mut c.kind else { return None };
+        fields.extend(added);
+        *base = None;
+        Some(c)
+    }
+
     fn struct_literal(&mut self, ty: &Name, types: &[TypeAst], fields: &[(Name, Expr)]) -> Type {
         if ty.text == "List" {
             self.diags.push(Diag::new(ty.span, t!("list_literal")).help(t!("list_made_help")));

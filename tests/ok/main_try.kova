@@ -1,0 +1,11 @@
+// `?` in `main`: there is nowhere to go up, the program stops and says why.
+import files
+
+fn main {
+    print(files.read("tests/data/poem.txt")?.length > 0)
+    let text: String := files.read("tests/data/nowhere.txt")?
+    print(text)
+}
+// expect: true
+// code: 101
+// stderr: error: NotFound("tests/data/nowhere.txt")

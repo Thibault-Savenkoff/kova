@@ -37,6 +37,28 @@ is not allowed where a value is expected.
 Prefer `let`: a value that cannot change is one less thing to follow when reading the code. The
 compiler refuses to change a `let`, and says to declare it with `var` if that was meant.
 
+### Constants
+
+A `let` at the top of a file is a constant, for a value that has one meaning in the whole program.
+It is made of written values and other constants, and its name is free: `limit` or `LIMIT`.
+
+```kova
+let LIMIT: Int := 3
+let double: Int := LIMIT * 2
+
+fn main {
+    print(LIMIT)
+    print(double)
+}
+```
+
+```text
+3
+6
+```
+
+Under `public:`, another file reads it as `settings.limit`.
+
 ## Types are written
 
 Every name is introduced with its type: `name: String`, `age: Int`. The compiler checks every use

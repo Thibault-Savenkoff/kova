@@ -192,13 +192,18 @@ exception qui peut sortir de n'importe quel appel. Il marche aussi sur `T?`, dan
 rend un `T?` : un `none` est alors rendu tout de suite.
 
 Le résultat de la fonction elle-même doit le permettre, et le compilateur le dit quand ce n'est pas
-le cas, comme dans un `main` qui ne rend rien :
+le cas, comme dans une fonction qui ne rend rien :
 
 ```kova
 import files
 
-fn main {
+fn show {
     let text: String := files.read("note.txt")?
+    print(text)
+}
+
+fn main {
+    show
 }
 ```
 
@@ -210,6 +215,46 @@ erreur: `?` rend l'erreur (`files.IoError`) à l'appelant : la fonction doit ren
   |                         ^^^^^^^^^^^^^^^^^^^^^^^
   = aide : ou traite l'erreur toi-même : `match … { ok(v) => …, err(e) => … }`
 ```
+
+`main` et les tests n'ont personne à qui rendre l'erreur : là, `?` arrête le programme et dit
+pourquoi. Un petit script peut donc lire son fichier en une ligne :
+
+```kova
+import files
+
+fn main {
+    let text: String := files.read("note.txt")?
+    print(text)
+}
+```
+
+```txt
+erreur: NotFound("note.txt")
+  --> main.kova:4:25
+```
+
+## `else` : une valeur de secours
+
+`else` après un optionnel ou un résultat donne la valeur qu'il contient, ou celle de droite s'il
+n'y en a pas. Il dit en une ligne ce que fait le programme quand la valeur manque :
+
+```kova
+fn main {
+    let ages: Map<String, Int> := ["Rex" := 3]
+    print(ages["Rex"] else 0)
+    print(ages["Fido"] else 0)
+    print("12x".to_int else -1)
+}
+```
+
+```text
+3
+0
+-1
+```
+
+Le côté droit n'est calculé que s'il sert. `x` reste utilisable ensuite : `else` le lit et copie la
+valeur.
 
 ### Tes propres erreurs
 

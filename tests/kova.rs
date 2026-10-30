@@ -98,6 +98,13 @@ fn check_output(name: &str, mode: &str, out: &Output, e: &Expected, failures: &m
     }
 }
 
+/// A test takes a free port, lets it go, then starts its server there: two at once could get the
+/// same port, so they run one after the other.
+fn one_server() -> std::sync::MutexGuard<'static, ()> {
+    static SERVERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERVERS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn ok_programs() {
     let tmp = std::env::temp_dir().join(format!("kova-tests-{}", std::process::id()));
@@ -939,6 +946,7 @@ fn input_not_text() {
 /// answering by path: every kind of answer, and every failure that needs no other machine.
 #[test]
 fn web() {
+    let _alone = one_server();
     use std::io::Read;
     use std::net::TcpListener;
     let server = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1023,6 +1031,7 @@ fn web() {
 /// Lists are alive: the same after 1 round of questions and after 4, so no question leaves any.
 #[test]
 fn server() {
+    let _alone = one_server();
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     let source = "tests/web/server.kova";
@@ -1140,6 +1149,7 @@ fn server() {
 /// does not grow with them. `kova run` answers the same, one at a time.
 #[test]
 fn server_workers() {
+    let _alone = one_server();
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::time::Instant;
@@ -1232,6 +1242,7 @@ fn parallel_lists() {
 /// server, what it says"), in run and in build.
 #[test]
 fn server_log() {
+    let _alone = one_server();
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     let source = "tests/web/quiet.kova";
@@ -1278,6 +1289,7 @@ fn server_log() {
 /// "The web server"), in run and in build. Skipped on a computer with no network address.
 #[test]
 fn server_network() {
+    let _alone = one_server();
     use std::io::{Read, Write};
     use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
     // Which address this computer would send from: connecting UDP sends nothing.

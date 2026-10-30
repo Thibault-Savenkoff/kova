@@ -3019,6 +3019,9 @@ impl<'a> Translator<'a> {
                 // Borrowed from the List: nobody frees it (unless `move`: freed at the end of each turn).
                 let vars = match value {
                     None => HashMap::from([(name.text.clone(), (v, elem))]),
+                    Some(value) if matches!(self.ty(list), Type::List(_)) => {
+                        HashMap::from([(name.text.clone(), (vec![i], Type::Int)), (value.text.clone(), (v, elem))])
+                    }
                     // `for name, age in ages`: the key's slots, then the value's.
                     Some(value) => {
                         let (k, t) = (element(&elem, 0), element(&elem, 1));
@@ -5350,6 +5353,44 @@ impl<'a> Translator<'a> {
             }
             // On `none` (or `err`), leaves the function with `none` (or the same `err`);
             // otherwise the value, owned by the expression.
+            // `x else y`: the value inside is copied, `x` is only read, as `if x != none` would.
+            ExprKind::Else(x, fallback) => {
+                let ty = self.ty(e);
+                let out = self.new_slots(&ty);
+                let v = self.expr(x);
+                let (present, empty, done) = (self.new_block(), self.new_block(), self.new_block());
+                self.go(End::Branch(v[0], present, empty), present);
+                let skip = if let Type::Result(_, err) = self.ty(x) { scalars(&err).len() } else { 0 };
+                let copy = self.clone_value(&v[1 + skip..], &ty);
+                self.copy(&out, &copy);
+                self.go(End::Jump(done), empty);
+                let other = self.owned(fallback);
+                self.copy(&out, &other);
+                self.go(End::Jump(done), done);
+                self.track(&out, &ty);
+                out
+            }
+            // In `main` or a `test`, with nowhere to go up: the program stops here, saying why.
+            ExprKind::Try(x) if self.ret == Type::Unit => {
+                let v = self.owned(x);
+                let (empty, present) = (self.new_block(), self.new_block());
+                self.go(End::Branch(v[0], present, empty), empty);
+                let (mark, skip) = (self.temps.len(), if let Type::Result(_, err) = self.ty(x) { scalars(&err).len() } else { 0 });
+                let mut m = vec![Piece::Label("error_prefix")];
+                match self.ty(x) {
+                    Type::Result(_, err) => self.value_pieces(&v[1..=skip], &err, &mut m),
+                    _ => m.push(Piece::Label("try_none")),
+                }
+                let l = self.loc(e.span);
+                let place = format!(":{}:{}\n", l.line, l.col);
+                m.extend([Piece::Text("\n  --> ".into()), Piece::File(l.file), Piece::Text(place)]);
+                self.temps.truncate(mark);
+                self.emit(Inst::Fail(m));
+                self.go(End::Unreachable, present);
+                let value = v[1 + skip..].to_vec();
+                self.track(&value, &self.ty(e));
+                value
+            }
             ExprKind::Try(x) => {
                 let v = self.owned(x);
                 let (empty, present) = (self.new_block(), self.new_block());
@@ -6003,6 +6044,10 @@ pub fn names_in(e: &Expr, names: &mut Vec<String>) {
         }
         ExprKind::Match(m) => names_in(&m.subject, names),
         ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } | ExprKind::Is(x, _) => names_in(x, names),
+        ExprKind::Else(x, y) => {
+            names_in(x, names);
+            names_in(y, names);
+        }
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));

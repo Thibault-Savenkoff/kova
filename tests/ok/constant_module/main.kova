@@ -1,0 +1,9 @@
+// A constant of a module, under `public:`, read with the module's name.
+import settings
+
+fn main {
+    print(settings.limit)
+    print(settings.twice)
+}
+// expect: 10
+// expect: 20
