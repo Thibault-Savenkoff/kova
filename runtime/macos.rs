@@ -613,7 +613,6 @@ mod dl {
 /// `KOVA_UI_HIDDEN` never shows the window.
 pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
     use crate::Global;
-    static KIT: Global<Option<Kit>> = Global::new(None);
     // `WAITING`: nothing yet, -1: the window closed.
     static CLICKED: Global<i64> = Global::new(WAITING);
     static TYPED: Global<String> = Global::new(String::new());
@@ -664,6 +663,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 pop: t(f("objc_autoreleasePoolPop")),
                 window: core::ptr::null_mut(),
                 target: core::ptr::null_mut(),
+                canvas: core::ptr::null_mut(),
             });
             let kit = KIT.get().as_mut().unwrap();
             let app = kit.send(kit.class("NSApplication"), "sharedApplication");
@@ -690,6 +690,23 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             add(class, kit.sel("controlTextDidChange:"), changed as usize, c"v@:@".as_ptr() as *const u8);
             register(class);
             kit.target = kit.send(kit.send(class, "alloc"), "init");
+            // The view of a `ui.canvas`: y going down, as everywhere else.
+            let canvas = new_class(kit.class("NSView"), c"KovaUiCanvas".as_ptr() as *const u8, 0);
+            let (yes, hears) = (c"c@:".as_ptr() as *const u8, c"v@:@".as_ptr() as *const u8);
+            add(canvas, kit.sel("isFlipped"), mac_yes as usize, yes);
+            add(canvas, kit.sel("acceptsFirstResponder"), mac_yes as usize, yes);
+            add(canvas, kit.sel("acceptsFirstMouse:"), mac_yes as usize, c"c@:@".as_ptr() as *const u8);
+            add(canvas, kit.sel("drawRect:"), mac_draw as usize, c"v@:{CGRect={CGPoint=dd}{CGSize=dd}}".as_ptr() as *const u8);
+            add(canvas, kit.sel("mouseDown:"), mac_down as usize, hears);
+            add(canvas, kit.sel("rightMouseDown:"), mac_right_down as usize, hears);
+            add(canvas, kit.sel("mouseUp:"), mac_up as usize, hears);
+            add(canvas, kit.sel("rightMouseUp:"), mac_right_up as usize, hears);
+            add(canvas, kit.sel("mouseMoved:"), mac_moved as usize, hears);
+            add(canvas, kit.sel("mouseDragged:"), mac_moved as usize, hears);
+            add(canvas, kit.sel("rightMouseDragged:"), mac_moved as usize, hears);
+            add(canvas, kit.sel("keyDown:"), mac_key as usize, hears);
+            register(canvas);
+            kit.canvas = canvas;
             // Titled, closable, miniaturizable, resizable; buffered.
             let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
             let w = (kit.window_init)(kit.send(kit.class("NSWindow"), "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, 15, 2, false);
@@ -715,6 +732,14 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let (s, setter) = match leaf {
                 Text(s) | Input(s, _) => (s, "setStringValue:"),
                 Button(s, _) => (s, "setTitle:"),
+                Canvas(c) => {
+                    if let Some(there) = MAC_CANVASES.get().iter_mut().find(|e| e.0 == v) {
+                        there.1 = c.clone();
+                    }
+                    (kit.send_id)(v, kit.sel("setNeedsDisplay:"), 1);
+                    kit.send(v, "displayIfNeeded");
+                    continue;
+                }
                 _ => continue, // an image: its path is in the shape
             };
             let now = kit.send(v, if setter == "setTitle:" { "title" } else { "stringValue" });
@@ -725,10 +750,16 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     } else {
         let made = MADE.get();
         made.clear();
+        MAC_CANVASES.get().clear();
         let root = mac_make(kit, view, made, 32.0);
         (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
+        if let Some((hearing, _)) = MAC_CANVASES.get().iter().find(|(_, c)| c.key.is_some()) {
+            (kit.send_two)(w, kit.sel("makeFirstResponder:"), *hearing);
+        }
+        let now = mac_now(kit);
+        *MAC_CLOCKS.get() = crate::shared::ui_clocks(view).into_iter().map(|(ms, n)| (ms as f64 / 1000.0, n, now + ms as f64 / 1000.0)).collect();
     }
     for ((leaf, style), &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
         mac_style(kit, v, leaf, style);
@@ -744,18 +775,232 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
-    while *CLICKED.get() == WAITING {
-        let e = (kit.event)(app, kit.sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64::MAX, future, mode, true);
+    while *CLICKED.get() == WAITING && MAC_HEARD.get().is_empty() {
+        // Waits for the next event or the next tick, whichever comes first.
+        let now = mac_now(kit);
+        for clock in MAC_CLOCKS.get().iter_mut().filter(|clock| clock.2 <= now) {
+            clock.2 = now + clock.0;
+            MAC_HEARD.get().hear(clock.1 as i64, String::new());
+        }
+        if !MAC_HEARD.get().is_empty() {
+            break;
+        }
+        let next = MAC_CLOCKS.get().iter().map(|clock| clock.2).fold(f64::INFINITY, f64::min);
+        let until = if next.is_finite() { (kit.send_float)(kit.class("NSDate"), kit.sel("dateWithTimeIntervalSinceNow:"), next - now) } else { future };
+        let e = (kit.event)(app, kit.sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64::MAX, until, mode, true);
         if !e.is_null() {
             (kit.send_two)(app, kit.sel("sendEvent:"), e);
         }
         kit.send(app, "updateWindows");
     }
     (kit.pop)(pool);
+    if *CLICKED.get() == WAITING {
+        let (answer, text) = MAC_HEARD.get().next().unwrap_or((-1, String::new()));
+        *typed = text;
+        return answer;
+    }
     if *CLICKED.get() <= -2 {
         *typed = TYPED.get().clone();
     }
     *CLICKED.get()
+}
+
+static KIT: crate::Global<Option<Kit>> = crate::Global::new(None);
+/// What a canvas or a clock heard, for `ui_show`.
+static MAC_HEARD: crate::Global<crate::shared::UiQueue> = crate::Global::new(crate::shared::UiQueue::new());
+/// The clocks: (seconds between ticks, button number, next tick).
+static MAC_CLOCKS: crate::Global<Vec<(f64, usize, f64)>> = crate::Global::new(Vec::new());
+/// Each canvas now on screen.
+static MAC_CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
+
+/// Seconds, from `NSDate`.
+fn mac_now(kit: &Kit) -> f64 {
+    let seconds: extern "C" fn(Id, Id) -> f64 = unsafe { core::mem::transmute(kit.send as usize) };
+    seconds(kit.class("NSDate"), kit.sel("timeIntervalSinceReferenceDate"))
+}
+
+extern "C" fn mac_yes(_me: Id, _message: Id) -> bool {
+    true
+}
+
+fn mac_mouse(me: Id, event: Id, kind: &str, button: i32) {
+    let Some(kit) = KIT.get().as_ref() else { return };
+    let Some(n) = MAC_CANVASES.get().iter().find(|e| e.0 == me).and_then(|e| e.1.mouse) else { return };
+    let convert: extern "C" fn(Id, Id, Size, Id) -> Size = unsafe { core::mem::transmute(kit.send as usize) };
+    let at = convert(me, kit.sel("convertPoint:fromView:"), (kit.fitting)(event, kit.sel("locationInWindow")), core::ptr::null_mut());
+    MAC_HEARD.get().hear(crate::shared::ui_changed(n), crate::shared::ui_mouse(kind, at.width as i32, at.height as i32, button));
+}
+
+fn mac_pressed(me: Id, event: Id, button: i32) {
+    if let Some(kit) = KIT.get().as_ref() {
+        (kit.send_two)(kit.window, kit.sel("makeFirstResponder:"), me);
+    }
+    mac_mouse(me, event, "press", button);
+}
+
+extern "C" fn mac_down(me: Id, _message: Id, event: Id) {
+    mac_pressed(me, event, 1);
+}
+
+extern "C" fn mac_right_down(me: Id, _message: Id, event: Id) {
+    mac_pressed(me, event, 2);
+}
+
+extern "C" fn mac_up(me: Id, _message: Id, event: Id) {
+    mac_mouse(me, event, "release", 1);
+}
+
+extern "C" fn mac_right_up(me: Id, _message: Id, event: Id) {
+    mac_mouse(me, event, "release", 2);
+}
+
+extern "C" fn mac_moved(me: Id, _message: Id, event: Id) {
+    mac_mouse(me, event, "move", 0);
+}
+
+/// `ui.Key`'s name for a key that writes nothing: the same word on every system. `keyCode`s are
+/// places on the keyboard, the same on every Mac.
+fn mac_key_name(code: i64) -> Option<&'static str> {
+    Some(match code {
+        36 | 76 => "Enter",
+        48 => "Tab",
+        49 => "Space",
+        51 => "Backspace",
+        53 => "Escape",
+        115 => "Home",
+        116 => "PageUp",
+        117 => "Delete",
+        119 => "End",
+        121 => "PageDown",
+        123 => "Left",
+        124 => "Right",
+        125 => "Down",
+        126 => "Up",
+        122 => "F1",
+        120 => "F2",
+        99 => "F3",
+        118 => "F4",
+        96 => "F5",
+        97 => "F6",
+        98 => "F7",
+        100 => "F8",
+        101 => "F9",
+        109 => "F10",
+        103 => "F11",
+        111 => "F12",
+        _ => return None,
+    })
+}
+
+extern "C" fn mac_key(me: Id, _message: Id, event: Id) {
+    let Some(kit) = KIT.get().as_ref() else { return };
+    let Some(n) = MAC_CANVASES.get().iter().find(|e| e.0 == me).and_then(|e| e.1.key) else { return };
+    let code = (kit.send_int)(event, kit.sel("keyCode")) & 0xffff;
+    let name = match mac_key_name(code) {
+        Some(name) => name.into(),
+        None => mac_text(kit, kit.send(event, "characters")),
+    };
+    if !name.is_empty() {
+        MAC_HEARD.get().hear(crate::shared::ui_changed(n), crate::shared::ui_key(&name));
+    }
+}
+
+/// Paints a canvas, from what `ui.canvas` drew. Thickness stays inside a shape, as on every system.
+extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
+    use crate::shared::UiOp as Op;
+    let Some(kit) = KIT.get().as_ref() else { return };
+    let Some((_, canvas)) = MAC_CANVASES.get().iter().find(|e| e.0 == me) else { return };
+    let Some(graphics) = library("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics") else { return };
+    let Some(appkit) = library("/System/Library/Frameworks/AppKit.framework/AppKit") else { return };
+    let f = |name: &str| symbol(graphics, name).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let context = kit.send(kit.send(kit.class("NSGraphicsContext"), "currentContext"), "CGContext");
+        let fill_color: extern "C" fn(Id, f64, f64, f64, f64) = t(f("CGContextSetRGBFillColor"));
+        let stroke_color: extern "C" fn(Id, f64, f64, f64, f64) = t(f("CGContextSetRGBStrokeColor"));
+        let fill_rect: extern "C" fn(Id, Rect) = t(f("CGContextFillRect"));
+        let fill_oval: extern "C" fn(Id, Rect) = t(f("CGContextFillEllipseInRect"));
+        let stroke_rect: extern "C" fn(Id, Rect) = t(f("CGContextStrokeRect"));
+        let stroke_oval: extern "C" fn(Id, Rect) = t(f("CGContextStrokeEllipseInRect"));
+        let thickness: extern "C" fn(Id, f64) = t(f("CGContextSetLineWidth"));
+        let move_to: extern "C" fn(Id, f64, f64) = t(f("CGContextMoveToPoint"));
+        let line_to: extern "C" fn(Id, f64, f64) = t(f("CGContextAddLineToPoint"));
+        let stroke: extern "C" fn(Id) = t(f("CGContextStrokePath"));
+        let part = |c: u32, shift: u32| (c >> shift & 255) as f64 / 255.0;
+        let fill = |c: u32| fill_color(context, part(c, 16), part(c, 8), part(c, 0), 1.0);
+        let line = |c: u32, n: i32| {
+            stroke_color(context, part(c, 16), part(c, 8), part(c, 0), 1.0);
+            thickness(context, n as f64);
+        };
+        let inside = |x: i32, y: i32, w: i32, h: i32, n: i32| {
+            let inset = n as f64 / 2.0;
+            Rect { x: x as f64 + inset, y: y as f64 + inset, width: w as f64 - 2.0 * inset, height: h as f64 - 2.0 * inset }
+        };
+        let whole = Rect { x: 0.0, y: 0.0, width: canvas.width as f64, height: canvas.height as f64 };
+        fill(0xffffff);
+        fill_rect(context, whole);
+        for op in &canvas.ops {
+            match op {
+                Op::Clear(c) => {
+                    fill(*c);
+                    fill_rect(context, whole);
+                }
+                Op::Rect { x, y, w, h, color, outline: 0 } => {
+                    fill(*color);
+                    fill_rect(context, inside(*x, *y, *w, *h, 0));
+                }
+                Op::Rect { x, y, w, h, color, outline } => {
+                    line(*color, *outline);
+                    stroke_rect(context, inside(*x, *y, *w, *h, *outline));
+                }
+                Op::Circle { x, y, r, color, outline: 0 } => {
+                    fill(*color);
+                    fill_oval(context, inside(x - r, y - r, 2 * r, 2 * r, 0));
+                }
+                Op::Circle { x, y, r, color, outline } => {
+                    line(*color, *outline);
+                    stroke_oval(context, inside(x - r, y - r, 2 * r, 2 * r, *outline));
+                }
+                Op::Line { x, y, x2, y2, color, thickness } => {
+                    line(*color, *thickness);
+                    move_to(context, *x as f64, *y as f64);
+                    line_to(context, *x2 as f64, *y2 as f64);
+                    stroke(context);
+                }
+                Op::Text { x, y, size, color, text } => {
+                    let named = |name: &str| symbol(appkit, name).map_or(core::ptr::null_mut(), |p| *(p as *const Id));
+                    let keys = [named("NSFontAttributeName"), named("NSForegroundColorAttributeName")];
+                    let make_color: extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id = t(kit.send as usize);
+                    let values = [
+                        (kit.send_float)(kit.class("NSFont"), kit.sel("systemFontOfSize:"), *size as f64),
+                        make_color(kit.class("NSColor"), kit.sel("colorWithSRGBRed:green:blue:alpha:"), part(*color, 16), part(*color, 8), part(*color, 0), 1.0),
+                    ];
+                    let dictionary: extern "C" fn(Id, Id, *const Id, *const Id, u64) -> Id = t(kit.send as usize);
+                    let attributes = dictionary(kit.class("NSDictionary"), kit.sel("dictionaryWithObjects:forKeys:count:"), values.as_ptr(), keys.as_ptr(), 2);
+                    let draw: extern "C" fn(Id, Id, Size, Id) = t(kit.send as usize);
+                    draw(kit.text(text), kit.sel("drawAtPoint:withAttributes:"), Size { width: *x as f64, height: *y as f64 }, attributes);
+                }
+            }
+        }
+    }
+}
+
+/// A canvas and its constraints; it hears the mouse moving wherever it is, a field having the keys.
+fn mac_canvas(kit: &Kit, c: &crate::shared::UiCanvas) -> Id {
+    let view = kit.send(kit.send(kit.canvas, "alloc"), "init");
+    for (anchor, length) in [("widthAnchor", c.width), ("heightAnchor", c.height)] {
+        let fixed = (kit.send_float)(kit.send(view, anchor), kit.sel("constraintEqualToConstant:"), length as f64);
+        (kit.send_id)(fixed, kit.sel("setActive:"), 1);
+    }
+    if c.mouse.is_some() {
+        // NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect.
+        let init: extern "C" fn(Id, Id, Rect, u64, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+        let nothing = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+        let area = init(kit.send(kit.class("NSTrackingArea"), "alloc"), kit.sel("initWithRect:options:owner:userInfo:"), nothing, 0x02 | 0x20 | 0x200, view, core::ptr::null_mut());
+        (kit.send_two)(view, kit.sel("addTrackingArea:"), area);
+    }
+    MAC_CANVASES.get().push((view, c.clone()));
+    (kit.send)(view, kit.sel("autorelease"))
 }
 
 /// An `NSString`'s text, copied (its bytes read one by one: no `strlen`).
@@ -817,6 +1062,7 @@ struct Kit {
     pop: extern "C" fn(Id),
     window: Id,
     target: Id,
+    canvas: Id,
 }
 
 impl Kit {
@@ -838,7 +1084,7 @@ impl Kit {
 /// Gives a text, button or field its style; without one, the system's font and color.
 fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::shared::UiStyle) {
     use crate::shared::UiNode::*;
-    if matches!(leaf, Image(..)) {
+    if matches!(leaf, Image(..) | Canvas(_)) {
         return;
     }
     let size = if style.size > 0 { style.size as f64 } else { 13.0 }; // `NSFont.systemFontSize`
@@ -932,9 +1178,9 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
             }
         }
         Styled(_, inner) => return mac_make(kit, inner, made, insets),
+        Every(_, _, inner) => return mac_make(kit, inner, made, insets),
+        Canvas(c) => mac_canvas(kit, c),
         // A stack view of one part, with room around it.
-        Every(_, _, inner) => mac_make(kit, inner, made, insets),
-        Canvas(_) => unsafe { let k = kit; let _ = k; core::ptr::null_mut() },
         Spaced(m, inner) => {
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
             (kit.send_id)(stack, kit.sel("setOrientation:"), 1);
