@@ -525,6 +525,16 @@ fn wide(x: i128) -> f64 {
     (x >> 64) as i64 as f64 * 18446744073709551616.0 + x as u64 as f64
 }
 
+/// `x.fixed(digits)`: always that many decimals.
+pub fn fixed(x: f64, digits: i64) -> String {
+    format!("{:.*}", digits.clamp(0, 30) as usize, x)
+}
+
+/// `x.round(digits)`.
+pub fn round_to(x: f64, digits: i64) -> f64 {
+    fixed(x, digits).parse().unwrap_or(x)
+}
+
 /// `l.median` of a List that is not empty: the middle value once sorted, or halfway between the
 /// two middle ones.
 pub fn median(values: &[i64], float: bool) -> f64 {

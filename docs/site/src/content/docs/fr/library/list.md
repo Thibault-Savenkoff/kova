@@ -24,6 +24,14 @@ du guide montre comment s'en servir ; cette page liste tout ce qu'elles ont.
 | Écrit | Fait |
 | --- | --- |
 | `l.length -> Int` | le nombre d'éléments. |
+| `l.is_empty -> Bool` | si la liste n'a aucun élément. |
+| `l.first -> T?` | le premier élément, `none` si la liste est vide. |
+| `l.last -> T?` | le dernier élément, `none` si la liste est vide. |
+| `l.contains(x: T) -> Bool` | si `x` est dans la liste, comparé avec `=`. |
+| `l.min -> T?` | le plus petit élément, `none` si la liste est vide. |
+| `l.max -> T?` | le plus grand élément, `none` si la liste est vide. |
+| `l.sum -> T` | le total d'une `List<Int>` ou `List<Float>`, `0` si la liste est vide. |
+| `l.reversed -> List<T>` | une nouvelle liste, dans l'ordre inverse. |
 | `l[i]` | l'élément à la position `i`. Après la fin, le programme s'arrête. |
 | `l[i] := v` | remplace l'élément en `i` (`l` doit être un `var`). |
 | `l.add(v)` | met `v` à la fin. Une valeur qui possède de la mémoire y est déplacée : `l.add(move name)`. |

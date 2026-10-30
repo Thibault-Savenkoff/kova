@@ -1,0 +1,13 @@
+// Written as in another language: the help says what Kova wants.
+fn main {
+    let name: String := "a"
+    print(nmae)
+    print(null)
+    prinln(name)
+    print(name.lenght)
+    print(name.size)
+}
+// error: did you mean `name`?
+// error: did you mean `none`?
+// error: did you mean `print`?
+// error: did you mean `length`?

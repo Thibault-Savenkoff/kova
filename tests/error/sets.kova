@@ -12,7 +12,7 @@ fn main {
 // error: `Set` takes one type, not 2: `Set<String>`
 // error: `=` does not compare Sets yet
 // error: `Set<Int>` has no method `push`
-// error: `length`, `add`, `contains`, `remove`, `clone`
+// error: did you mean `add`?
 // error: `s` is declared with let
 // error: `Set` has no function `Set.make`
 // error: different types: `Int` expected, `Bool` given

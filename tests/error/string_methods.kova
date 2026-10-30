@@ -8,5 +8,5 @@ fn main {
 // error: different types: `String` expected, `Int` given
 // error: `trim`
 // error: `upper`
-// error: `split`, `words`, `chars`
+// error: did you mean `to_upper`?
 // error: `Int` expected, `Bool` given

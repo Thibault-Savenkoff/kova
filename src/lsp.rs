@@ -867,6 +867,14 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         block("all", format!("{{{elem} -> Bool}} -> Bool"), ""),
         fold,
         plain("sorted", format!("-> List<{elem}>  ·  sorted {{ a: {elem}, b: {elem} => a < b }}")),
+        plain("contains", format!("(x: {elem}) -> Bool")),
+        plain("first", format!("-> {elem}?")),
+        plain("last", format!("-> {elem}?")),
+        plain("is_empty", "-> Bool".into()),
+        plain("sum", format!("-> {elem}")),
+        plain("min", format!("-> {elem}?")),
+        plain("max", format!("-> {elem}?")),
+        plain("reversed", format!("-> List<{elem}>")),
         plain("shuffled", format!("-> List<{elem}>")),
         plain("chosen", format!("-> {elem}?")),
         plain("mean", "-> Float".into()),
@@ -1507,7 +1515,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

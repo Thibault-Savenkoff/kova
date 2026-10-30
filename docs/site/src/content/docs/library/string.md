@@ -97,6 +97,8 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 | Method | Gives |
 | --- | --- |
 | `s.trim -> String` | `s` without spaces, tabs and line breaks at both ends. |
+| `s.is_empty -> Bool` | whether `s` has no character. |
+| `s.lines -> List<String>` | the lines of `s`, without their line breaks (`\n` or `\r\n`). |
 | `s.to_upper -> String` | `s` in capitals, accented letters too (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` in small letters. |
 | `s.replace(old: String, new: String) -> String` | `s` with every `old` replaced by `new`. `old` cannot be `""`. |

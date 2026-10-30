@@ -492,6 +492,9 @@ pub enum StrOp {
     /// `l.mean`, `l.median` of a List that is not empty: (the List, 1 for Floats) → a Float's bits.
     Mean,
     Median,
+    Lines,
+    Fixed,
+    RoundTo,
     /// `secure.random(from..to)`, `to` excluded and above `from` (checked before).
     SecureRandom,
     /// `secure.token(n)`, `n` ≥ 0 (checked before): a new String of `2n` hexadecimal digits.
@@ -569,6 +572,7 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "replace" => StrOp::Replace,
         "split" => StrOp::Split,
         "words" => StrOp::Words,
+        "lines" => StrOp::Lines,
         "chars" => StrOp::Chars,
         "to_upper" => StrOp::ToUpper,
         "to_lower" => StrOp::ToLower,
@@ -4231,6 +4235,19 @@ impl<'a> Translator<'a> {
     /// `n.abs`, `a.min(b)`, `n.pow(k)`, `x.sqrt`, `x.round`… on the number `v` (Part 4, "Standard
     /// library v2"): the same instructions in run and build, so the same digits.
     fn number_method(&mut self, e: &Expr, v: Local, name: &str, args: &[Expr]) -> Slots {
+        // `x.fixed(2)`, a text; `x.round(2)`, a Float: their digits are the same in run and build.
+        if name == "fixed" || (name == "round" && !args.is_empty()) {
+            let (digits, bits, dst) = (self.expr1(&args[0]), self.int_local(), self.int_local());
+            self.emit(Inst::Convert(bits, Conversion::ToBits, v, NOWHERE));
+            self.emit(Inst::Str(dst, if name == "fixed" { StrOp::Fixed } else { StrOp::RoundTo }, vec![bits, digits]));
+            if name == "fixed" {
+                self.temps.push((dst, Type::String));
+                return vec![dst];
+            }
+            let x = self.new_slots(&Type::Float)[0];
+            self.emit(Inst::Convert(x, Conversion::FromBits, dst, NOWHERE));
+            return vec![x];
+        }
         let ExprKind::Method { receiver, name: n, .. } = &e.kind else { unreachable!("a method call") };
         let ty = self.ty(receiver);
         let float = ty == Type::Float;
@@ -4465,7 +4482,8 @@ impl<'a> Translator<'a> {
     }
 
     /// `l.chosen`: a copy of an element drawn by `random`'s chance, `none` if `l` is empty.
-    fn chosen(&mut self, list: Local, elem: &Type) -> Slots {
+    /// A copy of the element `index` gives from the List's length, or `none` when the List is empty.
+    fn element_or_none(&mut self, list: Local, elem: &Type, index: impl FnOnce(&mut Self, Local) -> Local) -> Slots {
         let ty = Type::Optional(Box::new(elem.clone()));
         let v = self.new_slots(&ty);
         v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
@@ -4474,8 +4492,7 @@ impl<'a> Translator<'a> {
         let (some, yes, done) = (self.int_local(), self.new_block(), self.new_block());
         self.emit(Inst::Binary(some, Op::Gt, n, zero, NOWHERE));
         self.go(End::Branch(some, yes, done), yes);
-        let i = self.int_local();
-        self.emit(Inst::Str(i, StrOp::Random, vec![zero, n]));
+        let i = index(self, n);
         let element = self.load(list, i, elem);
         let copy = self.clone_value(&element, elem);
         self.emit(Inst::Const(v[0], 1));
@@ -4483,6 +4500,37 @@ impl<'a> Translator<'a> {
         self.go(End::Jump(done), done);
         self.track(&v, &ty);
         v
+    }
+
+    fn chosen(&mut self, list: Local, elem: &Type) -> Slots {
+        self.element_or_none(list, elem, |t, n| {
+            let (i, zero) = (t.int_local(), t.constant(0));
+            t.emit(Inst::Str(i, StrOp::Random, vec![zero, n]));
+            i
+        })
+    }
+
+    /// `l.min`, `l.max`: the first of the smallest, or of the biggest.
+    fn extreme(&mut self, list: Local, elem: &Type, biggest: bool, span: Span) -> Slots {
+        self.element_or_none(list, elem, |t, _| {
+            let best = t.constant(0);
+            t.each_element(list, elem, |t, i, v| {
+                let kept = t.load(list, best, elem);
+                let better = if biggest { t.less(&kept, &v, elem, span) } else { t.less(&v, &kept, elem, span) };
+                let (yes, next) = (t.new_block(), t.new_block());
+                t.go(End::Branch(better, yes, next), yes);
+                t.emit(Inst::Copy(best, i));
+                t.go(End::Jump(next), next);
+            });
+            best
+        })
+    }
+
+    /// `l.is_empty`, also for a Map or a Set, laid out like a List.
+    fn is_empty(&mut self, list: Local) -> Slots {
+        let (n, zero) = (self.int_local(), self.constant(0));
+        self.emit(Inst::ListLength(n, list));
+        vec![self.compare(Op::Eq, n, zero)]
     }
 
     /// `dst := a op b`, a new Bool local.
@@ -5621,6 +5669,7 @@ impl<'a> Translator<'a> {
                 let Type::Map(k, v) = self.ty(receiver) else { unreachable!() };
                 let map = self.expr1(receiver);
                 match name.text.as_str() {
+                    "is_empty" => self.is_empty(map),
                     "length" => {
                         let n = self.int_local();
                         self.emit(Inst::ListLength(n, map));
@@ -5658,6 +5707,7 @@ impl<'a> Translator<'a> {
                 let Type::Set(elem) = self.ty(receiver) else { unreachable!() };
                 let set = self.expr1(receiver);
                 match name.text.as_str() {
+                    "is_empty" => self.is_empty(set),
                     "length" => {
                         let n = self.int_local();
                         self.emit(Inst::ListLength(n, set));
@@ -5697,6 +5747,51 @@ impl<'a> Translator<'a> {
                     "sorted" => self.sorted(list, &elem, args.last(), e.span),
                     "shuffled" => self.shuffled(list, &elem),
                     "chosen" => self.chosen(list, &elem),
+                    "first" => self.element_or_none(list, &elem, |t, _| t.constant(0)),
+                    "last" => self.element_or_none(list, &elem, |t, n| {
+                        let (one, i) = (t.constant(1), t.int_local());
+                        t.emit(Inst::Binary(i, Op::Minus, n, one, NOWHERE));
+                        i
+                    }),
+                    "min" | "max" => self.extreme(list, &elem, name.text == "max", e.span),
+                    "is_empty" => self.is_empty(list),
+                    "contains" => {
+                        let x = self.expr(&args[0]);
+                        let found = self.int_local();
+                        self.emit(Inst::Const(found, 0));
+                        self.each_element(list, &elem, |t, _, v| {
+                            let same = t.equal(&v, &x, &elem, e.span);
+                            let (yes, next) = (t.new_block(), t.new_block());
+                            t.go(End::Branch(same, yes, next), yes);
+                            t.emit(Inst::Const(found, 1));
+                            t.go(End::Jump(next), next);
+                        });
+                        vec![found]
+                    }
+                    "sum" => {
+                        let (total, zero, loc) = (self.new_slots(&elem)[0], self.constant(0), self.loc(name.span));
+                        let float = *elem == Type::Float;
+                        self.emit(if float { Inst::Convert(total, Conversion::FromBits, zero, NOWHERE) } else { Inst::Copy(total, zero) });
+                        self.each_element(list, &elem, |t, _, v| {
+                            t.emit(if float { Inst::FBinary(total, Op::Plus, total, v[0], loc) } else { Inst::Binary(total, Op::Plus, total, v[0], loc) });
+                        });
+                        vec![total]
+                    }
+                    "reversed" => {
+                        let (ty, out, n, one) = (self.ty(e), self.int_local(), self.int_local(), self.constant(1));
+                        self.emit(Inst::ListNew(out, scalars(&elem).len()));
+                        self.emit(Inst::ListLength(n, list));
+                        self.times(n, |t, i| {
+                            let (last, j) = (t.int_local(), t.int_local());
+                            t.emit(Inst::Binary(last, Op::Minus, n, one, NOWHERE));
+                            t.emit(Inst::Binary(j, Op::Minus, last, i, NOWHERE));
+                            let v = t.load(list, j, &elem);
+                            let copy = t.clone_value(&v, &elem);
+                            t.push(out, &copy);
+                        });
+                        self.track(&[out], &ty);
+                        vec![out]
+                    }
                     "mean" | "median" => {
                         let (n, zero) = (self.int_local(), self.constant(0));
                         self.emit(Inst::ListLength(n, list));
@@ -5744,6 +5839,11 @@ impl<'a> Translator<'a> {
                     let arg = args.first().map(|a| self.expr1(a));
                     let loc = self.loc(name.span);
                     return vec![self.date_method(v, &ty, &name.text, arg, loc)];
+                }
+                if self.ty(receiver) == Type::String && name.text == "is_empty" {
+                    let (n, zero) = (self.int_local(), self.constant(0));
+                    self.emit(Inst::Str(n, StrOp::Length, vec![v]));
+                    return vec![self.compare(Op::Eq, n, zero)];
                 }
                 let string = |op| match op {
                     "length" => StrOp::Length,

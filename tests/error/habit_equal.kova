@@ -1,0 +1,6 @@
+fn main {
+    if 1 == 1 {
+        print(1)
+    }
+}
+// error: Kova compares with one `=`: write `a = b`

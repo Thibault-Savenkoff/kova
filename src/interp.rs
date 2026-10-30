@@ -864,9 +864,15 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = s(0).replace(s(1), s(2));
                             heap.make(t)
                         }
-                        StrOp::Split | StrOp::Words => {
+                        StrOp::Fixed => {
+                            let t = crate::shared::fixed(f64::from_bits(locals[a[0]] as u64), locals[a[1]]);
+                            heap.make(t)
+                        }
+                        StrOp::RoundTo => crate::shared::round_to(f64::from_bits(locals[a[0]] as u64), locals[a[1]]).to_bits() as i64,
+                        StrOp::Split | StrOp::Words | StrOp::Lines => {
                             let parts: Vec<String> = match op {
                                 StrOp::Split => s(0).split(s(1)).map(String::from).collect(),
+                                StrOp::Lines => s(0).lines().map(String::from).collect(),
                                 _ => s(0).split_ascii_whitespace().map(String::from).collect(),
                             };
                             let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();

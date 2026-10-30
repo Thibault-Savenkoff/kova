@@ -99,6 +99,8 @@ quel.
 | Méthode | Donne |
 | --- | --- |
 | `s.trim -> String` | `s` sans espaces, tabulations ni sauts de ligne aux deux bouts. |
+| `s.is_empty -> Bool` | si `s` n'a aucun caractère. |
+| `s.lines -> List<String>` | les lignes de `s`, sans leurs sauts de ligne (`\n` ou `\r\n`). |
 | `s.to_upper -> String` | `s` en majuscules, lettres accentuées comprises (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` en minuscules. |
 | `s.replace(old: String, new: String) -> String` | `s` avec chaque `old` remplacé par `new`. `old` ne peut pas être `""`. |

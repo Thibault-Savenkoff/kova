@@ -12,4 +12,4 @@ fn main {
 // error: `s` is neither an `Int` nor a `Float`
 // error: different types: `Int` expected, `String` given
 // error: `String` has no method `size`
-// error: methods of `String`: `length`, `clone`
+// error: did you mean `length`?

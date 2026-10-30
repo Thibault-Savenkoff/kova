@@ -15,4 +15,4 @@ fn main {
 // error: the parameters of this block don't match its type here: `{Int, Int -> Bool}`
 // error: `keys` takes no argument
 // error: `Map<String, Int>` has no method `size`
-// error: `length`, `contains`, `remove`, `keys`, `values`, `clone`
+// error: did you mean `length`?

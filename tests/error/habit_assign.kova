@@ -1,0 +1,4 @@
+fn main {
+    var i: Int = 0
+}
+// error: Kova gives a value with `:=`

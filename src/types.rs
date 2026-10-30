@@ -448,6 +448,57 @@ pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer",
 
 /// `web` written without `import web`, `get` or `Request` without `web.`, or a name from before
 /// the modules (`read_file`): what to write instead.
+const BASIC_TYPES: [&str; 8] = ["Int", "Float", "Bool", "Char", "String", "List", "Map", "Set"];
+
+/// The name of `known` closest to `name` (whatever its capitals), when it looks like a typo.
+fn closest<'a>(name: &str, known: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    // Edits between two names; two neighbours swapped count as one, the commonest typo.
+    fn distance(a: &[char], b: &[char]) -> usize {
+        let mut d = vec![vec![0; b.len() + 1]; a.len() + 1];
+        for i in 0..=a.len() {
+            for j in 0..=b.len() {
+                d[i][j] = if i == 0 || j == 0 {
+                    i + j
+                } else {
+                    let mut best = (d[i - 1][j - 1] + (a[i - 1] != b[j - 1]) as usize).min(d[i - 1][j] + 1).min(d[i][j - 1] + 1);
+                    if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                        best = best.min(d[i - 2][j - 2] + 1);
+                    }
+                    best
+                };
+            }
+        }
+        d[a.len()][b.len()]
+    }
+    let letters = |s: &str| s.to_lowercase().chars().collect::<Vec<char>>();
+    let wanted = letters(name);
+    let far = (wanted.len() / 4 + 1).min(2);
+    known.map(|k| (distance(&wanted, &letters(k)), k)).filter(|(d, _)| *d <= far).min().map(|(_, k)| k)
+}
+
+/// The member a developer means: the word of another language, else a typo's closest name.
+fn member_like<'a>(name: &str, known: &[&'a str]) -> Option<&'a str> {
+    let usual = match name {
+        "len" | "size" | "count" => "length",
+        "push" | "append" | "insert" => "add",
+        "includes" | "has" => "contains",
+        "upper" | "toUpperCase" => "to_upper",
+        "lower" | "toLowerCase" => "to_lower",
+        "str" | "toString" => "to_string",
+        "strip" => "trim",
+        _ => "",
+    };
+    known.iter().find(|k| **k == usual).copied().or_else(|| closest(name, known.iter().copied()))
+}
+
+/// The help of an unknown method: the one meant if it can be told, else them all.
+fn methods_help(name: &str, ty: &str, methods: &[&str]) -> String {
+    match member_like(name, methods) {
+        Some(n) => t!("did_you_mean", name = n),
+        None => t!("methods_of", type = ty, methods = quoted(methods)),
+    }
+}
+
 fn module_help(name: &str) -> Option<String> {
     if MODULES.contains(&name) {
         return Some(t!("module_import", module = name));
@@ -725,11 +776,11 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
-pub const MAP_METHODS: &[&str] = &["length", "contains", "remove", "keys", "values", "clone"];
-pub const SET_METHODS: &[&str] = &["length", "add", "contains", "remove", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
+pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone"];
+pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone"];
 pub const STRING_METHODS: &[&str] =
-    &["trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
+    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
 
@@ -740,7 +791,7 @@ fn quoted(names: &[&str]) -> String {
 
 /// The methods of `number_method`, numbers' and dates'.
 pub const NUMBER_METHODS: &[&str] = &[
-    "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
+    "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "fixed", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
     "plus_days", "plus_months", "plus_hours", "plus_minutes", "plus_seconds", "days_until", "seconds_until", "date", "weekday",
 ];
 
@@ -756,6 +807,7 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         // `libm`'s (musl's, in Rust): the same digits in run and build (`shared::math`).
         (Type::Float, "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "ln" | "log10" | "exp") => (vec![], float()),
         (Type::Float, "floor" | "ceil" | "round") => (vec![], int()),
+        (Type::Float, "fixed") => (vec![int()], Type::String),
         // Dates (PLAN Part 4, "Dates, the rest"): what a day or a time becomes.
         (Type::Date | Type::DateTime, "plus_days" | "plus_months") | (Type::DateTime, "plus_hours" | "plus_minutes" | "plus_seconds") => (vec![int()], t.clone()),
         (Type::Date, "days_until") | (Type::DateTime, "seconds_until") => (vec![t.clone()], int()),
@@ -771,6 +823,8 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
     let s = || Type::String;
     let list = |t| Type::List(Box::new(t));
     Some(match name {
+        "is_empty" => (vec![], Type::Bool),
+        "lines" => (vec![], list(s())),
         "trim" => (vec![], s()),
         "contains" | "starts_with" | "ends_with" => (vec![s()], Type::Bool),
         "replace" => (vec![s(), s()], s()),
@@ -2043,10 +2097,22 @@ impl Checker<'_> {
         self.diags.push(Diag::new(span, msg));
     }
 
-    /// An unknown name: when it is one of Kova's modules or in one, the help says what to write.
+    /// An unknown name: the help says what to write when it is one of Kova's modules or in one,
+    /// a word of another language, or close to a name that exists.
     fn unknown(&mut self, span: Span, msg: String, name: &str) {
         let d = Diag::new(span, msg);
-        self.diags.push(match module_help(name) {
+        let word = match name {
+            "null" | "nil" | "None" | "undefined" => Some("none"),
+            "True" => Some("true"),
+            "False" => Some("false"),
+            "this" => Some("self"),
+            "loop" => Some("while true"),
+            _ => None,
+        };
+        let vars = self.scopes.iter().flat_map(|s| s.keys());
+        let known = vars.chain(self.functions.keys()).chain(self.structs.keys()).map(String::as_str);
+        let help = module_help(name).or_else(|| word.or_else(|| closest(name, known.chain(BASIC_TYPES).chain(["print"]))).map(|w| t!("did_you_mean", name = w)));
+        self.diags.push(match help {
             Some(h) => d.help(h),
             None => d,
         });
@@ -3517,6 +3583,27 @@ impl Checker<'_> {
             }
             "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" | "each workers(…)" | "map workers(…)" => return Some(self.block_method(elem, name, args)),
             "length" => (vec![], Type::Int),
+            "is_empty" => (vec![], Type::Bool),
+            "contains" => {
+                if let Some(t) = self.missing_equal(elem) {
+                    self.error(name.span, t!("contains_needs_equal", type = t.text()));
+                }
+                (vec![(Mode::Read, elem.clone())], Type::Bool)
+            }
+            "first" | "last" => (vec![], Type::Optional(Box::new(elem.clone()))),
+            "reversed" => (vec![], Type::List(Box::new(elem.clone()))),
+            "min" | "max" => {
+                if !self.has(elem, "Comparable") {
+                    self.error(name.span, t!("order_needed", name = name.text, type = elem.text()));
+                }
+                (vec![], Type::Optional(Box::new(elem.clone())))
+            }
+            "sum" => {
+                if !matches!(elem, Type::Int | Type::Float | Type::Error) {
+                    self.error(name.span, t!("stats_needs_numbers", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
+                }
+                (vec![], elem.clone())
+            }
             // PLAN Part 4 "The library after Python, step 3".
             "shuffled" => (vec![], Type::List(Box::new(elem.clone()))),
             "chosen" => (vec![], Type::Optional(Box::new(elem.clone()))),
@@ -3559,7 +3646,7 @@ impl Checker<'_> {
                 let t = Type::List(Box::new(elem.clone())).text();
                 self.diags.push(
                     Diag::new(name.span, t!("no_method", type = t, name = name.text))
-                        .help(t!("methods_of", type = t, methods = quoted(LIST_METHODS))),
+                        .help(methods_help(&name.text, &t, LIST_METHODS)),
                 );
                 args.iter().for_each(|a| {
                     self.expr(a);
@@ -3567,7 +3654,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
+        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -3746,6 +3833,7 @@ impl Checker<'_> {
     fn map_method(&mut self, receiver: &Expr, t: &Type, k: &Type, v: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
             "length" => (vec![], Type::Int),
+            "is_empty" => (vec![], Type::Bool),
             "contains" => (vec![(Mode::Read, k.clone())], Type::Bool),
             "remove" => (vec![(Mode::Read, k.clone())], Type::Optional(Box::new(v.clone()))),
             // Copies, in the order the keys were added.
@@ -3759,7 +3847,7 @@ impl Checker<'_> {
             _ => {
                 self.diags.push(
                     Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
-                        .help(t!("methods_of", type = t.text(), methods = quoted(MAP_METHODS))),
+                        .help(methods_help(&name.text, &t.text(), MAP_METHODS)),
                 );
                 args.iter().for_each(|a| {
                     self.expr(a);
@@ -3783,6 +3871,7 @@ impl Checker<'_> {
     fn set_method(&mut self, receiver: &Expr, t: &Type, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
             "length" => (vec![], Type::Int),
+            "is_empty" => (vec![], Type::Bool),
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
             "contains" => (vec![(Mode::Read, elem.clone())], Type::Bool),
             "remove" => (vec![(Mode::Read, elem.clone())], Type::Bool),
@@ -3790,7 +3879,7 @@ impl Checker<'_> {
             _ => {
                 self.diags.push(
                     Diag::new(name.span, t!("no_method", type = t.text(), name = name.text))
-                        .help(t!("methods_of", type = t.text(), methods = quoted(SET_METHODS))),
+                        .help(methods_help(&name.text, &t.text(), SET_METHODS)),
                 );
                 args.iter().for_each(|a| {
                     self.expr(a);
@@ -4129,9 +4218,12 @@ impl Checker<'_> {
             Type::Struct(d) => d.fields().iter().map(|(n, _)| n.as_str()).collect(),
             _ => vec![],
         };
-        let fields: Vec<String> = own.into_iter().chain(methods).map(|n| format!("`{n}`")).collect();
+        let names: Vec<&str> = own.into_iter().chain(methods).collect();
+        let fields: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
         let mut diag = Diag::new(name.span, t!("no_member", type = owner, name = name.text));
-        if !fields.is_empty() {
+        if let Some(n) = member_like(&name.text, &names) {
+            diag = diag.help(t!("did_you_mean", name = n));
+        } else if !fields.is_empty() {
             diag = diag.help(t!("fields_of", type = owner, fields = fields.join(", ")));
         }
         self.diags.push(diag);
@@ -4694,6 +4786,11 @@ impl Checker<'_> {
                     self.arguments(name, args, &[(Mode::Read, param)], &[Some(given)]);
                     return Type::Float;
                 }
+                // `x.round` gives an `Int`, `x.round(2)` a `Float` with 2 decimals.
+                if t == Type::Float && name.text == "round" && !args.is_empty() {
+                    self.arguments(name, args, &[(Mode::Read, Type::Int)], &[]);
+                    return Type::Float;
+                }
                 if let Some((params, result)) = number_method(&t, &name.text) {
                     let params: Vec<(Mode, Type)> = params.into_iter().map(|p| (Mode::Read, p)).collect();
                     if params.is_empty() && !args.is_empty() {
@@ -4728,6 +4825,8 @@ impl Checker<'_> {
                         d = d.help(t!("float_method", name = name.text, code = code));
                     } else if let Type::Optional(_) = t {
                         d = d.help(t!("optional_method_help"));
+                    } else if let Some(n) = member_like(&name.text, &known.iter().map(|k| k.trim_matches('`')).collect::<Vec<_>>()) {
+                        d = d.help(t!("did_you_mean", name = n));
                     } else if !known.is_empty() {
                         d = d.help(t!("methods_of", type = t.text(), methods = known.join(", ")));
                     }

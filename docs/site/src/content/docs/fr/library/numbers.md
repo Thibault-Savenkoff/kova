@@ -75,6 +75,8 @@ un : `let x: Float := 2`.
 | `x.floor -> Int` | le plus grand entier inférieur ou égal (`(-2.5).floor` vaut `-3`). |
 | `x.ceil -> Int` | le plus petit entier supérieur ou égal. |
 | `x.round -> Int` | l'entier le plus proche, les demis loin de zéro (`2.5.round` vaut `3`). |
+| `x.round(digits: Int) -> Float` | la valeur gardée à `digits` décimales (`3.14159.round(2)` vaut `3.14`). |
+| `x.fixed(digits: Int) -> String` | un texte avec exactement `digits` décimales (`2.5.fixed(2)` donne `2.50`) : la façon d'afficher des prix et des mesures. |
 | `x.to_int -> Int` | la partie entière, coupée vers zéro (`(-2.7).to_int` vaut `-2`). |
 | `x.sqrt -> Float` | la racine carrée (`NaN` pour un nombre négatif). |
 | `x.pow(e: Int) -> Float`, `x.pow(e: Float) -> Float` | `x` à la puissance `e`. |

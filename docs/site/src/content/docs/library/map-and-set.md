@@ -17,6 +17,7 @@ tuples of them, and types that follow [`Equal`](/guide/interfaces-and-generics/#
 | --- | --- |
 | `["a" := 1, "b" := 2]` | a map of these entries; `[]` is an empty one where the type is known |
 | `m.length -> Int` | the number of entries. |
+| `m.is_empty -> Bool` | whether the Map has no entry. |
 | `m[k] -> V?` | the value of `k`, `none` if there is none. |
 | `m[k] := v` | gives `k` the value `v`, adding the key if needed (`m` must be a `var`). |
 | `m.contains(k: K) -> Bool` | whether `k` has a value. |
@@ -79,6 +80,7 @@ A `Map<String, T>` is also read from and written to JSON objects:
 | --- | --- |
 | `Set["a", "b"]` | a set of these values (a value written twice is kept once); `Set[]` is empty |
 | `s.length -> Int` | the number of values. |
+| `s.is_empty -> Bool` | whether the Set has no value. |
 | `s.add(v)` | adds `v`, unless it is already there. |
 | `s.contains(v: T) -> Bool` | whether `v` is there. |
 | `s.remove(v: T) -> Bool` | takes `v` out; `true` if it was there. |

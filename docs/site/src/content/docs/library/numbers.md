@@ -74,6 +74,8 @@ A number with a fraction, 64 bits (IEEE 754 `double`), about 15 to 17 significan
 | `x.floor -> Int` | the largest whole number below or equal (`(-2.5).floor` is `-3`). |
 | `x.ceil -> Int` | the smallest whole number above or equal. |
 | `x.round -> Int` | the nearest whole number, halves away from zero (`2.5.round` is `3`). |
+| `x.round(digits: Int) -> Float` | the value kept to `digits` decimals (`3.14159.round(2)` is `3.14`). |
+| `x.fixed(digits: Int) -> String` | a text with exactly `digits` decimals (`2.5.fixed(2)` is `2.50`): the way to show prices and measures. |
 | `x.to_int -> Int` | the whole part, cut towards zero (`(-2.7).to_int` is `-2`). |
 | `x.sqrt -> Float` | the square root (`NaN` for a negative number). |
 | `x.pow(e: Int) -> Float`, `x.pow(e: Float) -> Float` | `x` to the power `e`. |

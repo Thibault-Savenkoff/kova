@@ -1,0 +1,13 @@
+struct Dog {
+    name: String
+}
+
+fn main {
+    let dogs: List<Dog> := []
+    print(dogs.min)
+    print(dogs.sum)
+    print(dogs.contains(Dog { name := "Rex" }))
+}
+// error: `min` needs an order: `Dog` does not follow `Comparable`
+// error: `Dog`
+// error: `contains` compares with `=`, which does not compare `Dog` values

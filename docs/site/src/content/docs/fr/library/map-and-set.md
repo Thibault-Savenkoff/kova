@@ -19,6 +19,7 @@ Leurs clés peuvent être de n'importe quel type qui se compare avec `=` : nombr
 | --- | --- |
 | `["a" := 1, "b" := 2]` | une map de ces entrées ; `[]` en est une vide là où le type est connu |
 | `m.length -> Int` | le nombre d'entrées. |
+| `m.is_empty -> Bool` | si la Map n'a aucune entrée. |
 | `m[k] -> V?` | la valeur de `k`, `none` s'il n'y en a pas. |
 | `m[k] := v` | donne à `k` la valeur `v`, en ajoutant la clé si besoin (`m` doit être un `var`). |
 | `m.contains(k: K) -> Bool` | si `k` a une valeur. |
@@ -81,6 +82,7 @@ Une `Map<String, T>` se lit aussi depuis des objets JSON et s'y écrit :
 | --- | --- |
 | `Set["a", "b"]` | un set de ces valeurs (une valeur écrite deux fois est gardée une fois) ; `Set[]` est vide |
 | `s.length -> Int` | le nombre de valeurs. |
+| `s.is_empty -> Bool` | si le Set n'a aucune valeur. |
 | `s.add(v)` | ajoute `v`, sauf s'il y est déjà. |
 | `s.contains(v: T) -> Bool` | si `v` y est. |
 | `s.remove(v: T) -> Bool` | retire `v` ; `true` s'il y était. |

@@ -1,0 +1,6 @@
+fn main {
+    if not true {
+        print(1)
+    }
+}
+// error: write `!x`

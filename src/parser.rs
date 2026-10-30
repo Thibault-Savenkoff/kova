@@ -260,8 +260,31 @@ impl Parser<'_> {
         }
     }
     fn error<T>(&mut self, span: Span, msg: impl Into<String>) -> R<T> {
-        self.diags.push(Diag::new(span, msg));
+        let d = Diag::new(span, msg);
+        let habit = if span == self.token().span { self.habit() } else { None };
+        self.diags.push(match habit {
+            Some(h) => d.help(h),
+            None => d,
+        });
         Err(())
+    }
+    /// What to write instead, when the error comes from a habit of another language.
+    fn habit(&self) -> Option<String> {
+        let word = |back: usize| self.pos.checked_sub(back).map_or(String::new(), |p| self.text(self.t[p].span));
+        // Two signs with no space between them, like `==`.
+        let joined = self.pos > 0 && self.t[self.pos - 1].span.end == self.token().span.start;
+        let (now, before) = (word(0), word(1));
+        Some(match (before.as_str(), now.as_str()) {
+            ("=", "=") if joined => t!("habit_equal"),
+            ("+", "+") | ("-", "-") if joined => t!("habit_increment", sign = before),
+            ("*", "*") if joined => t!("habit_power"),
+            ("not", _) => t!("habit_not"),
+            ("?", _) if word(2) == "?" => t!("habit_default"),
+            (_, "=") => t!("habit_assign"),
+            (_, "and") => t!("habit_and"),
+            (_, "or") => t!("habit_or"),
+            _ => return None,
+        })
     }
     fn expect(&mut self, s: &str) -> R<Span> {
         if self.is_sym(s) {

@@ -1,0 +1,5 @@
+fn main {
+    var i: Int := 0
+    i++
+}
+// error: write `x += 1`

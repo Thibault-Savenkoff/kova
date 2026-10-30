@@ -24,6 +24,14 @@ lists everything they have.
 | Written | Does |
 | --- | --- |
 | `l.length -> Int` | the number of elements. |
+| `l.is_empty -> Bool` | whether the list has no element. |
+| `l.first -> T?` | the first element, `none` if the list is empty. |
+| `l.last -> T?` | the last element, `none` if the list is empty. |
+| `l.contains(x: T) -> Bool` | whether `x` is in the list, compared with `=`. |
+| `l.min -> T?` | the smallest element, `none` if the list is empty. |
+| `l.max -> T?` | the biggest element, `none` if the list is empty. |
+| `l.sum -> T` | the total of a `List<Int>` or `List<Float>`, `0` if the list is empty. |
+| `l.reversed -> List<T>` | a new list, in the opposite order. |
 | `l[i]` | the element at position `i`. Past the end, the program stops. |
 | `l[i] := v` | replaces the element at `i` (`l` must be a `var`). |
 | `l.add(v)` | puts `v` at the end. A value that owns memory is moved in: `l.add(move name)`. |

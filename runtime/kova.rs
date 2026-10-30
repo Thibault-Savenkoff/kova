@@ -536,6 +536,21 @@ pub extern "C" fn kova_str_words(a: i64) -> i64 {
     texts(text_of(a).split_ascii_whitespace())
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_lines(a: i64) -> i64 {
+    texts(text_of(a).lines())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_float_fixed(x: i64, digits: i64) -> i64 {
+    new_text(shared::fixed(f64::from_bits(x as u64), digits).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_float_round_to(x: i64, digits: i64) -> i64 {
+    shared::round_to(f64::from_bits(x as u64), digits).to_bits() as i64
+}
+
 /// The Unicode code of each character.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_chars(a: i64) -> i64 {

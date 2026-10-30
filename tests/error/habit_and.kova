@@ -1,0 +1,6 @@
+fn main {
+    if true and false {
+        print(1)
+    }
+}
+// error: write `&&`
