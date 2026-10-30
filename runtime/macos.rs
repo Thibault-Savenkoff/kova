@@ -752,6 +752,17 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         made.clear();
         MAC_CANVASES.get().clear();
         let root = mac_make(kit, view, made, 32.0);
+        // A view alone has no room around it: the window's content is always a stack view.
+        let is_a: extern "C" fn(Id, Id, Id) -> bool = unsafe { core::mem::transmute(kit.send as usize) };
+        let root = if is_a(root, kit.sel("isKindOfClass:"), kit.class("NSStackView")) {
+            root
+        } else {
+            let stack = kit.send(kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init"), "autorelease");
+            (kit.send_id)(stack, kit.sel("setOrientation:"), 1);
+            (kit.send_id)(stack, kit.sel("setAlignment:"), 5);
+            (kit.send_two)(stack, kit.sel("addArrangedSubview:"), root);
+            stack
+        };
         (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
