@@ -1,0 +1,27 @@
+// A window, hidden, placed by the program, which then reads where it is.
+import ui
+
+enum Event {
+    Tick
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.text("placed").every(10, Event.Tick)
+}
+
+fn update(n: var Int, e: Event) {
+    n := n + 1
+    match n {
+        1 => ui.place(40, 60) size(400, 300)
+        2 => {
+            let w: ui.Area := ui.window
+            print("{w.x} {w.y} {w.width} {w.height}")
+            ui.close
+        }
+        _ => {}
+    }
+}
+
+fn main {
+    ui.run("Place", 0, view, update) frame(false)
+}

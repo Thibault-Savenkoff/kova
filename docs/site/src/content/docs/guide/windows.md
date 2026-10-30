@@ -404,6 +404,58 @@ Kova's 16 pixels around the content go too, so a title bar reaches the window's 
 Without a frame, the window cannot be resized by its edges: give it its size with `width` and
 `height`, and offer `ui.maximize` if it should grow.
 
+
+## Moving and resizing the window yourself
+
+`ui.window` tells where the window is, `ui.screen` what the screen leaves it, without the menu bar,
+the Dock or the taskbar. Both give a `ui.Area`, with `x`, `y`, `width` and `height`.
+`ui.place(x, y) size(width, height)` puts the window there, at once.
+
+With a clock, that is all an animation needs. This window grows from the center of the screen, at
+the speed you chose, with the curve you chose:
+
+```kova
+import ui
+
+enum Event {
+    Grow
+    Tick
+}
+
+fn view(step: Int) -> ui.View {
+    return ui.button("Grow", Event.Grow).every(16, Event.Tick)
+}
+
+fn update(step: var Int, e: Event) {
+    match e {
+        Grow => step := 1
+        Tick => {
+            if step > 0 && step <= 30 {
+                let t: Float := step.to_float / 30.0
+                let eased: Float := t * t * (3.0 - 2.0 * t)
+                let s: ui.Area := ui.screen
+                let width: Int := 320 + ((s.width - 320).to_float * eased).to_int
+                let height: Int := 200 + ((s.height - 200).to_float * eased).to_int
+                ui.place(s.x + (s.width - width) / 2, s.y + (s.height - height) / 2) size(width, height)
+                step := step + 1
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Grow", 0, view, update)
+}
+```
+
+```text
+[Grow] button "Grow" every(16)
+```
+
+On Linux, `ui.place` does nothing yet: Wayland lets no program choose its window's place, and GTK 4
+cannot resize an open window. `ui.window` gives 0 for `x` and `y`, and `ui.screen` the whole screen,
+panels included.
+
 ## Testing a window
 
 A window cannot be looked at by a test. With `KOVA_UI_SCRIPT=1`, no window opens: each view is

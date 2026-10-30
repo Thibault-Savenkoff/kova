@@ -1,0 +1,27 @@
+// `ui.window` and `ui.screen` read where things are, `ui.place` changes it: what a program needs to
+// animate its window itself.
+import ui
+
+enum Event {
+    Moved
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.button("move", Event.Moved)
+}
+
+fn update(n: var Int, e: Event) {
+    let w: ui.Area := ui.window
+    let s: ui.Area := ui.screen
+    print("{w.x} {w.y} {w.width} {w.height} in {s.width} {s.height}")
+    ui.place(s.x + 10, s.y + 20) size(w.width + 1, w.height + 2)
+}
+
+fn main {
+    ui.run("Place", 0, view, update)
+}
+// stdin: 0
+// expect: [Place] button "move"
+// expect: 0 0 320 200 in 1920 1080
+// expect: [Place] button "move"
+// expect: (place)

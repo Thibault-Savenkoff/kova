@@ -413,6 +413,58 @@ touche les bords de la fenêtre. Mets `.margin` sur ce qui a besoin de place.
 Sans cadre, la fenêtre ne se redimensionne pas par ses bords : donne-lui sa taille avec `width` et
 `height`, et propose `ui.maximize` si elle doit grandir.
 
+
+## Déplacer et redimensionner la fenêtre toi-même
+
+`ui.window` dit où est la fenêtre, `ui.screen` ce que l'écran lui laisse, sans la barre de menus, le
+Dock ou la barre des tâches. Les deux donnent un `ui.Area`, avec `x`, `y`, `width` et `height`.
+`ui.place(x, y) size(width, height)` met la fenêtre à cet endroit, tout de suite.
+
+Avec une horloge, c'est tout ce qu'il faut pour une animation. Cette fenêtre grandit depuis le centre
+de l'écran, à la vitesse et avec la courbe que tu choisis :
+
+```kova
+import ui
+
+enum Event {
+    Grow
+    Tick
+}
+
+fn view(step: Int) -> ui.View {
+    return ui.button("Agrandir", Event.Grow).every(16, Event.Tick)
+}
+
+fn update(step: var Int, e: Event) {
+    match e {
+        Grow => step := 1
+        Tick => {
+            if step > 0 && step <= 30 {
+                let t: Float := step.to_float / 30.0
+                let eased: Float := t * t * (3.0 - 2.0 * t)
+                let s: ui.Area := ui.screen
+                let width: Int := 320 + ((s.width - 320).to_float * eased).to_int
+                let height: Int := 200 + ((s.height - 200).to_float * eased).to_int
+                ui.place(s.x + (s.width - width) / 2, s.y + (s.height - height) / 2) size(width, height)
+                step := step + 1
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Agrandir", 0, view, update)
+}
+```
+
+```text
+[Agrandir] button "Agrandir" every(16)
+```
+
+Sous Linux, `ui.place` ne fait rien pour l'instant : Wayland ne laisse aucun programme choisir la
+place de sa fenêtre, et GTK 4 ne sait pas redimensionner une fenêtre ouverte. `ui.window` donne 0 pour
+`x` et `y`, et `ui.screen` tout l'écran, panneaux compris.
+
 ## Tester une fenêtre
 
 Un test ne peut pas regarder une fenêtre. Avec `KOVA_UI_SCRIPT=1`, aucune fenêtre ne s'ouvre :

@@ -820,6 +820,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             }
             // Apple's animation shows the content as it is when it starts: the program first
             // draws for the size to come, then the next `ui_show` starts it.
+            6 => {
+                let [x, y, width, height] = crate::ui_placed();
+                let (x, width, height) = (x as f64, width as f64, height as f64);
+                mac_set_frame(kit, w, Rect { x, y: mac_top(kit) - y as f64 - height, width, height });
+            }
             5 => {
                 let content = mac_rect(kit, root, "bounds");
                 let to = if (kit.send_int)(w, kit.sel("styleMask")) & 1 << 14 != 0 {
@@ -901,8 +906,7 @@ fn mac_now(kit: &Kit) -> f64 {
 
 /// The content's size in full screen: the whole screen, below the notch if it has one.
 fn mac_full_size(kit: &Kit, w: Id) -> (f64, f64) {
-    let screen = kit.send(w, "screen");
-    let screen = if screen.is_null() { kit.send(kit.class("NSScreen"), "mainScreen") } else { screen };
+    let screen = mac_screen(kit, w);
     let frame = mac_rect(kit, screen, "frame");
     let knows: extern "C" fn(Id, Id, Id) -> bool = unsafe { core::mem::transmute(kit.send as usize) };
     // `NSEdgeInsets` has the shape of a `Rect`: top comes first. Since macOS 12.
@@ -931,9 +935,7 @@ extern "C" fn mac_zoom(me: Id, _message: Id, _sender: Id) {
         return; // in full screen, nothing to grow
     }
     let from = mac_rect(kit, me, "frame");
-    let screen = kit.send(me, "screen");
-    let screen = if screen.is_null() { kit.send(kit.class("NSScreen"), "mainScreen") } else { screen };
-    let full = mac_rect(kit, screen, "visibleFrame");
+    let full = mac_rect(kit, mac_screen(kit, me), "visibleFrame");
     let filling = [from.x - full.x, from.y - full.y, from.width - full.width, from.height - full.height].iter().all(|d| *d > -1.0 && *d < 1.0);
     let to = if filling {
         MAC_BEFORE.get().take().unwrap_or(from)
@@ -956,6 +958,12 @@ fn mac_grow(kit: &Kit, w: Id, now: f64) {
     let (a, b) = (growing.from, growing.to);
     let between = |from: f64, to: f64| from + (to - from) * eased;
     let frame = Rect { x: between(a.x, b.x), y: between(a.y, b.y), width: between(a.width, b.width), height: between(a.height, b.height) };
+    mac_set_frame(kit, w, frame);
+    *MAC_GROWING.get() = (t < 1.0).then_some(Growing { next: now + 1.0 / 120.0, ..growing });
+}
+
+/// Moves the window now, the program being told before anything is painted.
+fn mac_set_frame(kit: &Kit, w: Id, frame: Rect) {
     let set_frame: extern "C" fn(Id, Id, Rect, bool) = unsafe { core::mem::transmute(kit.send as usize) };
     set_frame(w, kit.sel("setFrame:display:"), frame, false);
     kit.send(kit.send(w, "contentView"), "layoutSubtreeIfNeeded");
@@ -963,7 +971,26 @@ fn mac_grow(kit: &Kit, w: Id, now: f64) {
     if MAC_HEARD.get().is_empty() {
         kit.send(w, "displayIfNeeded");
     }
-    *MAC_GROWING.get() = (t < 1.0).then_some(Growing { next: now + 1.0 / 120.0, ..growing });
+}
+
+/// The screen a window is on.
+fn mac_screen(kit: &Kit, w: Id) -> Id {
+    let screen = kit.send(w, "screen");
+    if screen.is_null() { kit.send(kit.class("NSScreen"), "mainScreen") } else { screen }
+}
+
+/// The top of the first screen: AppKit counts y from the bottom, a Kova program from there down.
+fn mac_top(kit: &Kit) -> f64 {
+    let first = kit.send(kit.send(kit.class("NSScreen"), "screens"), "firstObject");
+    mac_rect(kit, first, "frame").height
+}
+
+/// `ui.window` then `ui.screen`: x, y, width, height.
+pub fn ui_areas() -> Option<[i32; 8]> {
+    let kit = KIT.get().as_ref()?;
+    let (w, top) = (kit.window, mac_top(kit));
+    let (a, b) = (mac_rect(kit, w, "frame"), mac_rect(kit, mac_screen(kit, w), "visibleFrame"));
+    Some([a.x as i32, (top - a.y - a.height) as i32, a.width as i32, a.height as i32, b.x as i32, (top - b.y - b.height) as i32, b.width as i32, b.height as i32])
 }
 
 /// Tells the program the real size of its `ui.fill` canvases, if it changed.

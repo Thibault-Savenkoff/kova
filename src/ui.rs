@@ -12,14 +12,22 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 32] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "maximize", "drag", "fill",
+const OWN: [&str; 36] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill",
 ];
 
 const SOURCE: &str = r#"import ui
 import files
 IMPORTS
 public:
+
+struct Area {
+public:
+    x: Int
+    y: Int
+    width: Int
+    height: Int
+}
 
 struct View {
 private:
@@ -248,6 +256,18 @@ fn maximize {
 
 fn full_screen {
     ui.act(5)
+}
+
+fn place(x: Int, y: Int) size(width: Int, height: Int) {
+    ui.put(x, y, width, height)
+}
+
+fn window -> Area {
+    return Area { x := ui.room(3), y := ui.room(4), width := ui.room(5), height := ui.room(6) }
+}
+
+fn screen -> Area {
+    return Area { x := ui.room(7), y := ui.room(8), width := ui.room(9), height := ui.room(10) }
 }
 
 fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame(system: Bool := true) {

@@ -1261,6 +1261,17 @@ fn ui_frame() {
     assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "4", "5", "closed"], "{}", text(&out.stderr));
 }
 
+/// `ui.place` then `ui.window`, on the system's real windows, hidden. `ui.place` does nothing on
+/// Linux (GTK 4 on Wayland).
+#[test]
+fn ui_place() {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    let out = kova(LANG).args(["run", "tests/ui/place.kova"]).env("KOVA_UI_HIDDEN", "1").env_remove("KOVA_UI_SCRIPT").output().unwrap();
+    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["40 60 400 300"], "{}", text(&out.stderr));
+}
+
 #[test]
 fn server_log() {
     let _alone = one_server();

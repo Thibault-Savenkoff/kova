@@ -1067,6 +1067,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             *WINDOW.get() = w as usize;
         }
         let w = *WINDOW.get() as P;
+        *GTK_WINDOW.get() = w as usize;
         let set_title: extern "C" fn(P, *const u8) = t(f("gtk_window_set_title"));
         set_title(w, c_string(title).as_ptr());
         let shape = crate::shared::ui_shape(view);
@@ -1158,6 +1159,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     let change: extern "C" fn(P) = t(f(if is_full(w) != 0 { "gtk_window_unfullscreen" } else { "gtk_window_fullscreen" }));
                     change(w);
                 }
+                // 6, `ui.place`: Wayland gives no program its place, and GTK 4 has no call that
+                // resizes an open window (`gtk_window_set_default_size` does nothing then).
                 _ => {}
             }
         }
@@ -1177,6 +1180,35 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 }
 
 static GTK_LIBRARY: Global<usize> = Global::new(0);
+/// The window, for `ui_areas`.
+static GTK_WINDOW: Global<usize> = Global::new(0);
+
+/// `ui.window` then `ui.screen`: x, y, width, height. A program never knows its place on Wayland,
+/// nor what the panels take from the screen.
+pub fn ui_areas() -> Option<[i32; 8]> {
+    let w = *GTK_WINDOW.get() as P;
+    if w.is_null() {
+        return None;
+    }
+    let f = |name: &str| symbol(*GTK_LIBRARY.get(), name).unwrap_or(0);
+    let mut screen = [0i32; 4];
+    unsafe {
+        use core::mem::transmute as t;
+        let (width, height): (extern "C" fn(P) -> i32, extern "C" fn(P) -> i32) = (t(f("gtk_widget_get_width")), t(f("gtk_widget_get_height")));
+        let surface_of: extern "C" fn(P) -> P = t(f("gtk_native_get_surface"));
+        let surface = surface_of(w);
+        if !surface.is_null() {
+            let display: extern "C" fn(P) -> P = t(f("gdk_surface_get_display"));
+            let monitor: extern "C" fn(P, P) -> P = t(f("gdk_display_get_monitor_at_surface"));
+            let geometry: extern "C" fn(P, *mut i32) = t(f("gdk_monitor_get_geometry"));
+            let at = monitor(display(surface), surface);
+            if !at.is_null() {
+                geometry(at, screen.as_mut_ptr());
+            }
+        }
+        Some([0, 0, width(w), height(w), screen[0], screen[1], screen[2], screen[3]])
+    }
+}
 /// `ui.run(…) frame(false)`.
 static GTK_BARE: Global<bool> = Global::new(false);
 /// What a canvas or a clock heard, for `ui_show`.

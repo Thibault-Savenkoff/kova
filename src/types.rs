@@ -1391,6 +1391,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("ui.drawn".into(), Signature::new(None, vec![], string()));
     c.functions.insert("ui.room".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Int));
     c.functions.insert("ui.act".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
+    c.functions.insert("ui.put".into(), Signature::new(None, vec![(Mode::Read, Type::Int); 4], Type::Unit));
     c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
     c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));
     c.functions.insert("secure.key".into(), Signature::new(None, vec![], string()));

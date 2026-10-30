@@ -954,6 +954,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         }
         let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
         let show_as: extern "system" fn(Handle, i32) -> i32 = core::mem::transmute(user("ShowWindow"));
+        *WIN_WINDOW.get() = w;
         for act in acts {
             match act {
                 // WM_CLOSE
@@ -976,6 +977,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     show_as(w, if is_big(w) != 0 { 9 } else { 3 }); // SW_RESTORE, SW_MAXIMIZE
                 }
                 5 => win_full_screen(w),
+                6 => {
+                    let [x, y, width, height] = crate::ui_placed();
+                    let place: extern "system" fn(Handle, Handle, i32, i32, i32, i32, u32) -> i32 = core::mem::transmute(user("SetWindowPos"));
+                    place(w, 0, x, y, width, height, 0x14); // SWP_NOZORDER | SWP_NOACTIVATE
+                }
                 _ => {}
             }
         }
@@ -1005,6 +1011,36 @@ static WIN: Global<Option<Win32>> = Global::new(None);
 
 /// The window's style (`WS_OVERLAPPEDWINDOW`, unless `ui.run(…) frame(false)`).
 static WIN_STYLE: Global<u32> = Global::new(0xCF0000);
+/// The window, for `ui_areas`.
+static WIN_WINDOW: Global<Handle> = Global::new(0);
+
+/// `ui.window` then `ui.screen`: x, y, width, height.
+pub fn ui_areas() -> Option<[i32; 8]> {
+    let w = *WIN_WINDOW.get();
+    if w == 0 {
+        return None;
+    }
+    let (r, info) = win_measures(w);
+    Some([r[0], r[1], r[2] - r[0], r[3] - r[1], info[5], info[6], info[7] - info[5], info[8] - info[6]])
+}
+
+/// The window's rectangle, and its monitor's `MONITORINFO`: the whole screen from 1, what is left
+/// by the taskbar from 5.
+fn win_measures(w: Handle) -> ([i32; 4], [i32; 10]) {
+    let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+    let (mut r, mut info) = ([0i32; 4], [0i32; 10]);
+    info[0] = 40;
+    unsafe {
+        use core::mem::transmute as t;
+        let rect: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetWindowRect"));
+        let monitor: extern "system" fn(Handle, u32) -> Handle = t(user("MonitorFromWindow"));
+        let about: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetMonitorInfoW"));
+        rect(w, r.as_mut_ptr());
+        about(monitor(w, 2), info.as_mut_ptr()); // MONITOR_DEFAULTTONEAREST
+    }
+    (r, info)
+}
+
 /// The style and the place the window left for the full screen.
 static WIN_BEFORE: Global<Option<(u32, [i32; 4])>> = Global::new(None);
 
@@ -1019,13 +1055,7 @@ fn win_full_screen(w: Handle) {
         let (style, r) = match WIN_BEFORE.get().take() {
             Some(before) => before,
             None => {
-                let (mut r, mut info) = ([0i32; 4], [0i32; 10]);
-                info[0] = 40;
-                let rect: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetWindowRect"));
-                let monitor: extern "system" fn(Handle, u32) -> Handle = t(user("MonitorFromWindow"));
-                let about: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetMonitorInfoW"));
-                rect(w, r.as_mut_ptr());
-                about(monitor(w, 2), info.as_mut_ptr()); // MONITOR_DEFAULTTONEAREST
+                let (r, info) = win_measures(w);
                 *WIN_BEFORE.get() = Some((get_style(w, -16), r));
                 (0x9000_0000, [info[1], info[2], info[3], info[4]])
             }

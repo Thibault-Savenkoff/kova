@@ -1581,6 +1581,10 @@ static UI_ROOMS: Locked<(Vec<(i32, i32)>, usize)> = Locked::new((Vec::new(), 0))
 /// has said), 2 a new view starts.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_room(which: i64) -> i64 {
+    if which > 2 {
+        let areas = if sys::var("KOVA_UI_SCRIPT").is_some() { None } else { sys::ui_areas() };
+        return areas.unwrap_or(shared::UI_AREAS_GUESS)[which as usize - 3] as i64;
+    }
     UI_ROOMS.with(|(rooms, next)| {
         if which == 2 {
             *next = 0;
@@ -1603,6 +1607,20 @@ pub fn ui_room(k: usize, width: i32, height: i32) -> bool {
 
 /// `ui.act`: what the window must do at the next `ui.show`.
 static UI_ACTS: Locked<Vec<i64>> = Locked::new(Vec::new());
+
+/// Where `ui.place` wants the window.
+static UI_PLACE: Locked<[i32; 4]> = Locked::new([0; 4]);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_place(x: i64, y: i64, width: i64, height: i64) -> i64 {
+    UI_PLACE.with(|place| *place = [x as i32, y as i32, width as i32, height as i32]);
+    kova_ui_act(6)
+}
+
+/// What the last `ui.place` asked for.
+pub fn ui_placed() -> [i32; 4] {
+    UI_PLACE.with(|place| *place)
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_act(act: i64) -> i64 {

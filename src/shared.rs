@@ -979,9 +979,14 @@ pub fn ui_act_name(act: i64) -> &'static str {
         2 => "minimize",
         3 => "drag",
         4 => "maximize",
-        _ => "full screen",
+        5 => "full screen",
+        _ => "place",
     }
 }
+
+/// `ui.window` then `ui.screen` (x, y, width, height) before a window has said, and in test mode.
+#[allow(dead_code)]
+pub const UI_AREAS_GUESS: [i32; 8] = [0, 0, 320, 200, 0, 0, 1920, 1080];
 
 /// What `ui.show` gives back when a canvas took another size (src/ui.rs `run`): no button has it.
 #[allow(dead_code)]
