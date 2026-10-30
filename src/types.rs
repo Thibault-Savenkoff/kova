@@ -4433,7 +4433,10 @@ impl Checker<'_> {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Var(_) => self.invoked.contains(&called.id),
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
-                        t @ (Type::Struct(_) | Type::Enum(_)) => self.functions.contains_key(&method_name(&t.owner(), &name.text)),
+                        t @ (Type::Struct(_) | Type::Enum(_)) => {
+                            let key = method_name(&t.owner(), &name.text);
+                            self.functions.contains_key(&key) || self.completed(called, &key).is_some()
+                        }
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each" | "each workers(…)"),
                         Type::Map(..) => name.text == "remove",
                         Type::Set(_) => matches!(name.text.as_str(), "add" | "remove"),

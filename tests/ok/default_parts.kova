@@ -15,6 +15,13 @@ struct Dog {
     fn make(name: String) age(a: Int := 3) -> Dog {
         return Dog { name := "{name}{a}" }
     }
+    fn bark(self) loud(n: Int := 1) {
+        print("{self.name} barks {n}")
+    }
+}
+
+fn twice(f: {Dog}) {
+    f(Dog { name := "Max" })
 }
 
 fn main {
@@ -29,6 +36,11 @@ fn main {
     print(rex.walk far(5))
     print(Dog.make("Max"))
     print(Dog.make("Max") age(7))
+    rex.bark
+    rex.bark loud(2)
+    twice { d: Dog =>
+        d.bark
+    }
 }
 // expect: site.fr:80 false
 // expect: site.fr:8080 false
@@ -40,3 +52,6 @@ fn main {
 // expect: Rex walks 5 km
 // expect: Dog { name: "Max3" }
 // expect: Dog { name: "Max7" }
+// expect: Rex barks 1
+// expect: Rex barks 2
+// expect: Max barks 1
