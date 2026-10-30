@@ -1240,6 +1240,17 @@ fn parallel_lists() {
 
 /// `log(Log.Off)` writes nothing, `log(Log.Start)` only the addresses (PLAN Part 4 "The web
 /// server, what it says"), in run and in build.
+/// A canvas and a clock on the system's real windows, hidden: Linux has no screen in the tests
+/// (and GTK would find the user's). `tests/ok/ui_canvas.kova` checks the rest.
+#[test]
+fn ui_clock() {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    let out = kova(LANG).args(["run", "tests/ui/clock.kova"]).env("KOVA_UI_HIDDEN", "1").output().unwrap();
+    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "4", "5"], "{}", text(&out.stderr));
+}
+
 #[test]
 fn server_log() {
     let _alone = one_server();

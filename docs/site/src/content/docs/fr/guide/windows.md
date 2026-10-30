@@ -187,6 +187,163 @@ Le champ montre toujours l'état. Si `update` ne prend pas un changement (un cha
 une lettre, par exemple), le champ revient à ce que contient l'état, donc l'écran ne montre jamais
 une valeur que le programme n'a pas.
 
+## Dessiner
+
+Les éléments natifs conviennent aux formulaires. Pour un jeu, un graphique ou une apparence bien à
+toi, `ui.canvas` est une zone où tu dessines toi-même. C'est une vue comme les autres : elle se
+place dans une colonne à côté de textes et de boutons, et elle suit la même règle. L'état dit ce
+qu'il y a, `view` le dessine, `update` le change.
+
+```kova
+import ui
+
+enum Event {
+    Pressed(x: Int, y: Int)
+    Tick
+}
+
+struct App {
+    x: Int
+    y: Int
+    ticks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.canvas(300, 200) { d: ui.Draw =>
+        d.clear(ui.white)
+        d.circle(app.x, app.y) radius(20) color(ui.blue)
+        d.text("{app.ticks} ticks", 10, 10) color(ui.gray)
+    }
+    .on_mouse { m: ui.Mouse => Event.Pressed(m.x, m.y) }
+    .every(1000, Event.Tick)
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Pressed(x, y) => {
+            app.x := x
+            app.y := y
+        }
+        Tick => app.ticks := app.ticks + 1
+    }
+}
+
+fn main {
+    ui.run("Dot", App { x := 150, y := 100, ticks := 0 }, view, update)
+}
+```
+
+```text
+[Dot] canvas 300x200 clear(#ffffff) circle(150 100 20 #2563eb 0) text(10 10 16 #6b7280 "0 ticks") every(1000)
+```
+
+Le bloc s'exécute à chaque construction de la vue : un `for` ou un `if` à l'intérieur dessine ce que
+contient l'état. Il n'y a rien à effacer ni à déplacer à la main. Tu changes l'état, et le dessin
+suivant le montre.
+
+Les positions sont en pixels depuis le coin en haut à gauche du canvas. `d.width` et `d.height`
+donnent sa taille.
+
+```kova
+d.clear(ui.white)
+d.rect(10, 20) size(100, 50) color(ui.red)
+d.rect(10, 20) size(100, 50) outline(2)
+d.circle(150, 80) radius(30) color(ui.blue)
+d.line(0, 0) to(100, 100) thickness(3)
+d.text("Score", 10, 90) size(20) color(ui.gray)
+```
+
+Sans `color`, c'est noir. `outline(n)` ne trace que le bord, épais de `n` pixels, à l'intérieur de
+la forme ; sans lui, la forme est remplie. Un canvas commence blanc.
+
+### Souris, clavier, horloge
+
+Trois méthodes font écouter un canvas. Chacune transforme ce qui s'est passé en un de tes
+événements :
+
+| Écrit | Envoie son événement |
+| --- | --- |
+| `.on_mouse { m: ui.Mouse => … }` | quand un bouton est pressé ou relâché, et quand la souris bouge. |
+| `.on_key { k: ui.Key => … }` | à chaque touche pressée, tant que le canvas a le clavier. |
+| `.every(ms, event)` | toutes les `ms` millisecondes. |
+
+`m.x` et `m.y` donnent la position dans le canvas. `m.pressed`, `m.released` et `m.moved` disent ce
+qui s'est passé, `m.right` que c'est le bouton droit. Un mouvement avec un bouton enfoncé reste un
+`m.moved` : pour glisser-déposer, il faut donc une ligne dans ton état :
+
+```kova
+Mouse(x, y, pressed, released) => {
+    if pressed {
+        app.dragging := true
+    }
+    if released {
+        app.dragging := false
+    }
+    if app.dragging {
+        app.x := x
+    }
+}
+```
+
+`k.name` est ce que la touche écrit (`"a"`, `"A"`, `"é"`, `"1"`), ou un mot pour les autres, le même
+sur tous les systèmes : `Left`, `Right`, `Up`, `Down`, `Space`, `Enter`, `Escape`, `Tab`,
+`Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `F1` à `F12`.
+
+`.every` marche aussi sur n'importe quelle autre vue, par exemple pour rafraîchir une horloge. Pour
+une animation, 16 millisecondes donnent environ 60 images par seconde. Un programme plus lent que
+son horloge saute des tics plutôt que de prendre du retard, et seul le dernier mouvement de souris
+attend, mais un clic n'est jamais perdu.
+
+```kova
+import ui
+
+enum Event {
+    Tick
+    Key(name: String)
+}
+
+struct App {
+    x: Int
+    speed: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.canvas(300, 60) { d: ui.Draw =>
+        d.circle(app.x, 30) radius(10) color(ui.red)
+    }
+    .on_key { k: ui.Key => Event.Key(k.name.clone) }
+    .every(16, Event.Tick)
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Tick => app.x := app.x + app.speed
+        Key(name) => match name {
+            "Left" => app.speed := -2
+            "Right" => app.speed := 2
+            _ => {}
+        }
+    }
+}
+
+fn main {
+    ui.run("Ball", App { x := 150, speed := 0 }, view, update)
+}
+```
+
+```text
+[Ball] canvas 300x60 circle(150 30 10 #dc2626 0) every(16)
+```
+
+Le canvas reçoit le clavier à l'ouverture de la fenêtre et à chaque clic sur lui ; un clic dans un
+champ de texte le lui reprend.
+
+En [mode test](#tester-une-fenêtre), un canvas affiche ce qu'il dessine, et `k=press 10 20 1`,
+`k=release 10 20 1`, `k=move 10 20 0` ou `k=key Left` joue un geste sur l'écouteur `k`. Les
+écouteurs se comptent avec les champs de texte, dans l'ordre d'écriture de la vue ; pour un canvas,
+la souris avant le clavier si `.on_mouse` est écrit en premier. `1` est le bouton gauche, `2` le
+droit. Les horloges se comptent avec les boutons.
+
 ## Tester une fenêtre
 
 Un test ne peut pas regarder une fenêtre. Avec `KOVA_UI_SCRIPT=1`, aucune fenêtre ne s'ouvre :

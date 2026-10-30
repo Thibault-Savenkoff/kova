@@ -182,6 +182,160 @@ The field always shows the state. If `update` does not take a change (an age fie
 letter, say), the field goes back to what the state holds, so the screen never shows a value the
 program does not have.
 
+## Drawing
+
+Native widgets cover forms. For a game, a chart or a look of your own, `ui.canvas` is an area you
+draw on yourself. It is a view like the others, so it goes in a column next to texts and buttons,
+and it follows the same rule: the state says what is there, `view` draws it, `update` changes it.
+
+```kova
+import ui
+
+enum Event {
+    Pressed(x: Int, y: Int)
+    Tick
+}
+
+struct App {
+    x: Int
+    y: Int
+    ticks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.canvas(300, 200) { d: ui.Draw =>
+        d.clear(ui.white)
+        d.circle(app.x, app.y) radius(20) color(ui.blue)
+        d.text("{app.ticks} ticks", 10, 10) color(ui.gray)
+    }
+    .on_mouse { m: ui.Mouse => Event.Pressed(m.x, m.y) }
+    .every(1000, Event.Tick)
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Pressed(x, y) => {
+            app.x := x
+            app.y := y
+        }
+        Tick => app.ticks := app.ticks + 1
+    }
+}
+
+fn main {
+    ui.run("Dot", App { x := 150, y := 100, ticks := 0 }, view, update)
+}
+```
+
+```text
+[Dot] canvas 300x200 clear(#ffffff) circle(150 100 20 #2563eb 0) text(10 10 16 #6b7280 "0 ticks") every(1000)
+```
+
+The block runs each time the view is made, so a `for` or an `if` inside it draws what the state
+holds. There is nothing to erase and nothing to move by hand: change the state, and the next
+drawing shows it.
+
+Positions are in pixels from the top left corner of the canvas. `d.width` and `d.height` give its
+size.
+
+```kova
+d.clear(ui.white)
+d.rect(10, 20) size(100, 50) color(ui.red)
+d.rect(10, 20) size(100, 50) outline(2)
+d.circle(150, 80) radius(30) color(ui.blue)
+d.line(0, 0) to(100, 100) thickness(3)
+d.text("Score", 10, 90) size(20) color(ui.gray)
+```
+
+`color` is black when left out. `outline(n)` draws only the edge, `n` pixels thick, inside the
+shape; without it, the shape is filled. A canvas starts white.
+
+### Mouse, keyboard, clock
+
+Three methods make a canvas listen, each turning what happened into one of your events:
+
+| Written | Sends its event |
+| --- | --- |
+| `.on_mouse { m: ui.Mouse => … }` | when a button is pressed or released, and when the mouse moves. |
+| `.on_key { k: ui.Key => … }` | at each key pressed, while the canvas has the keyboard. |
+| `.every(ms, event)` | every `ms` milliseconds. |
+
+`m.x` and `m.y` are the place in the canvas. `m.pressed`, `m.released` and `m.moved` say what
+happened, `m.right` that it is the right button. A move with a button held down still gives
+`m.moved`, so dragging needs a line in your state:
+
+```kova
+Mouse(x, y, pressed, released) => {
+    if pressed {
+        app.dragging := true
+    }
+    if released {
+        app.dragging := false
+    }
+    if app.dragging {
+        app.x := x
+    }
+}
+```
+
+`k.name` is what the key writes (`"a"`, `"A"`, `"é"`, `"1"`), or one word for the others, the same
+on every system: `Left`, `Right`, `Up`, `Down`, `Space`, `Enter`, `Escape`, `Tab`, `Backspace`,
+`Delete`, `Home`, `End`, `PageUp`, `PageDown`, `F1` to `F12`.
+
+`.every` also works on any other view, to refresh a clock display for instance. For an animation,
+16 milliseconds gives about 60 images a second. A program slower than its clock skips ticks rather
+than falling behind, and only the last mouse move waits, but a press is never lost.
+
+```kova
+import ui
+
+enum Event {
+    Tick
+    Key(name: String)
+}
+
+struct App {
+    x: Int
+    speed: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.canvas(300, 60) { d: ui.Draw =>
+        d.circle(app.x, 30) radius(10) color(ui.red)
+    }
+    .on_key { k: ui.Key => Event.Key(k.name.clone) }
+    .every(16, Event.Tick)
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Tick => app.x := app.x + app.speed
+        Key(name) => match name {
+            "Left" => app.speed := -2
+            "Right" => app.speed := 2
+            _ => {}
+        }
+    }
+}
+
+fn main {
+    ui.run("Ball", App { x := 150, speed := 0 }, view, update)
+}
+```
+
+```text
+[Ball] canvas 300x60 circle(150 30 10 #dc2626 0) every(16)
+```
+
+The canvas receives the keyboard when the window opens and each time it is clicked; a click in a
+text field takes it back.
+
+In [test mode](#testing-a-window), a canvas prints what it draws, and `k=press 10 20 1`,
+`k=release 10 20 1`, `k=move 10 20 0` or `k=key Left` plays a gesture on listener `k`. Listeners
+are counted with the text fields, in the order the view is written; for a canvas, the mouse before
+the keyboard if `.on_mouse` is written first. `1` is the left button, `2` the right. Clocks are
+counted with the buttons.
+
 ## Testing a window
 
 A window cannot be looked at by a test. With `KOVA_UI_SCRIPT=1`, no window opens: each view is
@@ -199,6 +353,6 @@ so drive a window program through every case, on any machine, even without a scr
 
 ## What comes next
 
-`import ui` has texts, images, buttons, text fields, rows and columns today. More widgets are planned.
+`import ui` has texts, images, buttons, text fields, rows, columns and a drawing area today. More widgets are planned.
 For a widget it does not have yet, a program can call the system's own library through
 [`extern`](/guide/calling-c/).

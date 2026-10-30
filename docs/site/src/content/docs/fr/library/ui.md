@@ -20,6 +20,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.button(label: String, event: E) -> ui.View` | un bouton ; un clic envoie `event` à `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | un champ de texte qui contient `value` ; à chaque changement fait par l'utilisateur, l'événement du bloc, fait à partir du texte que contient maintenant le champ, va à `update` ([Les champs de texte](/fr/guide/windows/#les-champs-de-texte)). |
 | `ui.image(path: String) -> ui.View` | un fichier image : PNG ou JPEG sur chaque système. Un chemin qui n'existe pas arrête le programme en le nommant. `.size(w)` donne sa largeur en pixels, la hauteur suit. |
+| `ui.canvas(width: Int, height: Int) { d: ui.Draw => … } -> ui.View` | une zone de dessin ([Dessiner](/fr/guide/windows/#dessiner)). |
 | `ui.column(items: List<ui.View>) -> ui.View` | les vues l'une sous l'autre. |
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 | `ui.column(…) align(left\|center\|right)` | la colonne prend toute la largeur qu'on lui donne et y place ses vues. |
@@ -28,8 +29,34 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `vue.size(pixels: Int) -> ui.View` | la hauteur du texte, pour un texte, un bouton ou un champ. |
 | `vue.bold -> ui.View` | le texte en gras. |
 | `vue.margin(pixels: Int) -> ui.View` | des pixels vides tout autour de la vue. |
+| `vue.on_mouse { m: ui.Mouse => E } -> ui.View` | sur un canvas : l'événement du bloc à chaque pression, relâchement et mouvement de la souris. |
+| `vue.on_key { k: ui.Key => E } -> ui.View` | sur un canvas : l'événement du bloc à chaque touche pressée. |
+| `vue.every(ms: Int, event: E) -> ui.View` | envoie `event` toutes les `ms` millisecondes, sur n'importe quelle vue. |
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | n'importe quelle couleur, chaque composante allant de 0 à 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | des couleurs toutes prêtes. |
+
+## Dessiner sur un canvas
+
+| Écrit | Fait |
+| --- | --- |
+| `d.clear(c: ui.Color)` | peint tout le canvas. |
+| `d.rect(x, y) size(w, h) color(c) outline(n)` | un rectangle, depuis son coin en haut à gauche. |
+| `d.circle(x, y) radius(r) color(c) outline(n)` | un cercle, depuis son centre. |
+| `d.line(x, y) to(x2, y2) color(c) thickness(n)` | une ligne, épaisse de 1 pixel par défaut. |
+| `d.text(s, x, y) size(n) color(c)` | un texte, depuis son coin en haut à gauche, haut de 16 pixels par défaut. |
+| `d.width`, `d.height` | la taille du canvas. |
+
+Tous les nombres sont des `Int`, en pixels. `color` vaut noir par défaut. `outline(n)` ne trace que
+le bord ; sans lui, la forme est remplie.
+
+| Champ | C'est |
+| --- | --- |
+| `m.x`, `m.y` | la position de la souris dans le canvas. |
+| `m.pressed`, `m.released`, `m.moved` | ce qui vient de se passer. |
+| `m.right` | c'est le bouton droit. |
+| `k.name` | ce que la touche écrit, ou `Left`, `Right`, `Up`, `Down`, `Space`, `Enter`, `Escape`, `Tab`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `F1` à `F12`. |
+
+## Placement et style
 
 Tout est placé en partant d'en haut à gauche, sur chaque système, sauf si `align` dit autre chose.
 
@@ -55,7 +82,7 @@ formes, et que l'événement de chaque bouton est un `Event`.
 
 | Variable | Effet |
 | --- | --- |
-| `KOVA_UI_SCRIPT=1` | pas de fenêtre : chaque vue est affichée en texte, et le bouton à cliquer (son numéro à partir de 0, dans l'ordre où ils sont écrits), ou `k=texte` pour taper dans le champ `k`, est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Pour les tests. |
+| `KOVA_UI_SCRIPT=1` | pas de fenêtre : chaque vue est affichée en texte, et le bouton à cliquer (son numéro à partir de 0, dans l'ordre où ils sont écrits), ou `k=texte` pour taper dans le champ `k`, ou un geste comme `k=press 10 20 1` ou `k=key Left` pour un canvas, est lu sur l'entrée ; la fin de l'entrée ferme la fenêtre. Pour les tests. |
 | `KOVA_UI_HIDDEN=1` | la fenêtre existe mais n'est jamais montrée (Windows, macOS), pour un programme qui la pilote. |
 
 Sans `width` ni `height`, la fenêtre s'ouvre à la taille de son contenu, avec au moins 320 pixels de large. Elle n'est jamais plus petite que son contenu, quelle que soit la taille demandée, et qui s'en sert peut la redimensionner : un clic ne remet jamais la première taille, il fait seulement grandir la fenêtre quand le contenu a besoin de plus de place.

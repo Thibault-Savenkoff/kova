@@ -1,0 +1,33 @@
+// A clock and a canvas in a real window, hidden (`KOVA_UI_HIDDEN`): the system's own code runs.
+import ui
+
+enum Event {
+    Tick
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.canvas(100, 50) { d: ui.Draw =>
+        d.clear(ui.white)
+        d.rect(n, 5) size(10, 10) color(ui.red)
+        d.rect(1, 1) size(98, 48) outline(2)
+        d.circle(50, 25) radius(10) color(ui.blue)
+        d.circle(50, 25) radius(20) outline(1)
+        d.line(0, 0) to(99, 49) color(ui.green) thickness(2)
+        d.text("frame {n}", 2, 30) size(12)
+    }
+    .on_mouse { m: ui.Mouse => Event.Tick }
+    .on_key { k: ui.Key => Event.Tick }
+    .every(10, Event.Tick)
+}
+
+fn update(n: var Int, e: Event) {
+    n := n + 1
+    print(n)
+    if n = 5 {
+        exit(0)
+    }
+}
+
+fn main {
+    ui.run("Clock", 0, view, update)
+}
