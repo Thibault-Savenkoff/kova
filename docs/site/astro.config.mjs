@@ -33,6 +33,7 @@ export default defineConfig({
         fr: { label: 'Français', lang: 'fr' },
       },
       logo: { src: './src/assets/kova.svg' },
+      customCss: ['./src/styles/kova.css'],
       favicon: '/favicon.svg',
       // First visit only: a browser set to French opens the French pages. After that, the
       // language picker decides, so someone who switches back to English stays there.

@@ -1,0 +1,5 @@
+/* Third-level headings stay readable without competing with the section above them. */
+:root {
+	--sl-text-h3: var(--sl-text-xl);
+	--sl-text-h4: var(--sl-text-lg);
+}
