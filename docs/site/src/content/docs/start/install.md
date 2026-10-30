@@ -29,8 +29,45 @@ terminal:
 kova --version
 ```
 
-The files are also on the [releases page](https://github.com/Thibault-Savenkoff/kova/releases),
-one per system. Running the same command again installs the latest version.
+To **update Kova**, run the same command again: it always installs the latest version. To
+**uninstall** it, delete the `kova` file (the `kova` folder on Windows).
+
+### Or download it by hand
+
+Each Kova version is published ready-made on the
+[releases page](https://github.com/Thibault-Savenkoff/kova/releases). Take your system's file:
+
+| Your system | The file |
+| --- | --- |
+| Linux on a PC (Intel, AMD) | `kova-linux-x64.tar.gz` |
+| Linux on ARM (Raspberry Pi 4/5, ARM servers) | `kova-linux-arm64.tar.gz` |
+| Windows on a PC (Intel, AMD) | `kova-windows-x64.zip` |
+| Windows on ARM (Surface Pro X, Snapdragon) | `kova-windows-arm64.zip` |
+| macOS, every Mac (Apple Silicon and Intel) | `kova-mac.tar.gz` |
+
+On Linux, `uname -m` tells you which one: `x86_64` for x64, `aarch64` for arm64.
+
+Each file holds the `kova` command (`kova.exe` on Windows) and its two licenses, nothing else.
+Unpack it, then put `kova` in a folder of your `PATH`:
+
+```sh
+tar -xzf kova-linux-x64.tar.gz
+mv kova ~/.local/bin/
+```
+
+On Windows, right-click the `.zip`, choose **Extract All**, then put `kova.exe` in a folder of
+your `PATH`.
+
+:::caution[On a Mac, after a download in the browser]
+macOS blocks a downloaded program that Apple has not signed ("the developer cannot be
+verified"). Lift that block once:
+
+```sh
+xattr -d com.apple.quarantine kova
+```
+
+The `curl` command above does not have this problem.
+:::
 
 :::note[Two things only some programs need on Linux]
 A program that opens a window (`import ui`) needs GTK 4, and one that uses `https://` needs

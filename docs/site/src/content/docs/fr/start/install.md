@@ -31,8 +31,46 @@ nouveau terminal :
 kova --version
 ```
 
-Les fichiers sont aussi sur la [page des versions](https://github.com/Thibault-Savenkoff/kova/releases),
-un par système. Relancer la même commande installe la dernière version.
+Pour **mettre Kova à jour**, relance la même commande : elle installe toujours la dernière
+version. Pour le **désinstaller**, supprime le fichier `kova` (ou le dossier `kova` sous Windows).
+
+### Ou télécharger à la main
+
+Chaque version de Kova est publiée toute prête sur la
+[page des versions](https://github.com/Thibault-Savenkoff/kova/releases). Prends le fichier de ton
+système :
+
+| Ton système | Le fichier |
+| --- | --- |
+| Linux sur un PC (Intel, AMD) | `kova-linux-x64.tar.gz` |
+| Linux sur ARM (Raspberry Pi 4/5, serveurs ARM) | `kova-linux-arm64.tar.gz` |
+| Windows sur un PC (Intel, AMD) | `kova-windows-x64.zip` |
+| Windows sur ARM (Surface Pro X, Snapdragon) | `kova-windows-arm64.zip` |
+| macOS, tous les Mac (Apple Silicon et Intel) | `kova-mac.tar.gz` |
+
+Sous Linux, `uname -m` dit lequel prendre : `x86_64` pour x64, `aarch64` pour arm64.
+
+Chaque fichier contient la commande `kova` (`kova.exe` sous Windows) et ses deux licences, rien
+d'autre. Décompresse-le, puis mets `kova` dans un dossier de ton `PATH` :
+
+```sh
+tar -xzf kova-linux-x64.tar.gz
+mv kova ~/.local/bin/
+```
+
+Sous Windows, fais un clic droit sur le `.zip`, choisis **Extraire tout**, puis mets `kova.exe`
+dans un dossier de ton `PATH`.
+
+:::caution[Sur Mac, après un téléchargement par le navigateur]
+macOS bloque un programme téléchargé qui n'est pas signé par Apple (« impossible de vérifier le
+développeur »). Retire ce blocage une fois :
+
+```sh
+xattr -d com.apple.quarantine kova
+```
+
+La commande `curl` ci-dessus n'a pas ce problème.
+:::
 
 :::note[Deux choses dont seuls certains programmes ont besoin sous Linux]
 Un programme qui ouvre une fenêtre (`import ui`) a besoin de GTK 4, et un programme qui utilise
