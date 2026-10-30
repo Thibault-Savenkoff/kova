@@ -1,0 +1,92 @@
+# A ready-made `kova` for each system, holding the runtimes of all seven targets: nothing to
+# install to use it (no Rust, no rustup). Only in the public repository, where minutes cost nothing.
+# Started by hand: `gh workflow run release.yml -R Thibault-Savenkoff/kova -f version=0.1.0`
+# publishes the release `v0.1.0`; with `-f dry=true`, everything is built and checked, nothing is
+# published (the files stay a few days among the run's artifacts).
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version, as in Cargo.toml (0.1.0)'
+        required: true
+      dry:
+        description: 'Build and check only'
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.repository == 'Thibault-Savenkoff/kova'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: an older C library, so the Linux `kova` runs on older systems too.
+          - { os: ubuntu-22.04, name: linux-x64 }
+          - { os: ubuntu-22.04-arm, name: linux-arm64 }
+          - { os: windows-latest, name: windows-x64 }
+          - { os: windows-11-arm, name: windows-arm64 }
+          # Both Macs in one file, made on an arm Mac.
+          - { os: macos-latest, name: mac }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable
+      # The runtimes of every system (build.rs puts them inside kova).
+      - run: rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
+      - name: The version asked is kova's
+        shell: bash
+        run: grep -q "^version = \"${{ inputs.version }}\"$" Cargo.toml
+      - if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          cargo build --release --locked
+          mkdir out && cp target/release/kova${{ runner.os == 'Windows' && '.exe' || '' }} out/
+      - if: runner.os == 'macOS'
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir out && lipo -create -output out/kova target/aarch64-apple-darwin/release/kova target/x86_64-apple-darwin/release/kova
+      - name: It builds for every system
+        shell: bash
+        run: |
+          printf 'fn main {\n    print("hello")\n}\n' > hello.kova
+          for t in linux linux-arm windows windows-arm mac mac-arm mac-intel; do
+            out/kova build hello.kova --target $t -o hello-$t 2> said.txt || { cat said.txt; exit 1; }
+            if grep -q rustup said.txt; then cat said.txt; exit 1; fi
+          done
+          [ "$(out/kova run hello.kova)" = hello ]
+          out/kova --version
+      - if: runner.os != 'Windows'
+        run: |
+          cp LICENSE-MIT LICENSE-APACHE out/
+          tar -czf kova-${{ matrix.name }}.tar.gz -C out .
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE-MIT, LICENSE-APACHE out/
+          Compress-Archive -Path out/* -DestinationPath kova-${{ matrix.name }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kova-${{ matrix.name }}
+          path: kova-${{ matrix.name }}.*
+
+  publish:
+    needs: build
+    if: inputs.dry != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" kova-* -R "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "Kova ${{ inputs.version }}" \
+            --notes "Install: see https://thibault-savenkoff.github.io/kova/start/install/ . Each kova makes executables for every system (linux, linux-arm, windows, windows-arm, mac, mac-arm, mac-intel); nothing else to install."
