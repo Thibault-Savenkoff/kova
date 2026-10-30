@@ -912,7 +912,7 @@ fn mac_grow(kit: &Kit, w: Id, now: f64) {
     let frame = Rect { x: between(a.x, b.x), y: between(a.y, b.y), width: between(a.width, b.width), height: between(a.height, b.height) };
     let set_frame: extern "C" fn(Id, Id, Rect, bool) = unsafe { core::mem::transmute(kit.send as usize) };
     set_frame(w, kit.sel("setFrame:display:"), frame, false);
-    kit.send(kit.send(w, "contentView"), "layoutIfNeeded");
+    kit.send(kit.send(w, "contentView"), "layoutSubtreeIfNeeded");
     mac_measure(kit);
     if MAC_HEARD.get().is_empty() {
         kit.send(w, "displayIfNeeded");
