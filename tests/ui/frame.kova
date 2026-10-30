@@ -6,7 +6,7 @@ enum Event {
 }
 
 fn view(n: Int) -> ui.View {
-    return ui.canvas(100, 50) { d: ui.Draw =>
+    return ui.canvas(ui.fill, ui.fill) { d: ui.Draw =>
         d.clear(ui.white)
     }
     .on_key { k: ui.Key => Event.Tick }

@@ -960,6 +960,10 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     use crate::shared::UiOp as Op;
     let Some(kit) = KIT.get().as_ref() else { return };
     let Some((_, canvas)) = MAC_CANVASES.get().iter().find(|e| e.0 == me) else { return };
+    let bounds = mac_bounds(kit, me);
+    if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
+        MAC_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+    }
     let Some(graphics) = library("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics") else { return };
     let Some(appkit) = library("/System/Library/Frameworks/AppKit.framework/AppKit") else { return };
     let f = |name: &str| symbol(graphics, name).unwrap_or(0);
@@ -986,7 +990,7 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
             let inset = n as f64 / 2.0;
             Rect { x: x as f64 + inset, y: y as f64 + inset, width: w as f64 - 2.0 * inset, height: h as f64 - 2.0 * inset }
         };
-        let whole = Rect { x: 0.0, y: 0.0, width: canvas.width as f64, height: canvas.height as f64 };
+        let whole = Rect { x: 0.0, y: 0.0, width: bounds.width, height: bounds.height };
         fill(0xffffff);
         fill_rect(context, whole);
         for op in &canvas.ops {
@@ -1035,10 +1039,35 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     }
 }
 
+/// A view's `bounds`. A struct this big comes back through memory on Intel, a variant of
+/// `objc_msgSend` that arm64 does not have.
+fn mac_bounds(kit: &Kit, view: Id) -> Rect {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut out = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+        if let Some(send) = library("/usr/lib/libobjc.A.dylib").and_then(|l| symbol(l, "objc_msgSend_stret")) {
+            let send: extern "C" fn(*mut Rect, Id, Id) = unsafe { core::mem::transmute(send) };
+            send(&mut out, view, kit.sel("bounds"));
+        }
+        out
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let send: extern "C" fn(Id, Id) -> Rect = unsafe { core::mem::transmute(kit.send as usize) };
+        send(view, kit.sel("bounds"))
+    }
+}
+
 /// A canvas and its constraints; it hears the mouse moving wherever it is, a field having the keys.
 fn mac_canvas(kit: &Kit, c: &crate::shared::UiCanvas) -> Id {
     let view = kit.send(kit.send(kit.canvas, "alloc"), "init");
-    for (anchor, length) in [("widthAnchor", c.width), ("heightAnchor", c.height)] {
+    let give_way: extern "C" fn(Id, Id, f32, i64) = unsafe { core::mem::transmute(kit.send as usize) };
+    for (orientation, anchor, length) in [(0, "widthAnchor", c.width), (1, "heightAnchor", c.height)] {
+        if length == 0 {
+            // `ui.fill`: it takes the room the stack view has left, before any other part.
+            give_way(view, kit.sel("setContentHuggingPriority:forOrientation:"), 1.0, orientation);
+            continue;
+        }
         let fixed = (kit.send_float)(kit.send(view, anchor), kit.sel("constraintEqualToConstant:"), length as f64);
         (kit.send_id)(fixed, kit.sel("setActive:"), 1);
     }
@@ -1200,6 +1229,9 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
             };
             (kit.send_id)(stack, kit.sel("setAlignment:"), place);
             (kit.send_float)(stack, kit.sel("setSpacing:"), 8.0);
+            if crate::shared::ui_fills_down(node) && column || crate::shared::ui_fills(node) && !column {
+                (kit.send_id)(stack, kit.sel("setDistribution:"), 0); // NSStackViewDistributionFill
+            }
             for p in parts {
                 let part = mac_make(kit, p, made, 0.0);
                 (kit.send_two)(stack, kit.sel("addArrangedSubview:"), part);

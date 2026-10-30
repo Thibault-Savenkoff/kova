@@ -859,8 +859,12 @@ pub enum UiNode {
 /// mouse and the keyboard.
 #[derive(Clone, Default)]
 pub struct UiCanvas {
+    /// 0: all the room there is (`ui.fill`).
     pub width: i32,
     pub height: i32,
+    /// Its place among the view's canvases: `ui.room` asks by it.
+    #[allow(dead_code)]
+    pub number: usize,
     pub ops: Vec<UiOp>,
     pub mouse: Option<usize>,
     pub key: Option<usize>,
@@ -978,6 +982,10 @@ pub fn ui_act_name(act: i64) -> &'static str {
     }
 }
 
+/// What `ui.show` gives back when a canvas took another size (src/ui.rs `run`): no button has it.
+#[allow(dead_code)]
+pub const UI_RESIZED: i64 = 1 << 40;
+
 /// Everything that ticks in a view: (milliseconds, button number).
 #[allow(dead_code)]
 pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
@@ -1033,8 +1041,21 @@ impl UiAlign {
 #[allow(dead_code)]
 pub fn ui_fills(node: &UiNode) -> bool {
     match node {
-        UiNode::Column(_, a) => *a != UiAlign::Start,
+        UiNode::Column(parts, a) => *a != UiAlign::Start || parts.iter().any(ui_fills),
+        UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
+        UiNode::Canvas(c) => c.width == 0,
+        _ => false,
+    }
+}
+
+/// The same, down: a `ui.fill` height somewhere inside.
+#[allow(dead_code)]
+pub fn ui_fills_down(node: &UiNode) -> bool {
+    match node {
+        UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
+        UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
+        UiNode::Canvas(c) => c.height == 0,
         _ => false,
     }
 }
@@ -1042,7 +1063,7 @@ pub fn ui_fills(node: &UiNode) -> bool {
 #[allow(dead_code)] // the interpreter only uses `ui_describe`
 pub fn ui_tree(text: &str) -> UiNode {
     let mut chars = text.chars();
-    ui_node(&mut chars, &mut [0, 0], UiStyle::default())
+    ui_node(&mut chars, &mut [0, 0, 0], UiStyle::default())
 }
 
 /// What `ui.show` gives back (src/ui.rs): `-1` the window closed, `n` button `n` clicked,
@@ -1112,7 +1133,7 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
     n
 }
 
-fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyle) -> UiNode {
+fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyle) -> UiNode {
     let (mut own, mut margin) = (UiStyle::default(), None);
     // What listens, the last one written first.
     let mut listening = Vec::new();
@@ -1160,7 +1181,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyl
     clocks.into_iter().fold(node, |inner, (ms, n)| UiNode::Every(ms, n, inner.into()))
 }
 
-fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], style: UiStyle) -> UiNode {
+fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
     let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D') {
         UiAlign::Start
     } else {
@@ -1176,7 +1197,8 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], st
             let body: String = chars.by_ref().take(n).collect();
             let (size, ops) = body.split_once('\n').unwrap_or((&body, ""));
             let (width, height) = size.split_once(' ').unwrap_or((size, ""));
-            UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), ops: ui_ops(ops), ..UiCanvas::default() })
+            counts[2] += 1;
+            UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), number: counts[2] - 1, ops: ui_ops(ops), ..UiCanvas::default() })
         }
         'T' | 'B' | 'I' | 'P' => {
             let label: String = chars.by_ref().take(n).collect();
@@ -1243,7 +1265,8 @@ pub fn ui_describe(text: &str) -> String {
                 out.push_str(&format!(" every({ms})"));
             }
             UiNode::Canvas(c) => {
-                out.push_str(&format!("canvas {}x{}", c.width, c.height));
+                let side = |n: i32| if n == 0 { "fill".into() } else { format!("{n}") };
+                out.push_str(&format!("canvas {}x{}", side(c.width), side(c.height)));
                 for op in &c.ops {
                     out.push_str(&match op {
                         UiOp::Clear(c) => format!(" clear(#{c:06x})"),

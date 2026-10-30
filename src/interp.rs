@@ -965,6 +965,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             heap.ui_acts.push(locals[a[0]]);
                             0
                         }
+                        // As the runtime before a window has told it anything.
+                        StrOp::UiRoom => [320, 200, 0][locals[a[0]] as usize],
                         StrOp::UiDraw => {
                             let op = s(0).to_string();
                             heap.ui_drawing.push_str(&op);

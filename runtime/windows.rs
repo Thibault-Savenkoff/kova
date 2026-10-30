@@ -1005,6 +1005,18 @@ static WIN: Global<Option<Win32>> = Global::new(None);
 /// The window's style (`WS_OVERLAPPEDWINDOW`, unless `ui.run(…) frame(false)`).
 static WIN_STYLE: Global<u32> = Global::new(0xCF0000);
 
+/// While a view is placed: the width and height taken by what comes after, for a `ui.fill` canvas.
+static WIN_LEFT: Global<[i32; 2]> = Global::new([0, 0]);
+
+/// The height of a `ui.fill` canvas starting at `y`, with `under` pixels taken below it.
+fn win_filled(window: Handle, y: i32, under: i32) -> i32 {
+    let mut now = [0; 4];
+    if let Some(win) = WIN.get().as_ref() {
+        (win.client)(window, &mut now);
+    }
+    (now[3] - y - win_edge() - under).max(1)
+}
+
 /// The empty pixels around the content: none in a window that has given up its frame.
 fn win_edge() -> i32 {
     if *WIN_STYLE.get() == 0xCF0000 { 16 } else { 0 }
@@ -1441,18 +1453,25 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         Column(parts, a) => {
             let room = if crate::shared::ui_fills(node) { room.max(w) } else { w };
             let mut y = y;
-            for p in parts {
+            for (k, p) in parts.iter().enumerate() {
                 let (pw, ph) = win_size(win, dc, p);
                 let px = if crate::shared::ui_fills(p) { x } else { x + a.offset(room - pw) };
+                // A canvas of `ui.fill` height leaves room for what comes under it.
+                let under: i32 = parts[k + 1..].iter().map(|q| win_size(win, dc, q).1 + GAP).sum();
+                WIN_LEFT.get()[1] += under;
                 win_place(win, dc, window, p, Default::default(), px, y, room, made, same, at);
-                y += ph + GAP;
+                WIN_LEFT.get()[1] -= under;
+                y += if crate::shared::ui_fills_down(p) { win_filled(window, y, under) } else { ph } + GAP;
             }
         }
         Row(parts, a) => {
             let mut x = x;
-            for p in parts {
+            for (k, p) in parts.iter().enumerate() {
                 let (pw, ph) = win_size(win, dc, p);
+                let after: i32 = parts[k + 1..].iter().map(|q| win_size(win, dc, q).0 + GAP).sum();
+                WIN_LEFT.get()[0] += after;
                 win_place(win, dc, window, p, Default::default(), x, y + a.offset(h - ph), pw, made, same, at);
+                WIN_LEFT.get()[0] -= after;
                 x += pw + GAP;
             }
         }
@@ -1472,9 +1491,24 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         Canvas(c) => {
             control("KovaCanvas", "", 0, 0);
             let (handle, canvases) = (made[*at - 1], WIN_CANVASES.get());
+            let mut sized = c.clone();
+            if c.width == 0 || c.height == 0 {
+                let mut now = [0; 4];
+                (win.client)(window, &mut now);
+                if c.width == 0 {
+                    sized.width = (now[2] - x - win_edge() - WIN_LEFT.get()[0]).max(1);
+                }
+                if c.height == 0 {
+                    sized.height = win_filled(window, y, WIN_LEFT.get()[1]);
+                }
+                (win.set_pos)(handle, 0, x, y, sized.width, sized.height, 0x4 | 0x10);
+                if crate::ui_room(c.number, sized.width, sized.height) {
+                    WIN_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+                }
+            }
             match canvases.iter_mut().find(|e| e.0 == handle) {
-                Some(there) => there.1 = c.clone(),
-                None => canvases.push((handle, c.clone())),
+                Some(there) => there.1 = sized,
+                None => canvases.push((handle, sized)),
             }
             (win.invalidate)(handle, null(), 0);
         }

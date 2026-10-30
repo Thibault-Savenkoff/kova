@@ -1086,8 +1086,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     Button(s, _) if gtk_text(button_text(widget)) != *s => set_button(widget, c_string(s).as_ptr()),
                     Canvas(c) => {
                         let draw_again: extern "C" fn(P) = t(f("gtk_widget_queue_draw"));
-                        if let Some((_, ops)) = GTK_CANVASES.get().iter_mut().find(|(area, _)| *area == widget) {
-                            ops.clone_from(&c.ops);
+                        if let Some((_, there)) = GTK_CANVASES.get().iter_mut().find(|(area, _)| *area == widget) {
+                            there.ops.clone_from(&c.ops);
                         }
                         draw_again(widget);
                     }
@@ -1179,7 +1179,7 @@ static GTK_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::Ui
 /// The running clocks (`g_timeout_add_full`).
 static CLOCKS: Global<Vec<u32>> = Global::new(Vec::new());
 /// Each canvas now on screen, with what it draws.
-static GTK_CANVASES: Global<Vec<(P, Vec<crate::shared::UiOp>)>> = Global::new(Vec::new());
+static GTK_CANVASES: Global<Vec<(P, crate::shared::UiCanvas)>> = Global::new(Vec::new());
 
 fn gtk_symbol(name: &str) -> usize {
     symbol(*GTK_LIBRARY.get(), name).unwrap_or(0)
@@ -1265,9 +1265,13 @@ fn gtk_hears_keys(area: P) -> bool {
 }
 
 /// Paints a canvas, from what `ui.canvas` drew. Thickness stays inside a shape, as on every system.
-extern "C" fn gtk_paint(area: P, cairo: P, _width: i32, _height: i32, _data: P) {
+extern "C" fn gtk_paint(area: P, cairo: P, width: i32, height: i32, _data: P) {
     use crate::shared::UiOp::*;
-    let Some((_, ops)) = GTK_CANVASES.get().iter().find(|(a, _)| *a == area) else { return };
+    let Some((_, canvas)) = GTK_CANVASES.get().iter().find(|(a, _)| *a == area) else { return };
+    let ops = &canvas.ops;
+    if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, width, height) {
+        GTK_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+    }
     unsafe {
         use core::mem::transmute as t;
         let f = gtk_symbol;
@@ -1345,7 +1349,10 @@ fn gtk_canvas(g: &Gtk, c: &crate::shared::UiCanvas) -> P {
         content[1](area, c.height);
         let draw: extern "C" fn(P, usize, P, P) = t(f("gtk_drawing_area_set_draw_func"));
         draw(area, gtk_paint as usize, null_mut(), null_mut());
-        GTK_CANVASES.get().push((area, c.ops.clone()));
+        GTK_CANVASES.get().push((area, c.clone()));
+        let expand: [extern "C" fn(P, i32); 2] = [t(f("gtk_widget_set_hexpand")), t(f("gtk_widget_set_vexpand"))];
+        expand[0](area, (c.width == 0) as i32);
+        expand[1](area, (c.height == 0) as i32);
         let add: extern "C" fn(P, P) = t(f("gtk_widget_add_controller"));
         if let Some(n) = c.mouse {
             let clicks: extern "C" fn() -> P = t(f("gtk_gesture_click_new"));
@@ -1517,7 +1524,7 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
     // By default on the left and at the top, as Win32 and AppKit place it: GTK would centre a
     // text alone on its line. GTK_ALIGN_FILL = 0.
     (g.halign)(widget, if crate::shared::ui_fills(node) { 0 } else { h });
-    (g.valign)(widget, v);
+    (g.valign)(widget, if crate::shared::ui_fills_down(node) { 0 } else { v });
     widget
 }
 

@@ -1,0 +1,28 @@
+// `ui.fill`: a canvas taking all the room; `d.width` is what it really got, and a new size draws
+// it again (1099511627776 is what `ui.show` gives then; here the guess before any window said).
+import ui
+
+enum Event {
+    Tick
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.column([
+        ui.canvas(ui.fill, 36) { d: ui.Draw =>
+            d.rect(0, 0) size(d.width, d.height)
+        },
+        ui.canvas(ui.fill, ui.fill) { d: ui.Draw =>
+            d.line(0, 0) to(d.width, d.height)
+        },
+    ])
+}
+
+fn update(n: var Int, e: Event) {
+}
+
+fn main {
+    ui.run("Fill", 0, view, update)
+}
+// stdin: 1099511627776
+// expect: [Fill] column(canvas fillx36 rect(0 0 320 36 #000000 0), canvas fillxfill line(0 0 320 200 #000000 1))
+// expect: [Fill] column(canvas fillx36 rect(0 0 320 36 #000000 0), canvas fillxfill line(0 0 320 200 #000000 1))

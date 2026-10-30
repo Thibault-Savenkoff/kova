@@ -22,7 +22,7 @@ lists what `ui` has.
 | `ui.button(label: String, event: E) -> ui.View` | a button; a click sends `event` to `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | a text field holding `value`; at each change the user makes, the block's event, made from the text the field now holds, goes to `update` ([Text fields](/guide/windows/#text-fields)). |
 | `ui.image(path: String) -> ui.View` | an image file: PNG or JPEG on every system. A path that does not exist stops the program, naming it. `.size(w)` gives its width in pixels, the height following. |
-| `ui.canvas(width: Int, height: Int) { d: ui.Draw => … } -> ui.View` | a drawing area ([Drawing](/guide/windows/#drawing)). |
+| `ui.canvas(width: Int, height: Int) { d: ui.Draw => … } -> ui.View` | a drawing area ([Drawing](/guide/windows/#drawing)). `ui.fill` in place of a size takes all the room there is. |
 | `ui.column(items: List<ui.View>) -> ui.View` | the views one under the other. |
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
 | `ui.column(…) align(left\|center\|right)` | the column takes the whole width it is given and places its views there. |

@@ -12,8 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 30] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "maximize", "drag",
+const OWN: [&str; 31] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "maximize", "drag", "fill",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -210,10 +210,14 @@ fn image(path: String) -> View
     return View { text := "P{path.length}:{path}", events := [], typed := [] }
 }
 
+fn fill -> Int {
+    return 0
+}
+
 fn canvas(width: Int, height: Int, paint: {Draw}) -> View
-    require width > 0 && height > 0 else "a canvas is at least 1 pixel wide and high"
+    require width >= 0 && height >= 0 else "a canvas's size cannot be negative"
 {
-    paint(Draw { width, height })
+    paint(Draw { width := if width = 0 { ui.room(0) } else { width }, height := if height = 0 { ui.room(1) } else { height } })
     let body: String := "{width} {height}\n{ui.drawn}"
     return View { text := "D{body.length}:{body}", events := [], typed := [], canvas := true }
 }
@@ -248,11 +252,17 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame
     }
     var s: STATE := state.clone
     while true {
+        ui.room(2)
         let v: View := VIEW(s)
         let clicked: Int := ui.show(title, v.text, w, h)
         if clicked = -1 {
             return
         }
+        // A canvas took another size: the same state, drawn for it (`shared::UI_RESIZED`).
+        if clicked = 1099511627776 {
+            continue
+        }
+        ui.room(2)
         if clicked >= 0 {
             UPDATE(var s, v.events[clicked].clone)
         } else {

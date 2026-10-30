@@ -1574,6 +1574,33 @@ pub extern "C" fn kova_ui_typed() -> i64 {
     UI_TYPED.with(|now| new_text(now.as_bytes()))
 }
 
+/// The real size of each canvas of the view, as its window last said, and the next one made.
+static UI_ROOMS: Locked<(Vec<(i32, i32)>, usize)> = Locked::new((Vec::new(), 0));
+
+/// `ui.room`: 0 the width, 1 the height of the canvas being made (a guess before its window
+/// has said), 2 a new view starts.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_room(which: i64) -> i64 {
+    UI_ROOMS.with(|(rooms, next)| {
+        if which == 2 {
+            *next = 0;
+            return 0;
+        }
+        let (width, height) = rooms.get(*next).copied().unwrap_or((320, 200));
+        (if which == 0 { width } else { height }) as i64
+    })
+}
+
+/// A window says how big canvas `k` really is; true if that is news.
+pub fn ui_room(k: usize, width: i32, height: i32) -> bool {
+    UI_ROOMS.with(|(rooms, _)| {
+        if rooms.len() <= k {
+            rooms.resize(k + 1, (0, 0));
+        }
+        core::mem::replace(&mut rooms[k], (width, height)) != (width, height)
+    })
+}
+
 /// `ui.act`: what the window must do at the next `ui.show`.
 static UI_ACTS: Locked<Vec<i64>> = Locked::new(Vec::new());
 
@@ -1594,6 +1621,7 @@ pub extern "C" fn kova_ui_draw(op: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_drawn() -> i64 {
+    UI_ROOMS.with(|(_, next)| *next += 1);
     let drawn = UI_DRAWING.with(core::mem::take);
     new_text(drawn.as_bytes())
 }

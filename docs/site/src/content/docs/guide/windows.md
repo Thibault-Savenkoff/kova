@@ -238,6 +238,11 @@ drawing shows it.
 Positions are in pixels from the top left corner of the canvas. `d.width` and `d.height` give its
 size.
 
+`ui.fill` in place of a number gives the canvas all the room there is, so it follows the window:
+`ui.canvas(ui.fill, 36)` is a bar as wide as the window, `ui.canvas(ui.fill, ui.fill)` takes
+everything the other views leave. `d.width` and `d.height` then give what it really got, and it is
+drawn again each time that changes.
+
 ```kova
 d.clear(ui.white)
 d.rect(10, 20) size(100, 50) color(ui.red)

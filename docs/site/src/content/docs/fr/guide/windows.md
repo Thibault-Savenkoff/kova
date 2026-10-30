@@ -244,6 +244,11 @@ suivant le montre.
 Les positions sont en pixels depuis le coin en haut à gauche du canvas. `d.width` et `d.height`
 donnent sa taille.
 
+`ui.fill` à la place d'un nombre donne au canvas toute la place disponible, pour qu'il suive la
+fenêtre : `ui.canvas(ui.fill, 36)` est une barre aussi large que la fenêtre, `ui.canvas(ui.fill, ui.fill)`
+prend tout ce que les autres vues laissent. `d.width` et `d.height` donnent alors sa vraie taille,
+et il est redessiné à chaque changement.
+
 ```kova
 d.clear(ui.white)
 d.rect(10, 20) size(100, 50) color(ui.red)
