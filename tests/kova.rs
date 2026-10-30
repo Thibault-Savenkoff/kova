@@ -1247,7 +1247,7 @@ fn ui_clock() {
     if cfg!(target_os = "linux") {
         return;
     }
-    let out = kova(LANG).args(["run", "tests/ui/clock.kova"]).env("KOVA_UI_HIDDEN", "1").output().unwrap();
+    let out = kova(LANG).args(["run", "tests/ui/clock.kova"]).env("KOVA_UI_HIDDEN", "1").env_remove("KOVA_UI_SCRIPT").output().unwrap();
     assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "4", "5"], "{}", text(&out.stderr));
 }
 
