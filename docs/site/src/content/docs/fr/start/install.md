@@ -11,25 +11,35 @@ ni éditeur de liens, ni Rust.
 
 ## 1. Installer Kova
 
-Sous Linux et macOS :
+### Linux et macOS
+
+Dans un terminal :
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.sh | sh
 ```
 
-Il met `kova` dans `~/.local/bin` (ou dans le dossier que nomme `KOVA_INSTALL`). Sous Windows,
-dans PowerShell :
+Elle met `kova` dans `~/.local/bin` (ou dans le dossier que nomme `KOVA_INSTALL`).
+
+### Windows
+
+Dans PowerShell :
 
 ```sh
 irm https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.ps1 | iex
 ```
 
-Il met `kova.exe` dans `%LOCALAPPDATA%\Programs\kova` et l'ajoute à ton `PATH`. Ensuite, dans un
-nouveau terminal :
+Elle met `kova.exe` dans `%LOCALAPPDATA%\Programs\kova` et l'ajoute à ton `PATH`.
+
+### Vérifier
+
+Dans un nouveau terminal :
 
 ```sh
 kova --version
 ```
+
+### Mettre à jour, désinstaller
 
 Pour **mettre Kova à jour**, relance la même commande : elle installe toujours la dernière
 version. Pour le **désinstaller**, supprime le fichier `kova` (ou le dossier `kova` sous Windows).
