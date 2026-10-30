@@ -10,7 +10,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 8] = ["text", "button", "input", "column", "row", "run", "group", "View"];
+const OWN: [&str; 19] = [
+    "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white",
+];
 
 const SOURCE: &str = r#"import ui
 IMPORTS
@@ -21,6 +23,83 @@ private:
     text: String
     events: List<EVENT>
     typed: List<EVENT>
+
+    fn styled(self, key: String, value: Int) -> View {
+        return View { text := "S{key}{value}:{self.text}", events := self.events.clone, typed := self.typed.clone }
+    }
+
+public:
+
+    fn color(self, c: Color) -> View {
+        return self.styled("c", c.r * 65536 + c.g * 256 + c.b)
+    }
+
+    fn size(self, pixels: Int) -> View
+        require pixels > 0 else "a size is at least 1 pixel"
+    {
+        return self.styled("s", pixels)
+    }
+
+    fn bold(self) -> View {
+        return self.styled("b", 1)
+    }
+
+    fn margin(self, pixels: Int) -> View
+        require pixels >= 0 else "a margin cannot be negative"
+    {
+        return self.styled("m", pixels)
+    }
+}
+
+struct Color {
+private:
+    r: Int
+    g: Int
+    b: Int
+}
+
+fn rgb(r: Int, g: Int, b: Int) -> Color
+    require r >= 0 && r <= 255 else "red goes from 0 to 255"
+    require g >= 0 && g <= 255 else "green goes from 0 to 255"
+    require b >= 0 && b <= 255 else "blue goes from 0 to 255"
+{
+    return Color { r := r, g := g, b := b }
+}
+
+fn red -> Color {
+    return rgb(220, 38, 38)
+}
+
+fn green -> Color {
+    return rgb(22, 163, 74)
+}
+
+fn blue -> Color {
+    return rgb(37, 99, 235)
+}
+
+fn orange -> Color {
+    return rgb(234, 88, 12)
+}
+
+fn yellow -> Color {
+    return rgb(202, 138, 4)
+}
+
+fn purple -> Color {
+    return rgb(147, 51, 234)
+}
+
+fn gray -> Color {
+    return rgb(107, 114, 128)
+}
+
+fn black -> Color {
+    return rgb(0, 0, 0)
+}
+
+fn white -> Color {
+    return rgb(255, 255, 255)
 }
 
 enum Align {

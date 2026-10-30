@@ -82,6 +82,52 @@ it in a centered column: `ui.column([ui.row([…])]) align(center)`.
 The compiler checks the shapes: `view` takes the state and gives a `ui.View`, `update` takes the
 state as `var` and an event, and every button's event has the right type.
 
+## Styling a view
+
+A view follows the system's look until you say otherwise. Style methods follow each other in any
+order, and each gives a new view:
+
+```kova
+import ui
+
+struct App {
+    name: String
+}
+
+enum Event {
+    Renamed(name: String)
+}
+
+fn view(app: App) -> ui.View {
+    let wrong: Bool := app.name.length > 8
+    return ui.column([
+        ui.text("Your name").size(20).bold,
+        ui.input(app.name) { s: String => Event.Renamed(s.clone) }.color(if wrong { ui.red } else { ui.black }),
+        ui.text("Eight letters at most").size(11).color(ui.gray).margin(4),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Renamed(name) => app.name := name.clone
+    }
+}
+
+fn main {
+    ui.run("Style", App { name := "" }, view, update)
+}
+```
+
+Here the field's text turns red while the name is too long. The field stays the same field: the
+person typing keeps their cursor.
+
+Colors are `ui.red`, `ui.blue` and the others, or any color with `ui.rgb(37, 99, 235)`. On a column
+or a row, `color`, `size` and `bold` go to all its views; a view's own style wins. `margin` adds
+empty pixels around the view it is written on.
+
+A button's text keeps the system's color: Windows does not let a native button change it, and a
+window should behave the same everywhere. Its `size` and `bold` work.
+
 ## Text fields
 
 A field shows a value of the state, and each change the user makes, letter by letter, becomes an

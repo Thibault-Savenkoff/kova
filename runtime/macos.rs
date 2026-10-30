@@ -710,7 +710,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     let shape = crate::shared::ui_shape(view);
     if shape == *SHAPE.get() {
         // The same views: only the texts that differ change.
-        for (leaf, &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
+        for ((leaf, _), &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
             use crate::shared::UiNode::*;
             let (s, setter) = match leaf {
                 Text(s) | Input(s, _) => (s, "setStringValue:"),
@@ -729,6 +729,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
+    }
+    for ((leaf, style), &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
+        mac_style(kit, v, leaf, style);
     }
     let root = kit.send(w, "contentView");
     // The window first takes the size the program asked for, else fits its content, at least 320
@@ -832,6 +835,33 @@ impl Kit {
     }
 }
 
+/// Gives a text, button or field its style; without one, the system's font and color.
+fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::shared::UiStyle) {
+    use crate::shared::UiNode::*;
+    let size = if style.size > 0 { style.size as f64 } else { 13.0 }; // `NSFont.systemFontSize`
+    let font = (kit.send_float)(kit.class("NSFont"), kit.sel(if style.bold { "boldSystemFontOfSize:" } else { "systemFontOfSize:" }), size);
+    (kit.send_two)(view, kit.sel("setFont:"), font);
+    if matches!(leaf, Button(..)) {
+        return;
+    }
+    let color = match style.color {
+        Some(c) => {
+            let channel = |shift: u32| ((c >> shift) & 0xff) as f64 / 255.0;
+            let make: extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+            make(kit.class("NSColor"), kit.sel("colorWithSRGBRed:green:blue:alpha:"), channel(16), channel(8), channel(0), 1.0)
+        }
+        None => kit.send(kit.class("NSColor"), if matches!(leaf, Input(..)) { "textColor" } else { "labelColor" }),
+    };
+    (kit.send_two)(view, kit.sel("setTextColor:"), color);
+}
+
+/// A stack view's part that fills its width, `insets` kept from its edges.
+fn mac_fill(kit: &Kit, part: Id, stack: Id, insets: f64) {
+    let equal: extern "C" fn(Id, Id, Id, f64) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+    let width = equal(kit.send(part, "widthAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(stack, "widthAnchor"), -insets);
+    (kit.send_id)(width, kit.sel("setActive:"), 1);
+}
+
 /// The views of a view: a button's tag is its number, `clicked:` reads it; a field's too, for
 /// `controlTextDidChange:`. Each text, button and field goes into `made`, in order. `insets`:
 /// the width its own edges take from its parts.
@@ -875,10 +905,23 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
                 let part = mac_make(kit, p, made, 0.0);
                 (kit.send_two)(stack, kit.sel("addArrangedSubview:"), part);
                 if column && crate::shared::ui_fills(p) {
-                    let equal: extern "C" fn(Id, Id, Id, f64) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
-                    let width = equal(kit.send(part, "widthAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(stack, "widthAnchor"), -insets);
-                    (kit.send_id)(width, kit.sel("setActive:"), 1);
+                    mac_fill(kit, part, stack, insets);
                 }
+            }
+            return (kit.send)(stack, kit.sel("autorelease"));
+        }
+        Styled(_, inner) => return mac_make(kit, inner, made, insets),
+        // A stack view of one part, with room around it.
+        Spaced(m, inner) => {
+            let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
+            (kit.send_id)(stack, kit.sel("setOrientation:"), 1);
+            (kit.send_id)(stack, kit.sel("setAlignment:"), 5);
+            let m = *m as f64;
+            (kit.send_insets)(stack, kit.sel("setEdgeInsets:"), Insets { top: m, left: m, bottom: m, right: m });
+            let part = mac_make(kit, inner, made, 0.0);
+            (kit.send_two)(stack, kit.sel("addArrangedSubview:"), part);
+            if crate::shared::ui_fills(inner) {
+                mac_fill(kit, part, stack, 2.0 * m);
             }
             return (kit.send)(stack, kit.sel("autorelease"));
         }

@@ -1,0 +1,35 @@
+// `.color`, `.size`, `.bold`, `.margin` on a view, in any order: a group hands its text style down.
+import ui
+
+struct App {
+    name: String
+}
+
+fn view(app: App) -> ui.View {
+    let wrong: Bool := app.name.length > 2
+    return ui.column([
+        ui.text("Title").size(20).bold.color(ui.rgb(1, 2, 3)),
+        ui.input(app.name) { s: String => Event.Typed(s.clone) }.color(if wrong { ui.red } else { ui.black }),
+        ui.column([ui.text("a"), ui.text("b").size(9), ui.button("Go", Event.Go).color(ui.blue)]).size(12).color(ui.green).margin(4),
+        ui.row([ui.text("c")]) align(center).margin(8),
+    ]).margin(2)
+}
+
+enum Event {
+    Typed(text: String)
+    Go
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Typed(text) => app.name := text.clone
+        Go => app.name := ""
+    }
+}
+
+fn main {
+    ui.run("Style", App { name := "" }, view, update)
+}
+// stdin: 0=abc
+// expect: [Style] column(text "Title" color(#010203) size(20) bold, input "" color(#000000), column(text "a" color(#16a34a) size(12), text "b" color(#16a34a) size(9), button "Go" size(12)) margin(4), row center(text "c") margin(8)) margin(2)
+// expect: [Style] column(text "Title" color(#010203) size(20) bold, input "abc" color(#dc2626), column(text "a" color(#16a34a) size(12), text "b" color(#16a34a) size(9), button "Go" size(12)) margin(4), row center(text "c") margin(8)) margin(2)

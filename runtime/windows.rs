@@ -764,7 +764,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let mut now = [0; 4];
         (win.client)(window, &mut now);
         *SETTING.get() = true;
-        win_place(win, dc, window, view, 16, 16, now[2] - now[0] - 32, CONTROLS.get(), same, &mut 0);
+        win_place(win, dc, window, view, Default::default(), 16, 16, now[2] - now[0] - 32, CONTROLS.get(), same, &mut 0);
         *SETTING.get() = false;
         (win.release_dc)(window, dc);
     }
@@ -786,6 +786,14 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 *CLICKED.get() = crate::shared::ui_changed(id - FIELD);
                 (win.post)(0, 0, 0, 0);
                 0
+            }
+            // WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC: a text color goes on top of the system's defaults.
+            0x0133 | 0x0138 => {
+                let brush = (win.default)(h, message, w, l);
+                if let Some(&(_, color)) = COLORED.get().iter().find(|(c, _)| *c == l as Handle) {
+                    (win.text_color)(w as Handle, color);
+                }
+                brush
             }
             // WM_SIZE
             0x0005 if !SHOWN.get().is_null() => {
@@ -828,6 +836,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 font: (t::<usize, extern "system" fn(i32) -> Handle>(f(gdi, "GetStockObject")))(17), // DEFAULT_GUI_FONT
                 select: t(f(gdi, "SelectObject")),
                 extent: t(f(gdi, "GetTextExtentPoint32W")),
+                object: t(f(gdi, "GetObjectW")),
+                new_font: t(f(gdi, "CreateFontIndirectW")),
+                text_color: t(f(gdi, "SetTextColor")),
+                invalidate: t(f(user, "InvalidateRect")),
                 adjust: t(f(user, "AdjustWindowRect")),
                 client: t(f(user, "GetClientRect")),
                 set_pos: t(f(user, "SetWindowPos")),
@@ -877,6 +889,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             for c in CONTROLS.get().drain(..) {
                 (win.destroy)(c);
             }
+            COLORED.get().clear();
             *SHAPE.get() = shape;
         }
         let dc = (win.get_dc)(w);
@@ -920,6 +933,32 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 /// While controls are made or given their texts: their EN_CHANGE is not the user typing.
 static SETTING: Global<bool> = Global::new(false);
 
+/// The controls with a color of their own (a `COLORREF`, 0xBBGGRR), for WM_CTLCOLOR….
+static COLORED: Global<Vec<(Handle, u32)>> = Global::new(Vec::new());
+
+/// The font of a style, made once.
+fn win_font(win: &Win32, style: crate::shared::UiStyle) -> Handle {
+    static FONTS: Global<Vec<(i32, bool, Handle)>> = Global::new(Vec::new());
+    if style.size == 0 && !style.bold {
+        return win.font;
+    }
+    if let Some(&(.., font)) = FONTS.get().iter().find(|f| (f.0, f.1) == (style.size, style.bold)) {
+        return font;
+    }
+    // `LOGFONTW`, 92 bytes: the height first (negative: in pixels), the weight at byte 16.
+    let mut log = [0i32; 23];
+    (win.object)(win.font, 92, log.as_mut_ptr());
+    if style.size > 0 {
+        log[0] = -style.size;
+    }
+    if style.bold {
+        log[4] = 700;
+    }
+    let font = (win.new_font)(log.as_ptr());
+    FONTS.get().push((style.size, style.bold, font));
+    font
+}
+
 /// A field's id is `FIELD` + its number (a button's, its number + 1).
 const FIELD: usize = 0x8000;
 
@@ -962,6 +1001,10 @@ struct Win32 {
     font: Handle,
     select: extern "system" fn(Handle, Handle) -> Handle,
     extent: extern "system" fn(Handle, *const u16, i32, *mut [i32; 2]) -> i32,
+    object: extern "system" fn(Handle, i32, *mut i32) -> i32,
+    new_font: extern "system" fn(*const i32) -> Handle,
+    text_color: extern "system" fn(Handle, u32) -> u32,
+    invalidate: extern "system" fn(Handle, *const [i32; 4], i32) -> i32,
     adjust: extern "system" fn(*mut [i32; 4], u32, i32) -> i32,
     client: extern "system" fn(Handle, *mut [i32; 4]) -> i32,
     set_pos: extern "system" fn(Handle, Handle, i32, i32, i32, i32, u32) -> i32,
@@ -997,29 +1040,57 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
         }
         Column(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
         Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
+        Styled(style, leaf) => {
+            let before = (win.select)(dc, win_font(win, *style));
+            let size = win_size(win, dc, leaf);
+            (win.select)(dc, before);
+            size
+        }
+        Spaced(m, inner) => {
+            let (w, h) = win_size(win, dc, inner);
+            (w + 2 * m, h + 2 * m)
+        }
     }
 }
 
 /// Makes a view's controls in `window`, from (x, y), with `room` pixels of width. With `same`, the controls are already
 /// there (in `made`, the `at`-th next): they only move and take the texts that changed.
 #[allow(clippy::too_many_arguments)]
-fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, room: i32, made: &mut Vec<Handle>, same: bool, at: &mut usize) {
+fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, style: crate::shared::UiStyle, x: i32, y: i32, room: i32, made: &mut Vec<Handle>, same: bool, at: &mut usize) {
     use crate::shared::UiNode::*;
     let (w, h) = win_size(win, dc, node);
-    let mut control = |class: &str, s: &str, id: usize, style: u32| {
-        if same {
+    let mut control = |class: &str, s: &str, id: usize, flags: u32| {
+        let c = if same {
             let c = made[*at];
-            *at += 1;
             (win.set_pos)(c, 0, x, y, w, h, 0x4 | 0x10); // SWP_NOZORDER | SWP_NOACTIVATE
             if win_text(win, c) != s {
                 (win.set_text)(c, wide(s).as_ptr());
             }
-            return;
+            c
+        } else {
+            // WS_CHILD | WS_VISIBLE
+            let c = (win.create)(0, wide(class).as_ptr(), wide(s).as_ptr(), 0x5000_0000 | flags, x, y, w, h, window, id as Handle, 0, null_mut());
+            made.push(c);
+            c
+        };
+        *at += 1;
+        let font = win_font(win, style);
+        if (win.send)(c, 0x0031, 0, 0) != font as isize { // WM_GETFONT
+            (win.send)(c, 0x0030, font as usize, 1); // WM_SETFONT
         }
-        // WS_CHILD | WS_VISIBLE
-        let c = (win.create)(0, wide(class).as_ptr(), wide(s).as_ptr(), 0x5000_0000 | style, x, y, w, h, window, id as Handle, 0, null_mut());
-        (win.send)(c, 0x0030, win.font as usize, 1); // WM_SETFONT
-        made.push(c);
+        // 0xRRGGBB to a `COLORREF`, 0xBBGGRR.
+        let color = style.color.map(|c| (c & 0xff) << 16 | (c & 0xff00) | c >> 16);
+        let colored = COLORED.get();
+        let before = colored.iter().position(|e| e.0 == c);
+        if before.map(|k| colored[k].1) != color {
+            if let Some(k) = before {
+                colored.remove(k);
+            }
+            if let Some(color) = color {
+                colored.push((c, color));
+            }
+            (win.invalidate)(c, null(), 1);
+        }
     };
     match node {
         Text(s) => control("STATIC", s, 0, 0),
@@ -1032,7 +1103,7 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
             for p in parts {
                 let (pw, ph) = win_size(win, dc, p);
                 let px = if crate::shared::ui_fills(p) { x } else { x + a.offset(room - pw) };
-                win_place(win, dc, window, p, px, y, room, made, same, at);
+                win_place(win, dc, window, p, Default::default(), px, y, room, made, same, at);
                 y += ph + GAP;
             }
         }
@@ -1040,9 +1111,15 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
             let mut x = x;
             for p in parts {
                 let (pw, ph) = win_size(win, dc, p);
-                win_place(win, dc, window, p, x, y + a.offset(h - ph), pw, made, same, at);
+                win_place(win, dc, window, p, Default::default(), x, y + a.offset(h - ph), pw, made, same, at);
                 x += pw + GAP;
             }
         }
+        Styled(style, leaf) => {
+            let before = (win.select)(dc, win_font(win, *style));
+            win_place(win, dc, window, leaf, *style, x, y, room, made, same, at);
+            (win.select)(dc, before);
+        }
+        Spaced(m, inner) => win_place(win, dc, window, inner, style, x + m, y + m, room - 2 * m, made, same, at),
     }
 }

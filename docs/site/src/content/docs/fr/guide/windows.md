@@ -85,6 +85,53 @@ mets-la dans une colonne centrée : `ui.column([ui.row([…])]) align(center)`.
 Le compilateur vérifie les formes : `view` prend l'état et donne un `ui.View`, `update` prend l'état
 en `var` et un événement, et l'événement de chaque bouton a le bon type.
 
+## Donner du style à une vue
+
+Une vue suit l'apparence du système tant qu'on ne dit pas autre chose. Les méthodes de style
+s'enchaînent dans n'importe quel ordre, et chacune donne une nouvelle vue :
+
+```kova
+import ui
+
+struct App {
+    name: String
+}
+
+enum Event {
+    Renamed(name: String)
+}
+
+fn view(app: App) -> ui.View {
+    let wrong: Bool := app.name.length > 8
+    return ui.column([
+        ui.text("Votre nom").size(20).bold,
+        ui.input(app.name) { s: String => Event.Renamed(s.clone) }.color(if wrong { ui.red } else { ui.black }),
+        ui.text("Huit lettres au maximum").size(11).color(ui.gray).margin(4),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Renamed(name) => app.name := name.clone
+    }
+}
+
+fn main {
+    ui.run("Style", App { name := "" }, view, update)
+}
+```
+
+Ici, le texte du champ passe au rouge tant que le nom est trop long. Le champ reste le même : la
+personne qui écrit garde son curseur.
+
+Les couleurs sont `ui.red`, `ui.blue` et les autres, ou n'importe quelle couleur avec
+`ui.rgb(37, 99, 235)`. Sur une colonne ou une ligne, `color`, `size` et `bold` vont à toutes ses
+vues ; le style propre d'une vue l'emporte. `margin` ajoute des pixels vides autour de la vue où il
+est écrit.
+
+Le texte d'un bouton garde la couleur du système : Windows ne laisse pas un bouton natif la changer,
+et une fenêtre doit se comporter pareil partout. `size` et `bold` y fonctionnent.
+
 ## Les champs de texte
 
 Un champ montre une valeur de l'état, et chaque changement fait par l'utilisateur, lettre par

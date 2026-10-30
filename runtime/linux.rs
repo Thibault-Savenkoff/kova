@@ -987,7 +987,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     static TYPED: Global<String> = Global::new(String::new());
     // The view's shape and its widgets (with each field's `changed` handler), to change them in place.
     static SHAPE: Global<String> = Global::new(String::new());
-    static MADE: Global<Vec<(P, u64)>> = Global::new(Vec::new());
+    static MADE: Global<Vec<(P, u64, usize)>> = Global::new(Vec::new());
     const WAITING: i64 = i64::MIN;
     extern "C" fn clicked(_button: P, number: P) {
         *CLICKED.get() = number as i64;
@@ -1020,6 +1020,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             append: t(f("gtk_box_append")),
             halign: t(f("gtk_widget_set_halign")),
             valign: t(f("gtk_widget_set_valign")),
+            margins: [t(f("gtk_widget_set_margin_top")), t(f("gtk_widget_set_margin_bottom")), t(f("gtk_widget_set_margin_start")), t(f("gtk_widget_set_margin_end"))],
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
             changed: changed as usize,
@@ -1071,7 +1072,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let field_text: extern "C" fn(P) -> *const u8 = t(f("gtk_editable_get_text"));
             let block: extern "C" fn(P, u64) = t(f("g_signal_handler_block"));
             let unblock: extern "C" fn(P, u64) = t(f("g_signal_handler_unblock"));
-            for (leaf, &(widget, handler)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
+            for ((leaf, _), &(widget, handler, _)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
                 use crate::shared::UiNode::*;
                 match leaf {
                     Text(s) if gtk_text(label_text(widget)) != *s => set_label(widget, c_string(s).as_ptr()),
@@ -1090,13 +1091,13 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             made.clear();
             let root = gtk_make(&g, view, made, 1, 1);
             // 16 pixels around it.
-            for side in ["top", "bottom", "start", "end"] {
-                let margin: extern "C" fn(P, i32) = t(f(&format!("gtk_widget_set_margin_{side}")));
-                margin(root, 16);
-            }
+            g.margins.iter().for_each(|margin| margin(root, 16));
             let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
             set_child(w, root);
             *SHAPE.get() = shape;
+        }
+        for ((_, style), (widget, _, class)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter_mut()) {
+            gtk_style(&f, *widget, style, class);
         }
         let present: extern "C" fn(P) = t(f("gtk_window_present"));
         present(w);
@@ -1108,6 +1109,54 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             *typed = TYPED.get().clone();
         }
         *CLICKED.get()
+    }
+}
+
+/// Gives a widget its style: a CSS class per style met (`kova-1`…), its number in `class`, 0 for none.
+fn gtk_style(f: &dyn Fn(&str) -> usize, widget: P, style: crate::shared::UiStyle, class: &mut usize) {
+    use crate::shared::UiStyle;
+    static STYLES: Global<Vec<UiStyle>> = Global::new(Vec::new());
+    let styles = STYLES.get();
+    let wanted = match styles.iter().position(|s| *s == style) {
+        _ if style == UiStyle::default() => 0,
+        Some(k) => k + 1,
+        None => unsafe {
+            use core::mem::transmute as t;
+            styles.push(style);
+            let mut css = format!(".kova-{} {{", styles.len());
+            if let Some(c) = style.color {
+                css.push_str(&format!(" color: #{c:06x};"));
+            }
+            if style.size > 0 {
+                css.push_str(&format!(" font-size: {}px;", style.size));
+            }
+            if style.bold {
+                css.push_str(" font-weight: bold;");
+            }
+            css.push_str(" }");
+            let new: extern "C" fn() -> P = t(f("gtk_css_provider_new"));
+            // Not `load_from_string`: it needs GTK 4.12.
+            let load: extern "C" fn(P, *const u8, isize) = t(f("gtk_css_provider_load_from_data"));
+            let display: extern "C" fn() -> P = t(f("gdk_display_get_default"));
+            let add: extern "C" fn(P, P, u32) = t(f("gtk_style_context_add_provider_for_display"));
+            let provider = new();
+            load(provider, css.as_ptr(), css.len() as isize);
+            add(display(), provider, 600); // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+            styles.len()
+        },
+    };
+    if wanted != *class {
+        unsafe {
+            use core::mem::transmute as t;
+            let change: [extern "C" fn(P, *const u8); 2] = [t(f("gtk_widget_remove_css_class")), t(f("gtk_widget_add_css_class"))];
+            if *class > 0 {
+                change[0](widget, c_string(&format!("kova-{class}")).as_ptr());
+            }
+            if wanted > 0 {
+                change[1](widget, c_string(&format!("kova-{wanted}")).as_ptr());
+            }
+        }
+        *class = wanted;
     }
 }
 
@@ -1127,6 +1176,7 @@ struct Gtk {
     boxed: extern "C" fn(i32, i32) -> P,
     halign: extern "C" fn(P, i32),
     valign: extern "C" fn(P, i32),
+    margins: [extern "C" fn(P, i32); 4],
     append: extern "C" fn(P, P),
     connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
     clicked: usize,
@@ -1136,7 +1186,7 @@ struct Gtk {
 /// The widgets of a view: a button gives its number to `clicked`, a field to `changed`. Each
 /// text, button and field goes into `made`, in order, with its `changed` handler (0 if none).
 /// `h` and `v`: where its parent places it (`GtkAlign`).
-fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>, h: i32, v: i32) -> P {
+fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize)>, h: i32, v: i32) -> P {
     use crate::shared::UiNode::*;
     let mut handler = 0;
     let widget = match node {
@@ -1169,9 +1219,15 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>, h: 
             }
             b
         }
+        Styled(_, inner) => return gtk_make(g, inner, made, h, v),
+        Spaced(m, inner) => {
+            let widget = gtk_make(g, inner, made, h, v);
+            g.margins.iter().for_each(|margin| margin(widget, *m));
+            return widget;
+        }
     };
     if !matches!(node, Column(..) | Row(..)) {
-        made.push((widget, handler));
+        made.push((widget, handler, 0));
     }
     // By default on the left and at the top, as Win32 and AppKit place it: GTK would centre a
     // text alone on its line. GTK_ALIGN_FILL = 0.

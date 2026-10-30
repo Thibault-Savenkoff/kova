@@ -23,8 +23,18 @@ lists what `ui` has.
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
 | `ui.column(…) align(left\|center\|right)` | the column takes the whole width it is given and places its views there. |
 | `ui.row(…) align(top\|center\|bottom)` | the views at the top, in the middle or at the bottom of the row. |
+| `view.color(c: ui.Color) -> ui.View` | the color of a text or a field. A button keeps the system's color. |
+| `view.size(pixels: Int) -> ui.View` | the height of the text, for a text, a button or a field. |
+| `view.bold -> ui.View` | the text in bold. |
+| `view.margin(pixels: Int) -> ui.View` | empty pixels all around the view. |
+| `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | any color, each part from 0 to 255. |
+| `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | ready-made colors. |
 
 Everything is placed from the top left, on every system, unless `align` says otherwise.
+
+Style methods follow each other in any order: `ui.text("Total").size(20).bold.color(ui.red)`. On a
+column or a row, `color`, `size` and `bold` go to all its views, and a view's own style wins.
+`margin` stays on the view it is written on.
 
 The program writes the two functions `ui.run` takes:
 

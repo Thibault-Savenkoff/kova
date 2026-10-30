@@ -833,6 +833,29 @@ pub enum UiNode {
     Input(String, usize),
     Column(Vec<UiNode>, UiAlign),
     Row(Vec<UiNode>, UiAlign),
+    /// A text, button or field with a style of its own (a button keeps the system's text color).
+    Styled(UiStyle, alloc::boxed::Box<UiNode>),
+    /// Empty pixels around a view.
+    Spaced(i32, alloc::boxed::Box<UiNode>),
+}
+
+/// How a text, button or field looks. `size` 0: the system's.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub struct UiStyle {
+    pub color: Option<u32>,
+    pub size: i32,
+    pub bold: bool,
+}
+
+impl UiStyle {
+    /// This style, what it leaves unsaid taken from `around`.
+    fn over(self, around: UiStyle) -> UiStyle {
+        UiStyle {
+            color: self.color.or(around.color),
+            size: if self.size > 0 { self.size } else { around.size },
+            bold: self.bold || around.bold,
+        }
+    }
 }
 
 /// Where a column places its parts across its width, a row across its height.
@@ -859,13 +882,17 @@ impl UiAlign {
 /// have something in the middle of the window.
 #[allow(dead_code)]
 pub fn ui_fills(node: &UiNode) -> bool {
-    matches!(node, UiNode::Column(_, a) if *a != UiAlign::Start)
+    match node {
+        UiNode::Column(_, a) => *a != UiAlign::Start,
+        UiNode::Spaced(_, inner) => ui_fills(inner),
+        _ => false,
+    }
 }
 
 #[allow(dead_code)] // the interpreter only uses `ui_describe`
 pub fn ui_tree(text: &str) -> UiNode {
     let mut chars = text.chars();
-    ui_node(&mut chars, &mut [0, 0])
+    ui_node(&mut chars, &mut [0, 0], UiStyle::default())
 }
 
 /// What `ui.show` gives back (src/ui.rs): `-1` the window closed, `n` button `n` clicked,
@@ -876,7 +903,8 @@ pub fn ui_changed(field: usize) -> i64 {
 }
 
 /// A view's shape, `C2(T,R2(B,B))`: when it has not changed, a window keeps its widgets and only
-/// changes their texts, so a field being typed into keeps its cursor.
+/// changes their texts and styles, so a field being typed into keeps its cursor (even one that
+/// turns red while it is wrong).
 #[allow(dead_code)]
 pub fn ui_shape(node: &UiNode) -> String {
     match node {
@@ -888,15 +916,19 @@ pub fn ui_shape(node: &UiNode) -> String {
             let kind = if matches!(node, UiNode::Row(..)) { 'R' } else { 'C' };
             format!("{kind}{}{}({})", *a as u8, parts.len(), inside.join(","))
         }
+        UiNode::Styled(_, inner) => ui_shape(inner),
+        UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
     }
 }
 
-/// The texts, buttons and fields of a view, in order.
+/// The texts, buttons and fields of a view, in order, each with its style.
 #[allow(dead_code)]
-pub fn ui_leaves(node: &UiNode) -> Vec<&UiNode> {
+pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
-        leaf => alloc::vec![leaf],
+        UiNode::Spaced(_, inner) => ui_leaves(inner),
+        UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
+        leaf => alloc::vec![(leaf, UiStyle::default())],
     }
 }
 
@@ -914,8 +946,47 @@ pub fn ui_answer(line: &str) -> (i64, Option<String>) {
     }
 }
 
-fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
-    let kind = chars.next().unwrap_or('C');
+/// The number before the next `:`.
+fn ui_number(chars: &mut core::str::Chars) -> usize {
+    let mut n = 0usize;
+    for c in chars.by_ref() {
+        match c.to_digit(10) {
+            Some(d) => n = n * 10 + d as usize,
+            None => break, // the `:`
+        }
+    }
+    n
+}
+
+fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyle) -> UiNode {
+    let (mut own, mut margin) = (UiStyle::default(), None);
+    let mut kind = chars.next().unwrap_or('C');
+    while kind == 'S' {
+        let key = chars.next();
+        let n = ui_number(chars);
+        match key {
+            Some('c') => own.color = own.color.or(Some(n as u32)),
+            Some('s') if own.size == 0 => own.size = n as i32,
+            Some('b') => own.bold = true,
+            Some('m') => margin = margin.or(Some(n as i32)),
+            _ => {}
+        }
+        kind = chars.next().unwrap_or('C');
+    }
+    let style = own.over(around);
+    let node = ui_part(kind, chars, counts, style);
+    let node = match kind {
+        'B' if style.size > 0 || style.bold => UiNode::Styled(UiStyle { color: None, ..style }, node.into()),
+        'T' | 'I' if style != UiStyle::default() => UiNode::Styled(style, node.into()),
+        _ => node,
+    };
+    match margin {
+        Some(m) => UiNode::Spaced(m, node.into()),
+        None => node,
+    }
+}
+
+fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], style: UiStyle) -> UiNode {
     let align = if matches!(kind, 'T' | 'B' | 'I') {
         UiAlign::Start
     } else {
@@ -925,13 +996,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
             _ => UiAlign::Start,
         }
     };
-    let mut n = 0usize;
-    for c in chars.by_ref() {
-        match c.to_digit(10) {
-            Some(d) => n = n * 10 + d as usize,
-            None => break, // the `:`
-        }
-    }
+    let n = ui_number(chars);
     match kind {
         'T' | 'B' | 'I' => {
             let label: String = chars.by_ref().take(n).collect();
@@ -943,7 +1008,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
             if kind == 'I' { UiNode::Input(label, *count - 1) } else { UiNode::Button(label, *count - 1) }
         }
         _ => {
-            let parts = (0..n).map(|_| ui_node(chars, counts)).collect();
+            let parts = (0..n).map(|_| ui_node(chars, counts, style)).collect();
             if kind == 'R' { UiNode::Row(parts, align) } else { UiNode::Column(parts, align) }
         }
     }
@@ -973,6 +1038,22 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::Start) => group("row", parts, out),
             UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
+            UiNode::Styled(style, leaf) => {
+                write(leaf, out);
+                if let Some(c) = style.color {
+                    out.push_str(&format!(" color(#{c:06x})"));
+                }
+                if style.size > 0 {
+                    out.push_str(&format!(" size({})", style.size));
+                }
+                if style.bold {
+                    out.push_str(" bold");
+                }
+            }
+            UiNode::Spaced(m, inner) => {
+                write(inner, out);
+                out.push_str(&format!(" margin({m})"));
+            }
         }
     }
     let mut out = String::new();
@@ -1071,6 +1152,10 @@ mod tests {
     fn ui_views() {
         assert_eq!(ui_describe("CL2:T7:0 clicsRT2:B2:GoB3:a:b"), "column(text \"0 clics\", row(button \"Go\", button \"a:b\"))");
         assert_eq!(ui_describe("T5:été !"), "text \"été !\"");
+        // The last written comes first; a group hands its style down; a part's own style wins.
+        assert_eq!(ui_describe("Ss20:Ss10:Sb1:T1:a"), "text \"a\" size(20) bold");
+        assert_eq!(ui_describe("Sc255:Ss9:CL2:Ss5:T1:aB1:b"), "column(text \"a\" color(#0000ff) size(5), button \"b\" size(9))");
+        assert_eq!(ui_describe("Sm4:Sb1:T1:a"), "text \"a\" bold margin(4)");
     }
 }
 

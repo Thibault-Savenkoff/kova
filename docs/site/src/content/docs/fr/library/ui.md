@@ -23,8 +23,18 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 | `ui.column(…) align(left\|center\|right)` | la colonne prend toute la largeur qu'on lui donne et y place ses vues. |
 | `ui.row(…) align(top\|center\|bottom)` | les vues en haut, au milieu ou en bas de la ligne. |
+| `vue.color(c: ui.Color) -> ui.View` | la couleur d'un texte ou d'un champ. Un bouton garde la couleur du système. |
+| `vue.size(pixels: Int) -> ui.View` | la hauteur du texte, pour un texte, un bouton ou un champ. |
+| `vue.bold -> ui.View` | le texte en gras. |
+| `vue.margin(pixels: Int) -> ui.View` | des pixels vides tout autour de la vue. |
+| `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | n'importe quelle couleur, chaque composante allant de 0 à 255. |
+| `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | des couleurs toutes prêtes. |
 
 Tout est placé en partant d'en haut à gauche, sur chaque système, sauf si `align` dit autre chose.
+
+Les méthodes de style s'enchaînent dans n'importe quel ordre : `ui.text("Total").size(20).bold.color(ui.red)`.
+Sur une colonne ou une ligne, `color`, `size` et `bold` vont à toutes ses vues, et le style propre
+d'une vue l'emporte. `margin` reste sur la vue où il est écrit.
 
 Le programme écrit les deux fonctions que prend `ui.run` :
 
