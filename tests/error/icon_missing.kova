@@ -4,4 +4,4 @@ header {
 
 fn main {
 }
-// error: cannot read the icon `nowhere.png`: No such file or directory (os error 2)
+// error: cannot read the icon `nowhere.png`:
