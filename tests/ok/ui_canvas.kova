@@ -27,11 +27,11 @@ fn view(app: App) -> ui.View {
             d.circle(i, i) radius(i) outline(1)
         }
     }
-        .on_mouse { m: ui.Mouse =>
+    .on_mouse { m: ui.Mouse =>
         Event.Clicked(if m.right { 0 } else { m.x }, if m.pressed { m.y } else { 0 })
-        }
-            .on_key { k: ui.Key => Event.Pressed(k.name.clone) }
-            .every(16, Event.Tick)
+    }
+    .on_key { k: ui.Key => Event.Pressed(k.name.clone) }
+    .every(16, Event.Tick)
 }
 
 fn update(app: var App, e: Event) {
