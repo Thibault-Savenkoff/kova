@@ -708,15 +708,18 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             register(canvas);
             kit.canvas = canvas;
             // A window without a title bar refuses the keyboard unless a class of its own says yes.
-            let bare = new_class(kit.class("NSWindow"), c"KovaUiWindow".as_ptr() as *const u8, 0);
-            add(bare, kit.sel("canBecomeKeyWindow"), mac_yes as usize, yes);
-            add(bare, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
-            register(bare);
+            // `zoom:` animates without coming back here: at once, or a `ui.fill` canvas would
+            // only follow at the end.
+            let own = new_class(kit.class("NSWindow"), c"KovaUiWindow".as_ptr() as *const u8, 0);
+            add(own, kit.sel("canBecomeKeyWindow"), mac_yes as usize, yes);
+            add(own, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
+            add(own, kit.sel("animationResizeTime:"), mac_no_time as usize, c"d@:{CGRect={CGPoint=dd}{CGSize=dd}}".as_ptr() as *const u8);
+            register(own);
             // Titled, closable, miniaturizable, resizable; or only the last three; buffered.
             *MAC_BARE.get() = acts.contains(&0);
-            let (class, mask) = if *MAC_BARE.get() { (bare, 14) } else { (kit.class("NSWindow"), 15) };
+            let mask = if *MAC_BARE.get() { 14 } else { 15 };
             let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
-            let w = (kit.window_init)(kit.send(class, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
+            let w = (kit.window_init)(kit.send(own, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
             (kit.send_two)(w, kit.sel("setReleasedWhenClosed:"), core::ptr::null_mut());
             (kit.send_two)(w, kit.sel("setDelegate:"), kit.target);
             kit.send(w, "center");
@@ -860,6 +863,10 @@ static MAC_CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::
 fn mac_now(kit: &Kit) -> f64 {
     let seconds: extern "C" fn(Id, Id) -> f64 = unsafe { core::mem::transmute(kit.send as usize) };
     seconds(kit.class("NSDate"), kit.sel("timeIntervalSinceReferenceDate"))
+}
+
+extern "C" fn mac_no_time(_me: Id, _message: Id, _frame: Rect) -> f64 {
+    0.0
 }
 
 extern "C" fn mac_yes(_me: Id, _message: Id) -> bool {
