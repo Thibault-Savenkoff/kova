@@ -1061,6 +1061,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             if acts.contains(&0) {
                 let decorated: extern "C" fn(P, i32) = t(f("gtk_window_set_decorated"));
                 decorated(w, 0);
+                *GTK_BARE.get() = true;
             }
             (g.connect)(w, c"close-request".as_ptr() as *const u8, closing as usize, null_mut(), null_mut(), 0);
             *WINDOW.get() = w as usize;
@@ -1114,8 +1115,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             for (ms, n) in crate::shared::ui_clocks(view) {
                 CLOCKS.get().push(every(200, ms as u32, gtk_tick as usize, n as P, null_mut()));
             }
-            // 16 pixels around it.
-            g.margins.iter().for_each(|margin| margin(root, 16));
+            // 16 pixels around it; none in a window that has given up its frame.
+            if !*GTK_BARE.get() {
+                g.margins.iter().for_each(|margin| margin(root, 16));
+            }
             let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
             set_child(w, root);
             *SHAPE.get() = shape;
@@ -1169,6 +1172,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 }
 
 static GTK_LIBRARY: Global<usize> = Global::new(0);
+/// `ui.run(…) frame(false)`.
+static GTK_BARE: Global<bool> = Global::new(false);
 /// What a canvas or a clock heard, for `ui_show`.
 static GTK_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());
 /// The running clocks (`g_timeout_add_full`).

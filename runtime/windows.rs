@@ -763,7 +763,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let mut now = [0; 4];
         (win.client)(window, &mut now);
         *SETTING.get() = true;
-        win_place(win, dc, window, view, Default::default(), 16, 16, now[2] - now[0] - 32, CONTROLS.get(), same, &mut 0);
+        let edge = win_edge();
+        win_place(win, dc, window, view, Default::default(), edge, edge, now[2] - now[0] - 2 * edge, CONTROLS.get(), same, &mut 0);
         *SETTING.get() = false;
         (win.release_dc)(window, dc);
     }
@@ -945,7 +946,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (win.client)(w, &mut now);
             (cw, ch) = (now[2] - now[0], now[3] - now[1]);
         }
-        let (want_w, want_h) = ((content_w + 32).max(cw), (content_h + 32).max(ch));
+        let (want_w, want_h) = ((content_w + 2 * win_edge()).max(cw), (content_h + 2 * win_edge()).max(ch));
         if fresh || want_w > cw || want_h > ch {
             let mut r = [0, 0, want_w, want_h];
             (win.adjust)(&mut r, *WIN_STYLE.get(), 0);
@@ -1003,6 +1004,11 @@ static WIN: Global<Option<Win32>> = Global::new(None);
 
 /// The window's style (`WS_OVERLAPPEDWINDOW`, unless `ui.run(…) frame(false)`).
 static WIN_STYLE: Global<u32> = Global::new(0xCF0000);
+
+/// The empty pixels around the content: none in a window that has given up its frame.
+fn win_edge() -> i32 {
+    if *WIN_STYLE.get() == 0xCF0000 { 16 } else { 0 }
+}
 
 /// What a canvas or a clock heard, for `ui_show`.
 static WIN_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());

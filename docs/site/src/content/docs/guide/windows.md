@@ -392,6 +392,9 @@ fn main {
 `ui.drag` belongs just after a press, while the button is held: it starts from that press, and does
 nothing if there has been none. The release then goes to the system, so `m.released` does not come.
 
+Kova's 16 pixels around the content go too, so a title bar reaches the window's edges. Use
+`.margin` on what needs room.
+
 Without a frame, the window cannot be resized by its edges: give it its size with `width` and
 `height`, and offer `ui.maximize` if it should grow.
 

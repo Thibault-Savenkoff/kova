@@ -713,7 +713,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             add(bare, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
             register(bare);
             // Titled, closable, miniaturizable, resizable; or only the last three; buffered.
-            let (class, mask) = if acts.contains(&0) { (bare, 14) } else { (kit.class("NSWindow"), 15) };
+            *MAC_BARE.get() = acts.contains(&0);
+            let (class, mask) = if *MAC_BARE.get() { (bare, 14) } else { (kit.class("NSWindow"), 15) };
             let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
             let w = (kit.window_init)(kit.send(class, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
             (kit.send_two)(w, kit.sel("setReleasedWhenClosed:"), core::ptr::null_mut());
@@ -769,7 +770,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (kit.send_two)(stack, kit.sel("addArrangedSubview:"), root);
             stack
         };
-        (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
+        // None in a window that has given up its frame.
+        let edge = if *MAC_BARE.get() { 0.0 } else { 16.0 };
+        (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: edge, left: edge, bottom: edge, right: edge });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
         if let Some((hearing, _)) = MAC_CANVASES.get().iter().find(|(_, c)| c.key.is_some()) {
@@ -844,6 +847,8 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 }
 
 static KIT: crate::Global<Option<Kit>> = crate::Global::new(None);
+/// `ui.run(…) frame(false)`.
+static MAC_BARE: crate::Global<bool> = crate::Global::new(false);
 /// What a canvas or a clock heard, for `ui_show`.
 static MAC_HEARD: crate::Global<crate::shared::UiQueue> = crate::Global::new(crate::shared::UiQueue::new());
 /// The clocks: (seconds between ticks, button number, next tick).

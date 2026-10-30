@@ -401,6 +401,9 @@ fn main {
 pression et ne fait rien s'il n'y en a pas eu. Le relâchement va ensuite au système, donc
 `m.released` n'arrive pas.
 
+Les 16 pixels que Kova laisse autour du contenu disparaissent aussi, pour qu'une barre de titre
+touche les bords de la fenêtre. Mets `.margin` sur ce qui a besoin de place.
+
 Sans cadre, la fenêtre ne se redimensionne pas par ses bords : donne-lui sa taille avec `width` et
 `height`, et propose `ui.maximize` si elle doit grandir.
 
