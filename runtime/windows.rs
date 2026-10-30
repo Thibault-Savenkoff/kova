@@ -1092,6 +1092,8 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
         Column(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
         Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
         Image(path, width) => win_image(path, *width).map_or((0, 0), |(_, w, h)| (w, h)),
+        Canvas(c) => (c.width, c.height),
+        Every(_, _, inner) => win_size(win, dc, inner),
         Styled(style, leaf) => {
             let before = (win.select)(dc, win_font(win, *style));
             let size = win_size(win, dc, leaf);
@@ -1179,5 +1181,7 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
             (win.select)(dc, before);
         }
         Spaced(m, inner) => win_place(win, dc, window, inner, style, x + m, y + m, room - 2 * m, made, same, at),
+        Every(_, _, inner) => win_place(win, dc, window, inner, style, x, y, room, made, same, at),
+        Canvas(_) => {}
     }
 }

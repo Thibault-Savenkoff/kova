@@ -60,6 +60,8 @@ pub fn format(src: &str) -> Option<String> {
         let contract = matches!(t.kind, Kind::Keyword("require" | "ensure")) || only;
         let indent = match () {
             _ if closer || label => open.last().copied().unwrap_or(0),
+            // `}` then `.on_key { … }`: a chain of blocks stays on one level.
+            _ if t.kind == Kind::Sym(".") && prev.is_some_and(|(p, _)| p.kind == Kind::Sym("}")) => line,
             _ if continues => statement + 1,
             _ => inside + usize::from(contract),
         };

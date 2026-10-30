@@ -544,6 +544,9 @@ pub enum StrOp {
     CRead,
     /// `ui.typed`: the text of the field that changed last (src/ui.rs).
     UiTyped,
+    /// `ui.draw(op)`: one more thing on the canvas being drawn; `ui.drawn` takes all of it.
+    UiDraw,
+    UiDrawn,
     /// `ui.show(title, view, width, height)`: the button clicked, -1 once the window is closed (src/ui.rs).
     UiShow,
     /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
@@ -5084,16 +5087,21 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed") = name.text.as_str() {
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw") = name.text.as_str() {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
                     let op = match n {
                         "secure.uuid" => StrOp::Uuid,
                         "secure.key" => StrOp::SecureKey,
                         "ui.typed" => StrOp::UiTyped,
+                        "ui.drawn" => StrOp::UiDrawn,
+                        "ui.draw" => StrOp::UiDraw,
                         _ => StrOp::PasswordMatches,
                     };
                     self.emit(Inst::Str(t, op, vals));
+                    if n == "ui.draw" {
+                        return vec![];
+                    }
                     if n != "secure.password_matches(…) hash(…)" {
                         self.track(&[t], &Type::String);
                     }

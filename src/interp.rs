@@ -44,6 +44,8 @@ struct Heap {
     log_env: Option<Option<i64>>,
     /// `ui.typed`: what the field that changed last holds.
     ui_typed: String,
+    /// `ui.draw`: the canvas being drawn.
+    ui_drawing: String,
 }
 
 impl Heap {
@@ -951,6 +953,15 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::UiTyped => {
                             let t = heap.ui_typed.clone();
+                            heap.make(t)
+                        }
+                        StrOp::UiDraw => {
+                            let op = s(0).to_string();
+                            heap.ui_drawing.push_str(&op);
+                            0
+                        }
+                        StrOp::UiDrawn => {
+                            let t = core::mem::take(&mut heap.ui_drawing);
                             heap.make(t)
                         }
                         StrOp::LogLevel => {

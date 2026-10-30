@@ -849,6 +849,131 @@ pub enum UiNode {
     Styled(UiStyle, alloc::boxed::Box<UiNode>),
     /// Empty pixels around a view.
     Spaced(i32, alloc::boxed::Box<UiNode>),
+    /// A drawing area.
+    Canvas(UiCanvas),
+    /// A view and a clock: every so many milliseconds, the button number's event.
+    Every(i32, usize, alloc::boxed::Box<UiNode>),
+}
+
+/// `ui.canvas`: its size, its drawing, and the numbers (counted with the fields) of what hears the
+/// mouse and the keyboard.
+#[derive(Clone, Default)]
+pub struct UiCanvas {
+    pub width: i32,
+    pub height: i32,
+    pub ops: Vec<UiOp>,
+    pub mouse: Option<usize>,
+    pub key: Option<usize>,
+}
+
+/// One thing drawn. An outline of 0 fills the shape. Colors are `0xRRGGBB`.
+#[derive(Clone, PartialEq, Debug)]
+pub enum UiOp {
+    Clear(u32),
+    Rect { x: i32, y: i32, w: i32, h: i32, color: u32, outline: i32 },
+    Circle { x: i32, y: i32, r: i32, color: u32, outline: i32 },
+    Line { x: i32, y: i32, x2: i32, y2: i32, color: u32, thickness: i32 },
+    Text { x: i32, y: i32, size: i32, color: u32, text: String },
+}
+
+/// What `ui.draw` gathered, one line per thing drawn (src/ui.rs).
+fn ui_ops(text: &str) -> Vec<UiOp> {
+    let mut chars = text.chars();
+    let mut ops = Vec::new();
+    let signed = |chars: &mut core::str::Chars| {
+        let mut n = 0i32;
+        let mut minus = false;
+        for c in chars.by_ref() {
+            match c {
+                '-' => minus = true,
+                '0'..='9' => n = n.saturating_mul(10).saturating_add(c as i32 - '0' as i32),
+                _ => break, // the space, or the `:` of a text's length
+            }
+        }
+        if minus { -n } else { n }
+    };
+    while let Some(kind) = chars.next() {
+        chars.next();
+        let mut n = |count: usize| {
+            let mut out = [0; 5];
+            out[..count].iter_mut().for_each(|o| *o = signed(&mut chars));
+            out
+        };
+        ops.push(match kind {
+            'C' => UiOp::Clear(n(1)[0] as u32),
+            'R' => {
+                let [x, y, w, h, color] = n(5);
+                UiOp::Rect { x, y, w, h, color: color as u32, outline: n(1)[0] }
+            }
+            'O' => {
+                let [x, y, r, color, outline] = n(5);
+                UiOp::Circle { x, y, r, color: color as u32, outline }
+            }
+            'L' => {
+                let [x, y, x2, y2, color] = n(5);
+                UiOp::Line { x, y, x2, y2, color: color as u32, thickness: n(1)[0] }
+            }
+            _ => {
+                let [x, y, size, color, length] = n(5);
+                let text = chars.by_ref().take(length as usize).collect();
+                chars.next();
+                UiOp::Text { x, y, size, color: color as u32, text }
+            }
+        });
+    }
+    ops
+}
+
+/// What `ui.typed` gives after a gesture on a canvas (src/ui.rs `gesture`). `kind` is `press`,
+/// `release` or `move`; `button` 1 left, 2 right, 0 none.
+#[allow(dead_code)]
+pub fn ui_mouse(kind: &str, x: i32, y: i32, button: i32) -> String {
+    format!("{kind} {x} {y} {button}")
+}
+
+/// The same, for a key.
+#[allow(dead_code)]
+pub fn ui_key(name: &str) -> String {
+    format!("key {name}")
+}
+
+/// What canvases and clocks heard, until the program asks: (`ui.show`'s answer, `ui.typed`'s text).
+/// A program slower than the mouse or a clock keeps only the last move and one tick; a press is
+/// never lost.
+#[allow(dead_code)]
+pub struct UiQueue(Vec<(i64, String)>);
+
+#[allow(dead_code)]
+impl UiQueue {
+    pub const fn new() -> UiQueue {
+        UiQueue(Vec::new())
+    }
+    pub fn hear(&mut self, answer: i64, text: String) {
+        if text.is_empty() && self.0.iter().any(|w| w.0 == answer) {
+            return;
+        }
+        match self.0.last_mut() {
+            Some(last) if last.0 == answer && last.1.starts_with("move ") && text.starts_with("move ") => last.1 = text,
+            _ => self.0.push((answer, text)),
+        }
+    }
+    pub fn next(&mut self) -> Option<(i64, String)> {
+        (!self.0.is_empty()).then(|| self.0.remove(0))
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Everything that ticks in a view: (milliseconds, button number).
+#[allow(dead_code)]
+pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
+    match node {
+        UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_clocks).collect(),
+        UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
+        UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
+        _ => Vec::new(),
+    }
 }
 
 /// How a text, button or field looks. `size` 0: the system's.
@@ -896,7 +1021,7 @@ impl UiAlign {
 pub fn ui_fills(node: &UiNode) -> bool {
     match node {
         UiNode::Column(_, a) => *a != UiAlign::Start,
-        UiNode::Spaced(_, inner) => ui_fills(inner),
+        UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
         _ => false,
     }
 }
@@ -931,6 +1056,9 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Image(path, width) => format!("P{width}:{path}"),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
+        // Not its drawing, which changes at every frame.
+        UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}", c.width, c.height, c.mouse, c.key),
+        UiNode::Every(ms, n, inner) => format!("E{ms}:{n}({})", ui_shape(inner)),
     }
 }
 
@@ -939,7 +1067,7 @@ pub fn ui_shape(node: &UiNode) -> String {
 pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
-        UiNode::Spaced(_, inner) => ui_leaves(inner),
+        UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
         leaf => alloc::vec![(leaf, UiStyle::default())],
     }
@@ -973,6 +1101,8 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
 
 fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyle) -> UiNode {
     let (mut own, mut margin) = (UiStyle::default(), None);
+    // What listens, the last one written first.
+    let mut listening = Vec::new();
     let mut kind = chars.next().unwrap_or('C');
     while kind == 'S' {
         let key = chars.next();
@@ -982,12 +1112,24 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyl
             Some('s') if own.size == 0 => own.size = n as i32,
             Some('b') => own.bold = true,
             Some('m') => margin = margin.or(Some(n as i32)),
+            Some(key @ ('M' | 'K' | 'E')) => listening.push((key, n as i32)),
             _ => {}
         }
         kind = chars.next().unwrap_or('C');
     }
     let style = own.over(around);
-    let node = ui_part(kind, chars, counts, style);
+    let mut node = ui_part(kind, chars, counts, style);
+    // Numbered after the view's own, as src/ui.rs adds them to its lists.
+    let mut clocks = Vec::new();
+    for (key, ms) in listening.into_iter().rev() {
+        let count = &mut counts[(key != 'E') as usize];
+        *count += 1;
+        match (key, &mut node) {
+            ('M', UiNode::Canvas(c)) => c.mouse = Some(*count - 1),
+            ('K', UiNode::Canvas(c)) => c.key = Some(*count - 1),
+            _ => clocks.push((ms, *count - 1)),
+        }
+    }
     let node = match kind {
         // A size on the image itself: a column's text size is not an image's width.
         'P' => match node {
@@ -998,14 +1140,15 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyl
         'T' | 'I' if style != UiStyle::default() => UiNode::Styled(style, node.into()),
         _ => node,
     };
-    match margin {
+    let node = match margin {
         Some(m) => UiNode::Spaced(m, node.into()),
         None => node,
-    }
+    };
+    clocks.into_iter().fold(node, |inner, (ms, n)| UiNode::Every(ms, n, inner.into()))
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1016,6 +1159,12 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], st
     };
     let n = ui_number(chars);
     match kind {
+        'D' => {
+            let body: String = chars.by_ref().take(n).collect();
+            let (size, ops) = body.split_once('\n').unwrap_or((&body, ""));
+            let (width, height) = size.split_once(' ').unwrap_or((size, ""));
+            UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), ops: ui_ops(ops), ..UiCanvas::default() })
+        }
         'T' | 'B' | 'I' | 'P' => {
             let label: String = chars.by_ref().take(n).collect();
             match kind {
@@ -1076,6 +1225,22 @@ pub fn ui_describe(text: &str) -> String {
                 write(inner, out);
                 out.push_str(&format!(" margin({m})"));
             }
+            UiNode::Every(ms, _, inner) => {
+                write(inner, out);
+                out.push_str(&format!(" every({ms})"));
+            }
+            UiNode::Canvas(c) => {
+                out.push_str(&format!("canvas {}x{}", c.width, c.height));
+                for op in &c.ops {
+                    out.push_str(&match op {
+                        UiOp::Clear(c) => format!(" clear(#{c:06x})"),
+                        UiOp::Rect { x, y, w, h, color, outline } => format!(" rect({x} {y} {w} {h} #{color:06x} {outline})"),
+                        UiOp::Circle { x, y, r, color, outline } => format!(" circle({x} {y} {r} #{color:06x} {outline})"),
+                        UiOp::Line { x, y, x2, y2, color, thickness } => format!(" line({x} {y} {x2} {y2} #{color:06x} {thickness})"),
+                        UiOp::Text { x, y, size, color, text } => format!(" text({x} {y} {size} #{color:06x} {text:?})"),
+                    });
+                }
+            }
         }
     }
     let mut out = String::new();
@@ -1095,6 +1260,33 @@ mod tests {
         assert_eq!(library_files("sqlite3", "windows"), ["sqlite3.dll", "libsqlite3.dll"]);
         assert_eq!(library_files("C:\\x\\a.dll", "windows"), ["C:\\x\\a.dll"]);
         assert_eq!(library_files("AppKit", "macos")[4], "/System/Library/Frameworks/AppKit.framework/AppKit");
+    }
+
+    #[test]
+    fn ui_gestures_wait_in_order() {
+        let mut q = UiQueue::new();
+        q.hear(5, String::new());
+        q.hear(-2, ui_mouse("move", 1, 1, 0));
+        q.hear(-2, ui_mouse("move", 2, 2, 0));
+        q.hear(-2, ui_mouse("press", 2, 2, 1));
+        q.hear(5, String::new());
+        q.hear(-2, ui_mouse("move", 3, 3, 0));
+        assert_eq!(q.next(), Some((5, String::new())));
+        assert_eq!(q.next(), Some((-2, "move 2 2 0".into())));
+        assert_eq!(q.next(), Some((-2, "press 2 2 1".into())));
+        assert_eq!(q.next(), Some((-2, "move 3 3 0".into())));
+        assert_eq!(q.next(), None);
+    }
+
+    #[test]
+    fn ui_canvas_read_back() {
+        let tree = ui_tree("SE16:SK0:SM0:Sm4:D39:3 2\nC 5\nT 1 -2 9 0 3:a b\nL 0 0 1 1 7 2\n");
+        let UiNode::Every(16, 0, spaced) = tree else { panic!() };
+        let UiNode::Spaced(4, canvas) = *spaced else { panic!() };
+        let UiNode::Canvas(c) = *canvas else { panic!() };
+        assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
+        assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
+        assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
     }
 
     #[test]

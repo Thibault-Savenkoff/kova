@@ -1008,6 +1008,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         return -1;
     }
     *CLICKED.get() = WAITING;
+    GTK_LIBRARY.get().clone_from(GTK.get());
     let f = |name: &str| symbol(*GTK.get(), name).unwrap_or(0);
     unsafe {
         use core::mem::transmute as t;
@@ -1078,6 +1079,13 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 match leaf {
                     Text(s) if gtk_text(label_text(widget)) != *s => set_label(widget, c_string(s).as_ptr()),
                     Button(s, _) if gtk_text(button_text(widget)) != *s => set_button(widget, c_string(s).as_ptr()),
+                    Canvas(c) => {
+                        let draw_again: extern "C" fn(P) = t(f("gtk_widget_queue_draw"));
+                        if let Some((_, ops)) = GTK_CANVASES.get().iter_mut().find(|(area, _)| *area == widget) {
+                            ops.clone_from(&c.ops);
+                        }
+                        draw_again(widget);
+                    }
                     // Set from here, a field must not tell `changed` it was typed into.
                     Input(s, _) if gtk_text(field_text(widget)) != *s => {
                         block(widget, handler);
@@ -1090,12 +1098,28 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         } else {
             let made = MADE.get();
             made.clear();
+            GTK_CANVASES.get().clear();
             let root = gtk_make(&g, view, made, 1, 1);
+            // The clocks of the view that was there stop, this one's start. Below the redrawing
+            // (G_PRIORITY_DEFAULT_IDLE): a clock faster than the program must not stop it drawing.
+            let remove: extern "C" fn(u32) -> i32 = t(f("g_source_remove"));
+            let every: extern "C" fn(i32, u32, usize, P, P) -> u32 = t(f("g_timeout_add_full"));
+            CLOCKS.get().drain(..).for_each(|clock| {
+                remove(clock);
+            });
+            for (ms, n) in crate::shared::ui_clocks(view) {
+                CLOCKS.get().push(every(200, ms as u32, gtk_tick as usize, n as P, null_mut()));
+            }
             // 16 pixels around it.
             g.margins.iter().for_each(|margin| margin(root, 16));
             let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
             set_child(w, root);
             *SHAPE.get() = shape;
+            // The keys go to the canvas that hears them.
+            let focus: extern "C" fn(P) -> i32 = t(f("gtk_widget_grab_focus"));
+            if let Some((area, _)) = GTK_CANVASES.get().iter().find(|(area, _)| gtk_hears_keys(*area)) {
+                focus(*area);
+            }
         }
         for ((_, style), (widget, _, class)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter_mut()) {
             gtk_style(&f, *widget, style, class);
@@ -1103,13 +1127,191 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let present: extern "C" fn(P) = t(f("gtk_window_present"));
         present(w);
         let iteration: extern "C" fn(P, i32) -> i32 = t(f("g_main_context_iteration"));
-        while *CLICKED.get() == WAITING {
+        while *CLICKED.get() == WAITING && GTK_HEARD.get().is_empty() {
             iteration(null_mut(), 1);
+        }
+        if *CLICKED.get() == WAITING {
+            let (answer, text) = GTK_HEARD.get().next().unwrap_or((-1, String::new()));
+            *typed = text;
+            return answer;
         }
         if *CLICKED.get() <= -2 {
             *typed = TYPED.get().clone();
         }
         *CLICKED.get()
+    }
+}
+
+static GTK_LIBRARY: Global<usize> = Global::new(0);
+/// What a canvas or a clock heard, for `ui_show`.
+static GTK_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());
+/// The running clocks (`g_timeout_add_full`).
+static CLOCKS: Global<Vec<u32>> = Global::new(Vec::new());
+/// Each canvas now on screen, with what it draws.
+static GTK_CANVASES: Global<Vec<(P, Vec<crate::shared::UiOp>)>> = Global::new(Vec::new());
+
+fn gtk_symbol(name: &str) -> usize {
+    symbol(*GTK_LIBRARY.get(), name).unwrap_or(0)
+}
+
+extern "C" fn gtk_tick(n: P) -> i32 {
+    GTK_HEARD.get().hear(n as i64, String::new());
+    1 // G_SOURCE_CONTINUE
+}
+
+fn gtk_mouse(gesture: Option<P>, kind: &str, x: f64, y: f64, number: P) {
+    let button = gesture.map_or(0, |g| {
+        let current: extern "C" fn(P) -> u32 = unsafe { core::mem::transmute(gtk_symbol("gtk_gesture_single_get_current_button")) };
+        if current(g) == 3 { 2 } else { 1 }
+    });
+    GTK_HEARD.get().hear(crate::shared::ui_changed(number as usize), crate::shared::ui_mouse(kind, x as i32, y as i32, button));
+}
+
+extern "C" fn gtk_pressed(g: P, _times: i32, x: f64, y: f64, number: P) {
+    gtk_mouse(Some(g), "press", x, y, number);
+}
+
+extern "C" fn gtk_released(g: P, _times: i32, x: f64, y: f64, number: P) {
+    gtk_mouse(Some(g), "release", x, y, number);
+}
+
+extern "C" fn gtk_moved(_motion: P, x: f64, y: f64, number: P) {
+    gtk_mouse(None, "move", x, y, number);
+}
+
+/// `ui.Key`'s name: what the key writes, or the same word on every system.
+extern "C" fn gtk_key(_keys: P, key: u32, _code: u32, _state: u32, number: P) -> i32 {
+    let (unicode, name): (extern "C" fn(u32) -> u32, extern "C" fn(u32) -> *const u8) = unsafe { (core::mem::transmute(gtk_symbol("gdk_keyval_to_unicode")), core::mem::transmute(gtk_symbol("gdk_keyval_name"))) };
+    let word = gtk_text(name(key));
+    let named = match word.as_str() {
+        "space" => "Space",
+        "Return" | "KP_Enter" => "Enter",
+        "BackSpace" => "Backspace",
+        "Page_Up" => "PageUp",
+        "Page_Down" => "PageDown",
+        "Tab" | "Escape" | "Delete" | "Left" | "Right" | "Up" | "Down" | "Home" | "End" => &word,
+        _ if word.starts_with('F') && word[1..].parse::<u32>().is_ok() => &word,
+        _ => "",
+    };
+    let text = match (named, char::from_u32(unicode(key))) {
+        ("", Some(c)) if c != '\0' => c.into(),
+        ("", _) => return 0, // a modifier alone
+        (n, _) => String::from(n),
+    };
+    GTK_HEARD.get().hear(crate::shared::ui_changed(number as usize), crate::shared::ui_key(&text));
+    1
+}
+
+fn gtk_hears_keys(area: P) -> bool {
+    let focusable: extern "C" fn(P) -> i32 = unsafe { core::mem::transmute(gtk_symbol("gtk_widget_get_focusable")) };
+    focusable(area) != 0
+}
+
+/// Paints a canvas, from what `ui.canvas` drew. Thickness stays inside a shape, as on every system.
+extern "C" fn gtk_paint(area: P, cairo: P, _width: i32, _height: i32, _data: P) {
+    use crate::shared::UiOp::*;
+    let Some((_, ops)) = GTK_CANVASES.get().iter().find(|(a, _)| *a == area) else { return };
+    unsafe {
+        use core::mem::transmute as t;
+        let f = gtk_symbol;
+        let source: extern "C" fn(P, f64, f64, f64) = t(f("cairo_set_source_rgb"));
+        let paint: extern "C" fn(P) = t(f("cairo_paint"));
+        let rectangle: extern "C" fn(P, f64, f64, f64, f64) = t(f("cairo_rectangle"));
+        let arc: extern "C" fn(P, f64, f64, f64, f64, f64) = t(f("cairo_arc"));
+        let fill: extern "C" fn(P) = t(f("cairo_fill"));
+        let stroke: extern "C" fn(P) = t(f("cairo_stroke"));
+        let thickness: extern "C" fn(P, f64) = t(f("cairo_set_line_width"));
+        let move_to: extern "C" fn(P, f64, f64) = t(f("cairo_move_to"));
+        let line_to: extern "C" fn(P, f64, f64) = t(f("cairo_line_to"));
+        let font: extern "C" fn(P, *const u8, i32, i32) = t(f("cairo_select_font_face"));
+        let font_size: extern "C" fn(P, f64) = t(f("cairo_set_font_size"));
+        let extents: extern "C" fn(P, *mut [f64; 5]) = t(f("cairo_font_extents"));
+        let show: extern "C" fn(P, *const u8) = t(f("cairo_show_text"));
+        let color = |c: u32| source(cairo, (c >> 16 & 255) as f64 / 255.0, (c >> 8 & 255) as f64 / 255.0, (c & 255) as f64 / 255.0);
+        let outlined = |n: i32| {
+            if n > 0 {
+                thickness(cairo, n as f64);
+                stroke(cairo);
+            } else {
+                fill(cairo);
+            }
+        };
+        color(0xffffff);
+        paint(cairo);
+        font(cairo, c"sans-serif".as_ptr() as *const u8, 0, 0);
+        for op in ops {
+            match op {
+                Clear(c) => {
+                    color(*c);
+                    paint(cairo);
+                }
+                Rect { x, y, w, h, color: c, outline } => {
+                    color(*c);
+                    let inset = *outline as f64 / 2.0;
+                    rectangle(cairo, *x as f64 + inset, *y as f64 + inset, *w as f64 - 2.0 * inset, *h as f64 - 2.0 * inset);
+                    outlined(*outline);
+                }
+                Circle { x, y, r, color: c, outline } => {
+                    color(*c);
+                    arc(cairo, *x as f64, *y as f64, (*r as f64 - *outline as f64 / 2.0).max(0.0), 0.0, 6.283185307179586);
+                    outlined(*outline);
+                }
+                Line { x, y, x2, y2, color: c, thickness: n } => {
+                    color(*c);
+                    thickness(cairo, *n as f64);
+                    move_to(cairo, *x as f64, *y as f64);
+                    line_to(cairo, *x2 as f64, *y2 as f64);
+                    stroke(cairo);
+                }
+                Text { x, y, size, color: c, text } => {
+                    color(*c);
+                    font_size(cairo, *size as f64);
+                    let mut measures = [0.0; 5];
+                    extents(cairo, &mut measures);
+                    move_to(cairo, *x as f64, *y as f64 + measures[0]);
+                    show(cairo, c_string(text).as_ptr());
+                }
+            }
+        }
+    }
+}
+
+/// A canvas and what hears it.
+fn gtk_canvas(g: &Gtk, c: &crate::shared::UiCanvas) -> P {
+    unsafe {
+        use core::mem::transmute as t;
+        let f = gtk_symbol;
+        let new: extern "C" fn() -> P = t(f("gtk_drawing_area_new"));
+        let area = new();
+        let content: [extern "C" fn(P, i32); 2] = [t(f("gtk_drawing_area_set_content_width")), t(f("gtk_drawing_area_set_content_height"))];
+        content[0](area, c.width);
+        content[1](area, c.height);
+        let draw: extern "C" fn(P, usize, P, P) = t(f("gtk_drawing_area_set_draw_func"));
+        draw(area, gtk_paint as usize, null_mut(), null_mut());
+        GTK_CANVASES.get().push((area, c.ops.clone()));
+        let add: extern "C" fn(P, P) = t(f("gtk_widget_add_controller"));
+        if let Some(n) = c.mouse {
+            let clicks: extern "C" fn() -> P = t(f("gtk_gesture_click_new"));
+            let any_button: extern "C" fn(P, u32) = t(f("gtk_gesture_single_set_button"));
+            let (click, number) = (clicks(), n as P);
+            any_button(click, 0);
+            (g.connect)(click, c"pressed".as_ptr() as *const u8, gtk_pressed as usize, number, null_mut(), 0);
+            (g.connect)(click, c"released".as_ptr() as *const u8, gtk_released as usize, number, null_mut(), 0);
+            add(area, click);
+            let moves: extern "C" fn() -> P = t(f("gtk_event_controller_motion_new"));
+            let motion = moves();
+            (g.connect)(motion, c"motion".as_ptr() as *const u8, gtk_moved as usize, number, null_mut(), 0);
+            add(area, motion);
+        }
+        if let Some(n) = c.key {
+            let keys: extern "C" fn() -> P = t(f("gtk_event_controller_key_new"));
+            let focusable: extern "C" fn(P, i32) = t(f("gtk_widget_set_focusable"));
+            let controller = keys();
+            (g.connect)(controller, c"key-pressed".as_ptr() as *const u8, gtk_key as usize, n as P, null_mut(), 0);
+            add(area, controller);
+            focusable(area, 1);
+        }
+        area
     }
 }
 
@@ -1244,7 +1446,8 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
                 p
             }
         },
-        Styled(_, inner) => return gtk_make(g, inner, made, h, v),
+        Canvas(c) => gtk_canvas(g, c),
+        Styled(_, inner) | Every(_, _, inner) => return gtk_make(g, inner, made, h, v),
         Spaced(m, inner) => {
             let widget = gtk_make(g, inner, made, h, v);
             g.margins.iter().for_each(|margin| margin(widget, *m));

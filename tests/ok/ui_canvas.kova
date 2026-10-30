@@ -1,0 +1,61 @@
+// `ui.canvas(w, h) { d: ui.Draw => … }`: a drawing area, drawn again from the state after each
+// event. `0=press 10 20 1` in the input is a gesture for what hears number 0.
+import ui
+
+enum Event {
+    Clicked(x: Int, y: Int)
+    Pressed(key: String)
+    Tick
+}
+
+struct App {
+    x: Int
+    y: Int
+    ticks: Int
+    key: String
+}
+
+fn view(app: App) -> ui.View {
+    return ui.canvas(200, 100) { d: ui.Draw =>
+        d.clear(ui.white)
+        d.rect(app.x, app.y) size(20, 10) color(ui.red)
+        d.rect(0, 0) size(d.width, d.height) outline(2)
+        d.circle(50, 50) radius(9) color(ui.blue)
+        d.line(0, 0) to(-4, 7)
+        d.text("{app.key}: {app.ticks}", 5, 5) size(12) color(ui.rgb(1, 2, 3))
+        for i in 1..3 {
+            d.circle(i, i) radius(i) outline(1)
+        }
+    }
+        .on_mouse { m: ui.Mouse =>
+        Event.Clicked(if m.right { 0 } else { m.x }, if m.pressed { m.y } else { 0 })
+        }
+            .on_key { k: ui.Key => Event.Pressed(k.name.clone) }
+            .every(16, Event.Tick)
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        Clicked(x, y) => {
+            app.x := x
+            app.y := y
+        }
+        Pressed(key) => app.key := key.clone
+        Tick => app.ticks := app.ticks + 1
+    }
+}
+
+fn main {
+    ui.run("Paint", App { x := 1, y := 2, ticks := 0, key := "" }, view, update)
+    print("closed")
+}
+// stdin: 0=press 10 20 1
+// stdin: 1=key Left
+// stdin: 0
+// stdin: 0=release 3 4 2
+// expect: [Paint] canvas 200x100 clear(#ffffff) rect(1 2 20 10 #dc2626 0) rect(0 0 200 100 #000000 2) circle(50 50 9 #2563eb 0) line(0 0 -4 7 #000000 1) text(5 5 12 #010203 ": 0") circle(1 1 1 #000000 1) circle(2 2 2 #000000 1) every(16)
+// expect: [Paint] canvas 200x100 clear(#ffffff) rect(10 20 20 10 #dc2626 0) rect(0 0 200 100 #000000 2) circle(50 50 9 #2563eb 0) line(0 0 -4 7 #000000 1) text(5 5 12 #010203 ": 0") circle(1 1 1 #000000 1) circle(2 2 2 #000000 1) every(16)
+// expect: [Paint] canvas 200x100 clear(#ffffff) rect(10 20 20 10 #dc2626 0) rect(0 0 200 100 #000000 2) circle(50 50 9 #2563eb 0) line(0 0 -4 7 #000000 1) text(5 5 12 #010203 "Left: 0") circle(1 1 1 #000000 1) circle(2 2 2 #000000 1) every(16)
+// expect: [Paint] canvas 200x100 clear(#ffffff) rect(10 20 20 10 #dc2626 0) rect(0 0 200 100 #000000 2) circle(50 50 9 #2563eb 0) line(0 0 -4 7 #000000 1) text(5 5 12 #010203 "Left: 1") circle(1 1 1 #000000 1) circle(2 2 2 #000000 1) every(16)
+// expect: [Paint] canvas 200x100 clear(#ffffff) rect(0 0 20 10 #dc2626 0) rect(0 0 200 100 #000000 2) circle(50 50 9 #2563eb 0) line(0 0 -4 7 #000000 1) text(5 5 12 #010203 "Left: 1") circle(1 1 1 #000000 1) circle(2 2 2 #000000 1) every(16)
+// expect: closed

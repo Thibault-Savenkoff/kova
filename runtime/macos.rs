@@ -933,6 +933,8 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
         }
         Styled(_, inner) => return mac_make(kit, inner, made, insets),
         // A stack view of one part, with room around it.
+        Every(_, _, inner) => mac_make(kit, inner, made, insets),
+        Canvas(_) => unsafe { let k = kit; let _ = k; core::ptr::null_mut() },
         Spaced(m, inner) => {
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
             (kit.send_id)(stack, kit.sel("setOrientation:"), 1);

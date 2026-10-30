@@ -2,7 +2,8 @@
 // each program, with its state and event types and its `view` / `update` functions written in.
 // The checker, ownership, KIR and both backends then see ordinary Kova; the only primitive is
 // `ui.show(title, text, width, height)`, which shows a view and waits for a click or a change
-// (`StrOp::UiShow`; a size of 0 = fit the content), and `ui.typed`, the text a field now holds.
+// (`StrOp::UiShow`; a size of 0 = fit the content), `ui.typed`, the text a field now holds or the
+// gesture made on a canvas, and `ui.draw` / `ui.drawn`, which gather a canvas's drawing.
 
 use crate::ast::{File, Mode};
 use crate::diag::Diag;
@@ -10,8 +11,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 20] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white",
+const OWN: [&str; 26] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -23,16 +24,27 @@ struct View {
 private:
     text: String
     events: List<EVENT>
-    typed: List<EVENT>
+    typed: List<EVENT?>
+    canvas: Bool := false
 
     fn styled(self, key: String, value: Int) -> View {
-        return View { text := "S{key}{value}:{self.text}", events := self.events.clone, typed := self.typed.clone }
+        return self.written("S{key}{value}:{self.text}")
+    }
+
+    fn written(self, text: String) -> View {
+        return View { text := text.clone, events := self.events.clone, typed := self.typed.clone, canvas := self.canvas }
+    }
+
+    fn hearing(self, key: String, event: EVENT?) -> View {
+        var typed: List<EVENT?> := self.typed.clone
+        typed.add(event.clone)
+        return View { text := "S{key}0:{self.text}", events := self.events.clone, typed := typed, canvas := self.canvas }
     }
 
 public:
 
     fn color(self, c: Color) -> View {
-        return self.styled("c", c.r * 65536 + c.g * 256 + c.b)
+        return self.styled("c", number(c))
     }
 
     fn size(self, pixels: Int) -> View
@@ -49,6 +61,73 @@ public:
         require pixels >= 0 else "a margin cannot be negative"
     {
         return self.styled("m", pixels)
+    }
+
+    fn on_mouse(self, heard: {Mouse -> EVENT}) -> View
+        require self.canvas else "only a ui.canvas hears the mouse"
+    {
+        return self.hearing("M", match gesture {
+            none => none
+            m => heard(m)
+        })
+    }
+
+    fn on_key(self, heard: {Key -> EVENT}) -> View
+        require self.canvas else "only a ui.canvas hears the keyboard"
+    {
+        return self.hearing("K", match pressed {
+            none => none
+            k => heard(k)
+        })
+    }
+
+    fn every(self, ms: Int, event: EVENT) -> View
+        require ms > 0 else "a time is at least 1 millisecond"
+    {
+        var events: List<EVENT> := self.events.clone
+        events.add(event.clone)
+        return View { text := "SE{ms}:{self.text}", events := events, typed := self.typed.clone, canvas := self.canvas }
+    }
+}
+
+struct Mouse {
+public:
+    x: Int
+    y: Int
+    pressed: Bool
+    released: Bool
+    moved: Bool
+    right: Bool
+}
+
+struct Key {
+public:
+    name: String
+}
+
+struct Draw {
+public:
+    width: Int
+    height: Int
+
+    fn clear(self, c: Color) {
+        ui.draw("C {number(c)}\n")
+    }
+
+    fn rect(self, x: Int, y: Int) size(w: Int, h: Int) color(c: Color := black) outline(n: Int := 0) {
+        ui.draw("R {x} {y} {w} {h} {number(c)} {n}\n")
+    }
+
+    fn circle(self, x: Int, y: Int) radius(r: Int) color(c: Color := black) outline(n: Int := 0) {
+        ui.draw("O {x} {y} {r} {number(c)} {n}\n")
+    }
+
+    fn line(self, x: Int, y: Int) to(x2: Int, y2: Int) color(c: Color := black) thickness(n: Int := 1) {
+        ui.draw("L {x} {y} {x2} {y2} {number(c)} {n}\n")
+    }
+
+    fn text(self, s: String, x: Int, y: Int) size(n: Int := 16) color(c: Color := black) {
+        ui.draw("T {x} {y} {n} {number(c)} {s.length}:{s}\n")
     }
 }
 
@@ -120,14 +199,22 @@ fn button(label: String, event: EVENT) -> View {
 }
 
 fn input(value: String, changed: {String -> EVENT}) -> View {
-    let typed: String := ui.typed
-    return View { text := "I{value.length}:{value}", events := [], typed := [changed(typed)] }
+    let typed: EVENT? := changed(ui.typed)
+    return View { text := "I{value.length}:{value}", events := [], typed := [typed] }
 }
 
 fn image(path: String) -> View
     require files.exists(path) else "no image at {path}"
 {
     return View { text := "P{path.length}:{path}", events := [], typed := [] }
+}
+
+fn canvas(width: Int, height: Int, paint: {Draw}) -> View
+    require width > 0 && height > 0 else "a canvas is at least 1 pixel wide and high"
+{
+    paint(Draw { width, height })
+    let body: String := "{width} {height}\n{ui.drawn}"
+    return View { text := "D{body.length}:{body}", events := [], typed := [], canvas := true }
 }
 
 fn column(items: List<View>) align(a: Align := Align.Left) -> View {
@@ -149,14 +236,47 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
         if clicked >= 0 {
             UPDATE(var s, v.events[clicked].clone)
         } else {
-            // A field changed: the view again, now that `ui.typed` gives its text.
+            // A field changed or a canvas heard something: the view again, now that `ui.typed`
+            // gives what happened.
             let again: View := VIEW(s)
-            UPDATE(var s, again.typed[-2 - clicked].clone)
+            let event: EVENT? := again.typed[-2 - clicked].clone
+            if event != none {
+                UPDATE(var s, event)
+            }
         }
     }
 }
 
 private:
+
+fn number(c: Color) -> Int {
+    return c.r * 65536 + c.g * 256 + c.b
+}
+
+// What `ui.typed` holds after a gesture on a canvas (`shared::ui_mouse`), and `none` otherwise: a
+// block of `on_mouse` or `on_key` only runs on something that happened.
+fn gesture -> Mouse? {
+    let w: List<String> := ui.typed.words
+    if w.length != 4 {
+        return none
+    }
+    let (x, y): (Int?, Int?) := (w[1].to_int, w[2].to_int)
+    if x = none || y = none {
+        return none
+    }
+    if w[0] != "press" && w[0] != "release" && w[0] != "move" {
+        return none
+    }
+    return Mouse { x, y, pressed := w[0] = "press", released := w[0] = "release", moved := w[0] = "move", right := w[3] = "2" }
+}
+
+fn pressed -> Key? {
+    let t: String := ui.typed
+    if !t.starts_with("key ") {
+        return none
+    }
+    return Key { name := t[4..t.length] }
+}
 
 fn group(kind: String, items: List<View>, a: Align) -> View {
     let place: String := match a {
@@ -168,7 +288,7 @@ fn group(kind: String, items: List<View>, a: Align) -> View {
     }
     var out: String := "{kind}{place}{items.length}:"
     var events: List<EVENT> := []
-    var typed: List<EVENT> := []
+    var typed: List<EVENT?> := []
     for v in items {
         out := out + v.text
         for e in v.events {

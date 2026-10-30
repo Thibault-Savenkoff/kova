@@ -1567,6 +1567,21 @@ pub extern "C" fn kova_ui_typed() -> i64 {
     UI_TYPED.with(|now| new_text(now.as_bytes()))
 }
 
+/// `ui.draw`: the canvas being drawn.
+static UI_DRAWING: Locked<String> = Locked::new(String::new());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_draw(op: i64) -> i64 {
+    UI_DRAWING.with(|now| now.push_str(text_of(op)));
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_drawn() -> i64 {
+    let drawn = UI_DRAWING.with(core::mem::take);
+    new_text(drawn.as_bytes())
+}
+
 /// The address of each `extern` function, once found (0 before).
 static EXTERNS: Locked<Vec<i64>> = Locked::new(Vec::new());
 
