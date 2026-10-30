@@ -758,7 +758,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let made = MADE.get();
         made.clear();
         MAC_CANVASES.get().clear();
-        let root = mac_make(kit, view, made, 32.0);
+        // 16 points around it; none in a window that has given up its frame.
+        let edge = if *MAC_BARE.get() { 0.0 } else { 16.0 };
+        let root = mac_make(kit, view, made, 2.0 * edge);
         // A view alone has no room around it: the window's content is always a stack view.
         let is_a: extern "C" fn(Id, Id, Id) -> bool = unsafe { core::mem::transmute(kit.send as usize) };
         let root = if is_a(root, kit.sel("isKindOfClass:"), kit.class("NSStackView")) {
@@ -770,8 +772,6 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (kit.send_two)(stack, kit.sel("addArrangedSubview:"), root);
             stack
         };
-        // None in a window that has given up its frame.
-        let edge = if *MAC_BARE.get() { 0.0 } else { 16.0 };
         (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: edge, left: edge, bottom: edge, right: edge });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
