@@ -708,20 +708,19 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             register(canvas);
             kit.canvas = canvas;
             // A window without a title bar refuses the keyboard unless a class of its own says yes.
-            // The system's `zoom:` animates in a loop of its own, where a `ui.fill` canvas could
-            // only follow at the end: `mac_zoom` animates from `ui_show`'s loop instead.
-            let own = new_class(kit.class("NSWindow"), c"KovaUiWindow".as_ptr() as *const u8, 0);
-            add(own, kit.sel("canBecomeKeyWindow"), mac_yes as usize, yes);
-            add(own, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
-            add(own, kit.sel("zoom:"), mac_zoom as usize, hears);
-            register(own);
+            let bare = new_class(kit.class("NSWindow"), c"KovaUiWindow".as_ptr() as *const u8, 0);
+            add(bare, kit.sel("canBecomeKeyWindow"), mac_yes as usize, yes);
+            add(bare, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
+            register(bare);
             // Titled, closable, miniaturizable, resizable; or only the last three; buffered.
             *MAC_BARE.get() = acts.contains(&0);
-            let mask = if *MAC_BARE.get() { 14 } else { 15 };
+            let (class, mask) = if *MAC_BARE.get() { (bare, 14) } else { (kit.class("NSWindow"), 15) };
             let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
-            let w = (kit.window_init)(kit.send(own, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
+            let w = (kit.window_init)(kit.send(class, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
             (kit.send_two)(w, kit.sel("setReleasedWhenClosed:"), core::ptr::null_mut());
             (kit.send_two)(w, kit.sel("setDelegate:"), kit.target);
+            // A window without a title bar has no full screen unless it asks for it.
+            (kit.send_id)(w, kit.sel("setCollectionBehavior:"), 1 << 7);
             kit.send(w, "center");
             kit.window = w;
             if var("KOVA_UI_HIDDEN").is_none() {
@@ -812,7 +811,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 (kit.send_two)(w, kit.sel("performWindowDragWithEvent:"), *MAC_PRESS.get());
             }
             4 => {
-                (kit.send_two)(w, kit.sel("zoom:"), core::ptr::null_mut());
+                (kit.send_two)(w, kit.sel("toggleFullScreen:"), core::ptr::null_mut());
             }
             _ => {}
         }
@@ -822,7 +821,6 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     while *CLICKED.get() == WAITING && MAC_HEARD.get().is_empty() {
         // Waits for the next event or the next tick, whichever comes first.
         let now = mac_now(kit);
-        mac_grow(kit, w, now);
         for clock in MAC_CLOCKS.get().iter_mut().filter(|clock| clock.2 <= now) {
             clock.2 = now + clock.0;
             MAC_HEARD.get().hear(clock.1 as i64, String::new());
@@ -830,8 +828,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         if !MAC_HEARD.get().is_empty() {
             break;
         }
-        let step = MAC_GROWING.get().as_ref().map_or(f64::INFINITY, |growing| growing.next);
-        let next = MAC_CLOCKS.get().iter().map(|clock| clock.2).fold(step, f64::min);
+        let next = MAC_CLOCKS.get().iter().map(|clock| clock.2).fold(f64::INFINITY, f64::min);
         let until = if next.is_finite() { (kit.send_float)(kit.class("NSDate"), kit.sel("dateWithTimeIntervalSinceNow:"), next - now) } else { future };
         let e = (kit.event)(app, kit.sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64::MAX, until, mode, true);
         if !e.is_null() {
@@ -865,69 +862,6 @@ static MAC_CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::
 fn mac_now(kit: &Kit) -> f64 {
     let seconds: extern "C" fn(Id, Id) -> f64 = unsafe { core::mem::transmute(kit.send as usize) };
     seconds(kit.class("NSDate"), kit.sel("timeIntervalSinceReferenceDate"))
-}
-
-/// The window on its way to a new frame.
-#[derive(Clone, Copy)]
-struct Growing {
-    from: Rect,
-    to: Rect,
-    start: f64,
-    seconds: f64,
-    next: f64,
-}
-
-static MAC_GROWING: crate::Global<Option<Growing>> = crate::Global::new(None);
-/// The frame `zoom:` left, to come back to.
-static MAC_BEFORE: crate::Global<Option<Rect>> = crate::Global::new(None);
-
-/// Fills the screen, or goes back to the frame it left, in the system's time.
-extern "C" fn mac_zoom(me: Id, _message: Id, _sender: Id) {
-    let Some(kit) = KIT.get().as_ref() else { return };
-    let from = mac_rect(kit, me, "frame");
-    let screen = kit.send(me, "screen");
-    let screen = if screen.is_null() { kit.send(kit.class("NSScreen"), "mainScreen") } else { screen };
-    let full = mac_rect(kit, screen, "visibleFrame");
-    let filling = [from.x - full.x, from.y - full.y, from.width - full.width, from.height - full.height].iter().all(|d| *d > -1.0 && *d < 1.0);
-    let to = if filling {
-        MAC_BEFORE.get().take().unwrap_or(from)
-    } else {
-        *MAC_BEFORE.get() = Some(from);
-        full
-    };
-    let time: extern "C" fn(Id, Id, Rect) -> f64 = unsafe { core::mem::transmute(kit.send as usize) };
-    let start = mac_now(kit);
-    *MAC_GROWING.get() = Some(Growing { from, to, start, seconds: time(me, kit.sel("animationResizeTime:"), to), next: start });
-}
-
-/// One step of the way, 60 times a second. The canvases are measured before anything is painted:
-/// `ui_show` then returns, and they are painted for their new size, never at the old one. The wait
-/// between two steps is what lets the system put each of them on screen.
-fn mac_grow(kit: &Kit, w: Id, now: f64) {
-    let Some(growing) = MAC_GROWING.get().filter(|growing| growing.next <= now) else { return };
-    let t = ((now - growing.start) / growing.seconds).min(1.0);
-    let eased = t * t * (3.0 - 2.0 * t);
-    let (a, b) = (growing.from, growing.to);
-    let between = |from: f64, to: f64| from + (to - from) * eased;
-    let frame = Rect { x: between(a.x, b.x), y: between(a.y, b.y), width: between(a.width, b.width), height: between(a.height, b.height) };
-    let set_frame: extern "C" fn(Id, Id, Rect, bool) = unsafe { core::mem::transmute(kit.send as usize) };
-    set_frame(w, kit.sel("setFrame:display:"), frame, false);
-    kit.send(kit.send(w, "contentView"), "layoutSubtreeIfNeeded");
-    mac_measure(kit);
-    if MAC_HEARD.get().is_empty() {
-        kit.send(w, "displayIfNeeded");
-    }
-    *MAC_GROWING.get() = (t < 1.0).then_some(Growing { next: now + 1.0 / 60.0, ..growing });
-}
-
-/// Tells the program the real size of its `ui.fill` canvases, if it changed.
-fn mac_measure(kit: &Kit) {
-    for (view, canvas) in MAC_CANVASES.get().iter() {
-        let bounds = mac_rect(kit, *view, "bounds");
-        if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
-            MAC_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
-        }
-    }
 }
 
 extern "C" fn mac_yes(_me: Id, _message: Id) -> bool {
@@ -1028,8 +962,10 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     use crate::shared::UiOp as Op;
     let Some(kit) = KIT.get().as_ref() else { return };
     let Some((_, canvas)) = MAC_CANVASES.get().iter().find(|e| e.0 == me) else { return };
-    let bounds = mac_rect(kit, me, "bounds");
-    mac_measure(kit);
+    let bounds = mac_bounds(kit, me);
+    if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
+        MAC_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+    }
     let Some(graphics) = library("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics") else { return };
     let Some(appkit) = library("/System/Library/Frameworks/AppKit.framework/AppKit") else { return };
     let f = |name: &str| symbol(graphics, name).unwrap_or(0);
@@ -1105,22 +1041,22 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     }
 }
 
-/// A rectangle an object answers with. A struct this big comes back through memory on Intel, a
-/// variant of `objc_msgSend` that arm64 does not have.
-fn mac_rect(kit: &Kit, object: Id, message: &str) -> Rect {
+/// A view's `bounds`. A struct this big comes back through memory on Intel, a variant of
+/// `objc_msgSend` that arm64 does not have.
+fn mac_bounds(kit: &Kit, view: Id) -> Rect {
     #[cfg(target_arch = "x86_64")]
     {
         let mut out = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
         if let Some(send) = library("/usr/lib/libobjc.A.dylib").and_then(|l| symbol(l, "objc_msgSend_stret")) {
             let send: extern "C" fn(*mut Rect, Id, Id) = unsafe { core::mem::transmute(send) };
-            send(&mut out, object, kit.sel(message));
+            send(&mut out, view, kit.sel("bounds"));
         }
         out
     }
     #[cfg(target_arch = "aarch64")]
     {
         let send: extern "C" fn(Id, Id) -> Rect = unsafe { core::mem::transmute(kit.send as usize) };
-        send(object, kit.sel(message))
+        send(view, kit.sel("bounds"))
     }
 }
 

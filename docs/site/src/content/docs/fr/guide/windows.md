@@ -359,7 +359,7 @@ fonctions, appelées depuis `update`, remplacent ce qui a disparu :
 | --- | --- |
 | `ui.close` | ferme la fenêtre ; `ui.run` se termine et le programme continue. |
 | `ui.minimize` | envoie la fenêtre dans la barre des tâches ou le Dock. |
-| `ui.maximize` | remplit l'écran, ou revient en arrière si c'est déjà le cas. |
+| `ui.maximize` | remplit l'écran, ou revient en arrière si c'est déjà le cas. Sur Mac, c'est le vrai plein écran, comme avec le bouton vert. |
 | `ui.drag` | le système déplace la fenêtre avec la souris, jusqu'au relâchement du bouton. |
 
 ```kova

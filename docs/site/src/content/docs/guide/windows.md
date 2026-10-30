@@ -351,7 +351,7 @@ border. Everything inside is yours, so a canvas can be the title bar. Four funct
 | --- | --- |
 | `ui.close` | closes the window; `ui.run` ends and the program goes on. |
 | `ui.minimize` | sends the window to the taskbar or the Dock. |
-| `ui.maximize` | fills the screen, or comes back if it already does. |
+| `ui.maximize` | fills the screen, or comes back if it already does. On a Mac, this is the real full screen, as with the green button. |
 | `ui.drag` | the system moves the window with the mouse, until the button is released. |
 
 ```kova
