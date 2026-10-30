@@ -1,0 +1,19 @@
+// A missing image stops the program and says which one, instead of leaving a hole in the window.
+import ui
+
+struct App {
+    n: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.image("tests/data/nowhere.png")
+}
+
+fn update(app: var App, e: Int) {
+}
+
+fn main {
+    ui.run("Image", App { n := 0 }, view, update)
+}
+// code: 101
+// stderr: no image at tests/data/nowhere.png

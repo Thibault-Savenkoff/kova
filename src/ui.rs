@@ -10,11 +10,12 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 19] = [
-    "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white",
+const OWN: [&str; 20] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white",
 ];
 
 const SOURCE: &str = r#"import ui
+import files
 IMPORTS
 public:
 
@@ -121,6 +122,12 @@ fn button(label: String, event: EVENT) -> View {
 fn input(value: String, changed: {String -> EVENT}) -> View {
     let typed: String := ui.typed
     return View { text := "I{value.length}:{value}", events := [], typed := [changed(typed)] }
+}
+
+fn image(path: String) -> View
+    require files.exists(path) else "no image at {path}"
+{
+    return View { text := "P{path.length}:{path}", events := [], typed := [] }
 }
 
 fn column(items: List<View>) align(a: Align := Align.Left) -> View {

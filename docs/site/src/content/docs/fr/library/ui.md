@@ -19,6 +19,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.text(s: String) -> ui.View` | une ligne de texte. |
 | `ui.button(label: String, event: E) -> ui.View` | un bouton ; un clic envoie `event` à `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | un champ de texte qui contient `value` ; à chaque changement fait par l'utilisateur, l'événement du bloc, fait à partir du texte que contient maintenant le champ, va à `update` ([Les champs de texte](/fr/guide/windows/#les-champs-de-texte)). |
+| `ui.image(path: String) -> ui.View` | un fichier image : PNG ou JPEG sur chaque système. Un chemin qui n'existe pas arrête le programme en le nommant. `.size(w)` donne sa largeur en pixels, la hauteur suit. |
 | `ui.column(items: List<ui.View>) -> ui.View` | les vues l'une sous l'autre. |
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 | `ui.column(…) align(left\|center\|right)` | la colonne prend toute la largeur qu'on lui donne et y place ses vues. |

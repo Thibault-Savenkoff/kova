@@ -128,6 +128,15 @@ empty pixels around the view it is written on.
 A button's text keeps the system's color: Windows does not let a native button change it, and a
 window should behave the same everywhere. Its `size` and `bold` work.
 
+An image comes from a file, and `.size` gives its width, the height following:
+
+```kova
+ui.image("logo.png").size(64)
+```
+
+If the file does not exist, the program stops and names it, rather than leaving a hole in the
+window. A relative path starts from the folder the program was launched in.
+
 ## Text fields
 
 A field shows a value of the state, and each change the user makes, letter by letter, becomes an
@@ -190,6 +199,6 @@ so drive a window program through every case, on any machine, even without a scr
 
 ## What comes next
 
-`import ui` has texts, buttons, text fields, rows and columns today. More widgets are planned.
+`import ui` has texts, images, buttons, text fields, rows and columns today. More widgets are planned.
 For a widget it does not have yet, a program can call the system's own library through
 [`extern`](/guide/calling-c/).

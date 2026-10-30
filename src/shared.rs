@@ -833,6 +833,8 @@ pub enum UiNode {
     Input(String, usize),
     Column(Vec<UiNode>, UiAlign),
     Row(Vec<UiNode>, UiAlign),
+    /// An image file and its width (0: the file's own).
+    Image(String, i32),
     /// A text, button or field with a style of its own (a button keeps the system's text color).
     Styled(UiStyle, alloc::boxed::Box<UiNode>),
     /// Empty pixels around a view.
@@ -916,6 +918,7 @@ pub fn ui_shape(node: &UiNode) -> String {
             let kind = if matches!(node, UiNode::Row(..)) { 'R' } else { 'C' };
             format!("{kind}{}{}({})", *a as u8, parts.len(), inside.join(","))
         }
+        UiNode::Image(path, width) => format!("P{width}:{path}"),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
     }
@@ -976,6 +979,11 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyl
     let style = own.over(around);
     let node = ui_part(kind, chars, counts, style);
     let node = match kind {
+        // A size on the image itself: a column's text size is not an image's width.
+        'P' => match node {
+            UiNode::Image(path, _) => UiNode::Image(path, own.size),
+            other => other,
+        },
         'B' if style.size > 0 || style.bold => UiNode::Styled(UiStyle { color: None, ..style }, node.into()),
         'T' | 'I' if style != UiStyle::default() => UiNode::Styled(style, node.into()),
         _ => node,
@@ -987,7 +995,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -998,10 +1006,12 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 2], st
     };
     let n = ui_number(chars);
     match kind {
-        'T' | 'B' | 'I' => {
+        'T' | 'B' | 'I' | 'P' => {
             let label: String = chars.by_ref().take(n).collect();
-            if kind == 'T' {
-                return UiNode::Text(label);
+            match kind {
+                'T' => return UiNode::Text(label),
+                'P' => return UiNode::Image(label, 0),
+                _ => {}
             }
             let count = &mut counts[(kind == 'I') as usize];
             *count += 1;
@@ -1038,6 +1048,8 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::Start) => group("row", parts, out),
             UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
+            UiNode::Image(path, 0) => out.push_str(&format!("image {path:?}")),
+            UiNode::Image(path, width) => out.push_str(&format!("image {path:?} size({width})")),
             UiNode::Styled(style, leaf) => {
                 write(leaf, out);
                 if let Some(c) = style.color {
@@ -1155,6 +1167,8 @@ mod tests {
         // The last written comes first; a group hands its style down; a part's own style wins.
         assert_eq!(ui_describe("Ss20:Ss10:Sb1:T1:a"), "text \"a\" size(20) bold");
         assert_eq!(ui_describe("Sc255:Ss9:CL2:Ss5:T1:aB1:b"), "column(text \"a\" color(#0000ff) size(5), button \"b\" size(9))");
+        assert_eq!(ui_describe("Ss9:RT1:Ss64:P5:a.png"), "row(image \"a.png\" size(64))");
+        assert_eq!(ui_describe("Ss9:RT1:P5:a.png"), "row(image \"a.png\")");
         assert_eq!(ui_describe("Sm4:Sb1:T1:a"), "text \"a\" bold margin(4)");
     }
 }

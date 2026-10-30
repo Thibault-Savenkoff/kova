@@ -715,7 +715,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let (s, setter) = match leaf {
                 Text(s) | Input(s, _) => (s, "setStringValue:"),
                 Button(s, _) => (s, "setTitle:"),
-                _ => continue,
+                _ => continue, // an image: its path is in the shape
             };
             let now = kit.send(v, if setter == "setTitle:" { "title" } else { "stringValue" });
             if mac_text(kit, now) != *s {
@@ -838,6 +838,9 @@ impl Kit {
 /// Gives a text, button or field its style; without one, the system's font and color.
 fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::shared::UiStyle) {
     use crate::shared::UiNode::*;
+    if matches!(leaf, Image(..)) {
+        return;
+    }
     let size = if style.size > 0 { style.size as f64 } else { 13.0 }; // `NSFont.systemFontSize`
     let font = (kit.send_float)(kit.class("NSFont"), kit.sel(if style.bold { "boldSystemFontOfSize:" } else { "systemFontOfSize:" }), size);
     (kit.send_two)(view, kit.sel("setFont:"), font);
@@ -909,6 +912,24 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
                 }
             }
             return (kit.send)(stack, kit.sel("autorelease"));
+        }
+        Image(path, width) => {
+            let image = (kit.send_two)(kit.send(kit.class("NSImage"), "alloc"), kit.sel("initWithContentsOfFile:"), kit.text(path));
+            if image.is_null() {
+                (kit.send_two)(kit.class("NSTextField"), kit.sel("labelWithString:"), kit.text(""))
+            } else {
+                let v = (kit.send_two)(kit.class("NSImageView"), kit.sel("imageViewWithImage:"), image);
+                if *width > 0 {
+                    let natural = (kit.fitting)(image, kit.sel("size"));
+                    let width = *width as f64;
+                    (kit.send_id)(v, kit.sel("setImageScaling:"), 3); // NSImageScaleProportionallyUpOrDown
+                    for (anchor, length) in [("widthAnchor", width), ("heightAnchor", width * natural.height / natural.width.max(1.0))] {
+                        let fixed = (kit.send_float)(kit.send(v, anchor), kit.sel("constraintEqualToConstant:"), length);
+                        (kit.send_id)(fixed, kit.sel("setActive:"), 1);
+                    }
+                }
+                v
+            }
         }
         Styled(_, inner) => return mac_make(kit, inner, made, insets),
         // A stack view of one part, with room around it.

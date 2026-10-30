@@ -1,0 +1,21 @@
+// `ui.image(path)`, its width with `.size`: a size given to a group is not an image's.
+import ui
+
+struct App {
+    n: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.image("tests/data/poem.txt"),
+        ui.image("tests/data/poem.txt").size(64).margin(2),
+    ]).size(9)
+}
+
+fn update(app: var App, e: Int) {
+}
+
+fn main {
+    ui.run("Image", App { n := 0 }, view, update)
+}
+// expect: [Image] column(image "tests/data/poem.txt", image "tests/data/poem.txt" size(64) margin(2))

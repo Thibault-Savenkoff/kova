@@ -1012,6 +1012,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     unsafe {
         use core::mem::transmute as t;
         let g = Gtk {
+            library: *GTK.get(),
             label: t(f("gtk_label_new")),
             button: t(f("gtk_button_new_with_label")),
             entry: t(f("gtk_entry_new")),
@@ -1169,6 +1170,7 @@ type P = *mut u8;
 
 /// The GTK functions `gtk_make` calls.
 struct Gtk {
+    library: usize,
     label: extern "C" fn(*const u8) -> P,
     button: extern "C" fn(*const u8) -> P,
     entry: extern "C" fn() -> P,
@@ -1219,6 +1221,29 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
             }
             b
         }
+        // Through a pixbuf, the one way to have a smaller image: a `GtkPicture` asks for the file's size.
+        Image(path, width) => unsafe {
+            use core::mem::transmute as t;
+            let f = |name: &str| symbol(g.library, name).unwrap_or(0);
+            let file = c_string(path);
+            let pixbuf = if *width > 0 {
+                let load: extern "C" fn(*const u8, i32, i32, i32, *mut P) -> P = t(f("gdk_pixbuf_new_from_file_at_scale"));
+                load(file.as_ptr(), *width, -1, 1, null_mut())
+            } else {
+                let load: extern "C" fn(*const u8, *mut P) -> P = t(f("gdk_pixbuf_new_from_file"));
+                load(file.as_ptr(), null_mut())
+            };
+            if pixbuf.is_null() {
+                (g.label)(c"".as_ptr() as *const u8)
+            } else {
+                let texture: extern "C" fn(P) -> P = t(f("gdk_texture_new_for_pixbuf"));
+                let picture: extern "C" fn(P) -> P = t(f("gtk_picture_new_for_paintable"));
+                let shrink: extern "C" fn(P, i32) = t(f("gtk_picture_set_can_shrink"));
+                let p = picture(texture(pixbuf));
+                shrink(p, 0);
+                p
+            }
+        },
         Styled(_, inner) => return gtk_make(g, inner, made, h, v),
         Spaced(m, inner) => {
             let widget = gtk_make(g, inner, made, h, v);

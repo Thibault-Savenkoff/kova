@@ -959,6 +959,57 @@ fn win_font(win: &Win32, style: crate::shared::UiStyle) -> Handle {
     font
 }
 
+/// An image as a bitmap, with its size: read by GDI+, the Windows part that knows PNG and JPEG, then
+/// kept. Transparency is mixed with the window's color. None if it cannot be read.
+fn win_image(path: &str, width: i32) -> Option<(Handle, i32, i32)> {
+    static IMAGES: Global<Vec<(String, i32, Option<(Handle, i32, i32)>)>> = Global::new(Vec::new());
+    static GDIPLUS: Global<usize> = Global::new(0);
+    if let Some(known) = IMAGES.get().iter().find(|i| i.0 == path && i.1 == width) {
+        return known.2;
+    }
+    let read = || unsafe {
+        use core::mem::transmute as t;
+        if *GDIPLUS.get() == 0 {
+            let plus = library("gdiplus.dll")?;
+            // `GdiplusStartupInput`: version 1, then nothing asked.
+            let (mut token, input) = (0usize, [1usize, 0, 0]);
+            let start: extern "system" fn(*mut usize, *const usize, *mut u8) -> i32 = t(symbol(plus, "GdiplusStartup")?);
+            if start(&mut token, input.as_ptr(), core::ptr::null_mut()) != 0 {
+                return None;
+            }
+            *GDIPLUS.get() = plus;
+        }
+        let f = |name: &str| symbol(*GDIPLUS.get(), name);
+        let from_file: extern "system" fn(*const u16, *mut Handle) -> i32 = t(f("GdipCreateBitmapFromFile")?);
+        let measure: [extern "system" fn(Handle, *mut u32) -> i32; 2] = [t(f("GdipGetImageWidth")?), t(f("GdipGetImageHeight")?)];
+        let scaled: extern "system" fn(Handle, u32, u32, *mut Handle, usize, usize) -> i32 = t(f("GdipGetImageThumbnail")?);
+        let bitmap: extern "system" fn(Handle, *mut Handle, u32) -> i32 = t(f("GdipCreateHBITMAPFromBitmap")?);
+        let color: extern "system" fn(i32) -> u32 = t(symbol(library("user32.dll")?, "GetSysColor")?);
+        let (mut image, mut w, mut h) = (0 as Handle, 0, 0);
+        if from_file(wide(path).as_ptr(), &mut image) != 0 {
+            return None;
+        }
+        measure[0](image, &mut w);
+        measure[1](image, &mut h);
+        if width > 0 && w > 0 {
+            h = (h as u64 * width as u64 / w as u64).max(1) as u32;
+            w = width as u32;
+            let mut smaller = 0 as Handle;
+            if scaled(image, w, h, &mut smaller, 0, 0) != 0 {
+                return None;
+            }
+            image = smaller;
+        }
+        // COLOR_BTNFACE, 0xBBGGRR, to opaque 0xAARRGGBB.
+        let c = color(15);
+        let (mut made, around) = (0 as Handle, 0xff00_0000 | (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff));
+        (bitmap(image, &mut made, around) == 0).then_some((made, w as i32, h as i32))
+    };
+    let image = read();
+    IMAGES.get().push((path.into(), width, image));
+    image
+}
+
 /// A field's id is `FIELD` + its number (a button's, its number + 1).
 const FIELD: usize = 0x8000;
 
@@ -1040,6 +1091,7 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
         }
         Column(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
         Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
+        Image(path, width) => win_image(path, *width).map_or((0, 0), |(_, w, h)| (w, h)),
         Styled(style, leaf) => {
             let before = (win.select)(dc, win_font(win, *style));
             let size = win_size(win, dc, leaf);
@@ -1113,6 +1165,12 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
                 let (pw, ph) = win_size(win, dc, p);
                 win_place(win, dc, window, p, Default::default(), x, y + a.offset(h - ph), pw, made, same, at);
                 x += pw + GAP;
+            }
+        }
+        Image(path, width) => {
+            control("STATIC", "", 0, 0xE); // SS_BITMAP
+            if let (false, Some((bitmap, ..))) = (same, win_image(path, *width)) {
+                (win.send)(made[*at - 1], 0x0172, 0, bitmap as isize); // STM_SETIMAGE, IMAGE_BITMAP
             }
         }
         Styled(style, leaf) => {

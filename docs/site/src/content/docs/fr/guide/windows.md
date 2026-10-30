@@ -132,6 +132,15 @@ est écrit.
 Le texte d'un bouton garde la couleur du système : Windows ne laisse pas un bouton natif la changer,
 et une fenêtre doit se comporter pareil partout. `size` et `bold` y fonctionnent.
 
+Une image vient d'un fichier, et `.size` donne sa largeur, la hauteur suit :
+
+```kova
+ui.image("logo.png").size(64)
+```
+
+Si le fichier n'existe pas, le programme s'arrête et le nomme, plutôt que de laisser un trou dans la
+fenêtre. Un chemin relatif part du dossier où le programme a été lancé.
+
 ## Les champs de texte
 
 Un champ montre une valeur de l'état, et chaque changement fait par l'utilisateur, lettre par
@@ -197,6 +206,6 @@ même sans écran.
 
 ## La suite
 
-`import ui` a aujourd'hui du texte, des boutons, des champs de texte, des lignes et des colonnes.
+`import ui` a aujourd'hui du texte, des images, des boutons, des champs de texte, des lignes et des colonnes.
 D'autres éléments sont prévus. Pour un élément qu'il n'a pas encore, un programme peut appeler la
 bibliothèque du système elle-même avec [`extern`](/fr/guide/calling-c/).
