@@ -1251,6 +1251,16 @@ fn ui_clock() {
     assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "4", "5"], "{}", text(&out.stderr));
 }
 
+/// `frame(false)`, on the system's real windows, hidden, down to `ui.close`.
+#[test]
+fn ui_frame() {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    let out = kova(LANG).args(["run", "tests/ui/frame.kova"]).env("KOVA_UI_HIDDEN", "1").env_remove("KOVA_UI_SCRIPT").output().unwrap();
+    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "closed"], "{}", text(&out.stderr));
+}
+
 #[test]
 fn server_log() {
     let _alone = one_server();

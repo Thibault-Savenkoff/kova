@@ -746,7 +746,7 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
 /// being typed into keeps its cursor. The button clicked, a field changed (`shared::ui_changed`,
 /// its text in `typed`), or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
 /// from another program).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     static WINDOW: Global<Handle> = Global::new(0);
     static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
     static SHAPE: Global<String> = Global::new(String::new());
@@ -890,8 +890,12 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 class: class.as_ptr(),
                 small_icon,
             });
-            // WS_OVERLAPPEDWINDOW; CW_USEDEFAULT for the place.
-            let w = (win.create)(0, class.as_ptr(), wide(title).as_ptr(), 0xCF0000, i32::MIN, i32::MIN, 320, 200, 0, 0, instance, null_mut());
+            // WS_OVERLAPPEDWINDOW, or WS_POPUP with the taskbar's minimize and maximize;
+            // CW_USEDEFAULT for the place.
+            if acts.contains(&0) {
+                *WIN_STYLE.get() = 0x8003_0000;
+            }
+            let w = (win.create)(0, class.as_ptr(), wide(title).as_ptr(), *WIN_STYLE.get(), i32::MIN, i32::MIN, 320, 200, 0, 0, instance, null_mut());
             *WINDOW.get() = w;
             let show: extern "system" fn(Handle, i32) -> i32 = t(f(user, "ShowWindow"));
             if var("KOVA_UI_HIDDEN").is_none() {
@@ -944,8 +948,34 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let (want_w, want_h) = ((content_w + 32).max(cw), (content_h + 32).max(ch));
         if fresh || want_w > cw || want_h > ch {
             let mut r = [0, 0, want_w, want_h];
-            (win.adjust)(&mut r, 0xCF0000, 0);
+            (win.adjust)(&mut r, *WIN_STYLE.get(), 0);
             (win.set_pos)(w, 0, 0, 0, r[2] - r[0], r[3] - r[1], 0x2 | 0x4); // SWP_NOMOVE | SWP_NOZORDER
+        }
+        let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+        let show_as: extern "system" fn(Handle, i32) -> i32 = core::mem::transmute(user("ShowWindow"));
+        for act in acts {
+            match act {
+                // WM_CLOSE
+                1 => {
+                    (win.send)(w, 0x0010, 0, 0);
+                    return -1;
+                }
+                2 => {
+                    show_as(w, 6); // SW_MINIMIZE
+                }
+                // The system moves the window, as from a title bar, until the button is released
+                // (WM_NCLBUTTONDOWN, HTCAPTION).
+                3 => {
+                    let release: extern "system" fn() -> i32 = core::mem::transmute(user("ReleaseCapture"));
+                    release();
+                    (win.send)(w, 0x00A1, 2, 0);
+                }
+                4 => {
+                    let is_big: extern "system" fn(Handle) -> i32 = core::mem::transmute(user("IsZoomed"));
+                    show_as(w, if is_big(w) != 0 { 9 } else { 3 }); // SW_RESTORE, SW_MAXIMIZE
+                }
+                _ => {}
+            }
         }
         // `MSG`, 48 bytes.
         let mut m = [0u64; 6];
@@ -970,6 +1000,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 }
 
 static WIN: Global<Option<Win32>> = Global::new(None);
+
+/// The window's style (`WS_OVERLAPPEDWINDOW`, unless `ui.run(…) frame(false)`).
+static WIN_STYLE: Global<u32> = Global::new(0xCF0000);
 
 /// What a canvas or a clock heard, for `ui_show`.
 static WIN_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());

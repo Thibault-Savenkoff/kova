@@ -1356,9 +1356,10 @@ mod tests {
             items.into_iter().map(|i| i.label).collect::<Vec<_>>()
         };
         let ui = "import ui\nstruct App {\n    n: Int\n}\nfn view(a: App) -> ui.View {\n    return ui.text(\"x\")\n}\nfn update(a: var App, e: Int) {\n}\nfn main {\n    ui.run(\"T\", App { n := 0 }, view, update) RUN\n}\n";
-        assert_eq!(labels(&ui.replace("RUN", "|")), ["width(…)", "height(…)"]);
-        assert_eq!(labels(&ui.replace("RUN", "width(400) he|")), ["height(…)"]);
-        assert_eq!(labels(&ui.replace("RUN", "width(400) height(9) |")), Vec::<String>::new());
+        assert_eq!(labels(&ui.replace("RUN", "|")), ["width(…)", "height(…)", "frame(…)"]);
+        assert_eq!(labels(&ui.replace("RUN", "width(400) he|")), ["height(…)", "frame(…)"]);
+        assert_eq!(labels(&ui.replace("RUN", "width(400) height(9) |")), ["frame(…)"]);
+        assert_eq!(labels(&ui.replace("RUN", "width(400) height(9) frame(false) |")), Vec::<String>::new());
         let web = "import web\nfn main {\n    web.serve(8080) |\n}\n";
         let offered = labels(web);
         assert!(offered.contains(&"workers(…)".to_string()) && offered.contains(&"log(…)".to_string()), "{offered:?}");

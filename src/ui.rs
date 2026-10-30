@@ -3,7 +3,8 @@
 // The checker, ownership, KIR and both backends then see ordinary Kova; the only primitive is
 // `ui.show(title, text, width, height)`, which shows a view and waits for a click or a change
 // (`StrOp::UiShow`; a size of 0 = fit the content), `ui.typed`, the text a field now holds or the
-// gesture made on a canvas, and `ui.draw` / `ui.drawn`, which gather a canvas's drawing.
+// gesture made on a canvas, `ui.draw` / `ui.drawn`, which gather a canvas's drawing, and `ui.act`,
+// which asks something of the window (`shared::ui_act_name`).
 
 use crate::ast::{File, Mode};
 use crate::diag::Diag;
@@ -11,8 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 26] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number",
+const OWN: [&str; 30] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "maximize", "drag",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -225,7 +226,26 @@ fn row(items: List<View>) align(a: Align := Align.Top) -> View {
     return group("R", items, a)
 }
 
-fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
+fn close {
+    ui.act(1)
+}
+
+fn minimize {
+    ui.act(2)
+}
+
+fn drag {
+    ui.act(3)
+}
+
+fn maximize {
+    ui.act(4)
+}
+
+fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame(system: Bool := true) {
+    if !system {
+        ui.act(0)
+    }
     var s: STATE := state.clone
     while true {
         let v: View := VIEW(s)

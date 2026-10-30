@@ -336,6 +336,65 @@ are counted with the text fields, in the order the view is written; for a canvas
 the keyboard if `.on_mouse` is written first. `1` is the left button, `2` the right. Clocks are
 counted with the buttons.
 
+## A window with your own frame
+
+`frame(false)` on `ui.run` removes what the system draws around the window: title bar, buttons,
+border. Everything inside is yours, so a canvas can be the title bar. Four functions, called from
+`update`, replace what is gone:
+
+| Written | Does |
+| --- | --- |
+| `ui.close` | closes the window; `ui.run` ends and the program goes on. |
+| `ui.minimize` | sends the window to the taskbar or the Dock. |
+| `ui.maximize` | fills the screen, or comes back if it already does. |
+| `ui.drag` | the system moves the window with the mouse, until the button is released. |
+
+```kova
+import ui
+
+enum Event {
+    Pressed(x: Int, y: Int, pressed: Bool)
+    Closed
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.column([
+        ui.canvas(300, 32) { d: ui.Draw =>
+            d.clear(ui.rgb(40, 44, 52))
+            d.text("My program", 10, 8) color(ui.white)
+        }
+        .on_mouse { m: ui.Mouse => Event.Pressed(m.x, m.y, m.pressed) },
+        ui.button("Close", Event.Closed),
+    ])
+}
+
+fn update(n: var Int, e: Event) {
+    match e {
+        Pressed(x, y, pressed) => {
+            if pressed {
+                ui.drag
+            }
+        }
+        Closed => ui.close
+    }
+}
+
+fn main {
+    ui.run("Bare", 0, view, update) frame(false)
+}
+```
+
+```text
+[Bare] column(canvas 300x32 clear(#282c34) text(10 8 16 #ffffff "My program"), button "Close")
+(no frame)
+```
+
+`ui.drag` belongs just after a press, while the button is held: it starts from that press, and does
+nothing if there has been none. The release then goes to the system, so `m.released` does not come.
+
+Without a frame, the window cannot be resized by its edges: give it its size with `width` and
+`height`, and offer `ui.maximize` if it should grow.
+
 ## Testing a window
 
 A window cannot be looked at by a test. With `KOVA_UI_SCRIPT=1`, no window opens: each view is

@@ -1536,9 +1536,16 @@ pub extern "C" fn kova_c_read(address: i64, offset: i64, kind: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -> i64 {
     let (title, view) = (text_of(title), text_of(view));
+    let acts = UI_ACTS.with(core::mem::take);
     if sys::var("KOVA_UI_SCRIPT").is_some() {
         OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
+        for act in &acts {
+            OUT.with(|out| out.extend_from_slice(alloc::format!("({})\n", shared::ui_act_name(*act)).as_bytes()));
+        }
         flush();
+        if acts.contains(&1) {
+            return -1;
+        }
         let line = INPUT.with(|(input, at)| read_line(input, at));
         if line <= 0 {
             return -1;
@@ -1552,7 +1559,7 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
     }
     flush();
     let mut typed = String::new();
-    let clicked = sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32, &mut typed);
+    let clicked = sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32, &acts, &mut typed);
     if clicked <= -2 {
         UI_TYPED.with(|now| *now = typed);
     }
@@ -1565,6 +1572,15 @@ static UI_TYPED: Locked<String> = Locked::new(String::new());
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_typed() -> i64 {
     UI_TYPED.with(|now| new_text(now.as_bytes()))
+}
+
+/// `ui.act`: what the window must do at the next `ui.show`.
+static UI_ACTS: Locked<Vec<i64>> = Locked::new(Vec::new());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_act(act: i64) -> i64 {
+    UI_ACTS.with(|now| now.push(act));
+    0
 }
 
 /// `ui.draw`: the canvas being drawn.

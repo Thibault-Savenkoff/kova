@@ -547,6 +547,8 @@ pub enum StrOp {
     /// `ui.draw(op)`: one more thing on the canvas being drawn; `ui.drawn` takes all of it.
     UiDraw,
     UiDrawn,
+    /// `ui.act(n)`: what the window must do at the next `ui.show`.
+    UiAct,
     /// `ui.show(title, view, width, height)`: the button clicked, -1 once the window is closed (src/ui.rs).
     UiShow,
     /// Only made by codegen.rs for an `Inst::Extern`: the address of the function (its number,
@@ -5087,7 +5089,7 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw") = name.text.as_str() {
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw" | "ui.act") = name.text.as_str() {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
                     let op = match n {
@@ -5096,10 +5098,11 @@ impl<'a> Translator<'a> {
                         "ui.typed" => StrOp::UiTyped,
                         "ui.drawn" => StrOp::UiDrawn,
                         "ui.draw" => StrOp::UiDraw,
+                        "ui.act" => StrOp::UiAct,
                         _ => StrOp::PasswordMatches,
                     };
                     self.emit(Inst::Str(t, op, vals));
-                    if n == "ui.draw" {
+                    if matches!(n, "ui.draw" | "ui.act") {
                         return vec![];
                     }
                     if n != "secure.password_matches(…) hash(…)" {

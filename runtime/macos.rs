@@ -611,7 +611,7 @@ mod dl {
 /// cursor. The program runs its own event loop until something happens: the button clicked, a
 /// field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is closed.
 /// `KOVA_UI_HIDDEN` never shows the window.
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     use crate::Global;
     // `WAITING`: nothing yet, -1: the window closed.
     static CLICKED: Global<i64> = Global::new(WAITING);
@@ -707,9 +707,15 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             add(canvas, kit.sel("keyDown:"), mac_key as usize, hears);
             register(canvas);
             kit.canvas = canvas;
-            // Titled, closable, miniaturizable, resizable; buffered.
+            // A window without a title bar refuses the keyboard unless a class of its own says yes.
+            let bare = new_class(kit.class("NSWindow"), c"KovaUiWindow".as_ptr() as *const u8, 0);
+            add(bare, kit.sel("canBecomeKeyWindow"), mac_yes as usize, yes);
+            add(bare, kit.sel("canBecomeMainWindow"), mac_yes as usize, yes);
+            register(bare);
+            // Titled, closable, miniaturizable, resizable; or only the last three; buffered.
+            let (class, mask) = if acts.contains(&0) { (bare, 14) } else { (kit.class("NSWindow"), 15) };
             let frame = Rect { x: 200.0, y: 200.0, width: 320.0, height: 200.0 };
-            let w = (kit.window_init)(kit.send(kit.class("NSWindow"), "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, 15, 2, false);
+            let w = (kit.window_init)(kit.send(class, "alloc"), kit.sel("initWithContentRect:styleMask:backing:defer:"), frame, mask, 2, false);
             (kit.send_two)(w, kit.sel("setReleasedWhenClosed:"), core::ptr::null_mut());
             (kit.send_two)(w, kit.sel("setDelegate:"), kit.target);
             kit.send(w, "center");
@@ -784,6 +790,27 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let asked = Size { width: if width > 0 { width as f64 } else { 320.0 }, height: height.max(0) as f64 };
         (kit.send_size)(w, kit.sel("setContentSize:"), Size { width: size.width.max(asked.width), height: size.height.max(asked.height) });
     }
+    for act in acts {
+        match act {
+            1 => {
+                kit.send(w, "close");
+                (kit.pop)(pool);
+                *CLICKED.get() = -1;
+                return -1;
+            }
+            2 => {
+                (kit.send_two)(w, kit.sel("miniaturize:"), core::ptr::null_mut());
+            }
+            // The system moves the window until the button is released.
+            3 if !MAC_PRESS.get().is_null() => {
+                (kit.send_two)(w, kit.sel("performWindowDragWithEvent:"), *MAC_PRESS.get());
+            }
+            4 => {
+                (kit.send_two)(w, kit.sel("zoom:"), core::ptr::null_mut());
+            }
+            _ => {}
+        }
+    }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
     while *CLICKED.get() == WAITING && MAC_HEARD.get().is_empty() {
@@ -842,9 +869,16 @@ fn mac_mouse(me: Id, event: Id, kind: &str, button: i32) {
     MAC_HEARD.get().hear(crate::shared::ui_changed(n), crate::shared::ui_mouse(kind, at.width as i32, at.height as i32, button));
 }
 
+/// The last press, kept for `ui.drag`.
+static MAC_PRESS: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
+
 fn mac_pressed(me: Id, event: Id, button: i32) {
     if let Some(kit) = KIT.get().as_ref() {
         (kit.send_two)(kit.window, kit.sel("makeFirstResponder:"), me);
+        if !MAC_PRESS.get().is_null() {
+            kit.send(*MAC_PRESS.get(), "release");
+        }
+        *MAC_PRESS.get() = kit.send(event, "retain");
     }
     mac_mouse(me, event, "press", button);
 }

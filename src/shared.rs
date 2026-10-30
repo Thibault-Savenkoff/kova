@@ -965,6 +965,19 @@ impl UiQueue {
     }
 }
 
+/// What `ui.act(n)` asks of the window, in words: a test sees it in the output. `0`: no system
+/// frame, said before the window opens.
+#[allow(dead_code)]
+pub fn ui_act_name(act: i64) -> &'static str {
+    match act {
+        0 => "no frame",
+        1 => "close",
+        2 => "minimize",
+        3 => "drag",
+        _ => "maximize",
+    }
+}
+
 /// Everything that ticks in a view: (milliseconds, button number).
 #[allow(dead_code)]
 pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {

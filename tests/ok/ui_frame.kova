@@ -1,0 +1,48 @@
+// `frame(false)`: no frame from the system; `ui.close`, `ui.minimize`, `ui.maximize` and `ui.drag`
+// replace it, called from `update`.
+import ui
+
+enum Event {
+    Closed
+    Reduced
+    Grown
+    Moved
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.row([
+        ui.button("x", Event.Closed),
+        ui.button("-", Event.Reduced),
+        ui.button("+", Event.Grown),
+        ui.button("move", Event.Moved),
+    ])
+}
+
+fn update(n: var Int, e: Event) {
+    match e {
+        Closed => ui.close
+        Reduced => ui.minimize
+        Grown => ui.maximize
+        Moved => ui.drag
+    }
+}
+
+fn main {
+    ui.run("Bare", 0, view, update) frame(false)
+    print("after the window")
+}
+// stdin: 1
+// stdin: 2
+// stdin: 3
+// stdin: 0
+// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: (no frame)
+// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: (minimize)
+// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: (maximize)
+// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: (drag)
+// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: (close)
+// expect: after the window

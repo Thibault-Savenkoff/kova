@@ -344,6 +344,66 @@ En [mode test](#tester-une-fenêtre), un canvas affiche ce qu'il dessine, et `k=
 la souris avant le clavier si `.on_mouse` est écrit en premier. `1` est le bouton gauche, `2` le
 droit. Les horloges se comptent avec les boutons.
 
+## Une fenêtre avec ton propre cadre
+
+`frame(false)` sur `ui.run` retire ce que le système dessine autour de la fenêtre : barre de titre,
+boutons, bordure. Tout l'intérieur est à toi, donc un canvas peut servir de barre de titre. Quatre
+fonctions, appelées depuis `update`, remplacent ce qui a disparu :
+
+| Écrit | Fait |
+| --- | --- |
+| `ui.close` | ferme la fenêtre ; `ui.run` se termine et le programme continue. |
+| `ui.minimize` | envoie la fenêtre dans la barre des tâches ou le Dock. |
+| `ui.maximize` | remplit l'écran, ou revient en arrière si c'est déjà le cas. |
+| `ui.drag` | le système déplace la fenêtre avec la souris, jusqu'au relâchement du bouton. |
+
+```kova
+import ui
+
+enum Event {
+    Pressed(x: Int, y: Int, pressed: Bool)
+    Closed
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.column([
+        ui.canvas(300, 32) { d: ui.Draw =>
+            d.clear(ui.rgb(40, 44, 52))
+            d.text("Mon programme", 10, 8) color(ui.white)
+        }
+        .on_mouse { m: ui.Mouse => Event.Pressed(m.x, m.y, m.pressed) },
+        ui.button("Fermer", Event.Closed),
+    ])
+}
+
+fn update(n: var Int, e: Event) {
+    match e {
+        Pressed(x, y, pressed) => {
+            if pressed {
+                ui.drag
+            }
+        }
+        Closed => ui.close
+    }
+}
+
+fn main {
+    ui.run("Bare", 0, view, update) frame(false)
+}
+```
+
+```text
+[Bare] column(canvas 300x32 clear(#282c34) text(10 8 16 #ffffff "Mon programme"), button "Fermer")
+(no frame)
+```
+
+`ui.drag` se place juste après une pression, tant que le bouton est enfoncé : il part de cette
+pression et ne fait rien s'il n'y en a pas eu. Le relâchement va ensuite au système, donc
+`m.released` n'arrive pas.
+
+Sans cadre, la fenêtre ne se redimensionne pas par ses bords : donne-lui sa taille avec `width` et
+`height`, et propose `ui.maximize` si elle doit grandir.
+
 ## Tester une fenêtre
 
 Un test ne peut pas regarder une fenêtre. Avec `KOVA_UI_SCRIPT=1`, aucune fenêtre ne s'ouvre :

@@ -978,7 +978,7 @@ mod dl {
 /// widgets only take the new texts, so a field being typed into keeps its cursor. The button
 /// clicked, a field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is
 /// closed (or when GTK is missing or there is no display).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     // The library (0 = not looked for yet, 1 = missing), the window, what happened (`WAITING`:
     // nothing yet, -1: the window closed), the text of the field that changed.
     static GTK: Global<usize> = Global::new(0);
@@ -1058,6 +1058,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             // macOS, so the title shows. GTK never makes it smaller than the content.
             let default_size: extern "C" fn(P, i32, i32) = t(f("gtk_window_set_default_size"));
             default_size(w, if width > 0 { width } else { 320 }, if height > 0 { height } else { -1 });
+            if acts.contains(&0) {
+                let decorated: extern "C" fn(P, i32) = t(f("gtk_window_set_decorated"));
+                decorated(w, 0);
+            }
             (g.connect)(w, c"close-request".as_ptr() as *const u8, closing as usize, null_mut(), null_mut(), 0);
             *WINDOW.get() = w as usize;
         }
@@ -1127,6 +1131,28 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let present: extern "C" fn(P) = t(f("gtk_window_present"));
         present(w);
         let iteration: extern "C" fn(P, i32) -> i32 = t(f("g_main_context_iteration"));
+        for act in acts {
+            match act {
+                1 => {
+                    let destroy: extern "C" fn(P) = t(f("gtk_window_destroy"));
+                    destroy(w);
+                    while iteration(null_mut(), 0) != 0 {}
+                    *CLICKED.get() = -1;
+                    return -1;
+                }
+                2 => {
+                    let minimize: extern "C" fn(P) = t(f("gtk_window_minimize"));
+                    minimize(w);
+                }
+                3 => gtk_drag(w),
+                4 => {
+                    let is_big: extern "C" fn(P) -> i32 = t(f("gtk_window_is_maximized"));
+                    let change: extern "C" fn(P) = t(f(if is_big(w) != 0 { "gtk_window_unmaximize" } else { "gtk_window_maximize" }));
+                    change(w);
+                }
+                _ => {}
+            }
+        }
         while *CLICKED.get() == WAITING && GTK_HEARD.get().is_empty() {
             iteration(null_mut(), 1);
         }
@@ -1159,7 +1185,33 @@ extern "C" fn gtk_tick(n: P) -> i32 {
     1 // G_SOURCE_CONTINUE
 }
 
+/// The press `ui.drag` starts from: device, button, place in the window, time.
+static GTK_PRESS: Global<(P, i32, f64, f64, u32)> = Global::new((null_mut(), 0, 0.0, 0.0, 0));
+
+/// Hands the window over to the system, which moves it until the button is released.
+fn gtk_drag(w: P) {
+    let (device, button, x, y, time) = *GTK_PRESS.get();
+    if device.is_null() {
+        return;
+    }
+    unsafe {
+        use core::mem::transmute as t;
+        let surface: extern "C" fn(P) -> P = t(gtk_symbol("gtk_native_get_surface"));
+        let begin: extern "C" fn(P, P, i32, f64, f64, u32) = t(gtk_symbol("gdk_toplevel_begin_move"));
+        begin(surface(w), device, button, x, y, time);
+    }
+}
+
 fn gtk_mouse(gesture: Option<P>, kind: &str, x: f64, y: f64, number: P) {
+    if let (Some(g), "press") = (gesture, kind) {
+        unsafe {
+            use core::mem::transmute as t;
+            let device: extern "C" fn(P) -> P = t(gtk_symbol("gtk_gesture_get_device"));
+            let time: extern "C" fn(P) -> u32 = t(gtk_symbol("gtk_event_controller_get_current_event_time"));
+            let button: extern "C" fn(P) -> u32 = t(gtk_symbol("gtk_gesture_single_get_current_button"));
+            *GTK_PRESS.get() = (device(g), button(g) as i32, x, y, time(g));
+        }
+    }
     let button = gesture.map_or(0, |g| {
         let current: extern "C" fn(P) -> u32 = unsafe { core::mem::transmute(gtk_symbol("gtk_gesture_single_get_current_button")) };
         if current(g) == 3 { 2 } else { 1 }

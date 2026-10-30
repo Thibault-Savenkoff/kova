@@ -46,6 +46,8 @@ struct Heap {
     ui_typed: String,
     /// `ui.draw`: the canvas being drawn.
     ui_drawing: String,
+    /// `ui.act`: what the window must do.
+    ui_acts: Vec<i64>,
 }
 
 impl Heap {
@@ -938,9 +940,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         // Only the tests reach it: `kova run` runs a `ui` program as native code.
                         StrOp::UiShow => {
                             writeln!(out, "[{}] {}", s(0), crate::shared::ui_describe(s(1))).unwrap();
+                            let acts = std::mem::take(&mut heap.ui_acts);
+                            for act in &acts {
+                                writeln!(out, "({})", crate::shared::ui_act_name(*act)).unwrap();
+                            }
                             out.flush().unwrap();
                             let mut line = String::new();
-                            match std::env::var_os("KOVA_UI_SCRIPT").is_some() && heap.debugger.is_none() {
+                            match std::env::var_os("KOVA_UI_SCRIPT").is_some() && heap.debugger.is_none() && !acts.contains(&1) {
                                 true if std::io::stdin().read_line(&mut line).is_ok_and(|n| n > 0) => {
                                     let (answer, typed) = crate::shared::ui_answer(&line);
                                     if let Some(t) = typed {
@@ -954,6 +960,10 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         StrOp::UiTyped => {
                             let t = heap.ui_typed.clone();
                             heap.make(t)
+                        }
+                        StrOp::UiAct => {
+                            heap.ui_acts.push(locals[a[0]]);
+                            0
                         }
                         StrOp::UiDraw => {
                             let op = s(0).to_string();

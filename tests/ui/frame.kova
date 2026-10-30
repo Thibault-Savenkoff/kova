@@ -1,0 +1,30 @@
+// A window without the system's frame, hidden: it minimizes, maximizes, then closes itself.
+import ui
+
+enum Event {
+    Tick
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.canvas(100, 50) { d: ui.Draw =>
+        d.clear(ui.white)
+    }
+    .on_key { k: ui.Key => Event.Tick }
+    .every(10, Event.Tick)
+}
+
+fn update(n: var Int, e: Event) {
+    n := n + 1
+    print(n)
+    match n {
+        1 => ui.maximize
+        2 => ui.maximize
+        3 => ui.close
+        _ => {}
+    }
+}
+
+fn main {
+    ui.run("Bare", 0, view, update) width(300) frame(false)
+    print("closed")
+}
