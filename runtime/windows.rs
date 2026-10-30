@@ -747,7 +747,6 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
 /// its text in `typed`), or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
 /// from another program).
 pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, typed: &mut String) -> i64 {
-    static WIN: Global<Option<Win32>> = Global::new(None);
     static WINDOW: Global<Handle> = Global::new(0);
     static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
     static SHAPE: Global<String> = Global::new(String::new());
@@ -794,6 +793,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     (win.text_color)(w as Handle, color);
                 }
                 brush
+            }
+            // WM_TIMER: a clock's id is its button number + 1.
+            0x0113 => {
+                WIN_HEARD.get().hear(w as i64 - 1, String::new());
+                0
             }
             // WM_SIZE
             0x0005 if !SHOWN.get().is_null() => {
@@ -859,6 +863,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 true => (0, 0),
                 false => (image(instance, 1, 1, 0, 0, 0x40), image(instance, 1, 1, 16, 16, 0)), // IMAGE_ICON, LR_DEFAULTSIZE
             };
+            let canvas_class = wide("KovaCanvas");
+            register(&WindowClass {
+                size: core::mem::size_of::<WindowClass>() as u32,
+                style: 0x4000, // CS_GLOBALCLASS: `win_place` gives no instance
+                procedure: win_canvas as usize,
+                extra: [0, 0],
+                instance,
+                icon: 0,
+                cursor: cursor(0, 32512),
+                background: 0, // it paints everything itself
+                menu: null(),
+                class: canvas_class.as_ptr(),
+                small_icon: 0,
+            });
             register(&WindowClass {
                 size: core::mem::size_of::<WindowClass>() as u32,
                 style: 0,
@@ -890,6 +908,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 (win.destroy)(c);
             }
             COLORED.get().clear();
+            WIN_CANVASES.get().clear();
             *SHAPE.get() = shape;
         }
         let dc = (win.get_dc)(w);
@@ -898,6 +917,21 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         (win.release_dc)(w, dc);
         arrange(win, w, view, same);
         *SHOWN.get() = view;
+        if !same {
+            let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+            let set_timer: extern "system" fn(Handle, usize, u32, usize) -> usize = core::mem::transmute(user("SetTimer"));
+            let kill_timer: extern "system" fn(Handle, usize) -> i32 = core::mem::transmute(user("KillTimer"));
+            let focus: extern "system" fn(Handle) -> Handle = core::mem::transmute(user("SetFocus"));
+            for clock in WIN_CLOCKS.get().drain(..) {
+                kill_timer(w, clock);
+            }
+            for (ms, n) in crate::shared::ui_clocks(view) {
+                WIN_CLOCKS.get().push(set_timer(w, n + 1, ms as u32, 0));
+            }
+            if let Some((hearing, _)) = WIN_CANVASES.get().iter().find(|(_, c)| c.key.is_some()) {
+                focus(*hearing);
+            }
+        }
         // The window first takes the size the program asked for, else fits its content, 16 pixels
         // around it, at least 320 pixels wide; never smaller than the content. Later it only grows
         // when the content needs more room, so a size the user chose stays.
@@ -915,7 +949,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         }
         // `MSG`, 48 bytes.
         let mut m = [0u64; 6];
-        while *CLICKED.get() == WAITING {
+        while *CLICKED.get() == WAITING && WIN_HEARD.get().is_empty() {
             if (win.message)(m.as_mut_ptr(), 0, 0, 0) <= 0 {
                 *CLICKED.get() = -1;
             }
@@ -923,10 +957,231 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (win.dispatch)(m.as_ptr());
         }
         *SHOWN.get() = null();
+        if *CLICKED.get() == WAITING {
+            let (answer, text) = WIN_HEARD.get().next().unwrap_or((-1, String::new()));
+            *typed = text;
+            return answer;
+        }
         if *CLICKED.get() <= -2 {
             *typed = TYPED.get().clone();
         }
         *CLICKED.get()
+    }
+}
+
+static WIN: Global<Option<Win32>> = Global::new(None);
+
+/// What a canvas or a clock heard, for `ui_show`.
+static WIN_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());
+/// The running clocks (`SetTimer`).
+static WIN_CLOCKS: Global<Vec<usize>> = Global::new(Vec::new());
+/// Each canvas now on the screen.
+static WIN_CANVASES: Global<Vec<(Handle, crate::shared::UiCanvas)>> = Global::new(Vec::new());
+
+/// `ui.Key`'s name for a key that writes nothing: the same word on every system.
+fn win_key(key: usize) -> Option<String> {
+    let named = match key {
+        0x08 => "Backspace",
+        0x09 => "Tab",
+        0x0D => "Enter",
+        0x1B => "Escape",
+        0x20 => "Space",
+        0x21 => "PageUp",
+        0x22 => "PageDown",
+        0x23 => "End",
+        0x24 => "Home",
+        0x25 => "Left",
+        0x26 => "Up",
+        0x27 => "Right",
+        0x28 => "Down",
+        0x2E => "Delete",
+        0x70..=0x87 => return Some(alloc::format!("F{}", key - 0x6F)),
+        _ => return None,
+    };
+    Some(named.into())
+}
+
+/// The window of a `ui.canvas`.
+extern "system" fn win_canvas(h: Handle, message: u32, w: usize, l: isize) -> isize {
+    let user = |name: &str| library("user32.dll").and_then(|u| symbol(u, name)).unwrap_or(0);
+    let default: extern "system" fn(Handle, u32, usize, isize) -> isize = unsafe { core::mem::transmute(user("DefWindowProcW")) };
+    let Some((_, canvas)) = WIN_CANVASES.get().iter().find(|(c, _)| *c == h) else {
+        return default(h, message, w, l);
+    };
+    let (x, y) = ((l & 0xffff) as i16 as i32, (l >> 16 & 0xffff) as i16 as i32);
+    let mouse = |kind: &str, button: i32| {
+        if let Some(n) = canvas.mouse {
+            WIN_HEARD.get().hear(crate::shared::ui_changed(n), crate::shared::ui_mouse(kind, x, y, button));
+        }
+        0
+    };
+    let key = |name: String| {
+        if let Some(n) = canvas.key {
+            WIN_HEARD.get().hear(crate::shared::ui_changed(n), crate::shared::ui_key(&name));
+        }
+        0
+    };
+    unsafe {
+        use core::mem::transmute as t;
+        let capture: extern "system" fn(Handle) -> Handle = t(user("SetCapture"));
+        let release: extern "system" fn() -> i32 = t(user("ReleaseCapture"));
+        let focus: extern "system" fn(Handle) -> Handle = t(user("SetFocus"));
+        match message {
+            // WM_ERASEBKGND: nothing to erase, or it would flicker.
+            0x0014 => 1,
+            // WM_PAINT, through a bitmap for the same reason.
+            0x000F => {
+                let gdi = |name: &str| library("gdi32.dll").and_then(|g| symbol(g, name)).unwrap_or(0);
+                let begin: extern "system" fn(Handle, *mut u64) -> Handle = t(user("BeginPaint"));
+                let end: extern "system" fn(Handle, *const u64) -> i32 = t(user("EndPaint"));
+                let same_dc: extern "system" fn(Handle) -> Handle = t(gdi("CreateCompatibleDC"));
+                let bitmap_for: extern "system" fn(Handle, i32, i32) -> Handle = t(gdi("CreateCompatibleBitmap"));
+                let select: extern "system" fn(Handle, Handle) -> Handle = t(gdi("SelectObject"));
+                let copy: extern "system" fn(Handle, i32, i32, i32, i32, Handle, i32, i32, u32) -> i32 = t(gdi("BitBlt"));
+                let delete: extern "system" fn(Handle) -> i32 = t(gdi("DeleteObject"));
+                let delete_dc: extern "system" fn(Handle) -> i32 = t(gdi("DeleteDC"));
+                // `PAINTSTRUCT`, 72 bytes.
+                let mut paint = [0u64; 9];
+                let dc = begin(h, paint.as_mut_ptr());
+                let memory = same_dc(dc);
+                let bitmap = bitmap_for(dc, canvas.width, canvas.height);
+                let before = select(memory, bitmap);
+                win_draw(memory, canvas);
+                copy(dc, 0, 0, canvas.width, canvas.height, memory, 0, 0, 0xCC0020); // SRCCOPY
+                select(memory, before);
+                delete(bitmap);
+                delete_dc(memory);
+                end(h, paint.as_ptr());
+                0
+            }
+            // WM_PRINTCLIENT: into a DC given by someone else.
+            0x0318 => {
+                win_draw(w as Handle, canvas);
+                0
+            }
+            // WM_LBUTTONDOWN, WM_RBUTTONDOWN: what is pressed here stays here until released.
+            0x0201 | 0x0204 => {
+                focus(h);
+                capture(h);
+                mouse("press", if message == 0x0204 { 2 } else { 1 })
+            }
+            0x0202 | 0x0205 => {
+                release();
+                mouse("release", if message == 0x0205 { 2 } else { 1 })
+            }
+            0x0200 => mouse("move", 0),
+            // WM_KEYDOWN: what writes nothing. WM_CHAR: the rest, as the keyboard's layout says.
+            0x0100 => match win_key(w) {
+                Some(name) => key(name),
+                None => 0,
+            },
+            0x0102 if w > 0x20 && w != 0x7f => match char::from_u32(w as u32) {
+                Some(c) => key(c.into()),
+                None => 0,
+            },
+            // WM_GETDLGCODE: DLGC_WANTALLKEYS, or Tab and the arrows would go elsewhere.
+            0x0087 => 4,
+            _ => default(h, message, w, l),
+        }
+    }
+}
+
+/// `GdiplusStartup`, once: 0 without GDI+.
+fn gdiplus() -> usize {
+    static GDIPLUS: Global<usize> = Global::new(0);
+    if *GDIPLUS.get() == 0 {
+        let start = || unsafe {
+            let plus = library("gdiplus.dll")?;
+            // `GdiplusStartupInput`: version 1, then nothing asked.
+            let (mut token, input) = (0usize, [1usize, 0, 0]);
+            let start: extern "system" fn(*mut usize, *const usize, *mut u8) -> i32 = core::mem::transmute(symbol(plus, "GdiplusStartup")?);
+            (start(&mut token, input.as_ptr(), core::ptr::null_mut()) == 0).then_some(plus)
+        };
+        *GDIPLUS.get() = start().unwrap_or(0);
+    }
+    *GDIPLUS.get()
+}
+
+/// Paints a canvas on `dc`: shapes through GDI+, which smooths them; texts through GDI, with the
+/// fonts of the rest of the window. Thickness stays inside a shape, as on every system.
+fn win_draw(dc: Handle, canvas: &crate::shared::UiCanvas) {
+    use crate::shared::UiOp::*;
+    let plus = gdiplus();
+    if plus == 0 {
+        return;
+    }
+    let f = |name: &str| symbol(plus, name).unwrap_or(0);
+    let gdi = |name: &str| library("gdi32.dll").and_then(|g| symbol(g, name)).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let graphics_of: extern "system" fn(Handle, *mut Handle) -> i32 = t(f("GdipCreateFromHDC"));
+        let smooth: extern "system" fn(Handle, i32) -> i32 = t(f("GdipSetSmoothingMode"));
+        let finish: extern "system" fn(Handle) -> i32 = t(f("GdipDeleteGraphics"));
+        let new_brush: extern "system" fn(u32, *mut Handle) -> i32 = t(f("GdipCreateSolidFill"));
+        let free_brush: extern "system" fn(Handle) -> i32 = t(f("GdipDeleteBrush"));
+        let new_pen: extern "system" fn(u32, f32, i32, *mut Handle) -> i32 = t(f("GdipCreatePen1"));
+        let free_pen: extern "system" fn(Handle) -> i32 = t(f("GdipDeletePen"));
+        let fill_rect: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipFillRectangleI"));
+        let fill_oval: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipFillEllipseI"));
+        let draw_rect: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipDrawRectangleI"));
+        let draw_oval: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipDrawEllipseI"));
+        let draw_line: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipDrawLineI"));
+        let select: extern "system" fn(Handle, Handle) -> Handle = t(gdi("SelectObject"));
+        let background: extern "system" fn(Handle, i32) -> i32 = t(gdi("SetBkMode"));
+        let text_color: extern "system" fn(Handle, u32) -> u32 = t(gdi("SetTextColor"));
+        let text_out: extern "system" fn(Handle, i32, i32, *const u16, i32) -> i32 = t(gdi("TextOutW"));
+        let opaque = |c: u32| 0xff00_0000 | c;
+        let filled = |g: Handle, c: u32, shape: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32, box_: [i32; 4]| {
+            let mut brush = 0;
+            new_brush(opaque(c), &mut brush);
+            shape(g, brush, box_[0], box_[1], box_[2], box_[3]);
+            free_brush(brush);
+        };
+        let lined = |g: Handle, c: u32, n: i32, shape: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32, box_: [i32; 4]| {
+            let mut pen = 0;
+            new_pen(opaque(c), n as f32, 2, &mut pen); // UnitPixel
+            shape(g, pen, box_[0], box_[1], box_[2], box_[3]);
+            free_pen(pen);
+        };
+        // Closed around each text: GDI and GDI+ take turns on the DC.
+        let mut g = 0;
+        let open = |g: &mut Handle| {
+            if *g == 0 {
+                graphics_of(dc, g);
+                smooth(*g, 4); // SmoothingModeAntiAlias8x4
+            }
+        };
+        open(&mut g);
+        filled(g, 0xffffff, fill_rect, [0, 0, canvas.width, canvas.height]);
+        for op in &canvas.ops {
+            if !matches!(op, Text { .. }) {
+                open(&mut g);
+            }
+            match op {
+                Clear(c) => filled(g, *c, fill_rect, [0, 0, canvas.width, canvas.height]),
+                Rect { x, y, w, h, color, outline: 0 } => filled(g, *color, fill_rect, [*x, *y, *w, *h]),
+                Rect { x, y, w, h, color, outline } => lined(g, *color, *outline, draw_rect, [x + outline / 2, y + outline / 2, w - outline, h - outline]),
+                Circle { x, y, r, color, outline: 0 } => filled(g, *color, fill_oval, [x - r, y - r, 2 * r, 2 * r]),
+                Circle { x, y, r, color, outline } => lined(g, *color, *outline, draw_oval, [x - r + outline / 2, y - r + outline / 2, 2 * r - outline, 2 * r - outline]),
+                Line { x, y, x2, y2, color, thickness } => lined(g, *color, *thickness, draw_line, [*x, *y, *x2, *y2]),
+                Text { x, y, size, color, text } => {
+                    if g != 0 {
+                        finish(g);
+                        g = 0;
+                    }
+                    let Some(win) = WIN.get() else { continue };
+                    let before = select(dc, win_font(win, crate::shared::UiStyle { size: *size, ..Default::default() }));
+                    background(dc, 1); // TRANSPARENT
+                    text_color(dc, (color & 0xff) << 16 | (color & 0xff00) | color >> 16);
+                    let letters = wide(text);
+                    text_out(dc, *x, *y, letters.as_ptr(), letters.len() as i32 - 1);
+                    select(dc, before);
+                }
+            }
+        }
+        if g != 0 {
+            finish(g);
+        }
     }
 }
 
@@ -963,23 +1218,16 @@ fn win_font(win: &Win32, style: crate::shared::UiStyle) -> Handle {
 /// kept. Transparency is mixed with the window's color. None if it cannot be read.
 fn win_image(path: &str, width: i32) -> Option<(Handle, i32, i32)> {
     static IMAGES: Global<Vec<(String, i32, Option<(Handle, i32, i32)>)>> = Global::new(Vec::new());
-    static GDIPLUS: Global<usize> = Global::new(0);
     if let Some(known) = IMAGES.get().iter().find(|i| i.0 == path && i.1 == width) {
         return known.2;
     }
     let read = || unsafe {
         use core::mem::transmute as t;
-        if *GDIPLUS.get() == 0 {
-            let plus = library("gdiplus.dll")?;
-            // `GdiplusStartupInput`: version 1, then nothing asked.
-            let (mut token, input) = (0usize, [1usize, 0, 0]);
-            let start: extern "system" fn(*mut usize, *const usize, *mut u8) -> i32 = t(symbol(plus, "GdiplusStartup")?);
-            if start(&mut token, input.as_ptr(), core::ptr::null_mut()) != 0 {
-                return None;
-            }
-            *GDIPLUS.get() = plus;
+        let plus = gdiplus();
+        if plus == 0 {
+            return None;
         }
-        let f = |name: &str| symbol(*GDIPLUS.get(), name);
+        let f = |name: &str| symbol(plus, name);
         let from_file: extern "system" fn(*const u16, *mut Handle) -> i32 = t(f("GdipCreateBitmapFromFile")?);
         let measure: [extern "system" fn(Handle, *mut u32) -> i32; 2] = [t(f("GdipGetImageWidth")?), t(f("GdipGetImageHeight")?)];
         let scaled: extern "system" fn(Handle, u32, u32, *mut Handle, usize, usize) -> i32 = t(f("GdipGetImageThumbnail")?);
@@ -1182,6 +1430,14 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         }
         Spaced(m, inner) => win_place(win, dc, window, inner, style, x + m, y + m, room - 2 * m, made, same, at),
         Every(_, _, inner) => win_place(win, dc, window, inner, style, x, y, room, made, same, at),
-        Canvas(_) => {}
+        Canvas(c) => {
+            control("KovaCanvas", "", 0, 0);
+            let (handle, canvases) = (made[*at - 1], WIN_CANVASES.get());
+            match canvases.iter_mut().find(|e| e.0 == handle) {
+                Some(there) => there.1 = c.clone(),
+                None => canvases.push((handle, c.clone())),
+            }
+            (win.invalidate)(handle, null(), 0);
+        }
     }
 }
