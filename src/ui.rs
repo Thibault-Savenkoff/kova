@@ -23,6 +23,14 @@ private:
     typed: List<EVENT>
 }
 
+enum Align {
+    Left
+    Top
+    Center
+    Right
+    Bottom
+}
+
 fn text(s: String) -> View {
     return View { text := "T{s.length}:{s}", events := [], typed := [] }
 }
@@ -36,12 +44,12 @@ fn input(value: String, changed: {String -> EVENT}) -> View {
     return View { text := "I{value.length}:{value}", events := [], typed := [changed(typed)] }
 }
 
-fn column(items: List<View>) -> View {
-    return group("C", items)
+fn column(items: List<View>) align(a: Align := Align.Left) -> View {
+    return group("C", items, a)
 }
 
-fn row(items: List<View>) -> View {
-    return group("R", items)
+fn row(items: List<View>) align(a: Align := Align.Top) -> View {
+    return group("R", items, a)
 }
 
 fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
@@ -64,8 +72,15 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) {
 
 private:
 
-fn group(kind: String, items: List<View>) -> View {
-    var out: String := "{kind}{items.length}:"
+fn group(kind: String, items: List<View>, a: Align) -> View {
+    let place: String := match a {
+        Left => "L"
+        Top => "T"
+        Center => "C"
+        Right => "R"
+        Bottom => "B"
+    }
+    var out: String := "{kind}{place}{items.length}:"
     var events: List<EVENT> := []
     var typed: List<EVENT> := []
     for v in items {

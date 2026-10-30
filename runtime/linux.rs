@@ -1019,6 +1019,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             boxed: t(f("gtk_box_new")),
             append: t(f("gtk_box_append")),
             halign: t(f("gtk_widget_set_halign")),
+            valign: t(f("gtk_widget_set_valign")),
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
             changed: changed as usize,
@@ -1087,7 +1088,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         } else {
             let made = MADE.get();
             made.clear();
-            let root = gtk_make(&g, view, made);
+            let root = gtk_make(&g, view, made, 1, 1);
             // 16 pixels around it.
             for side in ["top", "bottom", "start", "end"] {
                 let margin: extern "C" fn(P, i32) = t(f(&format!("gtk_widget_set_margin_{side}")));
@@ -1125,6 +1126,7 @@ struct Gtk {
     set_text: extern "C" fn(P, *const u8),
     boxed: extern "C" fn(i32, i32) -> P,
     halign: extern "C" fn(P, i32),
+    valign: extern "C" fn(P, i32),
     append: extern "C" fn(P, P),
     connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
     clicked: usize,
@@ -1133,7 +1135,8 @@ struct Gtk {
 
 /// The widgets of a view: a button gives its number to `clicked`, a field to `changed`. Each
 /// text, button and field goes into `made`, in order, with its `changed` handler (0 if none).
-fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>) -> P {
+/// `h` and `v`: where its parent places it (`GtkAlign`).
+fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>, h: i32, v: i32) -> P {
     use crate::shared::UiNode::*;
     let mut handler = 0;
     let widget = match node {
@@ -1151,20 +1154,29 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64)>) -> 
             e
         }
         // GTK_ORIENTATION_HORIZONTAL = 0, VERTICAL = 1; 8 pixels between the parts.
-        Column(parts) | Row(parts) => {
-            let b = (g.boxed)(matches!(node, Column(_)) as i32, 8);
+        Column(parts, a) | Row(parts, a) => {
+            let column = matches!(node, Column(..));
+            let b = (g.boxed)(column as i32, 8);
+            // GTK_ALIGN_START = 1, END = 2, CENTER = 3.
+            let place = match a {
+                crate::shared::UiAlign::Start => 1,
+                crate::shared::UiAlign::End => 2,
+                crate::shared::UiAlign::Center => 3,
+            };
             for p in parts {
-                (g.append)(b, gtk_make(g, p, made));
+                let (h, v) = if column { (place, 1) } else { (1, place) };
+                (g.append)(b, gtk_make(g, p, made, h, v));
             }
             b
         }
     };
-    if !matches!(node, Column(_) | Row(_)) {
+    if !matches!(node, Column(..) | Row(..)) {
         made.push((widget, handler));
     }
-    // Everything on the left (GTK_ALIGN_START = 1), as Win32 and AppKit place it: GTK would centre
-    // a text alone on its line.
-    (g.halign)(widget, 1);
+    // By default on the left and at the top, as Win32 and AppKit place it: GTK would centre a
+    // text alone on its line. GTK_ALIGN_FILL = 0.
+    (g.halign)(widget, if crate::shared::ui_fills(node) { 0 } else { h });
+    (g.valign)(widget, v);
     widget
 }
 

@@ -1911,6 +1911,9 @@ impl Parser<'_> {
         if name.text == "ui.run" || name.text.starts_with("ui.run(…) ") {
             self.ui_run(name.span.to(end), &mut args);
         }
+        if name.text == "ui.column(…) align(…)" || name.text == "ui.row(…) align(…)" {
+            self.ui_align(&name.text, &mut args);
+        }
         Ok(self.expr(name.span.to(end), ExprKind::Call { name, args }))
     }
 
@@ -1928,6 +1931,26 @@ impl Parser<'_> {
             }
             _ => self.diags.push(Diag::new(call, t!("ui_run_shape"))),
         }
+    }
+
+    /// `ui.column(…) align(center)`: the word stands for `ui.Align.Center`. A column's parts go
+    /// from left to right, a row's from top to bottom.
+    fn ui_align(&mut self, call: &str, args: &mut [Expr]) {
+        let words = if call.starts_with("ui.column") { ["left", "center", "right"] } else { ["top", "center", "bottom"] };
+        let Some(Expr { kind: ExprKind::Var(word), span, .. }) = args.last() else { return };
+        let span = *span;
+        if !words.contains(&word.as_str()) {
+            self.diags.push(Diag::new(span, t!("ui_align_word", word = word, words = words.join("`, `"))));
+            return;
+        }
+        let mut variant = word.clone();
+        variant[..1].make_ascii_uppercase();
+        args.last_mut().unwrap().kind = ExprKind::Variant {
+            ty: Name { text: "ui.Align".into(), span },
+            types: vec![],
+            name: Name { text: variant, span },
+            args: vec![],
+        };
     }
 
     /// `l.each { x: Int => … }`: a block given last, after the `)` and on the same line

@@ -73,9 +73,14 @@ changement oublié quelque part.
 | `ui.input(valeur) { s: String => événement }` | un champ de texte qui contient `valeur` ; chaque changement envoie l'événement du bloc à `update` |
 | `ui.column([…])` | des vues l'une sous l'autre |
 | `ui.row([…])` | des vues côte à côte |
+| `ui.column([…]) align(center)` | les vues de la colonne centrées dans la fenêtre (`left`, `center`, `right`) |
+| `ui.row([…]) align(center)` | les vues de la ligne centrées dans sa hauteur (`top`, `center`, `bottom`) |
 
 L'événement d'un bouton est du type que prend `update`, en général une enum qui liste ce qui peut
 arriver. Il peut porter des valeurs : `Named(name: String)`, `Remove(index: Int)`.
+
+Sans `align`, tout part d'en haut à gauche. Pour centrer une ligne de boutons dans la fenêtre,
+mets-la dans une colonne centrée : `ui.column([ui.row([…])]) align(center)`.
 
 Le compilateur vérifie les formes : `view` prend l'état et donne un `ui.View`, `update` prend l'état
 en `var` et un événement, et l'événement de chaque bouton a le bon type.

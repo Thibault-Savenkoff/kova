@@ -21,8 +21,10 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.input(value: String) { s: String => E } -> ui.View` | un champ de texte qui contient `value` ; à chaque changement fait par l'utilisateur, l'événement du bloc, fait à partir du texte que contient maintenant le champ, va à `update` ([Les champs de texte](/fr/guide/windows/#les-champs-de-texte)). |
 | `ui.column(items: List<ui.View>) -> ui.View` | les vues l'une sous l'autre. |
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
+| `ui.column(…) align(left\|center\|right)` | la colonne prend toute la largeur qu'on lui donne et y place ses vues. |
+| `ui.row(…) align(top\|center\|bottom)` | les vues en haut, au milieu ou en bas de la ligne. |
 
-Tout est placé en partant d'en haut à gauche, sur chaque système.
+Tout est placé en partant d'en haut à gauche, sur chaque système, sauf si `align` dit autre chose.
 
 Le programme écrit les deux fonctions que prend `ui.run` :
 

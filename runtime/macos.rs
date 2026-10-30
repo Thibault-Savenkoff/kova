@@ -725,7 +725,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     } else {
         let made = MADE.get();
         made.clear();
-        let root = mac_make(kit, view, made);
+        let root = mac_make(kit, view, made, 32.0);
         (kit.send_insets)(root, kit.sel("setEdgeInsets:"), Insets { top: 16.0, left: 16.0, bottom: 16.0, right: 16.0 });
         (kit.send_two)(w, kit.sel("setContentView:"), root);
         *SHAPE.get() = shape;
@@ -833,8 +833,9 @@ impl Kit {
 }
 
 /// The views of a view: a button's tag is its number, `clicked:` reads it; a field's too, for
-/// `controlTextDidChange:`. Each text, button and field goes into `made`, in order.
-fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>) -> Id {
+/// `controlTextDidChange:`. Each text, button and field goes into `made`, in order. `insets`:
+/// the width its own edges take from its parts.
+fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets: f64) -> Id {
     use crate::shared::UiNode::*;
     let leaf = match node {
         Text(s) => (kit.send_two)(kit.class("NSTextField"), kit.sel("labelWithString:"), kit.text(s)),
@@ -853,18 +854,31 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>) -> Id {
             (kit.send_id)(wide, kit.sel("setActive:"), 1);
             field
         }
-        // NSUserInterfaceLayoutOrientationHorizontal = 0, Vertical = 1; a column's parts on the
-        // left (NSLayoutAttributeLeading = 5).
-        Column(parts) | Row(parts) => {
+        // NSUserInterfaceLayoutOrientationHorizontal = 0, Vertical = 1. `NSLayoutAttribute`:
+        // Top 3, Bottom 4, Leading 5, Trailing 6, CenterX 9, CenterY 10.
+        Column(parts, a) | Row(parts, a) => {
+            use crate::shared::UiAlign::*;
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
-            let column = matches!(node, Column(_));
+            let column = matches!(node, Column(..));
             (kit.send_id)(stack, kit.sel("setOrientation:"), column as i64);
-            if column {
-                (kit.send_id)(stack, kit.sel("setAlignment:"), 5);
-            }
+            let place = match (column, a) {
+                (true, Start) => 5,
+                (true, Center) => 9,
+                (true, End) => 6,
+                (false, Start) => 3,
+                (false, Center) => 10,
+                (false, End) => 4,
+            };
+            (kit.send_id)(stack, kit.sel("setAlignment:"), place);
             (kit.send_float)(stack, kit.sel("setSpacing:"), 8.0);
             for p in parts {
-                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), mac_make(kit, p, made));
+                let part = mac_make(kit, p, made, 0.0);
+                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), part);
+                if column && crate::shared::ui_fills(p) {
+                    let equal: extern "C" fn(Id, Id, Id, f64) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+                    let width = equal(kit.send(part, "widthAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(stack, "widthAnchor"), -insets);
+                    (kit.send_id)(width, kit.sel("setActive:"), 1);
+                }
             }
             return (kit.send)(stack, kit.sel("autorelease"));
         }

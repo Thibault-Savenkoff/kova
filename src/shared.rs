@@ -823,7 +823,7 @@ pub fn library_files(name: &str, system: &str) -> Vec<String> {
 }
 
 /// A view of `import ui` (src/ui.rs), read back from its text: `T5:hello` a text, `B2:Go` a
-/// button, `I3:Ada` a text field holding `Ada`, `C2:` a column then its 2 parts, `R…` a row.
+/// button, `I3:Ada` a text field holding `Ada`, `CL2:` a column placing its parts on the left, then its 2 parts, `RT…` a row (`Align`'s first letter).
 /// Buttons are numbered in the order they come, fields too, apart. The lengths count
 /// characters, as Kova's `length` does.
 #[allow(dead_code)] // a button's number: the runtime's
@@ -831,8 +831,35 @@ pub enum UiNode {
     Text(String),
     Button(String, usize),
     Input(String, usize),
-    Column(Vec<UiNode>),
-    Row(Vec<UiNode>),
+    Column(Vec<UiNode>, UiAlign),
+    Row(Vec<UiNode>, UiAlign),
+}
+
+/// Where a column places its parts across its width, a row across its height.
+#[derive(Clone, Copy, PartialEq)]
+pub enum UiAlign {
+    Start,
+    Center,
+    End,
+}
+
+#[allow(dead_code)] // the runtime's
+impl UiAlign {
+    /// How far a part goes from the start, with `free` pixels left around it.
+    pub fn offset(self, free: i32) -> i32 {
+        match self {
+            UiAlign::Start => 0,
+            UiAlign::Center => free / 2,
+            UiAlign::End => free,
+        }
+    }
+}
+
+/// A column that places its parts takes all the width it is given: there is no other way to
+/// have something in the middle of the window.
+#[allow(dead_code)]
+pub fn ui_fills(node: &UiNode) -> bool {
+    matches!(node, UiNode::Column(_, a) if *a != UiAlign::Start)
 }
 
 #[allow(dead_code)] // the interpreter only uses `ui_describe`
@@ -856,10 +883,10 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Text(_) => "T".into(),
         UiNode::Button(..) => "B".into(),
         UiNode::Input(..) => "I".into(),
-        UiNode::Column(parts) | UiNode::Row(parts) => {
+        UiNode::Column(parts, a) | UiNode::Row(parts, a) => {
             let inside: Vec<String> = parts.iter().map(ui_shape).collect();
-            let kind = if matches!(node, UiNode::Row(_)) { 'R' } else { 'C' };
-            format!("{kind}{}({})", parts.len(), inside.join(","))
+            let kind = if matches!(node, UiNode::Row(..)) { 'R' } else { 'C' };
+            format!("{kind}{}{}({})", *a as u8, parts.len(), inside.join(","))
         }
     }
 }
@@ -868,7 +895,7 @@ pub fn ui_shape(node: &UiNode) -> String {
 #[allow(dead_code)]
 pub fn ui_leaves(node: &UiNode) -> Vec<&UiNode> {
     match node {
-        UiNode::Column(parts) | UiNode::Row(parts) => parts.iter().flat_map(ui_leaves).collect(),
+        UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         leaf => alloc::vec![leaf],
     }
 }
@@ -889,6 +916,15 @@ pub fn ui_answer(line: &str) -> (i64, Option<String>) {
 
 fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
     let kind = chars.next().unwrap_or('C');
+    let align = if matches!(kind, 'T' | 'B' | 'I') {
+        UiAlign::Start
+    } else {
+        match chars.next() {
+            Some('C') => UiAlign::Center,
+            Some('R' | 'B') => UiAlign::End,
+            _ => UiAlign::Start,
+        }
+    };
     let mut n = 0usize;
     for c in chars.by_ref() {
         match c.to_digit(10) {
@@ -908,7 +944,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 2]) -> UiNode {
         }
         _ => {
             let parts = (0..n).map(|_| ui_node(chars, counts)).collect();
-            if kind == 'R' { UiNode::Row(parts) } else { UiNode::Column(parts) }
+            if kind == 'R' { UiNode::Row(parts, align) } else { UiNode::Column(parts, align) }
         }
     }
 }
@@ -931,8 +967,12 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Text(t) => out.push_str(&format!("text {t:?}")),
             UiNode::Button(t, _) => out.push_str(&format!("button {t:?}")),
             UiNode::Input(t, _) => out.push_str(&format!("input {t:?}")),
-            UiNode::Column(parts) => group("column", parts, out),
-            UiNode::Row(parts) => group("row", parts, out),
+            UiNode::Column(parts, UiAlign::Start) => group("column", parts, out),
+            UiNode::Column(parts, UiAlign::Center) => group("column center", parts, out),
+            UiNode::Column(parts, UiAlign::End) => group("column right", parts, out),
+            UiNode::Row(parts, UiAlign::Start) => group("row", parts, out),
+            UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
+            UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
         }
     }
     let mut out = String::new();
@@ -1029,7 +1069,7 @@ mod tests {
 
     #[test]
     fn ui_views() {
-        assert_eq!(ui_describe("C2:T7:0 clicsR2:B2:GoB3:a:b"), "column(text \"0 clics\", row(button \"Go\", button \"a:b\"))");
+        assert_eq!(ui_describe("CL2:T7:0 clicsRT2:B2:GoB3:a:b"), "column(text \"0 clics\", row(button \"Go\", button \"a:b\"))");
         assert_eq!(ui_describe("T5:été !"), "text \"été !\"");
     }
 }

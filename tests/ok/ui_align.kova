@@ -1,0 +1,28 @@
+// `ui.column(…) align(…)`, `ui.row(…) align(…)`: where the parts go; `left` and `top` are the default.
+import ui
+
+struct App {
+    clicks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("{app.clicks}"),
+        ui.row([ui.text("a"), ui.button("Go", 1)]) align(center),
+        ui.column([ui.text("b")]) align(right),
+        ui.row([ui.text("c")]) align(bottom),
+        ui.column([ui.text("d")]) align(left),
+        ui.row([ui.text("e")]) align(top),
+    ]) align(center)
+}
+
+fn update(app: var App, e: Int) {
+    app.clicks := app.clicks + e
+}
+
+fn main {
+    ui.run("Align", App { clicks := 0 }, view, update)
+}
+// stdin: 0
+// expect: [Align] column center(text "0", row center(text "a", button "Go"), column right(text "b"), row bottom(text "c"), column(text "d"), row(text "e"))
+// expect: [Align] column center(text "1", row center(text "a", button "Go"), column right(text "b"), row bottom(text "c"), column(text "d"), row(text "e"))

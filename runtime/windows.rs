@@ -754,7 +754,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     // `WAITING`: nothing yet, -1: the window closed.
     static CLICKED: Global<i64> = Global::new(WAITING);
     static TYPED: Global<String> = Global::new(String::new());
+    // The view on the screen, while `ui_show` waits: resizing the window places it again.
+    static SHOWN: Global<*const crate::shared::UiNode> = Global::new(null());
     const WAITING: i64 = i64::MIN;
+    /// Makes the controls, or moves the ones there, for the window's size now.
+    fn arrange(win: &Win32, window: Handle, view: &crate::shared::UiNode, same: bool) {
+        let dc = (win.get_dc)(window);
+        (win.select)(dc, win.font);
+        let mut now = [0; 4];
+        (win.client)(window, &mut now);
+        *SETTING.get() = true;
+        win_place(win, dc, window, view, 16, 16, now[2] - now[0] - 32, CONTROLS.get(), same, &mut 0);
+        *SETTING.get() = false;
+        (win.release_dc)(window, dc);
+    }
     extern "system" fn procedure(h: Handle, message: u32, w: usize, l: isize) -> isize {
         let win = WIN.get().as_ref().expect("made before the window");
         let id = w & 0xffff;
@@ -772,6 +785,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 *TYPED.get() = win_text(win, l as Handle);
                 *CLICKED.get() = crate::shared::ui_changed(id - FIELD);
                 (win.post)(0, 0, 0, 0);
+                0
+            }
+            // WM_SIZE
+            0x0005 if !SHOWN.get().is_null() => {
+                arrange(win, h, unsafe { &**SHOWN.get() }, true);
                 0
             }
             // WM_CLOSE
@@ -863,11 +881,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         }
         let dc = (win.get_dc)(w);
         (win.select)(dc, win.font);
-        let (width, height) = win_size(win, dc, view);
-        *SETTING.get() = true;
-        win_place(win, dc, w, view, 16, 16, CONTROLS.get(), same, &mut 0);
-        *SETTING.get() = false;
+        let (content_w, content_h) = win_size(win, dc, view);
         (win.release_dc)(w, dc);
+        arrange(win, w, view, same);
+        *SHOWN.get() = view;
         // The window first takes the size the program asked for, else fits its content, 16 pixels
         // around it, at least 320 pixels wide; never smaller than the content. Later it only grows
         // when the content needs more room, so a size the user chose stays.
@@ -877,7 +894,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (win.client)(w, &mut now);
             (cw, ch) = (now[2] - now[0], now[3] - now[1]);
         }
-        let (want_w, want_h) = ((width + 32).max(cw), (height + 32).max(ch));
+        let (want_w, want_h) = ((content_w + 32).max(cw), (content_h + 32).max(ch));
         if fresh || want_w > cw || want_h > ch {
             let mut r = [0, 0, want_w, want_h];
             (win.adjust)(&mut r, 0xCF0000, 0);
@@ -892,6 +909,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             (win.translate)(m.as_ptr());
             (win.dispatch)(m.as_ptr());
         }
+        *SHOWN.get() = null();
         if *CLICKED.get() <= -2 {
             *typed = TYPED.get().clone();
         }
@@ -977,15 +995,15 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
             let (wide, _) = text("abcdefghijklmnopqrstuvwx");
             (w.max(wide) + 12, h + 10)
         }
-        Column(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
-        Row(parts) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
+        Column(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
+        Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
     }
 }
 
-/// Makes a view's controls in `window`, from (x, y). With `same`, the controls are already
+/// Makes a view's controls in `window`, from (x, y), with `room` pixels of width. With `same`, the controls are already
 /// there (in `made`, the `at`-th next): they only move and take the texts that changed.
 #[allow(clippy::too_many_arguments)]
-fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, made: &mut Vec<Handle>, same: bool, at: &mut usize) {
+fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNode, x: i32, y: i32, room: i32, made: &mut Vec<Handle>, same: bool, at: &mut usize) {
     use crate::shared::UiNode::*;
     let (w, h) = win_size(win, dc, node);
     let mut control = |class: &str, s: &str, id: usize, style: u32| {
@@ -1008,16 +1026,22 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         Button(s, n) => control("BUTTON", s, n + 1, 0),
         // WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL
         Input(s, n) => control("EDIT", s, FIELD + n, 0x0080_0000 | 0x0001_0000 | 0x80),
-        Column(parts) | Row(parts) => {
-            let (mut x, mut y) = (x, y);
+        Column(parts, a) => {
+            let room = if crate::shared::ui_fills(node) { room.max(w) } else { w };
+            let mut y = y;
             for p in parts {
                 let (pw, ph) = win_size(win, dc, p);
-                win_place(win, dc, window, p, x, y, made, same, at);
-                if matches!(node, Column(_)) {
-                    y += ph + GAP;
-                } else {
-                    x += pw + GAP;
-                }
+                let px = if crate::shared::ui_fills(p) { x } else { x + a.offset(room - pw) };
+                win_place(win, dc, window, p, px, y, room, made, same, at);
+                y += ph + GAP;
+            }
+        }
+        Row(parts, a) => {
+            let mut x = x;
+            for p in parts {
+                let (pw, ph) = win_size(win, dc, p);
+                win_place(win, dc, window, p, x, y + a.offset(h - ph), pw, made, same, at);
+                x += pw + GAP;
             }
         }
     }

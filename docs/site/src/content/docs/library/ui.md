@@ -21,8 +21,10 @@ lists what `ui` has.
 | `ui.input(value: String) { s: String => E } -> ui.View` | a text field holding `value`; at each change the user makes, the block's event, made from the text the field now holds, goes to `update` ([Text fields](/guide/windows/#text-fields)). |
 | `ui.column(items: List<ui.View>) -> ui.View` | the views one under the other. |
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
+| `ui.column(…) align(left\|center\|right)` | the column takes the whole width it is given and places its views there. |
+| `ui.row(…) align(top\|center\|bottom)` | the views at the top, in the middle or at the bottom of the row. |
 
-Everything is placed from the top left, on every system.
+Everything is placed from the top left, on every system, unless `align` says otherwise.
 
 The program writes the two functions `ui.run` takes:
 

@@ -70,9 +70,14 @@ something wrong is a `view` to read, or an `update` to fix, never a forgotten ch
 | `ui.input(value) { s: String => event }` | a text field holding `value`; each change sends the block's event to `update` |
 | `ui.column([…])` | views one under the other |
 | `ui.row([…])` | views side by side |
+| `ui.column([…]) align(center)` | the column's views centered in the window (`left`, `center`, `right`) |
+| `ui.row([…]) align(center)` | the row's views centered in its height (`top`, `center`, `bottom`) |
 
 The event of a button is of the type `update` takes, usually an enum listing what can happen. It
 may carry values: `Named(name: String)`, `Remove(index: Int)`.
+
+Without `align`, everything starts at the top left. To center a row of buttons in the window, put
+it in a centered column: `ui.column([ui.row([…])]) align(center)`.
 
 The compiler checks the shapes: `view` takes the state and gives a `ui.View`, `update` takes the
 state as `var` and an event, and every button's event has the right type.

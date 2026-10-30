@@ -1,0 +1,18 @@
+import ui
+
+struct App {
+    clicks: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([ui.text("x")]) align(top)
+}
+
+fn update(app: var App, e: Int) {
+    app.clicks := app.clicks + e
+}
+
+fn main {
+    ui.run("Align", App { clicks := 0 }, view, update)
+}
+// error: `top` is not a place here: write `left`, `center`, `right`

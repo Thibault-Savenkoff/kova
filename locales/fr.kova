@@ -484,6 +484,7 @@ lang fr {
     extern_system := "`{found}` n'est pas un système : `linux`, `mac` ou `windows` donne à un système son propre nom (`from \"sqlite3\" windows \"winsqlite3\"`)"
     extern_copy := "`copy` donne à C la struct elle-même, pas son adresse : seulement devant une struct du bloc `extern`, sans `var` ni `?` (trouvé `{type}`)"
     ui_run_shape := "`ui.run` prend un titre, l'état, puis les noms de deux fonctions : `ui.run(\"Kova\", App \{ … \}, view, update)`"
+    ui_align_word := "`{word}` n'est pas une place ici : écris `{words}`"
     ui_run_missing := "un programme qui importe `ui` appelle une fois `ui.run(titre, état, view, update)`"
     ui_run_twice := "`ui.run` est déjà appelé ailleurs : un programme a une seule fenêtre"
     ui_view_shape := "`{name}` dessine l'état : `fn {name}(app: App) -> ui.View`"
