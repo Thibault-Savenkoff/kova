@@ -6,34 +6,33 @@ sidebar:
 ---
 
 Kova est une seule commande, `kova`, qui lance, compile, teste et met en forme les programmes.
-Elle est écrite en Rust, et s'installe donc avec l'outil de Rust, `cargo`.
+Elle existe toute prête pour Linux, Windows et macOS : rien d'autre à installer, ni compilateur,
+ni éditeur de liens, ni Rust.
 
-## 1. Installer Rust
+## 1. Installer Kova
 
-Si `cargo --version` répond déjà, passe cette étape. Sinon, installe Rust avec
-[rustup](https://rustup.rs) : sous Linux et macOS,
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-et sous Windows, télécharge et lance `rustup-init.exe` depuis le même site. Ouvre ensuite un
-nouveau terminal, pour qu'il trouve `cargo`.
-
-## 2. Installer Kova
+Sous Linux et macOS :
 
 ```sh
-cargo install --git https://github.com/Thibault-Savenkoff/kova --locked
+curl -fsSL https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.sh | sh
 ```
 
-Cela prend quelques minutes : cargo télécharge Kova et le compile. Vérifie ensuite :
+Il met `kova` dans `~/.local/bin` (ou dans le dossier que nomme `KOVA_INSTALL`). Sous Windows,
+dans PowerShell :
+
+```sh
+irm https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.ps1 | iex
+```
+
+Il met `kova.exe` dans `%LOCALAPPDATA%\Programs\kova` et l'ajoute à ton `PATH`. Ensuite, dans un
+nouveau terminal :
 
 ```sh
 kova --version
 ```
 
-C'est tout ce dont `kova build` a besoin. Kova écrit les exécutables lui-même : il n'y a ni
-compilateur C, ni éditeur de liens, ni autre outil à installer, sur aucun système.
+Les fichiers sont aussi sur la [page des versions](https://github.com/Thibault-Savenkoff/kova/releases),
+un par système. Relancer la même commande installe la dernière version.
 
 :::note[Deux choses dont seuls certains programmes ont besoin sous Linux]
 Un programme qui ouvre une fenêtre (`import ui`) a besoin de GTK 4, et un programme qui utilise
@@ -41,18 +40,27 @@ Un programme qui ouvre une fenêtre (`import ui`) a besoin de GTK 4, et un progr
 cherchés qu'au lancement du programme.
 :::
 
-## 3. Compiler pour d'autres systèmes (facultatif)
+## 2. Compiler pour tous les systèmes
 
-`kova build app.kova --target windows` crée un exécutable Windows depuis Linux ou un Mac, et ainsi
-de suite pour chaque système. Kova a besoin d'une petite partie de lui-même compilée pour chaque
-système visé ; ajoute ces systèmes à Rust **avant** d'installer Kova (ou réinstalle Kova après) :
+Chaque `kova` compile pour tous les systèmes : `kova build app.kova --target windows` crée un
+exécutable Windows depuis Linux ou un Mac, et ainsi de suite (`linux`, `linux-arm`, `windows`,
+`windows-arm`, `mac`, `mac-arm`, `mac-intel`). Sur Mac, `kova build` fait par défaut un seul
+exécutable pour tous les Mac.
+
+## 3. Construire Kova lui-même (pour le modifier)
+
+Kova est écrit en Rust. Avec Rust installé par [rustup](https://rustup.rs), depuis un clone du
+dépôt :
 
 ```sh
 rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
     aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
+cargo install --path . --locked
 ```
 
-Sans eux, `kova build --target …` dit lequel manque.
+La ligne `rustup target add` donne à Kova les morceaux dont il a besoin pour chaque système visé ;
+sans elle, ce `kova` ne compile que pour sa propre machine, et `kova build --target …` dit ce qui
+manque.
 
 ## 4. L'éditeur
 

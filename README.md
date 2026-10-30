@@ -57,21 +57,27 @@ The [language guide](https://thibault-savenkoff.github.io/kova/guide/values/) ex
 
 ## Install
 
-Kova is written in Rust. Install Rust with [rustup](https://rustup.rs), then:
+A ready-made `kova`, with nothing else to install (no Rust, no C compiler, no linker). On Linux and
+macOS:
 
 ```sh
-cargo install --git https://github.com/Thibault-Savenkoff/kova --locked
+curl -fsSL https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.sh | sh
 ```
 
-`kova build` needs nothing else: Kova links the executables itself, on Linux, Windows and macOS (x86-64
-and arm64 each). On a Mac, one executable runs on every Mac (Apple chips and Intel).
+On Windows, in PowerShell:
 
-To build for other systems (`kova build app.kova --target windows`), add their Rust targets **before**
-installing Kova:
+```powershell
+irm https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.ps1 | iex
+```
+
+Each `kova` builds for every system (`kova build app.kova --target windows`, `linux`, `mac`, and
+their `-arm` variants); on a Mac, one executable runs on every Mac. To build Kova itself from a
+clone: install Rust with [rustup](https://rustup.rs), then
 
 ```sh
 rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
     aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
+cargo install --path . --locked
 ```
 
 ## Use
