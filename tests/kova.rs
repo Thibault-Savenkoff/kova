@@ -1258,7 +1258,7 @@ fn ui_frame() {
         return;
     }
     let out = kova(LANG).args(["run", "tests/ui/frame.kova"]).env("KOVA_UI_HIDDEN", "1").env_remove("KOVA_UI_SCRIPT").output().unwrap();
-    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "closed"], "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["1", "2", "3", "4", "5", "closed"], "{}", text(&out.stderr));
 }
 
 #[test]

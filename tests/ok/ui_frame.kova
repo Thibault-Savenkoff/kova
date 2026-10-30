@@ -1,4 +1,5 @@
-// `frame(false)`: no frame from the system; `ui.close`, `ui.minimize`, `ui.maximize` and `ui.drag`
+// `frame(false)`: no frame from the system; `ui.close`, `ui.minimize`, `ui.maximize`,
+// `ui.full_screen` and `ui.drag`
 // replace it, called from `update`.
 import ui
 
@@ -6,6 +7,7 @@ enum Event {
     Closed
     Reduced
     Grown
+    Filled
     Moved
 }
 
@@ -14,6 +16,7 @@ fn view(n: Int) -> ui.View {
         ui.button("x", Event.Closed),
         ui.button("-", Event.Reduced),
         ui.button("+", Event.Grown),
+        ui.button("full", Event.Filled),
         ui.button("move", Event.Moved),
     ])
 }
@@ -23,6 +26,7 @@ fn update(n: var Int, e: Event) {
         Closed => ui.close
         Reduced => ui.minimize
         Grown => ui.maximize
+        Filled => ui.full_screen
         Moved => ui.drag
     }
 }
@@ -34,15 +38,18 @@ fn main {
 // stdin: 1
 // stdin: 2
 // stdin: 3
+// stdin: 4
 // stdin: 0
-// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
 // expect: (no frame)
-// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
 // expect: (minimize)
-// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
 // expect: (maximize)
-// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
+// expect: (full screen)
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
 // expect: (drag)
-// expect: [Bare] row(button "x", button "-", button "+", button "move")
+// expect: [Bare] row(button "x", button "-", button "+", button "full", button "move")
 // expect: (close)
 // expect: after the window

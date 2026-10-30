@@ -12,8 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 31] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "maximize", "drag", "fill",
+const OWN: [&str; 32] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "maximize", "drag", "fill",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -244,6 +244,10 @@ fn drag {
 
 fn maximize {
     ui.act(4)
+}
+
+fn full_screen {
+    ui.act(5)
 }
 
 fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame(system: Bool := true) {

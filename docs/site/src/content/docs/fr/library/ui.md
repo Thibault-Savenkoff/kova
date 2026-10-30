@@ -17,7 +17,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.run(title, state, view, update)` | montre une fenêtre de titre `title`, dessinée par `view(state)`, jusqu'à ce qu'elle soit fermée. À chaque clic, `update(var state, event)` tourne, et la fenêtre est redessinée. |
 | `ui.run(…) width(w) height(h)` | pareil, la fenêtre s'ouvrant avec `w` pixels de large et `h` de haut ; chaque partie peut être omise. |
 | `ui.run(…) frame(false)` | la fenêtre sans le cadre du système ([ton propre cadre](/fr/guide/windows/#une-fenêtre-avec-ton-propre-cadre)). |
-| `ui.close`, `ui.minimize`, `ui.maximize`, `ui.drag` | depuis `update` : ferme la fenêtre, la réduit, l'agrandit ou la rétablit, la déplace avec la souris après une pression. |
+| `ui.close`, `ui.minimize`, `ui.maximize`, `ui.full_screen`, `ui.drag` | depuis `update` : ferme la fenêtre, la réduit, l'agrandit ou la rétablit, la met en plein écran ou l'en sort, la déplace avec la souris après une pression. |
 | `ui.text(s: String) -> ui.View` | une ligne de texte. |
 | `ui.button(label: String, event: E) -> ui.View` | un bouton ; un clic envoie `event` à `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | un champ de texte qui contient `value` ; à chaque changement fait par l'utilisateur, l'événement du bloc, fait à partir du texte que contient maintenant le champ, va à `update` ([Les champs de texte](/fr/guide/windows/#les-champs-de-texte)). |

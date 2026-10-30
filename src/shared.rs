@@ -978,7 +978,8 @@ pub fn ui_act_name(act: i64) -> &'static str {
         1 => "close",
         2 => "minimize",
         3 => "drag",
-        _ => "maximize",
+        4 => "maximize",
+        _ => "full screen",
     }
 }
 

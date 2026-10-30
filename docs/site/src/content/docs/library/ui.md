@@ -17,7 +17,7 @@ lists what `ui` has.
 | `ui.run(title, state, view, update)` | shows a window titled `title`, drawn by `view(state)`, until it is closed. At each click, `update(var state, event)` runs, and the window is drawn again. |
 | `ui.run(…) width(w) height(h)` | the same, the window opening `w` pixels wide and `h` high; each part may be left out. |
 | `ui.run(…) frame(false)` | the window without the system's frame ([your own frame](/guide/windows/#a-window-with-your-own-frame)). |
-| `ui.close`, `ui.minimize`, `ui.maximize`, `ui.drag` | from `update`: closes the window, minimizes it, maximizes it or restores it, moves it with the mouse after a press. |
+| `ui.close`, `ui.minimize`, `ui.maximize`, `ui.full_screen`, `ui.drag` | from `update`: closes the window, minimizes it, maximizes it or restores it, puts it in full screen or takes it out, moves it with the mouse after a press. |
 | `ui.text(s: String) -> ui.View` | a line of text. |
 | `ui.button(label: String, event: E) -> ui.View` | a button; a click sends `event` to `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | a text field holding `value`; at each change the user makes, the block's event, made from the text the field now holds, goes to `update` ([Text fields](/guide/windows/#text-fields)). |

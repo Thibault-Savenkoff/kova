@@ -1153,6 +1153,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     let change: extern "C" fn(P) = t(f(if is_big(w) != 0 { "gtk_window_unmaximize" } else { "gtk_window_maximize" }));
                     change(w);
                 }
+                5 => {
+                    let is_full: extern "C" fn(P) -> i32 = t(f("gtk_window_is_fullscreen"));
+                    let change: extern "C" fn(P) = t(f(if is_full(w) != 0 { "gtk_window_unfullscreen" } else { "gtk_window_fullscreen" }));
+                    change(w);
+                }
                 _ => {}
             }
         }

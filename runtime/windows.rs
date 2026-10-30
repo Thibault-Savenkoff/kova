@@ -975,6 +975,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     let is_big: extern "system" fn(Handle) -> i32 = core::mem::transmute(user("IsZoomed"));
                     show_as(w, if is_big(w) != 0 { 9 } else { 3 }); // SW_RESTORE, SW_MAXIMIZE
                 }
+                5 => win_full_screen(w),
                 _ => {}
             }
         }
@@ -1004,6 +1005,35 @@ static WIN: Global<Option<Win32>> = Global::new(None);
 
 /// The window's style (`WS_OVERLAPPEDWINDOW`, unless `ui.run(…) frame(false)`).
 static WIN_STYLE: Global<u32> = Global::new(0xCF0000);
+/// The style and the place the window left for the full screen.
+static WIN_BEFORE: Global<Option<(u32, [i32; 4])>> = Global::new(None);
+
+/// `ui.full_screen`: the whole screen with no frame (WS_POPUP | WS_VISIBLE), or back.
+fn win_full_screen(w: Handle) {
+    let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let set_style: extern "system" fn(Handle, i32, u32) -> u32 = t(user("SetWindowLongW"));
+        let get_style: extern "system" fn(Handle, i32) -> u32 = t(user("GetWindowLongW"));
+        let place: extern "system" fn(Handle, Handle, i32, i32, i32, i32, u32) -> i32 = t(user("SetWindowPos"));
+        let (style, r) = match WIN_BEFORE.get().take() {
+            Some(before) => before,
+            None => {
+                let (mut r, mut info) = ([0i32; 4], [0i32; 10]);
+                info[0] = 40;
+                let rect: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetWindowRect"));
+                let monitor: extern "system" fn(Handle, u32) -> Handle = t(user("MonitorFromWindow"));
+                let about: extern "system" fn(Handle, *mut i32) -> i32 = t(user("GetMonitorInfoW"));
+                rect(w, r.as_mut_ptr());
+                about(monitor(w, 2), info.as_mut_ptr()); // MONITOR_DEFAULTTONEAREST
+                *WIN_BEFORE.get() = Some((get_style(w, -16), r));
+                (0x9000_0000, [info[1], info[2], info[3], info[4]])
+            }
+        };
+        set_style(w, -16, style);
+        place(w, 0, r[0], r[1], r[2] - r[0], r[3] - r[1], 0x24); // SWP_NOZORDER | SWP_FRAMECHANGED
+    }
+}
 
 /// While a view is placed: the width and height taken by what comes after, for a `ui.fill` canvas.
 static WIN_LEFT: Global<[i32; 2]> = Global::new([0, 0]);

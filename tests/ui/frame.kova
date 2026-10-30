@@ -19,7 +19,9 @@ fn update(n: var Int, e: Event) {
     match n {
         1 => ui.maximize
         2 => ui.maximize
-        3 => ui.close
+        3 => ui.full_screen
+        4 => ui.full_screen
+        5 => ui.close
         _ => {}
     }
 }
