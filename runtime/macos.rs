@@ -745,8 +745,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                     if let Some(there) = MAC_CANVASES.get().iter_mut().find(|e| e.0 == v) {
                         there.1 = c.clone();
                     }
-                    (kit.send_id)(v, kit.sel("setNeedsDisplay:"), 1);
-                    kit.send(v, "displayIfNeeded");
+                    if !*MAC_FILLING.get() {
+                        (kit.send_id)(v, kit.sel("setNeedsDisplay:"), 1);
+                        kit.send(v, "displayIfNeeded");
+                    }
                     continue;
                 }
                 _ => continue, // an image: its path is in the shape
@@ -810,11 +812,32 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             3 if !MAC_PRESS.get().is_null() => {
                 (kit.send_two)(w, kit.sel("performWindowDragWithEvent:"), *MAC_PRESS.get());
             }
+            // Apple's animation shows the content as it is when it starts: the program first
+            // draws for the size to come, then the next `ui_show` starts it.
             4 => {
-                (kit.send_two)(w, kit.sel("toggleFullScreen:"), core::ptr::null_mut());
+                let content = mac_rect(kit, root, "bounds");
+                let to = if (kit.send_int)(w, kit.sel("styleMask")) & 1 << 14 != 0 {
+                    *MAC_WINDOWED.get()
+                } else {
+                    *MAC_WINDOWED.get() = (content.width, content.height);
+                    mac_full_size(kit, w)
+                };
+                for (view, canvas) in MAC_CANVASES.get().iter().filter(|(_, c)| c.width == 0 || c.height == 0) {
+                    let now = mac_rect(kit, *view, "bounds");
+                    let width = if canvas.width == 0 { now.width + to.0 - content.width } else { now.width };
+                    let height = if canvas.height == 0 { now.height + to.1 - content.height } else { now.height };
+                    if crate::ui_room(canvas.number, width as i32, height as i32) {
+                        MAC_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+                    }
+                }
+                *MAC_FILLING.get() = true;
             }
             _ => {}
         }
+    }
+    if *MAC_FILLING.get() && MAC_HEARD.get().is_empty() {
+        *MAC_FILLING.get() = false;
+        (kit.send_two)(w, kit.sel("toggleFullScreen:"), core::ptr::null_mut());
     }
     let app = kit.send(kit.class("NSApplication"), "sharedApplication");
     let (future, mode) = (kit.send(kit.class("NSDate"), "distantFuture"), kit.text("kCFRunLoopDefaultMode"));
@@ -851,6 +874,10 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
 static KIT: crate::Global<Option<Kit>> = crate::Global::new(None);
 /// `ui.run(…) frame(false)`.
 static MAC_BARE: crate::Global<bool> = crate::Global::new(false);
+/// `ui.maximize` is waiting for the program to draw for the size to come.
+static MAC_FILLING: crate::Global<bool> = crate::Global::new(false);
+/// The content's size before the full screen.
+static MAC_WINDOWED: crate::Global<(f64, f64)> = crate::Global::new((0.0, 0.0));
 /// What a canvas or a clock heard, for `ui_show`.
 static MAC_HEARD: crate::Global<crate::shared::UiQueue> = crate::Global::new(crate::shared::UiQueue::new());
 /// The clocks: (seconds between ticks, button number, next tick).
@@ -862,6 +889,17 @@ static MAC_CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::
 fn mac_now(kit: &Kit) -> f64 {
     let seconds: extern "C" fn(Id, Id) -> f64 = unsafe { core::mem::transmute(kit.send as usize) };
     seconds(kit.class("NSDate"), kit.sel("timeIntervalSinceReferenceDate"))
+}
+
+/// The content's size in full screen: the whole screen, below the notch if it has one.
+fn mac_full_size(kit: &Kit, w: Id) -> (f64, f64) {
+    let screen = kit.send(w, "screen");
+    let screen = if screen.is_null() { kit.send(kit.class("NSScreen"), "mainScreen") } else { screen };
+    let frame = mac_rect(kit, screen, "frame");
+    let knows: extern "C" fn(Id, Id, Id) -> bool = unsafe { core::mem::transmute(kit.send as usize) };
+    // `NSEdgeInsets` has the shape of a `Rect`: top comes first. Since macOS 12.
+    let top = if knows(screen, kit.sel("respondsToSelector:"), kit.sel("safeAreaInsets")) { mac_rect(kit, screen, "safeAreaInsets").x } else { 0.0 };
+    (frame.width, frame.height - top)
 }
 
 extern "C" fn mac_yes(_me: Id, _message: Id) -> bool {
@@ -962,7 +1000,7 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     use crate::shared::UiOp as Op;
     let Some(kit) = KIT.get().as_ref() else { return };
     let Some((_, canvas)) = MAC_CANVASES.get().iter().find(|e| e.0 == me) else { return };
-    let bounds = mac_bounds(kit, me);
+    let bounds = mac_rect(kit, me, "bounds");
     if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
         MAC_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
     }
@@ -1041,22 +1079,22 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     }
 }
 
-/// A view's `bounds`. A struct this big comes back through memory on Intel, a variant of
-/// `objc_msgSend` that arm64 does not have.
-fn mac_bounds(kit: &Kit, view: Id) -> Rect {
+/// A rectangle an object answers with. A struct this big comes back through memory on Intel, a
+/// variant of `objc_msgSend` that arm64 does not have.
+fn mac_rect(kit: &Kit, object: Id, message: &str) -> Rect {
     #[cfg(target_arch = "x86_64")]
     {
         let mut out = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
         if let Some(send) = library("/usr/lib/libobjc.A.dylib").and_then(|l| symbol(l, "objc_msgSend_stret")) {
             let send: extern "C" fn(*mut Rect, Id, Id) = unsafe { core::mem::transmute(send) };
-            send(&mut out, view, kit.sel("bounds"));
+            send(&mut out, object, kit.sel(message));
         }
         out
     }
     #[cfg(target_arch = "aarch64")]
     {
         let send: extern "C" fn(Id, Id) -> Rect = unsafe { core::mem::transmute(kit.send as usize) };
-        send(view, kit.sel("bounds"))
+        send(object, kit.sel(message))
     }
 }
 
