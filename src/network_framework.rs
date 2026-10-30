@@ -190,17 +190,9 @@ fn finished(s: &Session) -> bool {
     false
 }
 
-impl<N: Network> Network for Tls<N> {
-    type Link = Link<N::Link>;
-
-    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail> {
-        if !secure {
-            return self.0.open(host, port, false, ms).map(Link::Plain);
-        }
-        if host.contains('\0') {
-            return Err(Fail::NoHost);
-        }
-        let (host, port) = ([host.as_bytes(), &[0]].concat(), alloc::format!("{port}\0"));
+impl<N: Network> Tls<N> {
+    /// One try at a secure connection; `Err(None)`: the site hung up (ECONNRESET).
+    fn handshake(&mut self, host: &[u8], port: &str, ms: u64) -> Result<Link<N::Link>, Option<Fail>> {
         unsafe {
             let shared = Box::new(Shared {
                 states: dispatch_semaphore_create(0),
@@ -230,12 +222,39 @@ impl<N: Network> Network for Tls<N> {
                 match s.shared.state.load(SeqCst) {
                     READY => return Ok(Link::Secure(s)),
                     WAITING | FAILED | CANCELLED => {
+                        let reset = (s.shared.domain.load(SeqCst), s.shared.code.load(SeqCst)) == (1, 54);
                         let f = s.shared.failure(true);
                         self.close(Link::Secure(s));
-                        return Err(f);
+                        return Err(if reset { None } else { Some(f) });
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+impl<N: Network> Network for Tls<N> {
+    type Link = Link<N::Link>;
+
+    fn open(&mut self, host: &str, port: u16, secure: bool, ms: u64) -> Result<Self::Link, Fail> {
+        if !secure {
+            return self.0.open(host, port, false, ms).map(Link::Plain);
+        }
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        let (host, port) = ([host.as_bytes(), &[0]].concat(), alloc::format!("{port}\0"));
+        // A site that hangs up during the handshake hides why: once a certificate is refused, the
+        // site's reset often arrives first, and the framework then reports it alone (seen on
+        // badssl.com, one try in three). Nothing was sent yet, so asking again is safe.
+        let mut tries = 0;
+        loop {
+            let opened = self.handshake(&host, &port, ms);
+            let reset = matches!(&opened, Err(None));
+            tries += 1;
+            if !reset || tries == 5 {
+                return opened.map_err(|f| f.unwrap_or(Fail::Refused));
             }
         }
     }
