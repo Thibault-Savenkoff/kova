@@ -783,6 +783,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let joined = format!("{}{}", s(0), s(1));
                             heap.make(joined)
                         }
+                        StrOp::Append => {
+                            let added = s(1).to_string();
+                            if let Some(Some(Object::Str(text))) = heap.objects.get_mut(locals[a[0]] as usize) {
+                                text.push_str(&added);
+                            }
+                            locals[a[0]]
+                        }
                         StrOp::Eq => (s(0) == s(1)) as i64,
                         StrOp::Hash if locals[a[0]] == 0 => 0,
                         StrOp::Hash => crate::shared::hash(s(0)),

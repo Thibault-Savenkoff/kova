@@ -615,6 +615,8 @@ pub enum StrOp {
     UiAct,
     /// `ui.place(…) size(…)`: where the window must go at the next `ui.show`.
     UiPlace,
+    /// `s += t`: grows `s`, which it takes, and gives it back, perhaps elsewhere.
+    Append,
     /// `sound.raw(data)`: 0 played, 1 not a WAV, 2 nothing to play it on.
     Sound,
     /// `ui.dialog(kind, title, text)`: what the person chose, "" if nothing.
@@ -2496,8 +2498,7 @@ impl<'a> Translator<'a> {
     /// `whole := whole + piece`; both old Strings are freed.
     fn append(&mut self, whole: Local, piece: Local) {
         let joined = self.int_local();
-        self.emit(Inst::Str(joined, StrOp::Concat, vec![whole, piece]));
-        self.emit(Inst::Free(whole));
+        self.emit(Inst::Str(joined, StrOp::Append, vec![whole, piece]));
         self.emit(Inst::Free(piece));
         self.emit(Inst::Copy(whole, joined));
     }
@@ -3119,6 +3120,62 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// The `t` of `s := s + t` when `s` is a String variable.
+    fn text_added<'e>(&self, target: &Target, op: Option<BinOp>, value: &'e Expr) -> Option<&'e Expr> {
+        let (None, None, Target::Place { name, fields, .. }, ExprKind::Binary(BinOp::Plus, a, added)) = (op, &self.reopen, target, &value.kind) else { return None };
+        let same = fields.is_empty() && !self.info.assign_ops.contains_key(&value.id) && matches!(&a.kind, ExprKind::Var(n) if *n == name.text);
+        (same && self.given(a) == Type::String).then_some(&**added)
+    }
+
+    /// `target := value`, or `target += value` with `op`.
+    fn assign(&mut self, target: &Target, op: Option<BinOp>, value: &Expr) {
+        match op.filter(|_| !self.info.assign_ops.contains_key(&value.id)) {
+        // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
+        None => {
+            // `total += v` with the method `+`: `total := total + v`.
+            let value = self.info.assign_ops.get(&value.id).unwrap_or(value);
+            let v = self.owned(value);
+            let ty = self.given(value);
+            if let Some(vars) = self.reopen.take() {
+                self.names.push(Scope { borrowed: true, vars });
+                self.names.push(Scope::default());
+            }
+            let new = self.new_slots(&ty);
+            self.copy(&new, &v);
+            let mut at = 0;
+            for (place, ty) in self.target_places(target) {
+                let n = scalars(&ty).len();
+                let old = self.read(&place);
+                self.free_value(&old, &ty);
+                self.write(&place, &new[at..at + n]);
+                at += n;
+            }
+        }
+        Some(op) => {
+            let v = self.expr1(value);
+            let (place, ty) = self.target_places(target).remove(0);
+            let old = self.read(&place)[0];
+            let r = if matches!(ty, Type::List(_) | Type::Set(_) | Type::Map(..)) {
+                self.add_all(old, v, &ty);
+                old
+            } else if ty == Type::String {
+                let r = self.int_local();
+                self.emit(Inst::Str(r, StrOp::Append, vec![old, v]));
+                r
+            } else if ty == Type::BigInt {
+                let loc = self.loc(value.span);
+                let r = self.big(op, old, v, loc);
+                self.emit(Inst::Free(old));
+                r
+            } else {
+                let loc = self.loc(target.span());
+                self.operation(kir_op(op), old, v, self.is_float(value), loc)
+            };
+            self.write(&place, &[r]);
+        }
+        }
+    }
+
     fn stmt(&mut self, s: &Stmt) {
         if self.watching {
             self.line(s);
@@ -3138,52 +3195,14 @@ impl<'a> Translator<'a> {
                 self.bind(pattern, &slots, &ty);
             }
             // The value first, then the places (a call in the value may change a List: `l[0] := f(var l)`).
-            Stmt::Assign { target, op, value } => match op.filter(|_| !self.info.assign_ops.contains_key(&value.id)) {
-                // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
-                None => {
-                    // `total += v` with the method `+`: `total := total + v`.
-                    let value = self.info.assign_ops.get(&value.id).unwrap_or(value);
-                    let v = self.owned(value);
-                    let ty = self.given(value);
-                    if let Some(vars) = self.reopen.take() {
-                        self.names.push(Scope { borrowed: true, vars });
-                        self.names.push(Scope::default());
-                    }
-                    let new = self.new_slots(&ty);
-                    self.copy(&new, &v);
-                    let mut at = 0;
-                    for (place, ty) in self.target_places(target) {
-                        let n = scalars(&ty).len();
-                        let old = self.read(&place);
-                        self.free_value(&old, &ty);
-                        self.write(&place, &new[at..at + n]);
-                        at += n;
-                    }
-                }
-                Some(op) => {
-                    let v = self.expr1(value);
-                    let (place, ty) = self.target_places(target).remove(0);
-                    let old = self.read(&place)[0];
-                    let r = if matches!(ty, Type::List(_) | Type::Set(_) | Type::Map(..)) {
-                        self.add_all(old, v, &ty);
-                        old
-                    } else if ty == Type::String {
-                        let r = self.int_local();
-                        self.emit(Inst::Str(r, StrOp::Concat, vec![old, v]));
-                        self.emit(Inst::Free(old));
-                        r
-                    } else if ty == Type::BigInt {
-                        let loc = self.loc(value.span);
-                        let r = self.big(op, old, v, loc);
-                        self.emit(Inst::Free(old));
-                        r
-                    } else {
-                        let loc = self.loc(target.span());
-                        self.operation(kir_op(op), old, v, self.is_float(value), loc)
-                    };
-                    self.write(&place, &[r]);
-                }
-            },
+            Stmt::Assign { target, op, value } => {
+                // `s := s + t` on a String is `s += t`, which grows `s` in place.
+                let (op, value) = match self.text_added(target, *op, value) {
+                    Some(added) => (Some(BinOp::Plus), added),
+                    None => (*op, value),
+                };
+                self.assign(target, op, value);
+            }
             Stmt::Return { value, .. } => {
                 let v = value.as_ref().map_or(vec![], |e| self.owned(e));
                 self.exit(v);
@@ -3843,8 +3862,7 @@ impl<'a> Translator<'a> {
                 None if fresh => {}
                 None => self.emit(Inst::Str(l, StrOp::Clone, vec![piece])),
                 Some(w) => {
-                    self.emit(Inst::Str(l, StrOp::Concat, vec![w, piece]));
-                    self.emit(Inst::Free(w));
+                    self.emit(Inst::Str(l, StrOp::Append, vec![w, piece]));
                     if fresh {
                         self.emit(Inst::Free(piece));
                     }

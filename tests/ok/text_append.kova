@@ -1,0 +1,36 @@
+// Adding to a text grows it in place: it must still behave like a new value.
+// expect: abab
+// expect: ab ab!
+// expect: 200000
+// expect: é
+// expect: Rex!
+// expect: ab
+struct Dog {
+    name: String
+}
+
+fn twice(s: var String) {
+    s += s
+}
+
+fn main {
+    var a: String := "ab"
+    let kept: String := a.clone
+    twice(var a)
+    print(a)
+    var b: String := "ab"
+    b := b + " " + b + "!"
+    print(b)
+    var long: String := ""
+    for i in 0..200000 {
+        long := long + "x"
+    }
+    print(long.length)
+    var e: String := ""
+    e += "é"
+    print(e)
+    var d: Dog := Dog { name := "Rex" }
+    d.name += "!"
+    print(d.name)
+    print(kept)
+}

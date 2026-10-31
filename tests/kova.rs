@@ -491,7 +491,7 @@ fn leak_counter() {
         text(&out.stderr)
     };
     let run = count(kova(LANG).args(["run", "tests/ok/strings.kova"]));
-    assert_eq!(run, "Strings and Lists made: 25\n");
+    assert_eq!(run, "Strings and Lists made: 21\n");
     let exe = std::env::temp_dir().join(format!("kova-leaks-{}{EXE}", std::process::id()));
     assert!(kova(LANG).args(["build", "tests/ok/strings.kova", "-o"]).arg(&exe).status().unwrap().success());
     assert_eq!(count(&mut program(&exe, LANG)), run);

@@ -896,6 +896,15 @@ unsafe impl GlobalAlloc for Memory {
 
 /// What one thread at a time may do (`crate::Locked`): 0 free, 1 taken, 2 taken and a thread
 /// sleeps waiting for it (Drepper, "Futexes are tricky").
+/// One thread so far: a lock has nobody to keep out, and the allocator, which takes one for each
+/// block, skips two atomic operations. It ends for good before a second thread can exist:
+/// at `spawn`, and when a C library is loaded (C may start threads and call Kova back).
+static ALONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+pub fn not_alone() {
+    ALONE.store(false, Relaxed);
+}
+
 pub struct Lock(AtomicU32);
 
 impl Lock {
@@ -903,6 +912,9 @@ impl Lock {
         Lock(AtomicU32::new(0))
     }
     pub fn lock(&self) {
+        if ALONE.load(Relaxed) {
+            return;
+        }
         if self.0.compare_exchange(0, 1, Acquire, Relaxed).is_err() {
             while self.0.swap(2, Acquire) != 0 {
                 // FUTEX_WAIT_PRIVATE: sleeps while it is still 2.
@@ -911,6 +923,9 @@ impl Lock {
         }
     }
     pub fn unlock(&self) {
+        if ALONE.load(Relaxed) {
+            return;
+        }
         if self.0.swap(0, Release) == 2 {
             // FUTEX_WAKE_PRIVATE: one of them.
             unsafe { call(FUTEX, self.0.as_ptr() as usize, 129, 1, 0, 0, 0) };
@@ -949,6 +964,7 @@ pub enum Thread {
 
 /// `f(arg)` on a new thread. None if the system cannot start it.
 pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
+    not_alone();
     let create = *PTHREAD_CREATE.get();
     if create != 0 {
         type Start = extern "C" fn(*mut u8) -> *mut u8;
@@ -1066,6 +1082,7 @@ unsafe fn start_thread(sp: usize, word: usize) -> isize {
 
 /// `extern` (PLAN Part 4 "`extern`, step 1"): a library loaded by the system's loader, or None.
 pub fn library(name: &str) -> Option<usize> {
+    not_alone();
     let name = [name.as_bytes(), &[0]].concat();
     // RTLD_NOW
     let h = unsafe { dl::dlopen(name.as_ptr(), 2) };

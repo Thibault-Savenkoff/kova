@@ -144,6 +144,7 @@ unsafe fn c_text<'a>(p: *const u8) -> &'a [u8] {
 
 /// Runs the program, then stops it (called by `sys`'s entry point once it knows `args`).
 fn run() -> ! {
+    COUNTING.store(sys::var("KOVA_LEAKS").is_some(), Relaxed);
     unsafe { kova_main() };
     every_thread_ended();
     exit(leaks())
@@ -256,6 +257,23 @@ pub extern "C" fn kova_print(value: i64, show: i64, newline: i64) {
 /// The text of a value, as `print` writes it (`"{x}"`).
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_format(value: i64, show: i64) -> i64 {
+    // A whole number, the usual case, needs no buffer on the heap.
+    if show as usize == kova_show_int as *const () as usize {
+        let (mut digits, mut at, mut left) = ([0u8; 20], 20, value.unsigned_abs());
+        loop {
+            at -= 1;
+            digits[at] = b'0' + (left % 10) as u8;
+            left /= 10;
+            if left == 0 {
+                break;
+            }
+        }
+        if value < 0 {
+            at -= 1;
+            digits[at] = b'-';
+        }
+        return new_text(&digits[at..]);
+    }
     let mut o = Vec::new();
     writer(show)(&mut o, value);
     new_text(&o)
@@ -361,9 +379,22 @@ pub extern "C" fn kova_exit(code: i64) {
 static ALLOCATED: AtomicI64 = AtomicI64::new(0);
 static LIVE: AtomicI64 = AtomicI64::new(0);
 
+/// `KOVA_LEAKS` is set: the counters count. Without it they stay still, and each String costs two
+/// atomic operations less.
+static COUNTING: AtomicBool = AtomicBool::new(false);
+
 fn made() {
+    if !COUNTING.load(Relaxed) {
+        return;
+    }
     ALLOCATED.fetch_add(1, Relaxed);
     LIVE.fetch_add(1, Relaxed);
+}
+
+fn unmade() {
+    if COUNTING.load(Relaxed) {
+        LIVE.fetch_sub(1, Relaxed);
+    }
 }
 
 /// With KOVA_LEAKS set (the test runner sets it): a String never freed is an error (code 102);
@@ -392,7 +423,8 @@ fn leaks() -> i32 {
 // 0 = no String: freeing it does nothing (a moved variable holds 0, src/kir.rs).
 
 fn layout(n: usize) -> Layout {
-    Layout::from_size_align(8 + n, 8).unwrap()
+    // The room is known from the length, so a text needs no field for it.
+    Layout::from_size_align((8 + n).next_power_of_two(), 8).unwrap()
 }
 
 fn new_text(b: &[u8]) -> i64 {
@@ -426,13 +458,47 @@ pub extern "C" fn kova_str_new(b: *const u8, n: i64) -> i64 {
 pub extern "C" fn kova_str_free(s: i64) {
     if s != 0 {
         unsafe { dealloc(s as *mut u8, layout(bytes(s).len())) };
-        LIVE.fetch_sub(1, Relaxed);
+        unmade();
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_concat(a: i64, b: i64) -> i64 {
-    new_text(&[bytes(a), bytes(b)].concat())
+    let (a, b) = (bytes(a), bytes(b));
+    unsafe {
+        let wanted = layout(a.len() + b.len());
+        let p = alloc(wanted);
+        if p.is_null() {
+            handle_alloc_error(wanted);
+        }
+        *(p as *mut i64) = (a.len() + b.len()) as i64;
+        core::ptr::copy_nonoverlapping(a.as_ptr(), p.add(8), a.len());
+        core::ptr::copy_nonoverlapping(b.as_ptr(), p.add(8 + a.len()), b.len());
+        made();
+        p as i64
+    }
+}
+
+/// `s += t`: `s`, which nobody else holds, grows where it is while it has room. The room doubles,
+/// so a loop adding to a text copies it a few times, not at each turn.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_append(a: i64, b: i64) -> i64 {
+    if a == b {
+        let doubled = new_text(&[bytes(a), bytes(b)].concat());
+        kova_str_free(a);
+        return doubled;
+    }
+    let (old, added) = (bytes(a).len(), bytes(b).len());
+    let wanted = layout(old + added);
+    unsafe {
+        let p = if wanted.size() == layout(old).size() { a as *mut u8 } else { alloc::alloc::realloc(a as *mut u8, layout(old), wanted.size()) };
+        if p.is_null() {
+            handle_alloc_error(wanted);
+        }
+        core::ptr::copy_nonoverlapping(bytes(b).as_ptr(), p.add(8 + old), added);
+        *(p as *mut i64) = (old + added) as i64;
+        p as i64
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -541,7 +607,7 @@ pub extern "C" fn kova_str_replace(a: i64, old: i64, new: i64) -> i64 {
 
 /// A new List of these bytes.
 fn byte_list(b: Vec<u8>) -> i64 {
-    new_list(List { length: b.len(), width: 1, slots: Vec::new(), index: 0, small: Some(b) })
+    new_list(List { length: b.len(), data: core::ptr::null_mut(), width: 1, slots: Vec::new(), index: 0, small: Some(b) })
 }
 
 /// A new List of Strings.
@@ -551,7 +617,7 @@ fn texts<'a>(parts: impl Iterator<Item = &'a str>) -> i64 {
 
 fn numbers(items: impl Iterator<Item = i64>) -> i64 {
     let slots: Vec<i64> = items.collect();
-    new_list(List { length: slots.len(), width: 1, slots, index: 0, small: None })
+    new_list(List { length: slots.len(), data: core::ptr::null_mut(), width: 1, slots, index: 0, small: None })
 }
 
 /// `separator` is never empty (src/kir.rs checks it before).
@@ -650,7 +716,7 @@ pub extern "C" fn kova_csv_read(text: i64, spec: i64) -> i64 {
                 csv::Slot::Int(n) => n,
                 csv::Slot::Text(t) => new_text(t.as_bytes()),
             }).collect();
-            new_list(List { length: slots.len() / width.max(1), width, slots, index: 0, small: None })
+            new_list(List { length: slots.len() / width.max(1), data: core::ptr::null_mut(), width, slots, index: 0, small: None })
         }
         Err(p) => p.code(),
     }
@@ -748,8 +814,13 @@ pub extern "C" fn kova_big_less(a: i64, b: i64) -> i64 {
 // A Map or a Set also has an `index` (a table of positions, made by `find_in_index` in
 // src/kir.rs): freed with it; `unindex` takes a removed element out of it.
 
+/// The code generator reads `length`, `data` and `width` itself (`codegen.rs`, `ListLoad`): their
+/// places must stay.
+#[repr(C)]
 struct List {
     length: usize,
+    /// The start of `slots`, or null while the values are in `small`.
+    data: *mut i64,
     width: usize,
     slots: Vec<i64>,
     index: i64,
@@ -763,13 +834,17 @@ impl List {
     fn words(&mut self) -> &mut Vec<i64> {
         if let Some(b) = self.small.take() {
             self.slots = b.iter().map(|&b| b as i64).collect();
+            self.data = self.slots.as_mut_ptr();
         }
         &mut self.slots
     }
 }
 
-fn new_list(l: List) -> i64 {
+fn new_list(mut l: List) -> i64 {
     made();
+    if l.small.is_none() {
+        l.data = l.slots.as_mut_ptr();
+    }
     Box::into_raw(Box::new(l)) as i64
 }
 
@@ -781,7 +856,7 @@ fn list<'a>(l: i64) -> &'a mut List {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_new(width: i64) -> i64 {
     let width = width as usize;
-    new_list(List { length: 0, width, slots: Vec::new(), index: 0, small: (width == 1).then(Vec::new) })
+    new_list(List { length: 0, data: core::ptr::null_mut(), width, slots: Vec::new(), index: 0, small: (width == 1).then(Vec::new) })
 }
 
 #[unsafe(no_mangle)]
@@ -824,7 +899,10 @@ pub extern "C" fn kova_list_grow(l: i64) -> i64 {
     let l = list(l);
     match &mut l.small {
         Some(b) => b.push(0),
-        None => l.slots.resize(l.slots.len() + l.width, 0),
+        None => {
+            l.slots.resize(l.slots.len() + l.width, 0);
+            l.data = l.slots.as_mut_ptr();
+        }
     }
     l.length += 1;
     l.length as i64 - 1
@@ -853,7 +931,7 @@ pub extern "C" fn kova_list_free(l: i64) {
     if l != 0 {
         let l = unsafe { Box::from_raw(l as *mut List) };
         kova_list_free(l.index);
-        LIVE.fetch_sub(1, Relaxed);
+        unmade();
     }
 }
 
@@ -1137,7 +1215,7 @@ pub extern "C" fn kova_run(p: i64, words: i64) -> i64 {
     match sys::run(&program, &words) {
         Ok((output, errors, code)) => {
             let slots = alloc::vec![new_text(String::from_utf8_lossy(&output).as_bytes()), new_text(String::from_utf8_lossy(&errors).as_bytes()), code];
-            new_list(List { length: 1, width: 3, slots, index: 0, small: None })
+            new_list(List { length: 1, data: core::ptr::null_mut(), width: 3, slots, index: 0, small: None })
         }
         Err(f) => -f,
     }
@@ -1206,7 +1284,7 @@ pub extern "C" fn kova_json_parse(s: i64) -> i64 {
         Err(line) => -line,
         Ok(nodes) => {
             let slots = json::slots(nodes, |t| new_text(t.as_bytes()));
-            new_list(List { length: slots.len() / 4, width: 4, slots, index: 0, small: None })
+            new_list(List { length: slots.len() / 4, data: core::ptr::null_mut(), width: 4, slots, index: 0, small: None })
         }
     }
 }
@@ -1263,9 +1341,9 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
     let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-    let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
+    let headers = new_list(List { length, data: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
     let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, byte_list(q.data), link as i64];
-    new_list(List { length: 1, width: 8, slots, index: 0, small: None })
+    new_list(List { length: 1, data: core::ptr::null_mut(), width: 8, slots, index: 0, small: None })
 }
 
 /// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
@@ -1412,7 +1490,7 @@ pub extern "C" fn kova_pipe_release(h: i64) -> i64 {
     if h != 0 && pipe(h).refs.fetch_sub(1, AcqRel) == 1 {
         let p = unsafe { Box::from_raw(h as *mut Pipe) };
         p.items.iter().for_each(|&b| (p.free)(b));
-        LIVE.fetch_sub(1, Relaxed);
+        unmade();
     }
     0
 }
@@ -1665,9 +1743,9 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
         Ok(a) => {
             let length = a.headers.len();
             let slots = a.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-            let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
+            let headers = new_list(List { length, data: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
             let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers, byte_list(a.data)];
-            new_list(List { length: 1, width: 5, slots, index: 0, small: None })
+            new_list(List { length: 1, data: core::ptr::null_mut(), width: 5, slots, index: 0, small: None })
         }
     }
 }
@@ -2509,6 +2587,37 @@ core::arch::global_asm!(
     "ret",
 );
 
+/// Copies `n` bytes that do not overlap, by words: first and last words overlap each other rather
+/// than finishing byte by byte. Volatile, so that the loop stays a loop; both processors read
+/// unaligned words.
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(target_os = "macos")))]
+unsafe fn short_copy(to: *mut u8, from: *const u8, n: usize) {
+    unsafe {
+        let word = |t: *mut u8, f: *const u8| (t as *mut u64).write_volatile((f as *const u64).read_volatile());
+        let half = |t: *mut u8, f: *const u8| (t as *mut u32).write_volatile((f as *const u32).read_volatile());
+        match n {
+            0 => {}
+            1..=3 => {
+                to.write_volatile(from.read_volatile());
+                to.add(n / 2).write_volatile(from.add(n / 2).read_volatile());
+                to.add(n - 1).write_volatile(from.add(n - 1).read_volatile());
+            }
+            4..=7 => {
+                half(to, from);
+                half(to.add(n - 4), from.add(n - 4));
+            }
+            _ => {
+                let mut i = 0;
+                while i + 8 < n {
+                    word(to.add(i), from.add(i));
+                    i += 8;
+                }
+                word(to.add(n - 8), from.add(n - 8));
+            }
+        }
+    }
+}
+
 // Copying memory, written with the processor's own instructions: written as Rust loops, the
 // compiler would turn them back into calls to themselves (same for `strlen`, so `c_text` reads
 // each byte "volatile").
@@ -2519,12 +2628,22 @@ mod memory {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn memcpy(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
+        // `rep movsb` starts slowly: most copies are a few bytes.
+        if n <= 256 {
+            unsafe { super::short_copy(to as *mut u8, from as *const u8, n) };
+            return to;
+        }
         unsafe { asm!("rep movsb", inout("rcx") n => _, inout("rdi") to => _, inout("rsi") from => _, options(nostack, preserves_flags)) };
         to
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn memmove(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
+        if (from as usize).wrapping_sub(to as usize) < n {
+            // `to` overlaps the start of `from`: forwards, byte by byte (`short_copy` could not).
+            unsafe { asm!("rep movsb", inout("rcx") n => _, inout("rdi") to => _, inout("rsi") from => _, options(nostack, preserves_flags)) };
+            return to;
+        }
         if (to as usize).wrapping_sub(from as usize) >= n {
             return unsafe { memcpy(to, from, n) };
         }
@@ -2560,22 +2679,26 @@ mod memory {
 }
 
 // On arm64 Linux and Windows: byte by byte, each byte "volatile" so that the loops stay loops.
-// ponytail: one byte at a time; by words of 8 bytes if copying ever shows in a profile.
 #[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
 mod memory {
     use core::ffi::c_void;
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn memcpy(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
-        let (t, f) = (to as *mut u8, from as *const u8);
-        for i in 0..n {
-            unsafe { t.add(i).write_volatile(f.add(i).read_volatile()) };
-        }
+        unsafe { super::short_copy(to as *mut u8, from as *const u8, n) };
         to
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn memmove(to: *mut c_void, from: *const c_void, n: usize) -> *mut c_void {
+        if (from as usize).wrapping_sub(to as usize) < n {
+            // `to` overlaps the start of `from`: forwards, byte by byte (`short_copy` could not).
+            let (t, f) = (to as *mut u8, from as *const u8);
+            for i in 0..n {
+                unsafe { t.add(i).write_volatile(f.add(i).read_volatile()) };
+            }
+            return to;
+        }
         if (to as usize).wrapping_sub(from as usize) >= n {
             return unsafe { memcpy(to, from, n) };
         }

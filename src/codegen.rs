@@ -9,7 +9,7 @@ use std::path::Path;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I32, I64};
-use cranelift_codegen::ir::{AbiParam, ArgumentPurpose, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode, Value};
+use cranelift_codegen::ir::{AbiParam, ArgumentPurpose, Block, BlockArg, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, TrapCode, Value};
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -210,7 +210,7 @@ fn write_executable(output: &str, exe: &[u8]) -> Result<(), String> {
 
 /// The C runtime functions called by the generated code.
 /// How many `StrOp`s the runtime has (`str_op` numbers them).
-const STR_OPS: usize = 139;
+const STR_OPS: usize = 140;
 
 struct Runtime {
     print: FuncId,
@@ -246,6 +246,7 @@ const LIST_FUNCTIONS: [(&str, usize, usize); 10] = [
     ("kova_list_set_index", 2, 0),
 ];
 const L_NEW: usize = 0;
+#[allow(dead_code)] // read directly, the table keeps its place
 const L_LENGTH: usize = 1;
 const L_CHECK: usize = 2;
 const L_LOAD: usize = 3;
@@ -369,6 +370,7 @@ fn str_op(op: StrOp) -> (usize, &'static str, usize) {
         StrOp::NetBytes => (134, "kova_net_bytes", 5),
         StrOp::UiDialog => (137, "kova_ui_dialog", 3),
         StrOp::Sound => (138, "kova_sound", 1),
+        StrOp::Append => (139, "kova_str_append", 2),
         StrOp::PointerRead => (135, "kova_pointer_read", 2),
         StrOp::PointerWrite => (136, "kova_pointer_write", 2),
         StrOp::SecureRandom => (76, "kova_secure_random", 2),
@@ -455,7 +457,7 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
         },
         str_ops: {
             let mut ids = vec![];
-            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::AllMatches, StrOp::ReplaceMatches, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel, StrOp::CText, StrOp::CFree, StrOp::FromCText, StrOp::ExternAddress, StrOp::CWideText, StrOp::CWideFree, StrOp::FromCWideText, StrOp::CRead, StrOp::UiShow, StrOp::UiTyped, StrOp::Lines, StrOp::Fixed, StrOp::RoundTo, StrOp::UiDraw, StrOp::UiDrawn, StrOp::UiAct, StrOp::UiRoom, StrOp::UiPlace, StrOp::Reversed, StrOp::ToBool, StrOp::ToBigInt, StrOp::Padded, StrOp::PaddedLeft, StrOp::ReadBytes, StrOp::WriteBytes, StrOp::NotBytes, StrOp::BytesText, StrOp::TextBytes, StrOp::PipeNew, StrOp::PipeRetain, StrOp::PipeRelease, StrOp::PipePut, StrOp::PipeTake, StrOp::PipeClose, StrOp::PipeSelect, StrOp::Spawn, StrOp::CharTest, StrOp::Cores, StrOp::Pack, StrOp::Net, StrOp::NetBytes, StrOp::PointerRead, StrOp::PointerWrite, StrOp::UiDialog, StrOp::Sound] {
+            for op in [StrOp::Concat, StrOp::Eq, StrOp::Length, StrOp::Clone, StrOp::Format(Show::Int), StrOp::IsInt, StrOp::ToInt, StrOp::ReadFile, StrOp::ReadLine, StrOp::Less, StrOp::Trim, StrOp::Contains, StrOp::StartsWith, StrOp::EndsWith, StrOp::Replace, StrOp::Split, StrOp::Words, StrOp::Chars, StrOp::Args, StrOp::BigAdd, StrOp::BigSub, StrOp::BigMul, StrOp::BigDiv, StrOp::BigRem, StrOp::BigLess, StrOp::Hash, StrOp::WriteFile, StrOp::AppendFile, StrOp::MakeDir, StrOp::RemoveFile, StrOp::ListDir, StrOp::Exists, StrOp::ToUpper, StrOp::ToLower, StrOp::Find, StrOp::Slice, StrOp::Repeat, StrOp::Join, StrOp::IsFloat, StrOp::ToFloat, StrOp::Now, StrOp::Sleep, StrOp::Random, StrOp::LocalNow, StrOp::ToDate, StrOp::ToDateTime, StrOp::Web, StrOp::JsonParse, StrOp::JsonQuote, StrOp::Listen, StrOp::Accept, StrOp::Reply, StrOp::UrlPath, StrOp::UrlQuery, StrOp::StatusText, StrOp::FileToServe, StrOp::Workers, StrOp::Parallel, StrOp::Next, StrOp::CopyFile, StrOp::MoveFile, StrOp::FileSize, StrOp::Modified, StrOp::IsFolder, StrOp::Matching, StrOp::Env, StrOp::Run, StrOp::Wrap, StrOp::Matches, StrOp::AllMatches, StrOp::ReplaceMatches, StrOp::Groups, StrOp::CsvRead, StrOp::CsvWrite, StrOp::Mean, StrOp::Median, StrOp::SecureRandom, StrOp::SecureToken, StrOp::Uuid, StrOp::Sha256, StrOp::Hmac, StrOp::ToBase64, StrOp::ToBase64Url, StrOp::FromBase64, StrOp::FromBase64Url, StrOp::FileSha256, StrOp::SecureKey, StrOp::Encrypt, StrOp::Decrypt, StrOp::PasswordHash, StrOp::PasswordMatches, StrOp::Paint, StrOp::Log, StrOp::LogLevel, StrOp::CText, StrOp::CFree, StrOp::FromCText, StrOp::ExternAddress, StrOp::CWideText, StrOp::CWideFree, StrOp::FromCWideText, StrOp::CRead, StrOp::UiShow, StrOp::UiTyped, StrOp::Lines, StrOp::Fixed, StrOp::RoundTo, StrOp::UiDraw, StrOp::UiDrawn, StrOp::UiAct, StrOp::UiRoom, StrOp::UiPlace, StrOp::Reversed, StrOp::ToBool, StrOp::ToBigInt, StrOp::Padded, StrOp::PaddedLeft, StrOp::ReadBytes, StrOp::WriteBytes, StrOp::NotBytes, StrOp::BytesText, StrOp::TextBytes, StrOp::PipeNew, StrOp::PipeRetain, StrOp::PipeRelease, StrOp::PipePut, StrOp::PipeTake, StrOp::PipeClose, StrOp::PipeSelect, StrOp::Spawn, StrOp::CharTest, StrOp::Cores, StrOp::Pack, StrOp::Net, StrOp::NetBytes, StrOp::PointerRead, StrOp::PointerWrite, StrOp::UiDialog, StrOp::Sound, StrOp::Append] {
                 let (_, name, n) = str_op(op);
                 ids.push(module.declare_function(name, Linkage::Import, &signature(&ints[..n], &ints[..1]))?);
             }
@@ -790,6 +792,15 @@ impl Generator<'_> {
     }
 
     /// If `cond` is true: calls `kova_fault` (which stops the program).
+    /// The address of slot `k` of element `i` of a List whose slots start at `data`.
+    fn list_slot(&mut self, l: Value, data: Value, i: Value, k: usize) -> Value {
+        let width = self.b.ins().load(I64, MemFlagsData::trusted(), l, 16);
+        let first = self.b.ins().imul(i, width);
+        let slot = self.b.ins().iadd_imm_s(first, k as i64);
+        let bytes = self.b.ins().ishl_imm_u(slot, 3);
+        self.b.ins().iadd(data, bytes)
+    }
+
     fn fault_if(&mut self, cond: Value, fault: Fault, loc: Loc) {
         let b = &mut self.b;
         let (fault_block, next) = (b.create_block(), b.create_block());
@@ -1090,10 +1101,19 @@ impl Generator<'_> {
                 let v = self.list_call(L_NEW, &[w]);
                 self.b.def_var(self.vars[*d], v.unwrap());
             }
+            // A List's first fields are read here, not through the runtime (`runtime/kova.rs` `List`).
+            // 0 = a List emptied by a move: its helper (`Drop`) still asks its length.
             Inst::ListLength(d, l) => {
                 let l = self.read(*l);
-                let v = self.list_call(L_LENGTH, &[l]);
-                self.b.def_var(self.vars[*d], v.unwrap());
+                let (full, next) = (self.b.create_block(), self.b.create_block());
+                let length = self.b.append_block_param(next, I64);
+                let zero = self.b.ins().iconst(I64, 0);
+                self.b.ins().brif(l, full, &[], next, &[BlockArg::Value(zero)]);
+                self.b.switch_to_block(full);
+                let v = self.b.ins().load(I64, MemFlagsData::trusted(), l, 0);
+                self.b.ins().jump(next, &[BlockArg::Value(v)]);
+                self.b.switch_to_block(next);
+                self.b.def_var(self.vars[*d], length);
             }
             Inst::FaultIf(c, f, loc) => {
                 let c = self.read(*c);
@@ -1101,14 +1121,35 @@ impl Generator<'_> {
             }
             Inst::ListCheck(l, i, loc) => {
                 let (l, i) = (self.read(*l), self.read(*i));
+                let length = self.b.ins().load(I64, MemFlagsData::trusted(), l, 0);
+                let (outside, next) = (self.b.create_block(), self.b.create_block());
+                self.b.set_cold_block(outside);
+                // Unsigned: a negative index is a huge number.
+                let far = self.b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, length);
+                self.b.ins().brif(far, outside, &[], next, &[]);
+                self.b.switch_to_block(outside);
                 let line = self.b.ins().iconst(I64, loc.packed());
                 let col = self.b.ins().iconst(I64, loc.col as i64);
                 self.list_call(L_CHECK, &[l, i, line, col]);
+                self.b.ins().jump(next, &[]);
+                self.b.switch_to_block(next);
             }
             Inst::ListLoad(d, l, i, k) => {
                 let (l, i) = (self.read(*l), self.read(*i));
+                let (fast, bytes, next) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
+                self.b.set_cold_block(bytes);
+                let mut v = self.b.append_block_param(next, I64);
+                let data = self.b.ins().load(I64, MemFlagsData::trusted(), l, 8);
+                self.b.ins().brif(data, fast, &[], bytes, &[]);
+                self.b.switch_to_block(fast);
+                let at = self.list_slot(l, data, i, *k);
+                let read = self.b.ins().load(I64, MemFlagsData::trusted(), at, 0);
+                self.b.ins().jump(next, &[BlockArg::Value(read)]);
+                self.b.switch_to_block(bytes);
                 let k = self.b.ins().iconst(I64, *k as i64);
-                let mut v = self.list_call(L_LOAD, &[l, i, k]).unwrap();
+                let read = self.list_call(L_LOAD, &[l, i, k]).unwrap();
+                self.b.ins().jump(next, &[BlockArg::Value(read)]);
+                self.b.switch_to_block(next);
                 if self.types[*d] == Scalar::Float {
                     v = self.b.ins().bitcast(F64, MemFlagsData::new(), v);
                 }
@@ -1116,12 +1157,23 @@ impl Generator<'_> {
             }
             Inst::ListStore(l, i, k, value) => {
                 let (l, i) = (self.read(*l), self.read(*i));
-                let k = self.b.ins().iconst(I64, *k as i64);
                 let mut v = self.read(*value);
                 if self.types[*value] == Scalar::Float {
                     v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
                 }
+                let (fast, bytes, next) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
+                self.b.set_cold_block(bytes);
+                let data = self.b.ins().load(I64, MemFlagsData::trusted(), l, 8);
+                self.b.ins().brif(data, fast, &[], bytes, &[]);
+                self.b.switch_to_block(fast);
+                let at = self.list_slot(l, data, i, *k);
+                self.b.ins().store(MemFlagsData::trusted(), v, at, 0);
+                self.b.ins().jump(next, &[]);
+                self.b.switch_to_block(bytes);
+                let k = self.b.ins().iconst(I64, *k as i64);
                 self.list_call(L_STORE, &[l, i, k, v]);
+                self.b.ins().jump(next, &[]);
+                self.b.switch_to_block(next);
             }
             Inst::ListGrow(d, l) => {
                 let l = self.read(*l);
