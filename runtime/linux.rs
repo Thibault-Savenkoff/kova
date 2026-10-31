@@ -830,6 +830,13 @@ pub fn wait(word: &AtomicU32, seen: u32) {
     unsafe { call(FUTEX, word.as_ptr() as usize, 128, seen as usize, 0, 0, 0) };
 }
 
+/// `wait`, for `ns` nanoseconds at most.
+pub fn wait_for(word: &AtomicU32, seen: u32, ns: u64) {
+    let time = [ns / 1_000_000_000, ns % 1_000_000_000];
+    // FUTEX_WAIT_PRIVATE: a time that counts from now.
+    unsafe { call(FUTEX, word.as_ptr() as usize, 128, seen as usize, time.as_ptr() as usize, 0, 0) };
+}
+
 /// Wakes those sleeping on `word`.
 pub fn wake(word: &AtomicU32) {
     // FUTEX_WAKE_PRIVATE.

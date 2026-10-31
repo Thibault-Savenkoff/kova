@@ -394,6 +394,7 @@ pub enum StrOp {
     PipePut,
     PipeTake,
     PipeClose,
+    PipeSelect,
     Spawn,
     /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
     NotBytes,
@@ -967,6 +968,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
         contracts,
         built,
         watching,
+        selected: 0,
         ensures,
         ret,
         result: None,
@@ -1094,6 +1096,8 @@ struct Translator<'a> {
     contracts: bool,
     /// `kova build` (true) or `kova run` / `kova test` (false).
     built: bool,
+    /// The box the last `threads.select` received.
+    selected: Local,
     /// For the debugger: an `Inst::Line` before each statement.
     watching: bool,
     /// With the names an interface's contract reads (`None`: the function's own).
@@ -1349,7 +1353,7 @@ impl<'a> Translator<'a> {
         self.emit(Inst::Binary(taken, Op::Lt, listener, zero, NOWHERE));
         self.emit(Inst::FaultIf(taken, Fault::CannotServe, loc));
         match (workers, block) {
-            (Some(n), Some(block)) if self.built => self.workers(listener, n, block),
+            (Some(n), Some(block)) if self.several_threads() => self.workers(listener, n, block),
             _ => self.answer_loop(listener, block, &given, folder),
         }
         vec![]
@@ -4341,7 +4345,7 @@ impl<'a> Translator<'a> {
         self.emit(Inst::Binary(bad, Op::Lt, n, one, NOWHERE));
         self.emit(Inst::FaultIf(bad, Fault::BadWorkers, loc));
         let base = name.trim_end_matches(" workers(…)");
-        if !self.built {
+        if !self.several_threads() {
             return self.block_method(e, list, elem, base, &args[1..]);
         }
         let (block, ty) = (&args[1], self.ty(e));
@@ -4452,6 +4456,7 @@ impl<'a> Translator<'a> {
             contracts: self.contracts,
             built: self.built,
             watching: self.watching,
+            selected: 0,
             ensures: vec![],
             ret,
             result: None,
@@ -4991,6 +4996,11 @@ impl<'a> Translator<'a> {
         v
     }
 
+    /// `workers` really shares its work: in native code, not under the debugger.
+    fn several_threads(&self) -> bool {
+        self.built || self.info.threads && !self.watching
+    }
+
     /// A new `Pipe` of values of type `inner`; what is left in it when it goes is freed.
     fn pipe_open(&mut self, inner: &Type, limit: Local) -> Local {
         let free = self.helper(Helper::Drop(Type::List(Box::new(inner.clone()))));
@@ -5022,6 +5032,26 @@ impl<'a> Translator<'a> {
         let ([line, col], b) = (self.site(loc), self.int_local());
         self.emit(Inst::Str(b, StrOp::PipeTake, vec![h, line, col]));
         b
+    }
+
+    /// Waits for a box from the channels of `list` (which goes). The number of the channel it came
+    /// from, then that of the time limit, then that of "all closed". The box is in `selected`.
+    fn select_on(&mut self, list: Local, time: Option<Local>, loc: Loc) -> Slots {
+        let minus = self.constant(f64::to_bits(-1.0) as i64);
+        let bits = match time {
+            Some(t) => {
+                let bits = self.int_local();
+                self.emit(Inst::Convert(bits, Conversion::ToBits, t, NOWHERE));
+                bits
+            }
+            None => minus,
+        };
+        let ([line, col], came) = (self.site(loc), self.int_local());
+        self.emit(Inst::Str(came, StrOp::PipeSelect, vec![list, bits, line, col]));
+        let zero = self.constant(0);
+        self.selected = self.load(list, zero, &Type::Int)[0];
+        self.emit(Inst::ListFree(list));
+        vec![came]
     }
 
     /// `threads.spawn { … }`: a Task, whose thread runs the function and gives its result to the
@@ -5074,6 +5104,46 @@ impl<'a> Translator<'a> {
                 let v = self.owned(x);
                 self.pipe_put(h, &v, loc);
                 vec![]
+            }
+            "selected" => {
+                let b = self.selected;
+                let v = self.load(b, zero, &inner);
+                self.emit(Inst::ListFree(b));
+                self.track(&v, &inner);
+                v
+            }
+            "select…" | "select after…" => {
+                let timed = name.text == "select after…";
+                let time = timed.then(|| self.expr1(&args[0]));
+                let list = self.int_local();
+                self.emit(Inst::ListNew(list, 1));
+                for c in std::iter::once(receiver).chain(&args[timed as usize..]) {
+                    let h = self.expr1(c);
+                    self.push(list, &[h]);
+                }
+                self.select_on(list, time, loc)
+            }
+            "receive_within" => {
+                let h = self.expr1(receiver);
+                let time = self.expr1(&args[0]);
+                let list = self.int_local();
+                self.emit(Inst::ListNew(list, 1));
+                self.push(list, &[h]);
+                let came = self.select_on(list, Some(time), loc)[0];
+                let (ty, b) = (self.ty(e), self.selected);
+                let dst = self.new_slots(&ty);
+                dst.iter().for_each(|&d| self.emit(Inst::Const(d, 0)));
+                let (yes, done, is_first) = (self.new_block(), self.new_block(), self.int_local());
+                self.emit(Inst::Binary(is_first, Op::Eq, came, zero, NOWHERE));
+                self.go(End::Branch(is_first, yes, done), yes);
+                let one = self.constant(1);
+                self.emit(Inst::Copy(dst[0], one));
+                let v = self.load(b, zero, &inner);
+                self.copy(&dst[1..], &v);
+                self.emit(Inst::ListFree(b));
+                self.go(End::Jump(done), done);
+                self.track(&dst, &ty);
+                dst
             }
             "close" => {
                 let (h, done) = (self.expr1(receiver), self.int_local());

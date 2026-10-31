@@ -164,6 +164,52 @@ Three things make this hold together:
 `threads.Channel<T>.new` holds as many values as you send. If senders may run ahead of receivers,
 `threads.Channel<T>.limited(10)` holds 10 at most, and `send` waits for room.
 
+## Waiting for several channels: `threads.select`
+
+`c.receive` waits for one channel. A thread that listens to several, or that must not wait for
+ever, uses `threads.select`: it takes the first value that comes, whichever channel it comes from,
+and runs that case.
+
+```kova
+import threads
+
+fn main {
+    let orders := threads.Channel<Int>.new
+    let notes := threads.Channel<String>.new
+    orders.send(12)
+    notes.send("call back")
+    notes.close
+    orders.close
+    while true {
+        threads.select {
+            order from orders => print("order {order}")
+            note from notes => print("note: {note}")
+            after(5.0) => print("nothing for five seconds")
+            closed => break
+        }
+    }
+}
+```
+
+```text
+order 12
+note: call back
+```
+
+Each case says what happens:
+
+- `name from channel`: a value came, and `name` holds it. It is yours, as with `for x in c`. The
+  channels may hold different types.
+- `after(seconds)`: nothing came for that long. This case is optional.
+- `closed`: every channel is closed and empty, so nothing will ever come. It is required, because
+  a loop around `select` must end somewhere: most of the time you write `closed => break`.
+
+A channel that is closed while the others are not is simply left out. When several channels have a
+value, the first one written is taken first.
+
+To wait for one channel for a limited time, `c.receive_within(2.5)` is shorter. It gives `none` when
+nothing came in time, and also when the channel is closed; use `select` to tell the two apart.
+
 ## Sharing a value: `threads.Shared`
 
 When threads must all see one value, a counter or a cache, put it in a `threads.Shared<T>`. A copy
@@ -229,9 +275,9 @@ network is not counted: it will wake up by itself.
 
 ## What to know
 
-- `kova run` takes one element, or one question, at a time with `workers`: only the built program
-  uses threads there. The results are the same either way. A program using `threads` runs as native
-  code in `kova run` and `kova test` too; `kova debug` stops at the first thread.
+- A program using `workers` or `threads` runs as native code in `kova run` and `kova test` too.
+  `kova debug` takes one element, or one question, at a time with `workers`; the results are the
+  same.
 - `workers(1)` works one at a time; `workers(0)` stops the program, since nothing would run.
 - `random` draws differently in each thread, so a `random` inside the block gives other numbers
   than one at a time.

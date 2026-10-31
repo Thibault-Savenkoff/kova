@@ -566,6 +566,12 @@ pub fn wait(word: &core::sync::atomic::AtomicU32, seen: u32) {
     unsafe { c::__ulock_wait(1, word.as_ptr() as *mut u8, seen as u64, 0) };
 }
 
+/// `wait`, for `ns` nanoseconds at most.
+pub fn wait_for(word: &core::sync::atomic::AtomicU32, seen: u32, ns: u64) {
+    let micro = (ns / 1000).clamp(1, u32::MAX as u64) as u32;
+    unsafe { c::__ulock_wait(1, word.as_ptr() as *mut u8, seen as u64, micro) };
+}
+
 /// Wakes those sleeping on `word`.
 pub fn wake(word: &core::sync::atomic::AtomicU32) {
     // UL_COMPARE_AND_WAIT | ULF_WAKE_ALL.

@@ -1,0 +1,10 @@
+// error: `threads.select` needs at least one `name from channel` and a `closed` case
+
+import threads
+
+fn main {
+    let a := threads.Channel<Int>.new
+    threads.select {
+        x from a => print(x)
+    }
+}

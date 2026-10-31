@@ -1,0 +1,59 @@
+// expect: first 1
+// expect: text one
+// expect: nothing yet
+// expect: a closed
+// expect: 7
+// expect: none
+// expect: none
+// expect: done
+
+import threads
+
+fn main {
+    let a := threads.Channel<Int>.new
+    let b := threads.Channel<String>.new
+    a.send(1)
+    threads.select {
+        x from a => print("first {x}")
+        s from b => print("text {s}")
+        closed => print("closed")
+    }
+    b.send("one")
+    threads.select {
+        x from a => print("first {x}")
+        s from b => print("text {s}")
+        closed => print("closed")
+    }
+    threads.select {
+        x from a => print("first {x}")
+        after(0.01) => print("nothing yet")
+        closed => print("closed")
+    }
+    a.close
+    threads.select {
+        x from a => print("first {x}")
+        s from b => print("text {s}")
+        after(0.01) => print("a closed")
+        closed => print("closed")
+    }
+    let c := threads.Channel<Int>.new
+    let sender: threads.Channel<Int> := c.clone
+    threads.spawn {
+        sender.send(7)
+    }
+    print(c.receive_within(5.0) else -1)
+    print(c.receive_within(0.01))
+    c.close
+    print(c.receive_within(5.0))
+    b.close
+    var turns: Int := 0
+    while true {
+        threads.select {
+            x from a => print(x)
+            s from b => print(s)
+            closed => break
+        }
+        turns += 1
+    }
+    print("done")
+}

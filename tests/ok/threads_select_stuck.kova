@@ -1,0 +1,14 @@
+// code: 101
+// stderr: error: every thread is waiting, and nothing can wake them
+
+import threads
+
+fn main {
+    let a := threads.Channel<Int>.new
+    let b := threads.Channel<Int>.new
+    threads.select {
+        x from a => print(x)
+        y from b => print(y)
+        closed => print("closed")
+    }
+}

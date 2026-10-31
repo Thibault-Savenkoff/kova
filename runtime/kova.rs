@@ -1328,7 +1328,17 @@ struct Pipe {
     closed: bool,
     /// How many threads sleep on `ring`, counted in `WAITING`.
     waiters: i64,
+    /// The `threads.select`s waiting on this pipe among others.
+    selecting: Vec<*const Selecting>,
     free: extern "C" fn(i64),
+}
+
+/// A `threads.select` asleep. It sits on the stack of its thread and leaves each pipe, under the
+/// pipe's lock, before it goes.
+struct Selecting {
+    /// 0: not counted in `WAITING`; 1: counted; 2: woken.
+    state: AtomicU32,
+    ring: AtomicU32,
 }
 
 /// The threads that run, this one included, and those asleep on a Pipe: when they are as many,
@@ -1347,6 +1357,7 @@ fn pipe<'a>(h: i64) -> &'a mut Pipe {
 impl Pipe {
     /// Sleeps until `wake`. The lock is held on entry and on return.
     fn wait(&mut self, line: i64, col: i64) {
+        flush();
         let seen = self.ring.load(SeqCst);
         self.waiters += 1;
         WAITED_AT.0.store(line, Relaxed);
@@ -1367,6 +1378,14 @@ impl Pipe {
         WAITING.fetch_sub(self.waiters, SeqCst);
         self.waiters = 0;
         sys::wake(&self.ring);
+        for s in self.selecting.drain(..) {
+            let s = unsafe { &*s };
+            if s.state.swap(2, SeqCst) == 1 {
+                WAITING.fetch_sub(1, SeqCst);
+            }
+            s.ring.store(1, SeqCst);
+            sys::wake(&s.ring);
+        }
     }
 }
 
@@ -1374,7 +1393,7 @@ impl Pipe {
 pub extern "C" fn kova_pipe_new(limit: i64, free: extern "C" fn(i64)) -> i64 {
     made();
     let items = alloc::collections::VecDeque::new();
-    let p = Pipe { lock: sys::Lock::new(), ring: AtomicU32::new(0), refs: AtomicI64::new(1), items, limit, closed: false, waiters: 0, free };
+    let p = Pipe { lock: sys::Lock::new(), ring: AtomicU32::new(0), refs: AtomicI64::new(1), items, limit, closed: false, waiters: 0, selecting: Vec::new(), free };
     Box::into_raw(Box::new(p)) as i64
 }
 
@@ -1425,6 +1444,77 @@ pub extern "C" fn kova_pipe_take(h: i64, line: i64, col: i64) -> i64 {
     p.wake();
     p.lock.unlock();
     b
+}
+
+/// `threads.select`, `c.receive_within(t)`: a box from the first of the pipes `l` to have one, put
+/// in `l`'s first place. Gives its number, the number of pipes when `bits` seconds went by (a
+/// Float; negative: no limit), one more once all are closed and empty. Without a limit it counts
+/// as waiting; with one it will wake up by itself, so it does not.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_select(l: i64, bits: i64, line: i64, col: i64) -> i64 {
+    let pipes: Vec<i64> = list(l).words().clone();
+    let time = f64::from_bits(bits as u64);
+    let end = (time >= 0.0).then(|| sys::now().saturating_add((time.min(1e9) * 1e9) as u64));
+    flush();
+    loop {
+        let me = Selecting { state: AtomicU32::new(0), ring: AtomicU32::new(0) };
+        let leave = || {
+            for &h in &pipes {
+                let p = pipe(h);
+                p.lock.lock();
+                p.selecting.retain(|&s| !core::ptr::eq(s, &me));
+                p.lock.unlock();
+            }
+        };
+        let (mut open, mut came) = (false, None);
+        for (k, &h) in pipes.iter().enumerate() {
+            let p = pipe(h);
+            p.lock.lock();
+            if let Some(b) = p.items.pop_front() {
+                p.wake();
+                p.lock.unlock();
+                came = Some((k, b));
+                break;
+            }
+            if !p.closed {
+                open = true;
+                p.selecting.push(&me);
+            }
+            p.lock.unlock();
+        }
+        if let Some((k, b)) = came {
+            leave();
+            list(l).words()[0] = b;
+            return k as i64;
+        }
+        if !open {
+            leave();
+            return pipes.len() as i64 + 1;
+        }
+        match end {
+            Some(end) => {
+                let now = sys::now();
+                if now >= end {
+                    leave();
+                    return pipes.len() as i64;
+                }
+                sys::wait_for(&me.ring, 0, end - now);
+            }
+            None => {
+                if me.state.compare_exchange(0, 1, SeqCst, SeqCst).is_ok() {
+                    WAITED_AT.0.store(line, Relaxed);
+                    WAITED_AT.1.store(col, Relaxed);
+                    if WAITING.fetch_add(1, SeqCst) + 1 == THREADS.load(SeqCst) && me.state.load(SeqCst) == 1 {
+                        kova_fault(FAULT_DEADLOCK, line, col);
+                    }
+                }
+                while me.ring.load(SeqCst) == 0 {
+                    sys::wait(&me.ring, 0);
+                }
+            }
+        }
+        leave();
+    }
 }
 
 #[unsafe(no_mangle)]

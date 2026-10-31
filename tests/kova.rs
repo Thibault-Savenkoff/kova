@@ -1148,7 +1148,7 @@ fn server() {
 
 /// `serve(port) workers(4)` (PLAN Part 4 "Several questions at once"): built, a quick question is
 /// answered while a slow one is still running; many at once get the right answers; what is alive
-/// does not grow with them. `kova run` answers the same, one at a time.
+/// does not grow with them. `kova run` is native code there too.
 #[test]
 fn server_workers() {
     let _alone = one_server();
@@ -1185,7 +1185,7 @@ fn server_workers() {
                 }
                 let child = c.arg(port.to_string()).env("KOVA_LEAKS", "live").stderr(std::process::Stdio::piped()).spawn().unwrap();
                 assert_eq!(ask(port, "/ada"), "hello 36");
-                // The slow one first: built, the quick one is answered before it.
+                // The slow one first: the quick one is answered before it.
                 let slow = std::thread::spawn(move || (ask(port, "/slow"), Instant::now()));
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 let (quick, quick_at) = (ask(port, "/alan"), Instant::now());
@@ -1193,8 +1193,8 @@ fn server_workers() {
                 if quick != "hello 41" || slow != "slow" {
                     failures.push(format!("{mode}: {quick:?} {slow:?}"));
                 }
-                if mode == "build" && quick_at > slow_at {
-                    failures.push("build: the quick question waited for the slow one".into());
+                if quick_at > slow_at {
+                    failures.push(format!("{mode}: the quick question waited for the slow one"));
                 }
                 let askers: Vec<_> = (0..many)
                     .map(|k| std::thread::spawn(move || (0..10).map(|_| ask(port, if k % 2 == 0 { "/ada" } else { "/nobody" })).collect::<Vec<_>>()))

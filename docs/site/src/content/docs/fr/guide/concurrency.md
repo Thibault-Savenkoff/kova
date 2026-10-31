@@ -165,6 +165,53 @@ Trois choses font tenir l'ensemble :
 l'avance sur les réceptions, `threads.Channel<T>.limited(10)` en garde 10 au plus, et `send` attend
 qu'il y ait de la place.
 
+## Attendre plusieurs canaux : `threads.select`
+
+`c.receive` attend un seul canal. Un fil qui en écoute plusieurs, ou qui ne doit pas attendre
+indéfiniment, utilise `threads.select` : il prend la première valeur qui arrive, quel que soit le
+canal, et exécute le cas correspondant.
+
+```kova
+import threads
+
+fn main {
+    let commandes := threads.Channel<Int>.new
+    let notes := threads.Channel<String>.new
+    commandes.send(12)
+    notes.send("rappeler")
+    notes.close
+    commandes.close
+    while true {
+        threads.select {
+            commande from commandes => print("commande {commande}")
+            note from notes => print("note : {note}")
+            after(5.0) => print("rien depuis cinq secondes")
+            closed => break
+        }
+    }
+}
+```
+
+```text
+commande 12
+note : rappeler
+```
+
+Chaque cas dit ce qui se passe :
+
+- `nom from canal` : une valeur est arrivée, et `nom` la contient. Elle est à toi, comme avec
+  `for x in c`. Les canaux peuvent contenir des types différents.
+- `after(secondes)` : rien n'est arrivé pendant ce temps. Ce cas est facultatif.
+- `closed` : tous les canaux sont fermés et vides, donc plus rien n'arrivera. Il est obligatoire,
+  car une boucle autour de `select` doit bien finir : le plus souvent, tu écris `closed => break`.
+
+Un canal fermé alors que les autres sont ouverts est simplement ignoré. Quand plusieurs canaux ont
+une valeur, le premier écrit passe d'abord.
+
+Pour attendre un seul canal pendant un temps limité, `c.receive_within(2.5)` est plus court. Il
+donne `none` si rien n'est arrivé à temps, et aussi si le canal est fermé ; utilise `select` pour
+distinguer les deux.
+
 ## Partager une valeur : `threads.Shared`
 
 Quand des fils doivent tous voir une même valeur, un compteur ou un cache, mets-la dans un
@@ -230,10 +277,9 @@ réseau n'est pas compté : il se réveillera tout seul.
 
 ## À savoir
 
-- Avec `workers`, `kova run` prend un élément, ou une question, à la fois : là, seul le programme
-  compilé utilise des fils. Les résultats sont les mêmes dans les deux cas. Un programme qui utilise
-  `threads` tourne en code natif dans `kova run` et `kova test` aussi ; `kova debug` s'arrête au
-  premier fil.
+- Un programme qui utilise `workers` ou `threads` tourne en code natif dans `kova run` et `kova test`
+  aussi. Avec `workers`, `kova debug` prend un élément, ou une question, à la fois ; les résultats
+  sont les mêmes.
 - `workers(1)` travaille un à la fois ; `workers(0)` arrête le programme, puisque rien ne tournerait.
 - `random` tire différemment dans chaque fil, donc un `random` dans le bloc donne d'autres nombres
   qu'un à la fois.

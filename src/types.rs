@@ -3883,6 +3883,25 @@ impl Checker<'_> {
             (Held::Channel, "send") => (vec![(Mode::Move, inner.clone())], Type::Unit),
             (Held::Channel, "receive") => (vec![], Type::Optional(Box::new(inner.clone()))),
             (Held::Channel, "close") => (vec![], Type::Unit),
+            (Held::Channel, "receive_within") => (vec![(Mode::Read, Type::Float)], Type::Optional(Box::new(inner.clone()))),
+            // Written by `Parser::select`.
+            (Held::Channel, "selected") => (vec![], inner.clone()),
+            (Held::Channel, "select…" | "select after…") => {
+                let (time, others) = args.split_at((name.text == "select after…") as usize);
+                if let [time] = time {
+                    let t = self.expr(time);
+                    if !matches!(t, Type::Float | Type::Error) {
+                        self.mismatch(time, t, &Type::Float);
+                    }
+                }
+                for c in others {
+                    match self.expr(c) {
+                        Type::Held(Held::Channel, _) | Type::Error => {}
+                        t => self.error(c.span, t!("select_channel", type = t.text())),
+                    }
+                }
+                return Type::Int;
+            }
             (Held::Task, "wait") | (Held::Shared, "read") => (vec![], inner.clone()),
             (Held::Shared, "change") => {
                 let [Expr { kind: ExprKind::Block { params, body }, .. }] = args else {
@@ -4060,6 +4079,7 @@ impl Checker<'_> {
         };
         let acc = if fold { self.expr(&args[0]) } else { Type::Unit };
         if workers {
+            self.threads = true;
             let n = self.expr(&args[0]);
             if !matches!(n, Type::Int | Type::Error) {
                 self.mismatch(&args[0], n, &Type::Int);
@@ -6168,6 +6188,9 @@ impl Checker<'_> {
             return r;
         }
         self.hidden(&name.text, name.span);
+        if name.text.contains("workers(…)") {
+            self.threads = true;
+        }
         if name.text == "threads.spawn" {
             self.threads = true;
             self.value_free = matches!(args, [Expr { kind: ExprKind::Block { .. }, .. }]);

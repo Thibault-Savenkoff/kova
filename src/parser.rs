@@ -1752,6 +1752,7 @@ impl Parser<'_> {
             Kind::Keyword("continue") => Ok(Stmt::Continue(self.advance().span)),
             Kind::Keyword("if") => self.if_stmt(),
             Kind::Keyword("match") => Ok(Stmt::Match(self.match_()?)),
+            Kind::Ident if self.text(start) == "threads" && self.select_starts() => self.select(),
             Kind::Keyword("check") => Ok(Stmt::Check(self.contract(ContractKind::Check)?)),
             Kind::Keyword(k @ ("require" | "ensure")) => {
                 self.diags.push(Diag::new(start, t!("contract_place", keyword = k)).help(t!("contract_place_help")));
@@ -1937,6 +1938,88 @@ impl Parser<'_> {
         };
         self.no_literal = saved;
         Ok(Match { mode, subject, arms, close: close? })
+    }
+
+    fn select_starts(&self) -> bool {
+        self.kind_at(1) == Kind::Sym(".") && self.text(self.t[self.pos + 2].span) == "select" && self.kind_at(3) == Kind::Sym("{")
+    }
+
+    /// `threads.select { x from a => … after(1.0) => … closed => … }` (PLAN Part 4 "Waiting for
+    /// several channels"): a `match` on the number of the case that came. `a.select…` waits and
+    /// gives it (the other channels and the time limit are its arguments), `a.selected` gives what
+    /// came. These two names cannot be written in a program.
+    fn select(&mut self) -> R<Stmt> {
+        let start = self.advance().span;
+        self.pos += 2; // .select
+        self.expect("{")?;
+        let saved = std::mem::replace(&mut self.no_literal, false);
+        let (mut channels, mut bodies, mut after, mut closed) = (vec![], vec![], None, None);
+        let close = loop {
+            self.skip_newlines();
+            let word = self.text(self.token().span);
+            if self.is_sym("}") {
+                break self.advance().span;
+            }
+            if self.kind() == Kind::Eof {
+                self.diags.push(Diag::new(self.token().span, t!("block_unclosed")));
+                return Err(());
+            }
+            if word == "closed" && self.kind_at(1) == Kind::Sym("=>") {
+                self.advance();
+                closed = Some(self.select_body()?);
+            } else if word == "after" && self.kind_at(1) == Kind::Sym("(") {
+                self.pos += 2;
+                let time = self.expression()?;
+                self.expect(")")?;
+                after = Some((time, self.select_body()?));
+            } else {
+                let name = self.value_name("what_variable")?;
+                if !self.is_keyword("from") {
+                    self.diags.push(Diag::new(name.span, t!("select_case")).help(t!("select_case_help")));
+                    return Err(());
+                }
+                self.advance();
+                let channel = self.expression()?;
+                let mut body = self.select_body()?;
+                let selected = Name { text: "selected".into(), span: name.span };
+                let value = self.expr(name.span, ExprKind::Method { receiver: Box::new(channel.clone()), name: selected, args: vec![] });
+                body.stmts.insert(0, Stmt::Declare { mutable: false, pattern: Pattern::Name(name), ty: Some(TypeAst::Inferred), value });
+                channels.push(channel);
+                bodies.push(body);
+            }
+        };
+        self.no_literal = saved;
+        let (Some(closed), false) = (closed, channels.is_empty()) else {
+            self.diags.push(Diag::new(start.to(close), t!("select_incomplete")).help(t!("select_incomplete_help")));
+            return Err(());
+        };
+        let name = Name { text: if after.is_some() { "select after…" } else { "select…" }.into(), span: start };
+        let mut channels = channels.into_iter();
+        let receiver = Box::new(channels.next().expect("checked above"));
+        let (time, waited) = after.unzip();
+        let args: Vec<Expr> = time.into_iter().chain(channels).collect();
+        let subject = self.expr(start.to(close), ExprKind::Method { receiver, name, args });
+        let mut arms = vec![];
+        for (k, body) in bodies.into_iter().chain(waited).enumerate() {
+            let number = self.expr(body.open, ExprKind::Int(k as u64));
+            arms.push(Arm { case: Case::Values(vec![number]), also: vec![], body });
+        }
+        arms.push(Arm { case: Case::Any(close), also: vec![], body: closed });
+        Ok(Stmt::Match(Match { mode: Mode::Read, subject, arms, close }))
+    }
+
+    /// `=> …`, a block or one statement.
+    fn select_body(&mut self) -> R<Block> {
+        let arrow = self.expect("=>")?;
+        self.skip_newlines();
+        let body = if self.is_sym("{") {
+            self.block()?
+        } else {
+            let s = self.stmt()?;
+            Block { open: arrow, stmts: vec![s], close: self.token().span }
+        };
+        self.separator()?;
+        Ok(body)
     }
 
     /// `Circle(r) => 3.14 * r * r` or `Red => { … }`.

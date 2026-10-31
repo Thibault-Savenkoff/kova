@@ -830,7 +830,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             None => 0,
                             Some(t) => heap.make(t),
                         },
-                        StrOp::PipeNew | StrOp::PipeRetain | StrOp::PipeRelease | StrOp::PipePut | StrOp::PipeTake | StrOp::PipeClose | StrOp::Spawn => {
+                        StrOp::PipeNew | StrOp::PipeRetain | StrOp::PipeRelease | StrOp::PipePut | StrOp::PipeTake | StrOp::PipeClose | StrOp::PipeSelect | StrOp::Spawn => {
                             unreachable!("stopped by `Inst::Threads`")
                         }
                         StrOp::Workers => unreachable!("built only: `kova run` answers one question at a time"),

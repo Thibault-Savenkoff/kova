@@ -725,6 +725,18 @@ pub fn wait(word: &core::sync::atomic::AtomicU32, seen: u32) {
 }
 
 /// Wakes those sleeping on `word`.
+pub fn wait_for(word: &core::sync::atomic::AtomicU32, seen: u32, ns: u64) {
+    let [lock, condition] = unsafe { &mut *SLEEPERS.0.get() };
+    let ms = (ns / 1_000_000 + 1).min(u32::MAX as u64 - 1) as u32;
+    unsafe {
+        AcquireSRWLockExclusive(lock);
+        if word.load(core::sync::atomic::Ordering::SeqCst) == seen {
+            SleepConditionVariableSRW(condition, lock, ms, 0);
+        }
+        ReleaseSRWLockExclusive(lock);
+    }
+}
+
 pub fn wake(_word: &core::sync::atomic::AtomicU32) {
     let [lock, condition] = unsafe { &mut *SLEEPERS.0.get() };
     unsafe {

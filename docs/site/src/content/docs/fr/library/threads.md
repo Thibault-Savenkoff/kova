@@ -35,10 +35,26 @@ Le bloc travaille sur ses propres copies de ce qu'il lit et ne peut pas changer 
 | `threads.Channel<T>.limited(n)` | un nouveau canal qui garde `n` valeurs au plus (`n` vaut 1 ou plus) |
 | `c.send(x)` | donne `x` au canal ; attend de la place dans un canal limité ; erreur sur un canal fermé |
 | `c.receive` | attend et prend la valeur la plus ancienne : un `T?`, `none` une fois fermé et vide |
+| `c.receive_within(secondes)` | pareil, pendant ce temps au plus : `none` aussi si rien n'est arrivé à temps |
 | `c.close` | plus de valeurs : celles qui sont dedans restent à recevoir |
 | `for x in c { … }` | reçoit jusqu'à ce que le canal soit fermé et vide ; chaque `x` appartient à la boucle |
 
 Une copie d'un canal (`c.clone`, ou son usage dans un bloc de `spawn`) est le même canal.
+
+## threads.select
+
+```kova
+threads.select {
+    x from a => print(x)
+    s from b => print(s)
+    after(1.5) => print("trop long")
+    closed => break
+}
+```
+
+Attend la première valeur de plusieurs canaux. `after(secondes)` est facultatif ; `closed`, qui
+s'exécute quand tous les canaux sont fermés et vides, est obligatoire. Voir
+[Attendre plusieurs canaux](/fr/guide/concurrency/#attendre-plusieurs-canaux--threadsselect).
 
 ## threads.Shared
 
