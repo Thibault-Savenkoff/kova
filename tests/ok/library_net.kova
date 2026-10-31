@@ -1,0 +1,54 @@
+// expect: "said: hello"
+// expect: "said: é"
+// expect: 127.0.0.1
+// expect: ping from 127.0.0.1
+// expect: true
+// expect: true
+// expect: err(net.Error.Refused("127.0.0.1"))
+// expect: true
+
+import net
+import threads
+
+fn echo(listener: net.Listener) -> String or net.Error {
+    var link: net.Link := listener.accept?
+    while true {
+        match link.read_line? {
+            none => break
+            line => link.send("said: {line}\n")?
+        }
+    }
+    let peer: String := link.peer.clone
+    link.close
+    return ok(peer)
+}
+
+fn main {
+    let port: Int := random(30000..60000)
+    let listener: net.Listener := net.listen(port)?
+    let task: threads.Task<String or net.Error> := threads.spawn { echo(listener) }
+    var link: net.Link := net.connect("127.0.0.1", port)?
+    link.send("hello\né\r\n")?
+    print(link.read_line?)
+    print(link.read_line?)
+    link.close
+    print(task.wait else "?")
+    let socket: net.Socket := net.udp(port) within(5.0)?
+    let other: net.Socket := net.udp(0)?
+    other.send_to("127.0.0.1", port, "ping".to_bytes)?
+    let d: net.Datagram := socket.receive?
+    print("{d.data.to_text else "?"} from {d.host}")
+    print(d.port > 0)
+    other.close
+    let quiet: net.Socket := net.udp(0) within(0.01)?
+    print(match quiet.receive {
+        err(e) => e = net.Error.TimedOut("")
+        ok(_) => false
+    })
+    socket.close
+    print(net.connect("127.0.0.1", 1))
+    print(match net.connect("no.such.host.invalid", 80) {
+        err(e) => e = net.Error.NoHost("no.such.host.invalid")
+        ok(_) => false
+    })
+}

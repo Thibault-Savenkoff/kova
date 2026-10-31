@@ -391,8 +391,70 @@ impl Network for Net {
     }
 }
 
+/// The first IPv4 address of `host`, for UDP.
+fn address_of(host: &str, port: u16) -> Result<([u8; 16], u32), Fail> {
+    if host.contains('\0') {
+        return Err(Fail::NoHost);
+    }
+    let (host, port) = (c_path(host), format!("{port}\0"));
+    let hints = AddrInfo { flags: 0, family: 2, socktype: 2, protocol: 0, addrlen: 0, addr: null(), canonname: null(), next: null_mut() };
+    let mut found = null_mut();
+    if unsafe { getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+        return Err(Fail::NoHost);
+    }
+    let Some(i) = (unsafe { found.as_ref() }) else { return Err(Fail::NoHost) };
+    let mut a = [0u8; 16];
+    a.copy_from_slice(unsafe { core::slice::from_raw_parts(i.addr, 16) });
+    let n = i.addrlen;
+    unsafe { freeaddrinfo(found) };
+    Ok((a, n))
+}
+
 impl Serve for Net {
     type Listener = usize;
+    type Datagram = usize;
+
+    fn stop(&mut self, fd: usize) {
+        close(fd);
+    }
+
+    fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<usize> {
+        let fd = unsafe { call(SOCKET, 2, 2 | 0o2000000, 0, 0, 0, 0) };
+        if fd < 0 {
+            return None;
+        }
+        let address = sockaddr_in(port, everyone);
+        if unsafe { call(BIND, fd as usize, address.as_ptr() as usize, 16, 0, 0, 0) } != 0 {
+            close(fd as usize);
+            return None;
+        }
+        let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+        unsafe { call(SETSOCKOPT, fd as usize, 1, 20, limit.as_ptr() as usize, 16, 0) };
+        Some(fd as usize)
+    }
+
+    fn send_to(&mut self, fd: &usize, host: &str, port: u16, data: &[u8]) -> Result<(), Fail> {
+        let (a, n) = address_of(host, port)?;
+        match unsafe { call(SENDTO, *fd, data.as_ptr() as usize, data.len(), 0x4000, a.as_ptr() as usize, n as usize) } {
+            e if e < 0 => Err(cut(e)),
+            _ => Ok(()),
+        }
+    }
+
+    fn receive_from(&mut self, fd: &usize, buffer: &mut [u8]) -> Result<(usize, [u8; 4], u16), Fail> {
+        let (mut from, mut n) = ([0u8; 16], 16u32);
+        loop {
+            match unsafe { call(RECVFROM, *fd, buffer.as_mut_ptr() as usize, buffer.len(), 0, from.as_mut_ptr() as usize, &mut n as *mut u32 as usize) } {
+                e if e == -EINTR => {}
+                got if got >= 0 => return Ok((got as usize, [from[4], from[5], from[6], from[7]], u16::from_be_bytes([from[2], from[3]]))),
+                e => return Err(cut(e)),
+            }
+        }
+    }
+
+    fn close_datagram(&mut self, fd: usize) {
+        close(fd);
+    }
 
     fn listen(&mut self, port: u16, everyone: bool) -> Option<usize> {
         let fd = unsafe { call(SOCKET, 2, SOCK_STREAM as usize | 0o2000000, 0, 0, 0, 0) };

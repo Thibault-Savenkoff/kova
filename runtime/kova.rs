@@ -1728,6 +1728,35 @@ pub extern "C" fn kova_pack(l: i64, kind: i64) -> i64 {
     }
 }
 
+impl http::Sockets for sys::Net {
+    #[cfg(windows)]
+    type Tls = schannel::Tls<sys::Net>;
+    #[cfg(target_os = "linux")]
+    type Tls = openssl::Tls<sys::Net>;
+    #[cfg(target_os = "macos")]
+    type Tls = network_framework::Tls<sys::Net>;
+    fn plain() -> sys::Net {
+        sys::Net
+    }
+    fn tls() -> Self::Tls {
+        network()
+    }
+    fn table<R>(f: impl FnOnce(&mut http::Table<sys::Net>) -> R) -> R {
+        static TABLE: Locked<http::Table<sys::Net>> = Locked::new(http::Table::new());
+        TABLE.with(f)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_net(kind: i64, text: i64, b: i64, c: i64) -> i64 {
+    http::net_raw::<sys::Net>(kind, text_of(text), b, c)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_net_bytes(kind: i64, text: i64, id: i64, data: i64, c: i64) -> i64 {
+    byte_list(http::net_bytes::<sys::Net>(kind, text_of(text), id, &bytes_of(data), c))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_cores() -> i64 {
     sys::cores()

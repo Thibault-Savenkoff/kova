@@ -38,6 +38,8 @@ presque la même chose.
 | `import toml` | [toml](/fr/library/toml/) | lire des fichiers de configuration |
 | `import xml` | [xml](/fr/library/xml/) | lire et écrire du XML |
 | `import compress`, `import zip` | [compress et zip](/fr/library/compress/) | gzip et archives zip |
+| `import net` | [net](/fr/library/net/) | TCP et UDP |
+| `import websocket` | [websocket](/fr/library/websocket/) | des connexions qui restent ouvertes avec les pages web |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 
 ## Chaque valeur a

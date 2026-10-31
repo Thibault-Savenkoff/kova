@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -464,6 +464,8 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "xml" => include_str!("library/xml.kova"),
         "compress" => include_str!("library/compress.kova"),
         "zip" => include_str!("library/zip.kova"),
+        "net" => include_str!("library/net.kova"),
+        "websocket" => include_str!("library/websocket.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })
@@ -1477,6 +1479,12 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("system.clock".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("system.cores".into(), Signature::new(None, vec![], Type::Int));
+    // What src/library/net.kova is written with.
+    let read = |ts: Vec<Type>| ts.into_iter().map(|t| (Mode::Read, t)).collect::<Vec<_>>();
+    let bytes = Type::List(Box::new(Type::Int));
+    c.functions.insert("net.raw".into(), Signature::new(None, read(vec![Type::Int, Type::String, Type::Int, Type::Int]), Type::Int));
+    let raw_bytes = read(vec![Type::Int, Type::String, Type::Int, bytes.clone(), Type::Int]);
+    c.functions.insert("net.raw_bytes".into(), Signature::new(None, raw_bytes, bytes));
     // What `ui.run` calls (src/ui.rs): shows a view, gives the button clicked, -1 once closed.
     c.functions.insert("ui.show".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, string()), (Mode::Read, Type::Int), (Mode::Read, Type::Int)], Type::Int));
     c.functions.insert("ui.typed".into(), Signature::new(None, vec![], string()));
@@ -6185,6 +6193,11 @@ impl Checker<'_> {
             },
             Some(Stmt::If { cond, then, otherwise: Some(otherwise) }) => self.if_value(cond, then, otherwise, expected),
             Some(Stmt::Match(m)) => self.match_(m, expected, true),
+            // `err(e) => return err(e)`: this branch gives nothing, the others do.
+            Some(s @ (Stmt::Return { .. } | Stmt::Break(_) | Stmt::Continue(_))) => {
+                self.stmt(s);
+                expected.cloned().unwrap_or(Type::Error)
+            }
             other => {
                 if let Some(s) = other {
                     self.stmt(s);

@@ -37,6 +37,8 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import toml` | [toml](/library/toml/) | reading configuration files |
 | `import xml` | [xml](/library/xml/) | reading and writing XML |
 | `import compress`, `import zip` | [compress and zip](/library/compress/) | gzip and zip archives |
+| `import net` | [net](/library/net/) | TCP and UDP |
+| `import websocket` | [websocket](/library/websocket/) | connections that stay open with web pages |
 | `import ui` | [ui](/library/ui/) | native windows |
 
 ## Every value has

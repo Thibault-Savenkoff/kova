@@ -1,0 +1,41 @@
+// expect: 5
+// expect: 7
+// expect: ended early
+// expect: 2
+
+fn half(n: Int) -> Int or String {
+    if n % 2 = 1 {
+        return err("odd")
+    }
+    return ok(n / 2)
+}
+
+fn use(n: Int) -> Int {
+    let h: Int := match half(n) {
+        err(_) => return -1
+        ok(v) => v
+    }
+    return h + 2
+}
+
+fn text_of(n: Int) -> String {
+    let name: String := "number {n}"
+    let t: String := if n < 0 { return "ended early" } else { name.clone }
+    return t
+}
+
+fn main {
+    print(use(6))
+    print(use(10))
+    print(text_of(-1))
+    var found: Int := 0
+    for i in [1, 2, 3, 4] {
+        let double: Int := if i = 3 {
+            break
+        } else {
+            i * 2
+        }
+        found := double / 2
+    }
+    print(found)
+}

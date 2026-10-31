@@ -1,0 +1,70 @@
+// expect: HTTP/1.1 101 Switching Protocols
+// expect: Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+// expect: websocket.Message.Text("echo: hello")
+// expect: 70000
+// expect: err(websocket.Error.BadAddress("http://nowhere"))
+
+import net
+import threads
+import websocket
+
+// The client's half, by hand: the example of RFC 6455.
+fn by_hand(port: Int) -> Nothing or net.Error {
+    var link: net.Link := net.connect("127.0.0.1", port)?
+    link.send("GET / HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")?
+    while true {
+        let line: String? := link.read_line?
+        if line = none || line.is_empty {
+            break
+        }
+        if line.starts_with("HTTP") || line.starts_with("Sec") {
+            print(line)
+        }
+    }
+    link.close
+    return ok
+}
+
+fn serve(listener: net.Listener) -> Nothing or websocket.Error {
+    let link: net.Link := listener.accept?
+    websocket.accept(move link)?
+    return ok
+}
+
+fn echo(listener: net.Listener) -> Nothing or websocket.Error {
+    let link: net.Link := listener.accept?
+    var socket: websocket.Socket := websocket.accept(move link)?
+    while true {
+        match socket.receive? {
+            .Text(text) => socket.send("echo: {text}")?
+            .Bytes(data) => socket.send_bytes(data)?
+            .Closed => break
+        }
+    }
+    socket.close
+    return ok
+}
+
+fn main {
+    let port: Int := random(30000..60000)
+    let listener: net.Listener := net.listen(port)?
+    let first: threads.Task<Nothing or websocket.Error> := threads.spawn { serve(listener) }
+    by_hand(port)?
+    first.wait?
+    let second: threads.Task<Nothing or websocket.Error> := threads.spawn { echo(listener) }
+    var socket: websocket.Socket := websocket.connect("ws://127.0.0.1:{port}/chat")?
+    socket.send("hello")?
+    print(socket.receive?)
+    var big: List<Int> := []
+    for i in 0..70000 {
+        big.add(i % 256)
+    }
+    socket.send_bytes(big)?
+    match socket.receive? {
+        .Bytes(data) => print(data.length)
+        _ => print("?")
+    }
+    socket.close
+    second.wait?
+    print(websocket.connect("http://nowhere"))
+}

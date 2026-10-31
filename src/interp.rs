@@ -1074,6 +1074,12 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 _ => crate::deflate::crc32(&bytes) as i64,
                             }
                         }
+                        StrOp::Net => crate::http::net_raw::<crate::web::System>(locals[a[0]], s(1), locals[a[2]], locals[a[3]]),
+                        StrOp::NetBytes => {
+                            let data = heap.bytes(locals[a[3]]);
+                            let got = crate::http::net_bytes::<crate::web::System>(locals[a[0]], heap.get(locals[a[1]]), locals[a[2]], &data, locals[a[4]]);
+                            heap.byte_list(got)
+                        }
                         StrOp::Spawn => {
                             start_thread(p, locals[a[0]] as usize, [locals[a[1]], locals[a[2]]], out, files, heap);
                             0

@@ -901,7 +901,7 @@ fn tables_size(imports: &[String], dlls: u64) -> u64 {
 /// first one has every function not named here.
 const DLLS: [(&str, &[&str]); 4] = [
     ("KERNEL32.dll", &[]),
-    ("WS2_32.dll", &["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "setsockopt", "connect", "send", "recv", "closesocket", "bind", "listen", "accept", "WSAPoll", "gethostname"]),
+    ("WS2_32.dll", &["WSAStartup", "WSAGetLastError", "getaddrinfo", "freeaddrinfo", "socket", "sendto", "recvfrom", "setsockopt", "connect", "send", "recv", "closesocket", "bind", "listen", "accept", "WSAPoll", "gethostname"]),
     ("SECUR32.dll", &["AcquireCredentialsHandleW", "InitializeSecurityContextW", "QueryContextAttributesW", "EncryptMessage", "DecryptMessage", "FreeContextBuffer", "DeleteSecurityContext", "FreeCredentialsHandle"]),
     ("bcrypt.dll", &["BCryptGenRandom"]),
 ];

@@ -275,6 +275,8 @@ unsafe extern "system" {
     fn recv(s: usize, b: *mut u8, n: i32, flags: i32) -> i32;
     fn closesocket(s: usize) -> i32;
     fn bind(s: usize, address: *const u8, n: i32) -> i32;
+    fn sendto(s: usize, b: *const u8, n: i32, flags: i32, to: *const u8, size: i32) -> i32;
+    fn recvfrom(s: usize, b: *mut u8, n: i32, flags: i32, from: *mut u8, size: *mut i32) -> i32;
     fn listen(s: usize, backlog: i32) -> i32;
     fn accept(s: usize, address: *mut u8, n: *mut i32) -> usize;
     fn WSAPoll(fds: *mut Poll, n: u32, ms: i32) -> i32;
@@ -379,6 +381,62 @@ impl Network for Net {
 
 impl Serve for Net {
     type Listener = usize;
+    type Datagram = usize;
+
+    fn stop(&mut self, s: usize) {
+        unsafe { closesocket(s) };
+    }
+
+    fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<usize> {
+        let mut data = [0u8; 512];
+        unsafe { WSAStartup(0x202, data.as_mut_ptr()) };
+        let s = unsafe { socket(2, 2, 0) };
+        if s == usize::MAX {
+            return None;
+        }
+        let mut a = [0u8; 16];
+        a[0] = 2;
+        a[2..4].copy_from_slice(&port.to_be_bytes());
+        if !everyone {
+            a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        }
+        if unsafe { bind(s, a.as_ptr(), 16) } != 0 {
+            unsafe { closesocket(s) };
+            return None;
+        }
+        unsafe { setsockopt(s, 0xFFFF, 0x1006, &(ms.min(u32::MAX as u64) as u32), 4) };
+        Some(s)
+    }
+
+    fn send_to(&mut self, s: &usize, host: &str, port: u16, data: &[u8]) -> Result<(), Fail> {
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        let (host, port) = ([host.as_bytes(), &[0]].concat(), alloc::format!("{port}\0"));
+        let hints = AddrInfo { flags: 0, family: 2, socktype: 2, protocol: 0, addrlen: 0, canonname: null(), addr: null(), next: null_mut() };
+        let mut found = null_mut();
+        if unsafe { getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+            return Err(Fail::NoHost);
+        }
+        let Some(i) = (unsafe { found.as_ref() }) else { return Err(Fail::NoHost) };
+        let sent = unsafe { sendto(*s, data.as_ptr(), data.len() as i32, 0, i.addr, i.addrlen as i32) };
+        unsafe { freeaddrinfo(found) };
+        if sent < 0 { Err(Fail::Broken) } else { Ok(()) }
+    }
+
+    fn receive_from(&mut self, s: &usize, buffer: &mut [u8]) -> Result<(usize, [u8; 4], u16), Fail> {
+        let (mut from, mut n) = ([0u8; 16], 16i32);
+        let got = unsafe { recvfrom(*s, buffer.as_mut_ptr(), buffer.len() as i32, 0, from.as_mut_ptr(), &mut n) };
+        if got >= 0 {
+            return Ok((got as usize, [from[4], from[5], from[6], from[7]], u16::from_be_bytes([from[2], from[3]])));
+        }
+        // WSAETIMEDOUT.
+        Err(if unsafe { WSAGetLastError() } == 10060 { Fail::Timeout } else { Fail::Broken })
+    }
+
+    fn close_datagram(&mut self, s: usize) {
+        unsafe { closesocket(s) };
+    }
 
     /// Without SO_REUSEADDR, which on Windows would let another program take the port too.
     fn listen(&mut self, port: u16, everyone: bool) -> Option<usize> {

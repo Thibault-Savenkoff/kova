@@ -1,0 +1,220 @@
+// `import net`: TCP and UDP. A connection is a number that the runtime keeps; everything here turns
+// its answers into what a program reads.
+import net
+
+public:
+
+enum Error: Equal {
+    NoHost(host: String)
+    Refused(host: String)
+    TimedOut(host: String)
+    Cut(host: String)
+    BadCertificate(host: String)
+    PortTaken(port: Int)
+    Closed
+}
+
+// A TCP connection.
+struct Link {
+public:
+    // Who is at the other end, for a connection from `accept`.
+    peer: String
+private:
+    id: Int
+    waiting: List<Int>
+
+public:
+    fn send(self, text: String) -> Nothing or Error {
+        return self.send_bytes(text.to_bytes)
+    }
+
+    fn send_bytes(self, data: List<Int>) -> Nothing or Error {
+        return checked(net.raw_bytes(0, "", self.id, data, 0)[0], self.peer)
+    }
+
+    // What has arrived, waiting if nothing has: empty once the other end has closed.
+    fn receive(var self) -> List<Int> or Error {
+        if !self.waiting.is_empty {
+            let ready: List<Int> := self.waiting.clone
+            self.waiting := []
+            return ok(ready)
+        }
+        let got: List<Int> := net.raw_bytes(1, "", self.id, [], 65536)
+        checked(got[0], self.peer)?
+        return ok(got[1..got.length])
+    }
+
+    // The next line without its line break; `none` once the other end has closed.
+    fn read_line(var self) -> String? or Error {
+        while true {
+            let cut: Int? := self.waiting.find(10)
+            if cut != none {
+                let line: List<Int> := self.waiting[0..cut]
+                self.waiting := self.waiting[cut + 1..self.waiting.length]
+                return ok(without_return(line).to_text)
+            }
+            let got: List<Int> := net.raw_bytes(1, "", self.id, [], 65536)
+            checked(got[0], self.peer)?
+            if got.length = 1 {
+                if self.waiting.is_empty {
+                    return ok(none)
+                }
+                let last: List<Int> := self.waiting.clone
+                self.waiting := []
+                return ok(without_return(last).to_text)
+            }
+            self.waiting += got[1..got.length]
+        }
+        return ok(none)
+    }
+
+    fn close(self) {
+        net.raw(3, "", self.id, 0)
+    }
+}
+
+// A port that waits for connections.
+struct Listener {
+private:
+    id: Int
+
+public:
+    // The next connection, waiting for it.
+    fn accept(self) -> Link or Error {
+        return accepted(self.id, 0)
+    }
+
+    // `seconds`: the limit of each `send` and `receive` of that connection.
+    fn accept_within(self, seconds: Float) -> Link or Error {
+        return accepted(self.id, milliseconds(seconds))
+    }
+
+    fn close(self) {
+        net.raw(4, "", self.id, 0)
+    }
+}
+
+struct Datagram {
+public:
+    data: List<Int>
+    host: String
+    port: Int
+}
+
+// A UDP port.
+struct Socket {
+private:
+    id: Int
+
+public:
+    fn send_to(self, host: String, port: Int, data: List<Int>) -> Nothing or Error {
+        return checked(net.raw_bytes(2, host, self.id, data, port)[0], host)
+    }
+
+    fn receive(self) -> Datagram or Error {
+        let got: List<Int> := net.raw_bytes(3, "", self.id, [], 0)
+        checked(got[0], "")?
+        let host: String := "{got[1]}.{got[2]}.{got[3]}.{got[4]}"
+        return ok(Datagram { data := got[7..got.length], host := host, port := got[5] * 256 + got[6] })
+    }
+
+    fn close(self) {
+        net.raw(6, "", self.id, 0)
+    }
+}
+
+// A connection to `port` of `host`. `within(seconds)`: the limit of connecting, then of each
+// `send` and `receive`; none by default, beyond the system's own.
+fn connect(host: String, port: Int) within(seconds: Float := 0.0) -> Link or Error {
+    return opened(host, port, milliseconds(seconds) * 2)
+}
+
+// The same, encrypted with TLS: the machine must show a valid certificate for `host`.
+fn connect_secure(host: String, port: Int) within(seconds: Float := 0.0) -> Link or Error {
+    return opened(host, port, milliseconds(seconds) * 2 + 1)
+}
+
+// Waits on `port` for connections from this computer.
+fn listen(port: Int) -> Listener or Error {
+    return listener(port, 0)
+}
+
+// The same, for the other computers too.
+fn listen_network(port: Int) -> Listener or Error {
+    return listener(port, 1)
+}
+
+// A UDP port of this computer (0: any free one), to itself only. `within(seconds)`: the limit of
+// each `receive`.
+fn udp(port: Int) within(seconds: Float := 0.0) -> Socket or Error {
+    return socket(port, milliseconds(seconds) * 2)
+}
+
+fn udp_network(port: Int) within(seconds: Float := 0.0) -> Socket or Error {
+    return socket(port, milliseconds(seconds) * 2 + 1)
+}
+
+private:
+
+fn milliseconds(seconds: Float) -> Int {
+    return (seconds * 1000.0).round
+}
+
+fn checked(status: Int, host: String) -> Nothing or Error {
+    if status = 0 {
+        return ok
+    }
+    return err(failure(status, host))
+}
+
+fn failure(status: Int, host: String) -> Error {
+    return match status {
+        1 => Error.NoHost(host.clone)
+        2 => Error.Refused(host.clone)
+        3 => Error.TimedOut(host.clone)
+        5 => Error.BadCertificate(host.clone)
+        7 => Error.Closed
+        _ => Error.Cut(host.clone)
+    }
+}
+
+fn without_return(line: List<Int>) -> List<Int> {
+    if !line.is_empty && line[line.length - 1] = 13 {
+        return line[0..line.length - 1]
+    }
+    return line.clone
+}
+
+fn opened(host: String, port: Int, how: Int) -> Link or Error {
+    let id: Int := net.raw(0, host, port, how)
+    if id < 0 {
+        return err(failure(-id, host))
+    }
+    return ok(Link { peer := host.clone, id := id, waiting := [] })
+}
+
+fn listener(port: Int, everyone: Int) -> Listener or Error {
+    let id: Int := net.raw(1, "", port, everyone)
+    if id = -6 {
+        return err(Error.PortTaken(port))
+    }
+    return ok(Listener { id := id })
+}
+
+fn socket(port: Int, how: Int) -> Socket or Error {
+    let id: Int := net.raw(5, "", port, how)
+    if id = -6 {
+        return err(Error.PortTaken(port))
+    }
+    return ok(Socket { id := id })
+}
+
+fn accepted(listener: Int, ms: Int) -> Link or Error {
+    let id: Int := net.raw(2, "", listener, ms)
+    if id < 0 {
+        return err(failure(-id, ""))
+    }
+    let ip: Int := net.raw(7, "", id, 0)
+    let peer: String := "{ip >> 24 & 255}.{ip >> 16 & 255}.{ip >> 8 & 255}.{ip & 255}"
+    return ok(Link { peer := peer, id := id, waiting := [] })
+}

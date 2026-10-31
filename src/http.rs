@@ -5,6 +5,7 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 /// Why there is no answer: the variants of `WebError`, in its order (`types::web_error`).
@@ -341,6 +342,7 @@ fn resolve(from: &str, to: &str) -> Option<String> {
 /// What a system gives to wait for questions: its plain sockets (never encrypted).
 pub trait Serve: Network {
     type Listener;
+    type Datagram;
     /// Listens on `port` of 127.0.0.1, or of every address (0.0.0.0) for `everyone`; `None` if the
     /// port is taken or not allowed.
     fn listen(&mut self, port: u16, everyone: bool) -> Option<Self::Listener>;
@@ -353,6 +355,208 @@ pub trait Serve: Network {
     /// This computer's IPv4 addresses, each with its interface's name ("" if the system does not
     /// say).
     fn addresses(&mut self) -> Vec<(String, [u8; 4])>;
+    fn stop(&mut self, listener: Self::Listener);
+    /// A UDP socket on `port` (0: any), each `receive_from` limited to `ms` milliseconds.
+    fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<Self::Datagram>;
+    fn send_to(&mut self, socket: &Self::Datagram, host: &str, port: u16, data: &[u8]) -> Result<(), Fail>;
+    /// A datagram into `buffer`: its size, and who sent it.
+    fn receive_from(&mut self, socket: &Self::Datagram, buffer: &mut [u8]) -> Result<(usize, [u8; 4], u16), Fail>;
+    fn close_datagram(&mut self, socket: Self::Datagram);
+}
+
+// ---- `import net` (PLAN Part 4 "Sockets"): src/library/net.kova calls `net_raw` and `net_bytes` ----
+
+/// How `net.kova` is told what went wrong.
+const PORT_TAKEN: i64 = 6;
+const CLOSED: i64 = 7;
+
+fn failure(f: Fail) -> i64 {
+    match f {
+        Fail::NoHost => 1,
+        Fail::Refused => 2,
+        Fail::Timeout => 3,
+        Fail::BadCertificate => 5,
+        _ => 4,
+    }
+}
+
+pub enum Socket<A, B> {
+    Plain(A),
+    Secure(B),
+}
+
+/// What a number in Kova stands for. Several threads may use it: each holds an `Arc` meanwhile,
+/// and the last one out closes it (`finish`). So a thread may send while another receives.
+// ponytail: `close` does not wake a thread blocked in `receive`; `shutdown` if a program needs it.
+pub struct Held<X>(core::cell::UnsafeCell<Option<X>>, [u8; 4]);
+
+impl<X> Held<X> {
+    #[allow(clippy::mut_from_ref)]
+    fn get(&self) -> Option<&mut X> {
+        unsafe { &mut *self.0.get() }.as_mut()
+    }
+}
+
+type Slots<X> = Vec<Option<Arc<Held<X>>>>;
+
+pub struct Table<N: Sockets> {
+    links: Slots<Socket<N::Link, <N::Tls as Network>::Link>>,
+    listeners: Slots<N::Listener>,
+    datagrams: Slots<N::Datagram>,
+}
+
+impl<N: Sockets> Table<N> {
+    pub const fn new() -> Self {
+        Table { links: Vec::new(), listeners: Vec::new(), datagrams: Vec::new() }
+    }
+}
+
+/// The system's sockets as `kova run` and the runtime each reach them.
+pub trait Sockets: Serve + Sized {
+    type Tls: Network;
+    fn plain() -> Self;
+    fn tls() -> Self::Tls;
+    fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
+}
+
+fn add<X>(slots: &mut Slots<X>, x: X, from: [u8; 4]) -> i64 {
+    slots.push(Some(Arc::new(Held(core::cell::UnsafeCell::new(Some(x)), from))));
+    slots.len() as i64
+}
+
+fn get<X>(slots: &Slots<X>, id: i64) -> Option<Arc<Held<X>>> {
+    slots.get((id as usize).wrapping_sub(1))?.clone()
+}
+
+fn take<X>(slots: &mut Slots<X>, id: i64) -> Option<Arc<Held<X>>> {
+    slots.get_mut((id as usize).wrapping_sub(1))?.take()
+}
+
+/// The last user of a socket closes it.
+fn finish<X>(held: Arc<Held<X>>, close: impl FnOnce(X)) {
+    if let Some(x) = Arc::into_inner(held).and_then(|h| h.0.into_inner()) {
+        close(x);
+    }
+}
+
+fn finish_link<N: Sockets>(held: Arc<Held<Socket<N::Link, <N::Tls as Network>::Link>>>) {
+    finish(held, |s| match s {
+        Socket::Plain(l) => N::plain().close(l),
+        Socket::Secure(l) => N::tls().close(l),
+    });
+}
+
+/// `net.raw(kind, text, b, c)`: the operations that give a number; negative: what went wrong.
+pub fn net_raw<N: Sockets>(kind: i64, text: &str, b: i64, c: i64) -> i64 {
+    let port = u16::try_from(b).unwrap_or(0);
+    match kind {
+        // `c`: the time limit in milliseconds, then 1 if encrypted.
+        0 => {
+            let (secure, ms) = (c & 1 == 1, (c >> 1) as u64);
+            let opened = if secure {
+                N::tls().open(text, port, true, ms).map(Socket::Secure)
+            } else {
+                N::plain().open(text, port, false, ms).map(Socket::Plain)
+            };
+            match opened {
+                Ok(s) => N::table(|t| add(&mut t.links, s, [0; 4])),
+                Err(f) => -failure(f),
+            }
+        }
+        1 => match N::plain().listen(port, c != 0) {
+            Some(l) => N::table(|t| add(&mut t.listeners, l, [0; 4])),
+            None => -PORT_TAKEN,
+        },
+        2 => {
+            let Some(held) = N::table(|t| get(&t.listeners, b)) else { return -CLOSED };
+            let got = held.get().and_then(|l| N::plain().accept(l, c as u64));
+            finish(held, |l| N::plain().stop(l));
+            match got {
+                Some((l, from)) => N::table(|t| add(&mut t.links, Socket::Plain(l), from)),
+                None => -failure(Fail::Broken),
+            }
+        }
+        3 => {
+            if let Some(held) = N::table(|t| take(&mut t.links, b)) {
+                finish_link::<N>(held);
+            }
+            0
+        }
+        4 => {
+            if let Some(held) = N::table(|t| take(&mut t.listeners, b)) {
+                finish(held, |l| N::plain().stop(l));
+            }
+            0
+        }
+        // `c`: the time limit in milliseconds, then 1 for every address.
+        5 => match N::plain().udp(port, c & 1 == 1, (c >> 1) as u64) {
+            Some(s) => N::table(|t| add(&mut t.datagrams, s, [0; 4])),
+            None => -PORT_TAKEN,
+        },
+        6 => {
+            if let Some(held) = N::table(|t| take(&mut t.datagrams, b)) {
+                finish(held, |s| N::plain().close_datagram(s));
+            }
+            0
+        }
+        // Who is at the other end of an accepted connection.
+        _ => N::table(|t| get(&t.links, b)).map_or(0, |held| i64::from(u32::from_be_bytes(held.1))),
+    }
+}
+
+/// `net.raw_bytes(kind, text, id, data, c)`: a status byte (0, or what went wrong), then the bytes.
+pub fn net_bytes<N: Sockets>(kind: i64, text: &str, id: i64, data: &[u8], c: i64) -> Vec<u8> {
+    let status = |r: Result<(), Fail>| alloc::vec![r.map_or_else(failure, |()| 0) as u8];
+    match kind {
+        0 => {
+            let Some(held) = N::table(|t| get(&t.links, id)) else { return alloc::vec![CLOSED as u8] };
+            let sent = match held.get() {
+                Some(Socket::Plain(l)) => N::plain().send(l, data),
+                Some(Socket::Secure(l)) => N::tls().send(l, data),
+                None => Err(Fail::Broken),
+            };
+            finish_link::<N>(held);
+            status(sent)
+        }
+        1 => {
+            let Some(held) = N::table(|t| get(&t.links, id)) else { return alloc::vec![CLOSED as u8] };
+            let mut out = alloc::vec![0; c as usize + 1];
+            let got = match held.get() {
+                Some(Socket::Plain(l)) => N::plain().receive(l, &mut out[1..]),
+                Some(Socket::Secure(l)) => N::tls().receive(l, &mut out[1..]),
+                None => Err(Fail::Broken),
+            };
+            finish_link::<N>(held);
+            match got {
+                Ok(n) => {
+                    out.truncate(n + 1);
+                    out
+                }
+                Err(f) => alloc::vec![failure(f) as u8],
+            }
+        }
+        2 => {
+            let Some(held) = N::table(|t| get(&t.datagrams, id)) else { return alloc::vec![CLOSED as u8] };
+            let sent = held.get().map_or(Err(Fail::Broken), |s| N::plain().send_to(s, text, u16::try_from(c).unwrap_or(0), data));
+            finish(held, |s| N::plain().close_datagram(s));
+            status(sent)
+        }
+        _ => {
+            let Some(held) = N::table(|t| get(&t.datagrams, id)) else { return alloc::vec![CLOSED as u8] };
+            let mut out = alloc::vec![0; 65536 + 7];
+            let got = held.get().map_or(Err(Fail::Broken), |s| N::plain().receive_from(s, &mut out[7..]));
+            finish(held, |s| N::plain().close_datagram(s));
+            match got {
+                Ok((n, from, port)) => {
+                    out[1..5].copy_from_slice(&from);
+                    out[5..7].copy_from_slice(&port.to_be_bytes());
+                    out.truncate(n + 7);
+                    out
+                }
+                Err(f) => alloc::vec![failure(f) as u8],
+            }
+        }
+    }
 }
 
 /// How long an answer may take to leave: a program that does not read must not stop the server.

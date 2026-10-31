@@ -11,6 +11,13 @@ pub struct System;
 /// What `kova run` connects with: the system, encrypted by SChannel on Windows, OpenSSL on Linux,
 /// Network.framework on macOS.
 #[cfg(windows)]
+type Tls = crate::schannel::Tls<System>;
+#[cfg(target_os = "linux")]
+type Tls = crate::openssl::Tls<System>;
+#[cfg(target_os = "macos")]
+type Tls = crate::network_framework::Tls<System>;
+
+#[cfg(windows)]
 pub fn network() -> crate::schannel::Tls<System> {
     crate::schannel::Tls(System)
 }
@@ -65,8 +72,47 @@ impl Network for System {
     fn close(&mut self, _: TcpStream) {}
 }
 
+impl crate::http::Sockets for System {
+    type Tls = Tls;
+    fn plain() -> System {
+        System
+    }
+    fn tls() -> Self::Tls {
+        network()
+    }
+    fn table<R>(f: impl FnOnce(&mut crate::http::Table<System>) -> R) -> R {
+        struct Sockets(crate::http::Table<System>);
+        // Reached through this lock only.
+        unsafe impl Send for Sockets {}
+        static TABLE: std::sync::Mutex<Sockets> = std::sync::Mutex::new(Sockets(crate::http::Table::new()));
+        f(&mut TABLE.lock().unwrap().0)
+    }
+}
+
 impl Serve for System {
     type Listener = TcpListener;
+    type Datagram = std::net::UdpSocket;
+
+    fn stop(&mut self, _: TcpListener) {}
+
+    fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<std::net::UdpSocket> {
+        let socket = std::net::UdpSocket::bind((if everyone { "0.0.0.0" } else { "127.0.0.1" }, port)).ok()?;
+        socket.set_read_timeout((ms > 0).then(|| std::time::Duration::from_millis(ms))).ok()?;
+        Some(socket)
+    }
+
+    fn send_to(&mut self, socket: &std::net::UdpSocket, host: &str, port: u16, data: &[u8]) -> Result<(), Fail> {
+        let address = (host, port).to_socket_addrs().map_err(|_| Fail::NoHost)?.find(|a| a.is_ipv4()).ok_or(Fail::NoHost)?;
+        socket.send_to(data, address).map(|_| ()).map_err(cut)
+    }
+
+    fn receive_from(&mut self, socket: &std::net::UdpSocket, buffer: &mut [u8]) -> Result<(usize, [u8; 4], u16), Fail> {
+        let (n, from) = socket.recv_from(buffer).map_err(cut)?;
+        let std::net::SocketAddr::V4(from) = from else { return Err(Fail::Broken) };
+        Ok((n, from.ip().octets(), from.port()))
+    }
+
+    fn close_datagram(&mut self, _: std::net::UdpSocket) {}
 
     /// Rust sets `SO_REUSEADDR` on Linux and macOS, as the runtime does, and not on Windows.
     fn listen(&mut self, port: u16, everyone: bool) -> Option<TcpListener> {
@@ -75,7 +121,7 @@ impl Serve for System {
 
     fn accept(&mut self, listener: &mut TcpListener, ms: u64) -> Option<(TcpStream, [u8; 4])> {
         let (s, from) = listener.accept().ok()?;
-        let limit = Some(std::time::Duration::from_millis(ms));
+        let limit = (ms > 0).then(|| std::time::Duration::from_millis(ms));
         s.set_read_timeout(limit).and_then(|()| s.set_write_timeout(limit)).ok()?;
         let from = match from.ip() {
             std::net::IpAddr::V4(ip) => ip.octets(),

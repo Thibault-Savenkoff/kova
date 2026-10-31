@@ -51,6 +51,8 @@ mod c {
         pub fn send(fd: i32, b: *const u8, n: usize, flags: i32) -> isize;
         pub fn recv(fd: i32, b: *mut u8, n: usize, flags: i32) -> isize;
         pub fn bind(fd: i32, address: *const u8, n: u32) -> i32;
+        pub fn sendto(fd: i32, b: *const u8, n: usize, flags: i32, to: *const u8, size: u32) -> isize;
+        pub fn recvfrom(fd: i32, b: *mut u8, n: usize, flags: i32, from: *mut u8, size: *mut u32) -> isize;
         pub fn listen(fd: i32, backlog: i32) -> i32;
         pub fn accept(fd: i32, address: *mut u8, n: *mut u32) -> i32;
         pub fn poll(fds: *mut [i32; 2], n: u32, ms: i32) -> i32;
@@ -260,6 +262,67 @@ impl Network for Net {
 
 impl Serve for Net {
     type Listener = i32;
+    type Datagram = i32;
+
+    fn stop(&mut self, fd: i32) {
+        unsafe { c::close(fd) };
+    }
+
+    fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<i32> {
+        let fd = unsafe { c::socket(2, 2, 0) };
+        if fd < 0 {
+            return None;
+        }
+        let mut a = [0u8; 16];
+        a[0] = 16;
+        a[1] = 2;
+        a[2..4].copy_from_slice(&port.to_be_bytes());
+        if !everyone {
+            a[4..8].copy_from_slice(&[127, 0, 0, 1]);
+        }
+        if unsafe { c::bind(fd, a.as_ptr(), 16) } != 0 {
+            unsafe { c::close(fd) };
+            return None;
+        }
+        let limit = [(ms / 1000) as i64, (ms % 1000 * 1000) as i64];
+        unsafe { c::setsockopt(fd, 0xFFFF, 0x1006, limit.as_ptr() as *const i32, 16) };
+        Some(fd)
+    }
+
+    fn send_to(&mut self, fd: &i32, host: &str, port: u16, data: &[u8]) -> Result<(), Fail> {
+        if host.contains('\0') {
+            return Err(Fail::NoHost);
+        }
+        let (host, port) = (c_path(host), alloc::format!("{port}\0"));
+        let hints = AddrInfo { flags: 0, family: 2, socktype: 2, protocol: 0, addrlen: 0, canonname: core::ptr::null(), addr: core::ptr::null(), next: core::ptr::null_mut() };
+        let mut found = core::ptr::null_mut();
+        if unsafe { c::getaddrinfo(host.as_ptr(), port.as_ptr(), &hints, &mut found) } != 0 {
+            return Err(Fail::NoHost);
+        }
+        let Some(i) = (unsafe { found.as_ref() }) else { return Err(Fail::NoHost) };
+        let sent = unsafe { c::sendto(*fd, data.as_ptr(), data.len(), 0, i.addr, i.addrlen) };
+        unsafe { c::freeaddrinfo(found) };
+        if sent < 0 { Err(Fail::Broken) } else { Ok(()) }
+    }
+
+    fn receive_from(&mut self, fd: &i32, buffer: &mut [u8]) -> Result<(usize, [u8; 4], u16), Fail> {
+        let (mut from, mut n) = ([0u8; 16], 16u32);
+        loop {
+            let got = unsafe { c::recvfrom(*fd, buffer.as_mut_ptr(), buffer.len(), 0, from.as_mut_ptr(), &mut n) };
+            if got >= 0 {
+                return Ok((got as usize, [from[4], from[5], from[6], from[7]], u16::from_be_bytes([from[2], from[3]])));
+            }
+            match unsafe { *c::__error() } {
+                4 => {}
+                35 | 60 => return Err(Fail::Timeout),
+                _ => return Err(Fail::Broken),
+            }
+        }
+    }
+
+    fn close_datagram(&mut self, fd: i32) {
+        unsafe { c::close(fd) };
+    }
 
     fn listen(&mut self, port: u16, everyone: bool) -> Option<i32> {
         let fd = unsafe { c::socket(2, SOCK_STREAM, 0) };

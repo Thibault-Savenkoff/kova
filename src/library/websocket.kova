@@ -1,0 +1,282 @@
+// `import websocket`: WebSocket (RFC 6455), a connection that stays open between a web page or a
+// service and a program, written on `net`.
+import net
+
+public:
+
+enum Error {
+    BadAddress(address: String)
+    // The other end did not agree to speak WebSocket.
+    Refused(reason: String)
+    Network(error: net.Error)
+    BadFrame
+}
+
+enum Message {
+    Text(text: String)
+    Bytes(data: List<Int>)
+    // The other end closed the connection.
+    Closed
+}
+
+struct Socket {
+private:
+    link: net.Link
+    // A client masks what it sends, a server does not.
+    client: Bool
+    // What was received beyond the last frame.
+    waiting: List<Int>
+
+public:
+    fn send(var self, text: String) -> Nothing or Error {
+        return self.frame(1, text.to_bytes)
+    }
+
+    fn send_bytes(var self, data: List<Int>) -> Nothing or Error {
+        return self.frame(2, data)
+    }
+
+    // The next message, waiting for it. A ping is answered here.
+    fn receive(var self) -> Message or Error {
+        var whole: List<Int> := []
+        var kind: Int := 0
+        while true {
+            let first: Int := self.need(1)?[0]
+            let second: Int := self.need(1)?[0]
+            let code: Int := first & 15
+            var size: Int := second & 127
+            if size = 126 {
+                size := number(self.need(2)?)
+            } else if size = 127 {
+                size := number(self.need(8)?)
+            }
+            let mask: List<Int> := if second & 128 != 0 { self.need(4)? } else { [] }
+            var body: List<Int> := self.need(size)?
+            if !mask.is_empty {
+                body := masked(body, mask)
+            }
+            if code = 8 {
+                return ok(Message.Closed)
+            }
+            if code = 9 {
+                self.frame(10, body)?
+            } else if code != 10 {
+                if code != 0 {
+                    kind := code
+                }
+                whole += body
+                if first & 128 != 0 {
+                    return if kind = 1 {
+                        match whole.to_text {
+                            none => err(Error.BadFrame)
+                            text => ok(Message.Text(text))
+                        }
+                    } else {
+                        ok(Message.Bytes(whole))
+                    }
+                }
+            }
+        }
+        return err(Error.BadFrame)
+    }
+
+    fn close(var self) {
+        match self.frame(8, []) {
+            ok => self.link.close
+            err(_) => self.link.close
+        }
+    }
+
+    fn frame(var self, code: Int, data: List<Int>) -> Nothing or Error {
+        var out: List<Int> := [128 + code]
+        let mark: Int := if self.client { 128 } else { 0 }
+        if data.length < 126 {
+            out.add(mark + data.length)
+        } else if data.length < 65536 {
+            out += [mark + 126, data.length >> 8, data.length & 255]
+        } else {
+            out.add(mark + 127)
+            for k in 0..8 {
+                out.add((data.length >> (56 - 8 * k)) & 255)
+            }
+        }
+        if self.client {
+            let mask: List<Int> := [random(0..256), random(0..256), random(0..256), random(0..256)]
+            out += mask
+            out += masked(data, mask)
+        } else {
+            out += data
+        }
+        self.link.send_bytes(out)?
+        return ok
+    }
+
+    // Exactly `size` bytes.
+    fn need(var self, size: Int) -> List<Int> or Error {
+        while self.waiting.length < size {
+            match self.link.receive {
+                err(e) => return err(Error.Network(e))
+                ok(got) => {
+                    if got.is_empty {
+                        return err(Error.Network(net.Error.Closed))
+                    }
+                    self.waiting += got
+                }
+            }
+        }
+        let wanted: List<Int> := self.waiting[0..size]
+        self.waiting := self.waiting[size..self.waiting.length]
+        return ok(wanted)
+    }
+}
+
+// Connects to `ws://host:port/path` or `wss://…`, encrypted.
+fn connect(address: String) -> Socket or Error {
+    let secure: Bool := address.starts_with("wss://")
+    if !secure && !address.starts_with("ws://") {
+        return err(Error.BadAddress(address.clone))
+    }
+    let rest: String := address[if secure { 6 } else { 5 }..address.length]
+    let cut: Int := rest.find("/") else rest.length
+    let place: String := rest[0..cut]
+    let path: String := if cut = rest.length { "/" } else { rest[cut..rest.length] }
+    let colon: Int? := place.find(":")
+    let host: String := if colon = none { place.clone } else { place[0..colon] }
+    let port: Int? := if colon = none { if secure { 443 } else { 80 } } else { place[colon + 1..place.length].to_int }
+    if host.is_empty || port = none {
+        return err(Error.BadAddress(address.clone))
+    }
+    let opened: net.Link or net.Error := if secure { net.connect_secure(host, port) } else { net.connect(host, port) }
+    var link: net.Link := opened?
+    var key: List<Int> := []
+    for k in 0..16 {
+        key.add(random(0..256))
+    }
+    let asked: String := "GET {path} HTTP/1.1\r\nHost: {place}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key.to_base64}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    link.send(asked)?
+    let head: List<String> := headers(var link)?
+    if head.is_empty || !head[0].contains(" 101") {
+        return err(Error.Refused(if head.is_empty { "" } else { head[0].clone }))
+    }
+    if field(head, "sec-websocket-accept") != answer(key.to_base64) {
+        return err(Error.Refused("wrong Sec-WebSocket-Accept"))
+    }
+    return ok(Socket { link := link, client := true, waiting := [] })
+}
+
+// Answers a browser or a client on a connection from `net.Listener.accept`.
+fn accept(given: move net.Link) -> Socket or Error {
+    var link: net.Link := given
+    let head: List<String> := headers(var link)?
+    let key: String? := field(head, "sec-websocket-key")
+    if key = none {
+        link.send("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")?
+        return err(Error.Refused("not a WebSocket request"))
+    }
+    link.send("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {answer(key)}\r\n\r\n")?
+    return ok(Socket { link := link, client := false, waiting := [] })
+}
+
+private:
+
+// The lines of an HTTP head, up to the empty one.
+fn headers(link: var net.Link) -> List<String> or Error {
+    var lines: List<String> := []
+    while true {
+        match link.read_line {
+            err(e) => return err(Error.Network(e))
+            ok(line) => {
+                if line = none || line.is_empty {
+                    return ok(lines)
+                }
+                lines.add(line.clone)
+            }
+        }
+    }
+    return ok(lines)
+}
+
+fn field(lines: List<String>, name: String) -> String? {
+    for line in lines {
+        let cut: Int? := line.find(":")
+        if cut != none && line[0..cut].to_lower = name {
+            return line[cut + 1..line.length].trim
+        }
+    }
+    return none
+}
+
+fn answer(key: String) -> String {
+    return sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").to_bytes).to_base64
+}
+
+fn number(bytes: List<Int>) -> Int {
+    return bytes.fold(0) { n: Int, b: Int => n * 256 + b }
+}
+
+fn masked(data: List<Int>, mask: List<Int>) -> List<Int> {
+    var out: List<Int> := []
+    for i, b in data {
+        out.add(b ^ mask[i % 4])
+    }
+    return out
+}
+
+let word: Int := 4294967295
+
+fn rotated(x: Int, n: Int) -> Int {
+    return ((x << n) | (x >> (32 - n))) & word
+}
+
+// SHA-1 is broken for signatures; the WebSocket handshake needs it, and nothing here rests on it.
+fn sha1(message: List<Int>) -> List<Int> {
+    var data: List<Int> := message.clone
+    data.add(128)
+    while data.length % 64 != 56 {
+        data.add(0)
+    }
+    let bits: Int := message.length * 8
+    for k in 0..8 {
+        data.add((bits >> (56 - 8 * k)) & 255)
+    }
+    var h: List<Int> := [1732584193, 4023233417, 2562383102, 271733878, 3285377520]
+    for block in 0..data.length / 64 {
+        var w: List<Int> := []
+        for t in 0..16 {
+            w.add(number(data[block * 64 + t * 4..block * 64 + t * 4 + 4]))
+        }
+        for t in 16..80 {
+            w.add(rotated(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1))
+        }
+        var a: Int := h[0]
+        var b: Int := h[1]
+        var c: Int := h[2]
+        var d: Int := h[3]
+        var e: Int := h[4]
+        for t in 0..80 {
+            let (f, k): (Int, Int) := if t < 20 {
+                ((b & c) | ((b ^ word) & d), 1518500249)
+            } else if t < 40 {
+                (b ^ c ^ d, 1859775393)
+            } else if t < 60 {
+                ((b & c) | (b & d) | (c & d), 2400959708)
+            } else {
+                (b ^ c ^ d, 3395469782)
+            }
+            let next: Int := (rotated(a, 5) + f + e + k + w[t]) & word
+            e := d
+            d := c
+            c := rotated(b, 30)
+            b := a
+            a := next
+        }
+        h := [(h[0] + a) & word, (h[1] + b) & word, (h[2] + c) & word, (h[3] + d) & word, (h[4] + e) & word]
+    }
+    var out: List<Int> := []
+    for part in h {
+        for k in 0..4 {
+            out.add((part >> (24 - 8 * k)) & 255)
+        }
+    }
+    return out
+}

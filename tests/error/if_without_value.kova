@@ -2,6 +2,5 @@ fn main {
     let x: Int := if true { 1 } else { return }
     let y: Int := if true { 1 } else { }
 }
-// error: :2:47
 // error: :3:40
 // error: this branch must end with a value

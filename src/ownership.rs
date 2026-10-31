@@ -221,7 +221,7 @@ impl Owner<'_> {
             Stmt::Expr(e) => self.give(e),
             Stmt::If { cond, then, otherwise: Some(otherwise) } => self.if_value(cond, then, otherwise),
             Stmt::Match(m) => self.match_(m, true),
-            _ => unreachable!("block checked by the type checker"),
+            leaving => self.stmt(leaving),
         }
         self.scopes.truncate(base);
     }

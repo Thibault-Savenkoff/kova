@@ -45,7 +45,25 @@ negative
 zero
 ```
 
-Un `if` qui donne une valeur a besoin d'un `else` : la valeur doit exister dans tous les cas.
+Un `if` qui donne une valeur a besoin d'un `else` : la valeur doit exister dans tous les cas. Une
+branche peut aussi partir au lieu d'en donner une, avec `return`, `break` ou `continue` :
+
+```kova
+fn halved(n: Int) -> String {
+    let half: Int := if n % 2 = 1 { return "odd" } else { n / 2 }
+    return "half is {half}"
+}
+
+fn main {
+    print(halved(3))
+    print(halved(8))
+}
+```
+
+```text
+odd
+half is 4
+```
 
 ## `match` sur une valeur
 

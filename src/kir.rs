@@ -400,6 +400,9 @@ pub enum StrOp {
     Cores,
     /// `data.deflate`, `data.inflate`, `data.crc32`: the second argument says which (`shared::PACKINGS`).
     Pack,
+    /// `http::net_raw`, `http::net_bytes`.
+    Net,
+    NetBytes,
     Spawn,
     /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
     NotBytes,
@@ -5288,7 +5291,10 @@ impl<'a> Translator<'a> {
                 self.match_(m, Some((&v, ty)));
                 v
             }
-            _ => unreachable!("block checked by the type checker"),
+            leaving => {
+                self.stmt(leaving);
+                self.new_slots(ty)
+            }
         };
         self.free_scopes(base);
         self.names.truncate(base);
@@ -5697,6 +5703,20 @@ impl<'a> Translator<'a> {
                     let clicked = self.int_local();
                     self.emit(Inst::Str(clicked, StrOp::UiShow, vals));
                     return vec![clicked];
+                }
+                // `src/library/net.kova` (PLAN Part 4 "Sockets").
+                if name.text == "net.raw" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let out = self.int_local();
+                    self.emit(Inst::Str(out, StrOp::Net, vals));
+                    return vec![out];
+                }
+                if name.text == "net.raw_bytes" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let out = self.int_local();
+                    self.emit(Inst::Str(out, StrOp::NetBytes, vals));
+                    self.temps.push((out, Type::List(Box::new(Type::Int))));
+                    return vec![out];
                 }
                 if name.text == "system.cores" {
                     let n = self.int_local();

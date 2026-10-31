@@ -45,7 +45,25 @@ negative
 zero
 ```
 
-An `if` that gives a value needs an `else`: the value must exist in every case.
+An `if` that gives a value needs an `else`: the value must exist in every case. A branch may also
+leave instead of giving one, with `return`, `break` or `continue`:
+
+```kova
+fn halved(n: Int) -> String {
+    let half: Int := if n % 2 = 1 { return "odd" } else { n / 2 }
+    return "half is {half}"
+}
+
+fn main {
+    print(halved(3))
+    print(halved(8))
+}
+```
+
+```text
+odd
+half is 4
+```
 
 ## `match` on a value
 
