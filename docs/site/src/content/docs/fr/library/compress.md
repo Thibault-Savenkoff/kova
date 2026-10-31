@@ -54,5 +54,5 @@ Dessous, trois méthodes marchent sur n'importe quels octets :
 | `data.inflate -> List<Int>?` | les octets d'origine, `none` si ce n'est pas du DEFLATE. Elle s'arrête à 4 Go, donc un petit fichier ne peut pas remplir la mémoire. |
 | `data.crc32 -> Int` | la somme de contrôle CRC-32. |
 
-Kova compresse vite mais moins serré que `gzip -9` : compte des fichiers 10 à 20 % plus gros. Tout ce
-que les autres outils compressent, Kova le lit.
+Kova compresse à peu près aussi serré que `gzip -9`. Tout ce que les autres outils compressent, Kova
+le lit.

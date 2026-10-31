@@ -119,7 +119,34 @@ pub trait Network {
     fn send(&mut self, link: &mut Self::Link, data: &[u8]) -> Result<(), Fail>;
     /// Some bytes of the answer; 0 when the machine closed the connection.
     fn receive(&mut self, link: &mut Self::Link, buffer: &mut [u8]) -> Result<usize, Fail>;
+    /// Whatever waits on `link` in another thread stops waiting: the connection is over.
+    fn wake(&mut self, link: &Self::Link);
     fn close(&mut self, link: Self::Link);
+}
+
+/// A lock held for the few moments of a piece of work: the encryption state of a connection one
+/// thread sends on while another receives.
+pub struct Turn(core::sync::atomic::AtomicBool);
+
+impl Turn {
+    pub const fn new() -> Self {
+        Turn(core::sync::atomic::AtomicBool::new(false))
+    }
+
+    #[allow(dead_code)]
+    pub fn lock(&self) {
+        self.waiting(core::hint::spin_loop);
+    }
+
+    pub fn waiting(&self, mut meanwhile: impl FnMut()) {
+        while self.0.swap(true, core::sync::atomic::Ordering::Acquire) {
+            meanwhile();
+        }
+    }
+
+    pub fn unlock(&self) {
+        self.0.store(false, core::sync::atomic::Ordering::Release);
+    }
 }
 
 /// A site's answer: a `Response` in Kova.
@@ -358,6 +385,9 @@ pub trait Serve: Network {
     /// say).
     fn addresses(&mut self) -> Vec<(String, [u8; 4])>;
     fn stop(&mut self, listener: Self::Listener);
+    /// The port a listener or a UDP socket really has: asked as 0, the system chose it.
+    fn port(&mut self, listener: &Self::Listener) -> u16;
+    fn datagram_port(&mut self, socket: &Self::Datagram) -> u16;
     /// A UDP socket on `port` (0: any), each `receive_from` limited to `ms` milliseconds.
     fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<Self::Datagram>;
     fn send_to(&mut self, socket: &Self::Datagram, host: &str, port: u16, data: &[u8]) -> Result<(), Fail>;
@@ -388,15 +418,28 @@ pub enum Socket<A, B> {
 }
 
 /// What a number in Kova stands for. Several threads may use it: each holds an `Arc` meanwhile,
-/// and the last one out closes it (`finish`). So a thread may send while another receives.
-// ponytail: `close` does not wake a thread blocked in `receive`; `shutdown` if a program needs it.
-pub struct Held<X>(core::cell::UnsafeCell<Option<X>>, [u8; 4]);
+/// and the last one out closes it (`finish`). So a thread may send while another receives; on an
+/// encrypted connection, `sending` and `receiving` keep each direction's bytes in their order.
+pub struct Held<X> {
+    x: core::cell::UnsafeCell<Option<X>>,
+    from: [u8; 4],
+    sending: Turn,
+    receiving: Turn,
+}
 
 impl<X> Held<X> {
     #[allow(clippy::mut_from_ref)]
     fn get(&self) -> Option<&mut X> {
-        unsafe { &mut *self.0.get() }.as_mut()
+        unsafe { &mut *self.x.get() }.as_mut()
     }
+}
+
+/// `work`, alone among those holding `turn`: a thread that waits may wait long, so it naps.
+fn alone<N: Sockets, R>(turn: &Turn, work: impl FnOnce() -> R) -> R {
+    turn.waiting(N::nap);
+    let done = work();
+    turn.unlock();
+    done
 }
 
 type Slots<X> = Vec<Option<Arc<Held<X>>>>;
@@ -419,10 +462,12 @@ pub trait Sockets: Serve + Sized {
     fn plain() -> Self;
     fn tls() -> Self::Tls;
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
+    /// A millisecond of sleep.
+    fn nap();
 }
 
 fn add<X>(slots: &mut Slots<X>, x: X, from: [u8; 4]) -> i64 {
-    slots.push(Some(Arc::new(Held(core::cell::UnsafeCell::new(Some(x)), from))));
+    slots.push(Some(Arc::new(Held { x: core::cell::UnsafeCell::new(Some(x)), from, sending: Turn::new(), receiving: Turn::new() })));
     slots.len() as i64
 }
 
@@ -436,7 +481,7 @@ fn take<X>(slots: &mut Slots<X>, id: i64) -> Option<Arc<Held<X>>> {
 
 /// The last user of a socket closes it.
 fn finish<X>(held: Arc<Held<X>>, close: impl FnOnce(X)) {
-    if let Some(x) = Arc::into_inner(held).and_then(|h| h.0.into_inner()) {
+    if let Some(x) = Arc::into_inner(held).and_then(|h| h.x.into_inner()) {
         close(x);
     }
 }
@@ -473,6 +518,11 @@ pub fn net_raw<N: Sockets>(kind: i64, text: &str, b: i64, c: i64) -> i64 {
             let Some(held) = N::table(|t| get(&t.listeners, b)) else { return -CLOSED };
             let got = held.get().and_then(|l| N::plain().accept(l, c as u64));
             finish(held, |l| N::plain().stop(l));
+            // Closed meanwhile: what woke it up is `close`'s own connection.
+            if N::table(|t| get(&t.listeners, b)).is_none() {
+                got.into_iter().for_each(|(l, _)| N::plain().close(l));
+                return -CLOSED;
+            }
             match got {
                 Some((l, from)) => N::table(|t| add(&mut t.links, Socket::Plain(l), from)),
                 None => -failure(Fail::Broken),
@@ -480,12 +530,26 @@ pub fn net_raw<N: Sockets>(kind: i64, text: &str, b: i64, c: i64) -> i64 {
         }
         3 => {
             if let Some(held) = N::table(|t| take(&mut t.links, b)) {
+                if Arc::strong_count(&held) > 1 {
+                    match held.get() {
+                        Some(Socket::Plain(l)) => N::plain().wake(l),
+                        Some(Socket::Secure(l)) => N::tls().wake(l),
+                        None => {}
+                    }
+                }
                 finish_link::<N>(held);
             }
             0
         }
         4 => {
             if let Some(held) = N::table(|t| take(&mut t.listeners, b)) {
+                // A thread blocked in `accept` stops for a connection, on every system.
+                if let (true, Some(l)) = (Arc::strong_count(&held) > 1, held.get()) {
+                    let port = N::plain().port(l);
+                    if let Ok(link) = N::plain().open("127.0.0.1", port, false, 1000) {
+                        N::plain().close(link);
+                    }
+                }
                 finish(held, |l| N::plain().stop(l));
             }
             0
@@ -497,12 +561,20 @@ pub fn net_raw<N: Sockets>(kind: i64, text: &str, b: i64, c: i64) -> i64 {
         },
         6 => {
             if let Some(held) = N::table(|t| take(&mut t.datagrams, b)) {
+                // A thread blocked in `receive` stops for a datagram, on every system.
+                if let (true, Some(s)) = (Arc::strong_count(&held) > 1, held.get()) {
+                    let port = N::plain().datagram_port(s);
+                    let _ = N::plain().send_to(s, "127.0.0.1", port, &[]);
+                }
                 finish(held, |s| N::plain().close_datagram(s));
             }
             0
         }
+        // The port really taken.
+        8 => N::table(|t| get(&t.listeners, b)).and_then(|held| held.get().map(|l| i64::from(N::plain().port(l)))).unwrap_or(0),
+        9 => N::table(|t| get(&t.datagrams, b)).and_then(|held| held.get().map(|s| i64::from(N::plain().datagram_port(s)))).unwrap_or(0),
         // Who is at the other end of an accepted connection.
-        _ => N::table(|t| get(&t.links, b)).map_or(0, |held| i64::from(u32::from_be_bytes(held.1))),
+        _ => N::table(|t| get(&t.links, b)).map_or(0, |held| i64::from(u32::from_be_bytes(held.from))),
     }
 }
 
@@ -514,7 +586,7 @@ pub fn net_bytes<N: Sockets>(kind: i64, text: &str, id: i64, data: &[u8], c: i64
             let Some(held) = N::table(|t| get(&t.links, id)) else { return alloc::vec![CLOSED as u8] };
             let sent = match held.get() {
                 Some(Socket::Plain(l)) => N::plain().send(l, data),
-                Some(Socket::Secure(l)) => N::tls().send(l, data),
+                Some(Socket::Secure(l)) => alone::<N, _>(&held.sending, || N::tls().send(l, data)),
                 None => Err(Fail::Broken),
             };
             finish_link::<N>(held);
@@ -525,10 +597,13 @@ pub fn net_bytes<N: Sockets>(kind: i64, text: &str, id: i64, data: &[u8], c: i64
             let mut out = alloc::vec![0; c as usize + 1];
             let got = match held.get() {
                 Some(Socket::Plain(l)) => N::plain().receive(l, &mut out[1..]),
-                Some(Socket::Secure(l)) => N::tls().receive(l, &mut out[1..]),
+                Some(Socket::Secure(l)) => alone::<N, _>(&held.receiving, || N::tls().receive(l, &mut out[1..])),
                 None => Err(Fail::Broken),
             };
             finish_link::<N>(held);
+            if N::table(|t| get(&t.links, id)).is_none() {
+                return alloc::vec![CLOSED as u8];
+            }
             match got {
                 Ok(n) => {
                     out.truncate(n + 1);
@@ -548,6 +623,9 @@ pub fn net_bytes<N: Sockets>(kind: i64, text: &str, id: i64, data: &[u8], c: i64
             let mut out = alloc::vec![0; 65536 + 7];
             let got = held.get().map_or(Err(Fail::Broken), |s| N::plain().receive_from(s, &mut out[7..]));
             finish(held, |s| N::plain().close_datagram(s));
+            if N::table(|t| get(&t.datagrams, id)).is_none() {
+                return alloc::vec![CLOSED as u8];
+            }
             match got {
                 Ok((n, from, port)) => {
                     out[1..5].copy_from_slice(&from);
@@ -914,6 +992,7 @@ mod tests {
             link.1 += n;
             Ok(n)
         }
+        fn wake(&mut self, _: &Self::Link) {}
         fn close(&mut self, _: Self::Link) {}
     }
 

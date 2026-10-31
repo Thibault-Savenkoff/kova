@@ -1748,6 +1748,9 @@ impl http::Sockets for sys::Net {
         static TABLE: Locked<http::Table<sys::Net>> = Locked::new(http::Table::new());
         TABLE.with(f)
     }
+    fn nap() {
+        sys::sleep(0.001);
+    }
 }
 
 #[unsafe(no_mangle)]

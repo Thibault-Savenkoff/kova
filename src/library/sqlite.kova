@@ -81,6 +81,15 @@ public:
         return self.lines(statement, values)
     }
 
+    // Runs one statement and gives each line to `visit` as it comes, keeping none in memory.
+    fn each(self, statement: String, visit: {Row}) -> Nothing or Error {
+        return self.walk(statement, [], visit)
+    }
+
+    fn each(self, statement: String) with(values: List<Value>, visit: {Row}) -> Nothing or Error {
+        return self.walk(statement, values, visit)
+    }
+
     // Runs several statements separated by `;`, none with values.
     fn script(self, statements: String) -> Nothing or Error {
         return self.checked(lib.exec(self.handle, statements, none, none, none))
@@ -109,19 +118,42 @@ private:
         return err(if code = 19 { Error.Constraint(message) } else if code = 5 || code = 6 { Error.Busy(message) } else { Error.Failed(message) })
     }
 
-    // ponytail: `tail` is not read, so what follows a first statement is ignored (`script` is for that).
     fn lines(self, statement: String, values: List<Value>) -> List<Row> or Error {
+        var rows: List<Row> := []
+        self.walk(statement, values) { row: Row => rows.add(row.clone) }?
+        return ok(rows)
+    }
+
+    // A statement that is not alone would otherwise lose what follows it, silently.
+    fn alone(self, statement: String, made: Pointer) -> Nothing or Error {
+        let rest: String := statement.to_bytes[lib.statement_text(made).to_bytes.length..statement.to_bytes.length].to_text else ""
+        if rest.trim.is_empty {
+            return ok
+        }
+        var next: Pointer? := none
+        let code: Int := lib.prepare(self.handle, rest, -1, var next, none)
+        if next != none {
+            lib.finalize(next)
+        }
+        if code = 0 && next = none {
+            return ok
+        }
+        return err(Error.Failed("several statements: use db.script, which runs them all"))
+    }
+
+    fn walk(self, statement: String, values: List<Value>, visit: {Row}) -> Nothing or Error {
         var made: Pointer? := none
         self.checked(lib.prepare(self.handle, statement, -1, var made, none))?
         if made = none {
-            return ok([])
+            return ok
         }
-        let done: List<Row> or Error := self.stepped(made, values)
+        let done: Nothing or Error := self.stepped(statement, made, values, visit)
         lib.finalize(made)
         return done
     }
 
-    fn stepped(self, statement: Pointer, values: List<Value>) -> List<Row> or Error {
+    fn stepped(self, text: String, statement: Pointer, values: List<Value>, visit: {Row}) -> Nothing or Error {
+        self.alone(text, statement)?
         for i, value in values {
             self.checked(bound(statement, i + 1, value))?
         }
@@ -129,20 +161,18 @@ private:
         for i in 0..lib.column_count(statement) {
             names.add(lib.column_name(statement, i))
         }
-        var rows: List<Row> := []
         while true {
             let code: Int := lib.step(statement)
             if code != 100 {
-                self.checked(code)?
-                return ok(rows)
+                return self.checked(code)
             }
             var cells: List<Value> := []
             for i in 0..names.length {
                 cells.add(cell(statement, i))
             }
-            rows.add(Row { names := names.clone, values := cells })
+            visit(Row { names := names.clone, values := cells })
         }
-        return ok(rows)
+        return ok
     }
 }
 
@@ -174,6 +204,7 @@ extern lib from "sqlite3" windows "winsqlite3" {
     fn prepare(db: Pointer, statement: String, size: Int32, made: var Pointer?, tail: Pointer?) -> Int32 from "sqlite3_prepare_v2"
     fn finalize(statement: Pointer) -> Int32 from "sqlite3_finalize"
     fn step(statement: Pointer) -> Int32 from "sqlite3_step"
+    fn statement_text(statement: Pointer) -> String from "sqlite3_sql"
     fn last_id(db: Pointer) -> Int from "sqlite3_last_insert_rowid"
     fn changes(db: Pointer) -> Int32 from "sqlite3_changes"
     fn bind_null(statement: Pointer, at: Int32) -> Int32 from "sqlite3_bind_null"

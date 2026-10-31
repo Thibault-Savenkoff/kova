@@ -22,6 +22,7 @@ package `libsqlite3-0` or `sqlite-libs`.
 | `sqlite.open(path) -> sqlite.Database or sqlite.Error` | opens a database file, made if missing. `":memory:"` is one that lives until `close`. |
 | `db.run(statement) with(values)` | runs one statement that gives no lines: `INSERT`, `UPDATE`, `CREATE TABLE`. Gives `Nothing or sqlite.Error`. `with` is optional. |
 | `db.query(statement) with(values) -> List<sqlite.Row> or sqlite.Error` | runs one statement and gives all its lines. |
+| `db.each(statement) { row: sqlite.Row => … }` | gives each line to the block as it comes, keeping none in memory: for tables too large to load. Gives `Nothing or sqlite.Error`. `db.each(statement) with(values) { … }` fills the `?`. |
 | `db.script(statements)` | runs several statements separated by `;`, none with values. Gives `Nothing or sqlite.Error`. |
 | `db.last_id -> Int` | the number given to the last line inserted. |
 | `db.changes -> Int` | how many lines the last `INSERT`, `UPDATE` or `DELETE` touched. |
@@ -104,4 +105,5 @@ If a step fails, run `db.script("ROLLBACK")` to undo what came before it.
 - `Busy(message)`: another connection holds the file. Try again a little later.
 - `Failed(message)`: anything else, such as a mistake in the statement.
 
-`run` and `query` run the first statement only, and ignore what follows it: use `script` for several.
+`run`, `query` and `each` take one statement: given more, they run nothing and give `Failed`. Use
+`script` for several.

@@ -54,5 +54,4 @@ Under them, three methods work on any bytes:
 | `data.inflate -> List<Int>?` | the bytes back, `none` if they are not DEFLATE data. It stops at 4 GB, so a tiny file cannot fill the memory. |
 | `data.crc32 -> Int` | the CRC-32 checksum. |
 
-Kova packs quickly but not as tightly as `gzip -9`: expect files 10 to 20% larger. Everything other
-tools pack, Kova reads.
+Kova packs about as tightly as `gzip -9`. Everything other tools pack, Kova reads.

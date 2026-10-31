@@ -40,6 +40,7 @@ There are two ways to send data over a network:
 | `link.close` | closes the connection. |
 | `listener.accept -> net.Link or net.Error` | waits for the next connection. |
 | `listener.accept_within(seconds) -> net.Link or net.Error` | the same, with `TimedOut` after that time. |
+| `listener.port -> Int` | the port it waits on: after `listen(0)`, the free one the system chose. |
 | `listener.close` | stops listening. |
 
 TCP sends a flow of bytes, not messages: two `send` may arrive in one `receive`, one may arrive in
@@ -87,6 +88,7 @@ you said: hello
 | `net.udp_network(port)` | the same, reachable from other computers. `within(seconds)` works too. |
 | `socket.send_to(host, port, data: List<Int>)` | sends one message. |
 | `socket.receive -> net.Datagram or net.Error` | waits for one message. |
+| `socket.port -> Int` | its port: after `udp(0)`, the free one the system chose. |
 | `socket.close` | closes the socket. |
 
 A `net.Datagram` has `host: String`, `port: Int` and `data: List<Int>`: answer to `host` and `port`
@@ -119,5 +121,6 @@ ping
 `Refused` means the computer answered and nothing listens on that port. `TimedOut` means nothing
 answered at all, which is often a firewall.
 
-Closing a link from one thread does not wake a `receive` waiting in another: give the waiting side
-a time limit with `within`.
+Closing a link, a listener or a socket from one thread wakes whatever waits on it in another: its
+`receive` or `accept` gives `net.Error.Closed`. So a thread can stop a server that waits for
+connections. One thread may send while another receives, encrypted or not.

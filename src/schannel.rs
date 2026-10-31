@@ -106,6 +106,8 @@ pub struct Session<L> {
     incoming: Vec<u8>,
     /// Decrypted bytes not yet given.
     plain: Vec<u8>,
+    /// One thread may send while another receives: one call into SChannel at a time.
+    turn: crate::http::Turn,
 }
 
 impl<N: Network> Network for Tls<N> {
@@ -116,7 +118,7 @@ impl<N: Network> Network for Tls<N> {
         if !secure {
             return Ok(Link::Plain(raw));
         }
-        let mut s = Box::new(Session { raw, cred: Handle(0, 0), ctx: Handle(0, 0), sizes: [0; 5], incoming: Vec::new(), plain: Vec::new() });
+        let mut s = Box::new(Session { raw, cred: Handle(0, 0), ctx: Handle(0, 0), sizes: [0; 5], incoming: Vec::new(), plain: Vec::new(), turn: crate::http::Turn::new() });
         match handshake(&mut self.0, &mut s, host) {
             Ok(()) => Ok(Link::Secure(s)),
             Err(f) => {
@@ -145,7 +147,9 @@ impl<N: Network> Network for Tls<N> {
                 Buffer { size: 0, kind: EMPTY, data: null_mut() },
             ];
             let mut d = Buffers { version: 0, count: 4, buffers: b.as_mut_ptr() };
+            s.turn.lock();
             let status = unsafe { EncryptMessage(&s.ctx, 0, &mut d, 0) };
+            s.turn.unlock();
             if status != OK {
                 return Err(failure(status));
             }
@@ -171,7 +175,10 @@ impl<N: Network> Network for Tls<N> {
                 Buffer { size: 0, kind: EMPTY, data: null_mut() },
             ];
             let mut d = Buffers { version: 0, count: 4, buffers: b.as_mut_ptr() };
-            match unsafe { DecryptMessage(&s.ctx, &mut d, 0, null_mut()) } {
+            s.turn.lock();
+            let status = unsafe { DecryptMessage(&s.ctx, &mut d, 0, null_mut()) };
+            s.turn.unlock();
+            match status {
                 OK => {
                     // Both point inside `incoming`, decrypted where it was.
                     let piece = |kind| b.iter().find(|b| b.kind == kind).map(|b| unsafe { core::slice::from_raw_parts(b.data, b.size as usize) }.to_vec());
@@ -193,6 +200,13 @@ impl<N: Network> Network for Tls<N> {
         buffer[..n].copy_from_slice(&s.plain[..n]);
         s.plain.drain(..n);
         Ok(n)
+    }
+
+    fn wake(&mut self, link: &Self::Link) {
+        match link {
+            Link::Plain(raw) => self.0.wake(raw),
+            Link::Secure(s) => self.0.wake(&s.raw),
+        }
     }
 
     fn close(&mut self, link: Self::Link) {

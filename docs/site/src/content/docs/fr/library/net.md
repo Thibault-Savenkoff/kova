@@ -40,6 +40,7 @@ Il y a deux façons d'envoyer des données sur un réseau :
 | `link.close` | ferme la connexion. |
 | `listener.accept -> net.Link or net.Error` | attend la prochaine connexion. |
 | `listener.accept_within(seconds) -> net.Link or net.Error` | la même chose, avec `TimedOut` après ce temps. |
+| `listener.port -> Int` | le port écouté : après `listen(0)`, celui que le système a choisi. |
 | `listener.close` | arrête d'écouter. |
 
 TCP envoie un flot d'octets, pas des messages : deux `send` peuvent arriver dans un seul `receive`,
@@ -87,6 +88,7 @@ you said: hello
 | `net.udp_network(port)` | la même chose, joignable depuis d'autres ordinateurs. `within(seconds)` marche aussi. |
 | `socket.send_to(host, port, data: List<Int>)` | envoie un message. |
 | `socket.receive -> net.Datagram or net.Error` | attend un message. |
+| `socket.port -> Int` | son port : après `udp(0)`, celui que le système a choisi. |
 | `socket.close` | ferme le socket. |
 
 Un `net.Datagram` a `host: String`, `port: Int` et `data: List<Int>` : réponds à `host` et `port`
@@ -119,5 +121,6 @@ ping
 `Refused` veut dire que l'ordinateur a répondu et que rien n'écoute sur ce port. `TimedOut` veut
 dire que rien n'a répondu du tout, souvent à cause d'un pare-feu.
 
-Fermer un lien depuis un fil ne réveille pas un `receive` qui attend dans un autre : donne une
-limite de temps au côté qui attend avec `within`.
+Fermer un lien, un listener ou un socket depuis un fil réveille ce qui l'attend dans un autre : son
+`receive` ou son `accept` donne `net.Error.Closed`. Un fil peut donc arrêter un serveur qui attend
+des connexions. Un fil peut envoyer pendant qu'un autre reçoit, chiffré ou non.

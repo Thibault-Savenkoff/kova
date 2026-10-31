@@ -69,6 +69,10 @@ impl Network for System {
         }
     }
 
+    fn wake(&mut self, link: &TcpStream) {
+        let _ = link.shutdown(std::net::Shutdown::Both);
+    }
+
     fn close(&mut self, _: TcpStream) {}
 }
 
@@ -87,6 +91,9 @@ impl crate::http::Sockets for System {
         static TABLE: std::sync::Mutex<Sockets> = std::sync::Mutex::new(Sockets(crate::http::Table::new()));
         f(&mut TABLE.lock().unwrap().0)
     }
+    fn nap() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 impl Serve for System {
@@ -94,6 +101,14 @@ impl Serve for System {
     type Datagram = std::net::UdpSocket;
 
     fn stop(&mut self, _: TcpListener) {}
+
+    fn port(&mut self, listener: &TcpListener) -> u16 {
+        listener.local_addr().map_or(0, |a| a.port())
+    }
+
+    fn datagram_port(&mut self, socket: &std::net::UdpSocket) -> u16 {
+        socket.local_addr().map_or(0, |a| a.port())
+    }
 
     fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<std::net::UdpSocket> {
         let socket = std::net::UdpSocket::bind((if everyone { "0.0.0.0" } else { "127.0.0.1" }, port)).ok()?;

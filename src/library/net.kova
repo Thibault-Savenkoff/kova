@@ -89,6 +89,11 @@ public:
         return accepted(self.id, milliseconds(seconds))
     }
 
+    // The port it waits on: the one the system chose after `listen(0)`.
+    fn port(self) -> Int {
+        return net.raw(8, "", self.id, 0)
+    }
+
     fn close(self) {
         net.raw(4, "", self.id, 0)
     }
@@ -118,6 +123,11 @@ public:
         return ok(Datagram { data := got[7..got.length], host := host, port := got[5] * 256 + got[6] })
     }
 
+    // The port it uses: the one the system chose after `udp(0)`.
+    fn port(self) -> Int {
+        return net.raw(9, "", self.id, 0)
+    }
+
     fn close(self) {
         net.raw(6, "", self.id, 0)
     }
@@ -134,7 +144,7 @@ fn connect_secure(host: String, port: Int) within(seconds: Float := 0.0) -> Link
     return opened(host, port, milliseconds(seconds) * 2 + 1)
 }
 
-// Waits on `port` for connections from this computer.
+// Waits on `port` for connections from this computer (0: any free one).
 fn listen(port: Int) -> Listener or Error {
     return listener(port, 0)
 }

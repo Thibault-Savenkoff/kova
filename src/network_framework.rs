@@ -78,8 +78,11 @@ fn block(invoke: *const c_void, shared: *const Shared) -> Block {
 struct Shared {
     /// Signalled when the connection is ready, waiting, failed or cancelled.
     states: P,
-    /// Signalled when a send or a receive is over.
+    /// Signalled when a receive is over, and when a send is: a thread may do each.
     done: P,
+    sends: P,
+    /// The last send failed.
+    send_failed: AtomicI32,
     state: AtomicI32,
     /// The last failure: its domain (1 POSIX, 2 DNS, 3 TLS) and code; 0 = none.
     domain: AtomicI32,
@@ -117,7 +120,8 @@ extern "C" fn changed(b: *const Block, state: i32, error: P) {
 extern "C" fn sent(b: *const Block, error: P) {
     let s = unsafe { &*(*b).shared };
     unsafe { failed(s, error) };
-    unsafe { dispatch_semaphore_signal(s.done) };
+    s.send_failed.store(!error.is_null() as i32, SeqCst);
+    unsafe { dispatch_semaphore_signal(s.sends) };
 }
 
 extern "C" fn received(b: *const Block, content: P, _: P, complete: bool, error: P) {
@@ -177,15 +181,15 @@ pub struct Session {
 
 /// Waits for the send or receive under way, within the time limit; false if it came first: the
 /// connection is then cancelled, and its block (called all the same) waited for.
-fn finished(s: &Session) -> bool {
+fn finished(s: &Session, done: P) -> bool {
     let ms = s.shared.ms;
     let until = if ms == 0 { u64::MAX } else { unsafe { dispatch_time(0, (ms as i64).saturating_mul(1_000_000)) } };
-    if unsafe { dispatch_semaphore_wait(s.shared.done, until) } == 0 {
+    if unsafe { dispatch_semaphore_wait(done, until) } == 0 {
         return true;
     }
     unsafe {
         nw_connection_cancel(s.connection);
-        dispatch_semaphore_wait(s.shared.done, u64::MAX);
+        dispatch_semaphore_wait(done, u64::MAX);
     }
     false
 }
@@ -197,6 +201,8 @@ impl<N: Network> Tls<N> {
             let shared = Box::new(Shared {
                 states: dispatch_semaphore_create(0),
                 done: dispatch_semaphore_create(0),
+                sends: dispatch_semaphore_create(0),
+                send_failed: AtomicI32::new(0),
                 state: AtomicI32::new(0),
                 domain: AtomicI32::new(0),
                 code: AtomicI32::new(0),
@@ -267,16 +273,15 @@ impl<N: Network> Network for Tls<N> {
         unsafe {
             // Copied by the framework (no destructor given).
             let content = dispatch_data_create(data.as_ptr(), data.len(), null_mut(), null());
-            s.shared.domain.store(0, SeqCst);
-        let done = block(sent as *const c_void, &*s.shared);
+            let done = block(sent as *const c_void, &*s.shared);
             nw_connection_send(s.connection, content, _nw_content_context_default_message, true, &done);
-            let late = !finished(s);
+            let late = !finished(s, s.shared.sends);
             dispatch_release(content);
             if late {
                 return Err(Fail::Timeout);
             }
         }
-        if s.shared.domain.load(SeqCst) != 0 { Err(s.shared.failure(false)) } else { Ok(()) }
+        if s.shared.send_failed.load(SeqCst) != 0 { Err(s.shared.failure(false)) } else { Ok(()) }
     }
 
     fn receive(&mut self, link: &mut Self::Link, buffer: &mut [u8]) -> Result<usize, Fail> {
@@ -291,7 +296,7 @@ impl<N: Network> Network for Tls<N> {
         let done = block(received as *const c_void, &*s.shared);
         unsafe {
             nw_connection_receive(s.connection, 1, buffer.len().min(1 << 30) as u32, &done);
-            if !finished(s) {
+            if !finished(s, s.shared.done) {
                 return Err(Fail::Timeout);
             }
         }
@@ -303,6 +308,14 @@ impl<N: Network> Network for Tls<N> {
             return Err(s.shared.failure(false));
         }
         Ok(n)
+    }
+
+    fn wake(&mut self, link: &Self::Link) {
+        match link {
+            Link::Plain(raw) => self.0.wake(raw),
+            // Calls the blocks under way, with a failure.
+            Link::Secure(s) => unsafe { nw_connection_cancel(s.connection) },
+        }
     }
 
     fn close(&mut self, link: Self::Link) {
@@ -318,6 +331,7 @@ impl<N: Network> Network for Tls<N> {
                 dispatch_release(s.queue);
                 dispatch_release(s.shared.states);
                 dispatch_release(s.shared.done);
+                dispatch_release(s.shared.sends);
             },
         }
     }

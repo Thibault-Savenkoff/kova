@@ -23,6 +23,7 @@ installe le paquet `libsqlite3-0` ou `sqlite-libs`.
 | `sqlite.open(path) -> sqlite.Database or sqlite.Error` | ouvre un fichier de base de données, créé s'il manque. `":memory:"` en donne une qui vit jusqu'à `close`. |
 | `db.run(statement) with(values)` | exécute une instruction qui ne donne pas de lignes : `INSERT`, `UPDATE`, `CREATE TABLE`. Donne `Nothing or sqlite.Error`. `with` est facultatif. |
 | `db.query(statement) with(values) -> List<sqlite.Row> or sqlite.Error` | exécute une instruction et donne toutes ses lignes. |
+| `db.each(statement) { row: sqlite.Row => … }` | donne chaque ligne au bloc dès qu'elle arrive, sans en garder en mémoire : pour les tables trop grosses à charger. Donne `Nothing or sqlite.Error`. `db.each(statement) with(values) { … }` remplit les `?`. |
 | `db.script(statements)` | exécute plusieurs instructions séparées par `;`, sans valeurs. Donne `Nothing or sqlite.Error`. |
 | `db.last_id -> Int` | le numéro donné à la dernière ligne insérée. |
 | `db.changes -> Int` | combien de lignes le dernier `INSERT`, `UPDATE` ou `DELETE` a touchées. |
@@ -105,4 +106,5 @@ Si une étape échoue, lance `db.script("ROLLBACK")` pour annuler ce qui précè
 - `Busy(message)` : une autre connexion tient le fichier. Réessaie un peu plus tard.
 - `Failed(message)` : tout le reste, comme une erreur dans l'instruction.
 
-`run` et `query` n'exécutent que la première instruction et ignorent la suite : utilise `script` pour plusieurs.
+`run`, `query` et `each` prennent une seule instruction : s'il y en a plus, rien n'est exécuté et ils
+donnent `Failed`. Utilise `script` pour plusieurs.

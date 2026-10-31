@@ -844,7 +844,7 @@ fn debugger() {
             if r["success"] == true { r["body"]["result"].as_str().unwrap().to_string() } else { format!("error: {}", r["message"].as_str().unwrap()) }
         }
         fn stack(&mut self) -> Vec<(String, u64)> {
-            let r = self.ask("stackTrace", json!({"threadId": 1}));
+            let r = self.ask("stackTrace", json!({}));
             let frame = |f: &Value| (f["name"].as_str().unwrap().to_string(), f["line"].as_u64().unwrap());
             r["body"]["stackFrames"].as_array().unwrap().iter().map(frame).collect()
         }
@@ -936,6 +936,11 @@ fn debugger() {
     e.send("configurationDone", json!({}));
     assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
     assert_eq!(e.stack()[0], ("double".to_string(), 4));
+    // The editor sees each thread, and where the other one waits.
+    let threads = e.ask("threads", json!({}))["body"]["threads"].clone();
+    assert_eq!(threads, json!([{"id": 1, "name": "main"}, {"id": 2, "name": "thread 1"}]));
+    let main = e.ask("stackTrace", json!({"threadId": 1}))["body"]["stackFrames"][0].clone();
+    assert_eq!((main["name"].as_str(), main["line"].as_u64()), (Some("main"), Some(18)));
     assert_eq!(e.go("next"), "step");
     assert_eq!(e.stack()[0], ("double".to_string(), 5));
     assert_eq!(e.go("continue"), "breakpoint");
@@ -1472,7 +1477,7 @@ fn run_programs() {
     let built = program(&parent, LANG).arg(&child).output().unwrap();
     let _ = std::fs::remove_file(&child);
     let _ = std::fs::remove_file(&parent);
-    let expected = "[]\né ok\nerrors: false, code 0\n[\"a b\", \"\", \"say \"hi\"\", \"back\\\", \"tab\there\"]\né ok\nerrors: false, code 0\n\
+    let expected = "[]\né ok\nerrors: false, code 0\n[\"a b\", \"\", \"say \\\"hi\\\"\", \"back\\\\\", \"tab\\there\"]\né ok\nerrors: false, code 0\n\
         [\"fail\"]\né ok\nerrors: true, code 101\ntrue\n[\"three\"]\né ok\nerrors: false, code 3\nNotFound(\"kova-no-such-program\")\n";
     assert_eq!(text(&run.stdout), expected, "run: {}", text(&run.stderr));
     assert_eq!(text(&built.stdout), expected, "build: {}", text(&built.stderr));

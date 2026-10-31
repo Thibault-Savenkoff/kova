@@ -3511,11 +3511,17 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Value(v[0], Show::Int));
                 m.push(Piece::Text(")".into()));
             }
-            Type::Char | Type::String => {
-                let quote = if *ty == Type::Char { "'" } else { "\"" };
-                m.push(Piece::Text(quote.into()));
+            Type::Char => {
+                m.push(Piece::Text("'".into()));
                 m.push(Piece::Value(v[0], Show::of(ty)));
-                m.push(Piece::Text(quote.into()));
+                m.push(Piece::Text("'".into()));
+            }
+            // As it would be written: `"` and line breaks escaped.
+            Type::String => {
+                let quoted = self.int_local();
+                self.emit(Inst::Str(quoted, StrOp::JsonQuote, vec![v[0]]));
+                self.temps.push((quoted, Type::String));
+                m.push(Piece::Value(quoted, Show::String));
             }
             _ => m.push(Piece::Value(v[0], Show::of(ty))),
         }

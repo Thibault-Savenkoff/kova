@@ -63,6 +63,8 @@ mod numbers {
     pub const SENDTO: usize = 44;
     pub const RECVFROM: usize = 45;
     pub const BIND: usize = 49;
+    pub const SHUTDOWN: usize = 48;
+    pub const GETSOCKNAME: usize = 51;
     pub const LISTEN: usize = 50;
     pub const ACCEPT4: usize = 288;
     pub const PPOLL: usize = 271;
@@ -105,6 +107,8 @@ mod numbers {
     pub const SENDTO: usize = 206;
     pub const RECVFROM: usize = 207;
     pub const BIND: usize = 200;
+    pub const SHUTDOWN: usize = 210;
+    pub const GETSOCKNAME: usize = 204;
     pub const LISTEN: usize = 201;
     pub const ACCEPT4: usize = 242;
     pub const PPOLL: usize = 73;
@@ -386,9 +390,20 @@ impl Network for Net {
         }
     }
 
+    fn wake(&mut self, fd: &usize) {
+        unsafe { call(SHUTDOWN, *fd, 2, 0, 0, 0, 0) };
+    }
+
     fn close(&mut self, fd: usize) {
         close(fd);
     }
+}
+
+/// The port of a socket: a `sockaddr_in` holds it after the family.
+fn port_of(fd: usize) -> u16 {
+    let (mut a, mut n) = ([0u8; 16], 16u32);
+    unsafe { call(GETSOCKNAME, fd, a.as_mut_ptr() as usize, &mut n as *mut u32 as usize, 0, 0, 0) };
+    u16::from_be_bytes([a[2], a[3]])
 }
 
 /// The first IPv4 address of `host`, for UDP.
@@ -416,6 +431,14 @@ impl Serve for Net {
 
     fn stop(&mut self, fd: usize) {
         close(fd);
+    }
+
+    fn port(&mut self, fd: &usize) -> u16 {
+        port_of(*fd)
+    }
+
+    fn datagram_port(&mut self, fd: &usize) -> u16 {
+        port_of(*fd)
     }
 
     fn udp(&mut self, port: u16, everyone: bool, ms: u64) -> Option<usize> {

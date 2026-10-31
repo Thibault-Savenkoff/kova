@@ -101,6 +101,9 @@ pub struct Session<L> {
     /// What OpenSSL reads from (the site's bytes) and writes to (the bytes for the site).
     from_site: P,
     to_site: P,
+    /// OpenSSL is not safe across threads on one connection: `Link::receive` waits without it.
+    // ponytail: a `send` stuck on a full socket holds it, so two peers both only sending can stall.
+    turn: crate::http::Turn,
 }
 
 impl<N: Network> Network for Tls<N> {
@@ -122,7 +125,7 @@ impl<N: Network> Network for Tls<N> {
             (ssl.set_verify)(ctx, 1, null_mut());
             (ssl.new)(ctx)
         };
-        let mut s = Box::new(Session { raw, ssl, ctx, session, from_site: null_mut(), to_site: null_mut() });
+        let mut s = Box::new(Session { raw, ssl, ctx, session, from_site: null_mut(), to_site: null_mut(), turn: crate::http::Turn::new() });
         match handshake(&mut self.0, &mut s, host) {
             Ok(()) => Ok(Link::Secure(s)),
             Err(f) => {
@@ -138,12 +141,16 @@ impl<N: Network> Network for Tls<N> {
             Link::Secure(s) => s,
         };
         for piece in data.chunks(1 << 30) {
+            s.turn.lock();
             (s.ssl.clear_errors)();
             // A memory BIO takes everything at once.
-            if (s.ssl.write)(s.session, piece.as_ptr(), piece.len() as i32) <= 0 {
+            let written = (s.ssl.write)(s.session, piece.as_ptr(), piece.len() as i32);
+            let sent = flush(&mut self.0, s);
+            s.turn.unlock();
+            if written <= 0 {
                 return Err(Fail::Broken);
             }
-            flush(&mut self.0, s)?;
+            sent?;
         }
         Ok(())
     }
@@ -154,13 +161,17 @@ impl<N: Network> Network for Tls<N> {
             Link::Secure(s) => s,
         };
         loop {
+            s.turn.lock();
             (s.ssl.clear_errors)();
             let n = (s.ssl.read)(s.session, buffer.as_mut_ptr(), buffer.len().min(1 << 30) as i32);
-            flush(&mut self.0, s)?;
+            let sent = flush(&mut self.0, s);
+            let why = if n > 0 { 0 } else { (s.ssl.error)(s.session, n) };
+            s.turn.unlock();
+            sent?;
             if n > 0 {
                 return Ok(n as usize);
             }
-            match (s.ssl.error)(s.session, n) {
+            match why {
                 WANT_READ => {
                     if !more(&mut self.0, s)? {
                         return Ok(0);
@@ -170,6 +181,13 @@ impl<N: Network> Network for Tls<N> {
                 ZERO_RETURN => return Ok(0),
                 _ => return Err(Fail::Broken),
             }
+        }
+    }
+
+    fn wake(&mut self, link: &Self::Link) {
+        match link {
+            Link::Plain(raw) => self.0.wake(raw),
+            Link::Secure(s) => self.0.wake(&s.raw),
         }
     }
 
@@ -207,7 +225,9 @@ fn more<N: Network>(net: &mut N, s: &mut Session<N::Link>) -> Result<bool, Fail>
     let mut buffer = [0u8; 16384];
     let n = net.receive(&mut s.raw, &mut buffer)?;
     if n > 0 {
+        s.turn.lock();
         (s.ssl.bio_write)(s.from_site, buffer.as_ptr(), n as i32);
+        s.turn.unlock();
     }
     Ok(n > 0)
 }

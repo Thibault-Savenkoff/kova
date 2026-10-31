@@ -55,6 +55,8 @@ mod c {
         pub fn recvfrom(fd: i32, b: *mut u8, n: usize, flags: i32, from: *mut u8, size: *mut u32) -> isize;
         pub fn listen(fd: i32, backlog: i32) -> i32;
         pub fn accept(fd: i32, address: *mut u8, n: *mut u32) -> i32;
+        pub fn shutdown(fd: i32, how: i32) -> i32;
+        pub fn getsockname(fd: i32, address: *mut u8, n: *mut u32) -> i32;
         pub fn poll(fds: *mut [i32; 2], n: u32, ms: i32) -> i32;
         pub fn getifaddrs(list: *mut *mut super::IfAddrs) -> i32;
         pub fn freeifaddrs(list: *mut super::IfAddrs);
@@ -255,14 +257,33 @@ impl Network for Net {
         }
     }
 
+    fn wake(&mut self, fd: &i32) {
+        unsafe { c::shutdown(*fd, 2) };
+    }
+
     fn close(&mut self, fd: i32) {
         unsafe { c::close(fd) };
     }
 }
 
+/// The port of a socket: a `sockaddr_in` holds it after the length and the family.
+fn port_of(fd: i32) -> u16 {
+    let (mut a, mut n) = ([0u8; 16], 16u32);
+    unsafe { c::getsockname(fd, a.as_mut_ptr(), &mut n) };
+    u16::from_be_bytes([a[2], a[3]])
+}
+
 impl Serve for Net {
     type Listener = i32;
     type Datagram = i32;
+
+    fn port(&mut self, fd: &i32) -> u16 {
+        port_of(*fd)
+    }
+
+    fn datagram_port(&mut self, fd: &i32) -> u16 {
+        port_of(*fd)
+    }
 
     fn stop(&mut self, fd: i32) {
         unsafe { c::close(fd) };

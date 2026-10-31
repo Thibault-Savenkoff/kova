@@ -1,0 +1,56 @@
+// expect: true
+// expect: true
+// expect: receive: Closed
+// expect: accept: Closed
+// expect: udp: Closed
+
+import net
+import system
+import threads
+
+fn received(link: net.Link) -> String {
+    var mine: net.Link := link.clone
+    return match mine.receive {
+        ok(data) => "got {data.length}"
+        err(e) => "receive: {if e = net.Error.Closed { "Closed" } else { "other" }}"
+    }
+}
+
+fn accepted(listener: net.Listener) -> String {
+    return match listener.accept {
+        ok(link) => "got {link.peer}"
+        err(e) => "accept: {if e = net.Error.Closed { "Closed" } else { "other" }}"
+    }
+}
+
+fn datagram(socket: net.Socket) -> String {
+    return match socket.receive {
+        ok(d) => "got {d.host}"
+        err(e) => "udp: {if e = net.Error.Closed { "Closed" } else { "other" }}"
+    }
+}
+
+fn main {
+    let listener: net.Listener := net.listen(0)?
+    let socket: net.Socket := net.udp(0)?
+    print(listener.port >= 1024)
+    print(socket.port >= 1024)
+
+    let link: net.Link := net.connect("127.0.0.1", listener.port)?
+    let served: net.Link := listener.accept?
+    let reading: threads.Task<String> := threads.spawn { received(link) }
+    system.sleep(0.1)
+    link.close
+    print(reading.wait)
+    served.close
+
+    let waiting: threads.Task<String> := threads.spawn { accepted(listener) }
+    system.sleep(0.1)
+    listener.close
+    print(waiting.wait)
+
+    let quiet: threads.Task<String> := threads.spawn { datagram(socket) }
+    system.sleep(0.1)
+    socket.close
+    print(quiet.wait)
+}

@@ -60,8 +60,7 @@ fn main {
 // expect:
 // expect: true
 // expect: true
-// expect: [["a", "b"], ["x,y", "deux
-// expect: lignes"]]
+// expect: [["a", "b"], ["x,y", "deux\nlignes"]]
 // expect: a,b
 // expect: "x,y","deux
 // expect: lignes"

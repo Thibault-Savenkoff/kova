@@ -126,7 +126,7 @@ fn main {
     lists
 }
 // expect: {"title":"Le \"Petit\" Prince","price":9.5,"pages":96,"read":true,"author":{"name":"Saint-Ex","born":null},"tags":["conte","été"],"notes":{"a":1,"b":2}}
-// expect: Book { title := "Le "Petit" Prince", price := 9.5, pages := 96, read := true, author := Author { name := "Saint-Ex", born := none }, tags := ["conte", "été"], notes := ["a" := 1, "b" := 2] }
+// expect: Book { title := "Le \"Petit\" Prince", price := 9.5, pages := 96, read := true, author := Author { name := "Saint-Ex", born := none }, tags := ["conte", "été"], notes := ["a" := 1, "b" := 2] }
 // expect: true
 // expect: missing: price
 // expect: error: NotJson(1)
@@ -149,7 +149,7 @@ fn main {
 // expect: ok(Pair<Int> { a := -9223372036854775808, b := 9223372036854775807 })
 // expect: err(WrongKind("a"))
 // expect: err(WrongKind("a"))
-// expect: ok(Pair<String> { a := "é😀A"/", b := "" })
+// expect: ok(Pair<String> { a := "é😀A\"/", b := "" })
 // expect: err(NotJson(1))
 // expect: {"f":[0.1,1.5e-5,1e16,-0.0,0.3333333333333333,1.2345678901234568e20,null,null],"i":[0,-1,42]}
 // expect: {"a":"x","b":"y"}

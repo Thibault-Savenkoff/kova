@@ -279,6 +279,8 @@ unsafe extern "system" {
     fn recvfrom(s: usize, b: *mut u8, n: i32, flags: i32, from: *mut u8, size: *mut i32) -> i32;
     fn listen(s: usize, backlog: i32) -> i32;
     fn accept(s: usize, address: *mut u8, n: *mut i32) -> usize;
+    fn shutdown(s: usize, how: i32) -> i32;
+    fn getsockname(s: usize, address: *mut u8, n: *mut i32) -> i32;
     fn WSAPoll(fds: *mut Poll, n: u32, ms: i32) -> i32;
     fn gethostname(name: *mut u8, n: i32) -> i32;
 }
@@ -374,14 +376,33 @@ impl Network for Net {
         }
     }
 
+    fn wake(&mut self, s: &usize) {
+        unsafe { shutdown(*s, 2) };
+    }
+
     fn close(&mut self, s: usize) {
         unsafe { closesocket(s) };
     }
 }
 
+/// The port of a socket: a `sockaddr_in` holds it after the family.
+fn port_of(s: usize) -> u16 {
+    let (mut a, mut n) = ([0u8; 16], 16i32);
+    unsafe { getsockname(s, a.as_mut_ptr(), &mut n) };
+    u16::from_be_bytes([a[2], a[3]])
+}
+
 impl Serve for Net {
     type Listener = usize;
     type Datagram = usize;
+
+    fn port(&mut self, s: &usize) -> u16 {
+        port_of(*s)
+    }
+
+    fn datagram_port(&mut self, s: &usize) -> u16 {
+        port_of(*s)
+    }
 
     fn stop(&mut self, s: usize) {
         unsafe { closesocket(s) };

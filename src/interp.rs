@@ -553,13 +553,18 @@ fn watches(p: &Program, at: Option<(usize, usize, usize, Loc)>) -> &[Watch] {
 fn pause(p: &Program, out: &mut dyn Write, files: &[String], heap: &mut Heap, reason: &str, text: Option<&str>) {
     let _ = out.flush();
     let Some(mut d) = heap.debugger.take() else { return };
+    d.me = heap.threads.me;
+    d.others = (heap.threads.stacks.iter().enumerate())
+        .filter(|(t, _)| *t != d.me)
+        .filter_map(|(t, s)| Some((t, s.as_ref()?.frames().to_vec())))
+        .collect();
     d.stopped(reason, text);
     while let Some(ask) = d.asked() {
         let frame = match &ask {
             Ask::Variables(f) | Ask::Evaluate(f, _) => *f,
         };
-        let at = d.frames.get(frame).and_then(|f| f.at);
-        let values = d.frames.get(frame).map_or(vec![], |f| f.values.clone());
+        let at = d.frame(frame).and_then(|f| f.at);
+        let values = d.frame(frame).map_or(vec![], |f| f.values.clone());
         if let Ask::Evaluate(_, expression) = &ask {
             let result = evaluate(p, at, &values, expression, &d, files, heap);
             d.evaluated(result);
@@ -586,6 +591,7 @@ fn pause(p: &Program, out: &mut dyn Write, files: &[String], heap: &mut Heap, re
         }
         d.variables(shown);
     }
+    d.others.clear();
     heap.debugger = Some(d);
 }
 

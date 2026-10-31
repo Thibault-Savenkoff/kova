@@ -24,6 +24,7 @@ use crate::{analyze, diag, interp, kir};
 
 /// A function being run: its name, the statement it is at (function, block, instruction, place)
 /// and the values of the variables visible there, copied at that statement or before a call.
+#[derive(Clone)]
 pub struct Frame {
     pub name: String,
     pub at: Option<(usize, usize, usize, Loc)>,
@@ -68,7 +69,13 @@ pub struct Debugger {
     /// The program run (its path and text), for `evaluation`.
     path: String,
     source: String,
+    /// The running thread, and the frames of the others while stopped.
+    pub me: usize,
+    pub others: Vec<(usize, Vec<Frame>)>,
 }
+
+/// What numbers a frame of a thread that does not run: the running one's count from 0.
+const THREAD: usize = 1 << 20;
 
 /// What the debugger follows for each thread: only the running one's is in `Debugger`.
 #[derive(Default)]
@@ -77,7 +84,21 @@ pub struct Stack {
     step: Step,
 }
 
+impl Stack {
+    pub fn frames(&self) -> &[Frame] {
+        &self.frames
+    }
+}
+
 impl Debugger {
+    /// A frame, of any thread, by the number the editor knows it by.
+    pub fn frame(&self, id: usize) -> Option<&Frame> {
+        match id / THREAD {
+            0 => self.frames.get(id),
+            t => self.others.iter().find(|(o, _)| o + 1 == t)?.1.get(id % THREAD),
+        }
+    }
+
     /// Another thread runs: a step stays in the thread it was asked in.
     pub fn swap(&mut self, stack: &mut Stack) {
         std::mem::swap(&mut self.frames, &mut stack.frames);
@@ -102,6 +123,8 @@ pub fn serve() -> i32 {
         breakpoints: HashMap::new(),
         step: Step::Run,
         frames: vec![],
+        me: 0,
+        others: vec![],
         errored: false,
         asked: None,
         quiet: false,
@@ -217,7 +240,7 @@ impl Debugger {
     /// Tells the editor the program stopped (`text`: the message of a runtime error).
     pub fn stopped(&mut self, reason: &str, text: Option<&str>) {
         self.step = Step::Run;
-        event("stopped", json!({ "reason": reason, "threadId": 1, "allThreadsStopped": true, "text": text, "description": text }));
+        event("stopped", json!({ "reason": reason, "threadId": self.me + 1, "allThreadsStopped": true, "text": text, "description": text }));
     }
 
     /// While stopped: answers the editor until it asks something about a function being run
@@ -318,7 +341,12 @@ impl Debugger {
     fn handle(&mut self, req: &Value) {
         let a = &req["arguments"];
         match req["command"].as_str().unwrap_or("") {
-            "threads" => respond(req, json!({ "threads": [{ "id": 1, "name": "main" }] })),
+            "threads" => {
+                let mut all: Vec<usize> = self.others.iter().map(|o| o.0).chain([self.me]).collect();
+                all.sort();
+                let named = |t: usize| if t == 0 { "main".to_string() } else { format!("thread {t}") };
+                respond(req, json!({ "threads": all.iter().map(|&t| json!({ "id": t + 1, "name": named(t) })).collect::<Vec<_>>() }));
+            }
             "setBreakpoints" => {
                 let lines: Vec<usize> = a["breakpoints"].as_array().into_iter().flatten().filter_map(|b| b["line"].as_u64()).map(|l| l as usize).collect();
                 let verified: Vec<Value> = lines.iter().map(|l| json!({ "verified": true, "line": l })).collect();
@@ -332,9 +360,14 @@ impl Debugger {
             }
             // The innermost function first; one that hasn't reached its first statement isn't shown.
             "stackTrace" => {
-                let frames: Vec<Value> = (self.frames.iter().enumerate().rev())
+                let thread = a["threadId"].as_u64().map_or(self.me, |t| t as usize - 1);
+                let (first, shown) = match self.others.iter().find(|o| o.0 == thread) {
+                    Some((t, frames)) => ((t + 1) * THREAD, frames),
+                    None => (0, &self.frames),
+                };
+                let frames: Vec<Value> = (shown.iter().enumerate().rev())
                     .filter_map(|(i, f)| Some((i, f, f.at?.3)))
-                    .map(|(i, f, loc)| json!({ "id": i, "name": f.name, "line": loc.line, "column": loc.col, "source": source(loc) }))
+                    .map(|(i, f, loc)| json!({ "id": first + i, "name": f.name, "line": loc.line, "column": loc.col, "source": source(loc) }))
                     .collect();
                 respond(req, json!({ "stackFrames": frames, "totalFrames": frames.len() }));
             }

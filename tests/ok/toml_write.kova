@@ -1,0 +1,55 @@
+// expect: title = "Kova \"x\""
+// expect: tags = ["a", "b"]
+// expect: empty = []
+// expect:
+// expect: [owner]
+// expect: name = "Ada"
+// expect: age = 36
+// expect:
+// expect: [[servers]]
+// expect: host = "alpha"
+// expect:
+// expect: [[servers]]
+// expect: host = "beta"
+// expect: true
+// expect: line 1: TOML is written from one JSON object
+
+import toml
+
+struct Owner : Equal {
+public:
+    name: String
+    age: Int
+    nick: String?
+}
+
+struct Server : Equal {
+public:
+    host: String
+}
+
+struct Config : Equal {
+public:
+    title: String
+    tags: List<String>
+    empty: List<Int>
+    owner: Owner
+    servers: List<Server>
+}
+
+fn main {
+    let c: Config := Config {
+        title := "Kova \"x\""
+        tags := ["a", "b"]
+        empty := []
+        owner := Owner { name := "Ada", age := 36, nick := none }
+        servers := [Server { host := "alpha" }, Server { host := "beta" }]
+    }
+    let written: String := toml.from_json(c.to_json) else ""
+    print(written.trim)
+    print((Config.from_json(toml.to_json(written) else "") else c.clone) = c)
+    match toml.from_json("[1]") {
+        ok(t) => print(t)
+        err(e) => print(e.to_string)
+    }
+}

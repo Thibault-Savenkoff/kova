@@ -1,6 +1,6 @@
 ---
 title: toml
-description: Reading TOML, the format of configuration files.
+description: Reading and writing TOML, the format of configuration files.
 sidebar:
   order: 19
 ---
@@ -74,4 +74,37 @@ Everything in TOML is read: all the kinds of texts, dotted names (`a.b = 1`), li
 tables, dates, and the numbers `1_000` and `0xff`. A date stays a text in the JSON, which a `Date`
 field reads. `inf` and `nan` are refused, since JSON cannot write them.
 
-Kova reads TOML but does not write it: a program that saves settings uses `to_json`.
+## Writing TOML
+
+`toml.from_json(json) -> String or toml.Error` is the other direction: give it what `to_json` writes
+for a struct of your program, and save the result. TOML has no `null`, so an absent field is left out.
+
+```kova
+import toml
+
+struct Owner {
+public:
+    name: String
+}
+
+struct Settings {
+public:
+    port: Int
+    tags: List<String>
+    owner: Owner
+}
+
+fn main {
+    let s: Settings := Settings { port := 80, tags := ["a"], owner := Owner { name := "Ada" } }
+    print(toml.from_json(s.to_json)?)
+}
+```
+
+```text
+port = 80
+tags = ["a"]
+
+[owner]
+name = "Ada"
+
+```
