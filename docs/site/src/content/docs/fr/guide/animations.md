@@ -547,6 +547,204 @@ fn update(app: var App, e: Event) {
 `.min(1.0)` arrête `t` à la fin, et cette animation dure 0,8 seconde quelle que soit la lenteur de
 l'ordinateur : un ordinateur plus lent montre moins d'images.
 
+## Plusieurs choses à la fois
+
+Chaque objet a besoin de son propre timing, pas de sa propre horloge. Un seul `t` pilote tout, et
+`part` donne à chaque objet son morceau. Ici cinq balles partent l'une après l'autre. Chacune démarre
+0,1 après la précédente, et prend 0,6 du temps :
+
+```kova
+import ui
+
+enum Event {
+    Start
+    Tick
+}
+
+let steps: Int := 90
+
+fn part(t: Float, begin: Float, end: Float) -> Float {
+    return ((t - begin) / (end - begin)).max(0.0).min(1.0)
+}
+
+fn slow_down(t: Float) -> Float {
+    return t * (2.0 - t)
+}
+
+fn view(step: Int) -> ui.View {
+    let t: Float := step.to_float / steps.to_float
+    return ui.column([
+        ui.button("Go", Event.Start),
+        ui.canvas(400, 220) { d: ui.Draw =>
+            d.clear(ui.white)
+            for i in 0..5 {
+                let begin: Float := i.to_float * 0.1
+                let e: Float := slow_down(part(t, begin, begin + 0.6))
+                d.circle(40 + (320.0 * e).to_int, 30 + i * 40) radius(15) color(ui.blue)
+            }
+        },
+    ]).every(16, Event.Tick)
+}
+
+fn update(step: var Int, e: Event) {
+    match e {
+        Start => step := 1
+        Tick => {
+            if step > 0 && step < steps {
+                step := step + 1
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Balls", 0, view, update)
+}
+```
+
+```text
+[Balls] column(button "Go", canvas 400x220 clear(#ffffff) circle(40 30 15 #2563eb 0) circle(40 70 15 #2563eb 0) circle(40 110 15 #2563eb 0) circle(40 150 15 #2563eb 0) circle(40 190 15 #2563eb 0)) every(16)
+```
+
+Changer `0.1` change l'écart entre les balles, et `0.6` la durée de chacune. Vérifie que la dernière
+finit à temps : elle commence à `4 * 0.1`, et `0.4 + 0.6` fait `1.0`. Une somme au-dessus de `1.0`
+veut dire que la dernière balle est coupée avant d'arriver.
+
+## Un mouvement sans courbe : la physique
+
+Une courbe connaît tout le mouvement à l'avance. Ce n'est pas ce qu'il faut pour quelque chose qui
+réagit : une balle qu'on relance en plein vol, ou qui heurte un mur. La physique marche autrement :
+l'état garde où est l'objet **et à quelle vitesse il va**, et chaque image calcule la suivante à
+partir de ça.
+
+Deux lignes suffisent, toujours dans cet ordre :
+
+1. La vitesse change : `speed := speed + gravity`.
+2. La position change : `position := position + speed`.
+
+Cette balle tombe, et perd une partie de sa vitesse à chaque fois qu'elle touche le sol :
+
+```kova
+import ui
+
+enum Event {
+    Drop
+    Tick
+}
+
+struct Ball {
+    y: Float
+    speed: Float
+}
+
+let floor_at: Float := 170.0
+let gravity: Float := 0.5
+let kept: Float := 0.7
+
+fn view(ball: Ball) -> ui.View {
+    return ui.column([
+        ui.button("Drop", Event.Drop),
+        ui.canvas(200, 200) { d: ui.Draw =>
+            d.clear(ui.white)
+            d.circle(100, ball.y.to_int + 15) radius(15) color(ui.red)
+        },
+    ]).every(16, Event.Tick)
+}
+
+fn update(ball: var Ball, e: Event) {
+    match e {
+        Drop => {
+            ball.y := 0.0
+            ball.speed := 0.0
+        }
+        Tick => {
+            ball.speed := ball.speed + gravity
+            ball.y := ball.y + ball.speed
+            if ball.y > floor_at {
+                ball.y := floor_at
+                ball.speed := -ball.speed * kept
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Ball", Ball { y := floor_at, speed := 0.0 }, view, update)
+}
+```
+
+```text
+[Ball] column(button "Drop", canvas 200x200 clear(#ffffff) circle(100 185 15 #dc2626 0)) every(16)
+```
+
+`gravity` est ce que la vitesse gagne à chaque image. `kept` est ce qui reste après le sol : `1.0`
+rebondit pour toujours, `0.0` ne rebondit pas du tout. Le frottement est une ligne de plus,
+`speed := speed * 0.98`, et un ressort est une vitesse tirée vers le but,
+`speed := speed + (goal - position) * 0.1`, avec du frottement pour le calmer.
+
+Rien ici ne dépend du temps restant : appuyer sur `Drop` pendant un rebond repart simplement de
+l'état. En revanche, la physique n'a pas de durée. Le mouvement finit quand la vitesse s'est éteinte,
+donc il se règle en essayant, et le même petit programme sans fenêtre le montre :
+
+```kova
+fn main {
+    var y: Float := 0.0
+    var speed: Float := 0.0
+    var highest: Float := 170.0
+    var going_up: Bool := false
+    for frame in 0..400 {
+        speed := speed + 0.5
+        y := y + speed
+        if y > 170.0 {
+            y := 170.0
+            speed := -speed * 0.7
+            going_up := true
+        }
+        if going_up && speed > 0.0 {
+            print("frame {frame}: rises to {170.0 - y}")
+            going_up := false
+        }
+    }
+}
+```
+
+```text
+frame 44: rises to 77.89999999999989
+frame 74: rises to 35.48999999999987
+frame 94: rises to 13.850999999999885
+frame 107: rises to 6.136199999999917
+frame 116: rises to 2.6364399999999932
+frame 122: rises to 0.34086899999996945
+```
+
+## Construire une animation complexe
+
+Ne commence pas par le code. Une animation complexe est une suite d'animations simples, donc
+construis-la dans cet ordre :
+
+1. **Écris la chronologie en mots.** « Le menu s'ouvre en 0,4 s ; à partir de 0,2 s, chaque ligne
+   glisse, une toutes les 0,05 s ; la dernière rebondit. » Une phrase que tu ne sais pas écrire est un
+   mouvement que tu n'as pas décidé.
+2. **Transforme chaque moment en part de `t`.** Divise les temps par le total. Avec 1 seconde en tout,
+   le menu est `part(t, 0.0, 0.4)`, la première ligne `part(t, 0.2, 0.5)`.
+3. **Choisis ce que chaque part déplace**, avec `valeur = départ + (but - départ) * progression`, une
+   ligne pour chacune.
+4. **Choisis une courbe pour chaque part**, en commençant sans aucune. Règle d'abord le timing à
+   vitesse constante : les courbes cachent les erreurs de timing.
+5. **Ralentis tout pour regarder.** Multiplie `steps` par 5 pendant que tu travailles : ce qui se passe
+   en 16 millisecondes ne se juge pas.
+
+Pour que ça reste lisible, mets le calcul de chaque objet dans une fonction de `t`, comme
+`fn menu_height(t: Float) -> Int`. `view` ne fait plus que dessiner, et chaque fonction peut s'afficher
+en tableau sans ouvrir de fenêtre. Un état avec un `enum` pour la phase (`Closed`, `Opening`, `Open`,
+`Closing`) dit quelle animation tourne et quels clics comptent : un clic sur un menu en train de
+s'ouvrir peut lancer `Closing` depuis là où est le menu, si l'état garde la valeur actuelle comme
+prochain départ.
+
+Pour un mouvement qui dépend de ce qui arrive, un clic ou une collision, utilise la physique. Pour un
+mouvement qui doit durer un temps précis et finir à un endroit précis, utilise une courbe. Les deux
+peuvent vivre dans le même programme : chaque objet choisit le sien.
+
 ## En bref
 
 - `valeur = départ + (but - départ) * progression`, à chaque image.

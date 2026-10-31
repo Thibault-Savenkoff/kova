@@ -543,6 +543,200 @@ fn update(app: var App, e: Event) {
 `.min(1.0)` stops `t` at the end, and this animation lasts 0.8 seconds however slow the computer is:
 a slower one shows fewer images.
 
+## Several things at once
+
+Each object needs its own timing, not its own clock. One `t` drives everything, and `part` gives each
+object its piece of it. Here five balls leave one after the other. Each starts 0.1 later than the
+last, and takes 0.6 of the time:
+
+```kova
+import ui
+
+enum Event {
+    Start
+    Tick
+}
+
+let steps: Int := 90
+
+fn part(t: Float, begin: Float, end: Float) -> Float {
+    return ((t - begin) / (end - begin)).max(0.0).min(1.0)
+}
+
+fn slow_down(t: Float) -> Float {
+    return t * (2.0 - t)
+}
+
+fn view(step: Int) -> ui.View {
+    let t: Float := step.to_float / steps.to_float
+    return ui.column([
+        ui.button("Go", Event.Start),
+        ui.canvas(400, 220) { d: ui.Draw =>
+            d.clear(ui.white)
+            for i in 0..5 {
+                let begin: Float := i.to_float * 0.1
+                let e: Float := slow_down(part(t, begin, begin + 0.6))
+                d.circle(40 + (320.0 * e).to_int, 30 + i * 40) radius(15) color(ui.blue)
+            }
+        },
+    ]).every(16, Event.Tick)
+}
+
+fn update(step: var Int, e: Event) {
+    match e {
+        Start => step := 1
+        Tick => {
+            if step > 0 && step < steps {
+                step := step + 1
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Balls", 0, view, update)
+}
+```
+
+```text
+[Balls] column(button "Go", canvas 400x220 clear(#ffffff) circle(40 30 15 #2563eb 0) circle(40 70 15 #2563eb 0) circle(40 110 15 #2563eb 0) circle(40 150 15 #2563eb 0) circle(40 190 15 #2563eb 0)) every(16)
+```
+
+Changing `0.1` changes the delay between the balls, and `0.6` how long each one takes. Check that the
+last one ends in time: it begins at `4 * 0.1`, and `0.4 + 0.6` is `1.0`. A sum above `1.0` means the
+last ball is cut off before it arrives.
+
+## Movement without a curve: physics
+
+A curve knows the whole movement in advance. That is not what you want for something that reacts: a
+ball that can be thrown again in mid-air, or that hits a wall. Physics works differently: the state
+holds where the object is **and how fast it goes**, and each image computes the next one from those.
+
+Two lines are enough, always in this order:
+
+1. The speed changes: `speed := speed + gravity`.
+2. The position changes: `position := position + speed`.
+
+This ball falls, and loses part of its speed each time it hits the floor:
+
+```kova
+import ui
+
+enum Event {
+    Drop
+    Tick
+}
+
+struct Ball {
+    y: Float
+    speed: Float
+}
+
+let floor_at: Float := 170.0
+let gravity: Float := 0.5
+let kept: Float := 0.7
+
+fn view(ball: Ball) -> ui.View {
+    return ui.column([
+        ui.button("Drop", Event.Drop),
+        ui.canvas(200, 200) { d: ui.Draw =>
+            d.clear(ui.white)
+            d.circle(100, ball.y.to_int + 15) radius(15) color(ui.red)
+        },
+    ]).every(16, Event.Tick)
+}
+
+fn update(ball: var Ball, e: Event) {
+    match e {
+        Drop => {
+            ball.y := 0.0
+            ball.speed := 0.0
+        }
+        Tick => {
+            ball.speed := ball.speed + gravity
+            ball.y := ball.y + ball.speed
+            if ball.y > floor_at {
+                ball.y := floor_at
+                ball.speed := -ball.speed * kept
+            }
+        }
+    }
+}
+
+fn main {
+    ui.run("Ball", Ball { y := floor_at, speed := 0.0 }, view, update)
+}
+```
+
+```text
+[Ball] column(button "Drop", canvas 200x200 clear(#ffffff) circle(100 185 15 #dc2626 0)) every(16)
+```
+
+`gravity` is how much the speed grows at each image. `kept` is what is left after the floor: `1.0`
+bounces forever, `0.0` does not bounce at all. Friction is one more line, `speed := speed * 0.98`, and
+a spring is a speed pulled towards the goal, `speed := speed + (goal - position) * 0.1`, with friction
+to calm it.
+
+Nothing here depends on the time left: pressing `Drop` during a bounce simply starts again from the
+state. Physics has no duration, though. The movement ends when the speed has died, so it is tuned by
+trying, and the same small program without a window shows it:
+
+```kova
+fn main {
+    var y: Float := 0.0
+    var speed: Float := 0.0
+    var highest: Float := 170.0
+    var going_up: Bool := false
+    for frame in 0..400 {
+        speed := speed + 0.5
+        y := y + speed
+        if y > 170.0 {
+            y := 170.0
+            speed := -speed * 0.7
+            going_up := true
+        }
+        if going_up && speed > 0.0 {
+            print("frame {frame}: rises to {170.0 - y}")
+            going_up := false
+        }
+    }
+}
+```
+
+```text
+frame 44: rises to 77.89999999999989
+frame 74: rises to 35.48999999999987
+frame 94: rises to 13.850999999999885
+frame 107: rises to 6.136199999999917
+frame 116: rises to 2.6364399999999932
+frame 122: rises to 0.34086899999996945
+```
+
+## Building a complex animation
+
+Do not start from the code. A complex animation is a series of simple ones, so build it in this
+order:
+
+1. **Write the timeline in words.** "The menu opens in 0.4 s; from 0.2 s, each line slides in, one
+   every 0.05 s; the last one rebounds." A sentence you cannot write is a movement you have not decided.
+2. **Turn each moment into a part of `t`.** Divide the times by the total. With 1 second in all, the
+   menu is `part(t, 0.0, 0.4)`, the first line `part(t, 0.2, 0.5)`.
+3. **Choose what each part moves**, with `value = start + (goal - start) * progress`, one line each.
+4. **Choose a curve for each part**, starting with none. Get the timing right at a steady speed first:
+   curves hide timing mistakes.
+5. **Slow it all down to look at it.** Multiply `steps` by 5 while you work: what happens in 16
+   milliseconds cannot be judged.
+
+To keep it readable, put each object's calculation in a function of `t`, such as
+`fn menu_height(t: Float) -> Int`. `view` then only draws, and each function can be printed as a table
+without opening a window. A state with an `enum` for the phase (`Closed`, `Opening`, `Open`, `Closing`)
+tells which animation runs and which clicks count: a click on an opening menu can start `Closing` from
+where the menu is, if the state keeps the current value as the next start.
+
+For a movement that depends on what happens, a click or a collision, use physics. For one that must
+last exactly a given time and end exactly in a given place, use a curve. Both can live in the same
+program: each object picks its own.
+
 ## In short
 
 - `value = start + (goal - start) * progress`, at each image.
