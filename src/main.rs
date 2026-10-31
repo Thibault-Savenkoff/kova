@@ -150,7 +150,7 @@ fn kova() {
             }
             // `extern` (PLAN Part 4 "`extern`, step 1"): C is called by native code only; so
             // are the system's windows (`import ui`).
-            if !tree.externs.is_empty() || tree.ui_from.is_some() {
+            if !tree.externs.is_empty() || tree.ui_from.is_some() || info.threads {
                 match native_run(&program, &files, lang(), &given, types::program_name(&tree)) {
                     Some(code) => exit(code),
                     None => fail(t!("extern_no_native", file = file)),
@@ -183,6 +183,7 @@ fn kova() {
             let time = if ms < 1000 { format!("{ms} ms") } else { format!("{}{}{} s", ms / 1000, t!("decimal_mark"), ms % 1000 / 100) };
             eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));
         }
+        Command::Test { only } if !tree.externs.is_empty() || info.threads => exit(native_test(&mut program, &files, lang(), only.as_deref())),
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
         Command::Install | Command::Uninstall => {
             let name = types::program_name(&tree).unwrap_or_else(|| std::path::Path::new(file).file_stem().map_or("program".into(), |s| s.to_string_lossy().into_owned()));
@@ -214,6 +215,44 @@ fn discreet(tree: &ast::File) -> bool {
 /// for `kova run` (its `mode = run` branches, its `else`s), runs as native code, which prints the
 /// same as the interpreter (PLAN Part 4 "Run or build, discreet functions"). `None` when it
 /// cannot be built or started here: the interpreter runs it.
+/// `kova test` for what only native code can do (threads, `extern`): each test is a program of
+/// its own, whose failure is its exit code. Says what `interp::test` says.
+fn native_test(program: &mut kir::Program, files: &[String], lang: Option<usize>, only: Option<&str>) -> i32 {
+    if program.tests.is_empty() {
+        println!("{}", t!("tests_none", file = files[0]));
+        return 0;
+    }
+    let tests: Vec<(String, usize)> = program.tests.iter().filter(|(name, _)| only.is_none_or(|o| o == name)).cloned().collect();
+    if let (Some(name), true) = (only, tests.is_empty()) {
+        eprintln!("{}", t!("test_unknown", name = name, file = files[0]));
+        return 1;
+    }
+    let Some(target) = codegen::Target::native() else { fail(t!("extern_no_native", file = files[0])) };
+    let dir = std::env::temp_dir().join(format!("kova-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let exe = dir.join(format!("test{}", target.suffix()));
+    let exe = exe.to_string_lossy();
+    let mut failed = 0;
+    for (name, num) in &tests {
+        program.main = Some(*num);
+        if codegen::build(program, files, &exe, lang, Some(target)).is_err() {
+            fail(t!("extern_no_native", file = files[0]));
+        }
+        let Ok(run) = std::process::Command::new(&*exe).output() else { fail(t!("extern_no_native", file = files[0])) };
+        print!("{}", String::from_utf8_lossy(&run.stdout));
+        if run.status.success() {
+            println!("✅ {name}");
+        } else {
+            failed += 1;
+            println!("❌ {name}");
+            String::from_utf8_lossy(&run.stderr).lines().for_each(|l| println!("   {l}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    println!("\n{}", t!("tests_summary", passed = tests.len() - failed, failed = failed, total = tests.len()));
+    (failed > 0) as i32
+}
+
 fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, given: &[String], named: Option<String>) -> Option<i32> {
     let target = codegen::Target::native()?;
     // `kova-run-123/counter`: the program keeps its `header` name or its file's name, which the Dock, the taskbar and

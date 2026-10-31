@@ -195,7 +195,7 @@ erreur: une fonction gardée dans une variable ne peut pas changer `count` : ell
   |
 4 |         count += 1
   |         ^^^^^
-  = aide : utilisez une `struct` avec une méthode `var self` pour garder un état qui change
+  = aide : utilisez une `struct` avec une méthode `var self` pour garder un état qui change ; entre threads, un `threads.Shared`
 ```
 
 Une fonction gardée est une valeur comme une `String` : `let b: {Int -> Int} := a` la déplace,

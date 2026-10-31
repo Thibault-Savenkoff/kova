@@ -2314,8 +2314,15 @@ impl Parser<'_> {
             loop {
                 let name = self.value_name("what_parameter")?;
                 self.expect(":")?;
+                // `s.change { n: var Int => n += 1 }`.
+                let mode = if self.kind() == Kind::Keyword("var") {
+                    self.advance();
+                    Mode::Var
+                } else {
+                    Mode::Read
+                };
                 let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
-                params.push(Param { name, mode: Mode::Read, ty, default: None });
+                params.push(Param { name, mode, ty, default: None });
                 if !self.is_sym(",") {
                     break;
                 }

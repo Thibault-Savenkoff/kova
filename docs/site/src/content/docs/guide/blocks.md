@@ -194,7 +194,7 @@ error: a function kept in a variable cannot change `count`: it holds its own cop
   |
 4 |         count += 1
   |         ^^^^^
-  = help: use a `struct` with a `var self` method to keep a state that changes
+  = help: use a `struct` with a `var self` method to keep a state that changes; between threads, a `threads.Shared`
 ```
 
 A kept function is a value like a `String`: `let b: {Int -> Int} := a` moves it, `a.clone` copies it,

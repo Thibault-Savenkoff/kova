@@ -31,6 +31,7 @@ presque la même chose.
 | `import web` | [web](/fr/library/web/), [serveur web](/fr/library/web-server/) | interroger des sites, répondre en serveur |
 | `import secure` | [secure](/fr/library/secure/#import-secure) | hasard sûr, mots de passe, chiffrement |
 | `import log` | [log](/fr/library/log/) | des lignes datées par niveau |
+| `import threads` | [threads](/fr/library/threads/) | des fils, des canaux, des valeurs partagées |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 
 ## Chaque valeur a

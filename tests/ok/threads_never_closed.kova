@@ -1,0 +1,14 @@
+import threads
+
+fn main {
+    let c := threads.Channel<Int>.new
+    threads.spawn {
+        for x in c {
+            print(x)
+        }
+    }
+    c.send(1)
+}
+// expect: 1
+// code: 101
+// stderr: error: every thread is waiting, and nothing can wake them

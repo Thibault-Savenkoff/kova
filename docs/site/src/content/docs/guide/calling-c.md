@@ -207,7 +207,7 @@ fn main {
 
 ## Running
 
-A program with `extern` runs as native code, even under `kova run`: the interpreter cannot call C.
-`kova test` and the debugger stop at the first call into C.
+A program with `extern` runs as native code, even under `kova run` and `kova test`: the interpreter
+cannot call C. The debugger stops at the first call into C.
 
 For windows, [`import ui`](/guide/windows/) does all of this for you, on every system.

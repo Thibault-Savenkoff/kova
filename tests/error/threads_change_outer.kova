@@ -1,0 +1,10 @@
+import threads
+
+fn main {
+    var n: Int := 0
+    threads.spawn {
+        n += 1
+    }
+    print(n)
+}
+// error: a function kept in a variable cannot change `n`: it holds its own copy

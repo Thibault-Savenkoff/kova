@@ -30,6 +30,7 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import web` | [web](/library/web/), [web server](/library/web-server/) | asking sites, answering as a server |
 | `import secure` | [secure](/library/secure/#import-secure) | secure chance, passwords, encryption |
 | `import log` | [log](/library/log/) | dated lines by level |
+| `import threads` | [threads](/library/threads/) | threads, channels, shared values |
 | `import ui` | [ui](/library/ui/) | native windows |
 
 ## Every value has

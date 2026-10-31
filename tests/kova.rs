@@ -302,10 +302,10 @@ fn command_line() {
     let out = kova(LANG).args(["test", "tests/ok/test_blocks.kova", "nope"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(text(&out.stderr), "no test \"nope\" in tests/ok/test_blocks.kova\n");
-    // `extern` (PLAN Part 4 "`extern`, step 1"): `kova test` interprets, so it stops at a C call.
+    // `extern`, threads: only native code has them, so each test is built (`main.rs` `native_test`).
     let out = kova(LANG).args(["test", "tests/ok/extern_c.kova"]).output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(text(&out.stdout).contains("error: calling C needs native code"), "{}", text(&out.stdout));
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stdout));
+    assert!(text(&out.stdout).contains("1 passed, 0 failed out of 1"), "{}", text(&out.stdout));
 
     // `header`: `mode := build` → `kova f.kova` compiles; `lock := true` refuses the other command.
     let dir = std::env::temp_dir().join(format!("kova-header-{}", std::process::id()));

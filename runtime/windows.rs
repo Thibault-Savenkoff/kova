@@ -53,6 +53,8 @@ unsafe extern "system" {
     fn Sleep(ms: u32);
     fn GetCurrentProcessId() -> u32;
     fn AcquireSRWLockExclusive(lock: *mut usize);
+    fn SleepConditionVariableSRW(condition: *mut usize, lock: *mut usize, milliseconds: u32, flags: u32) -> i32;
+    fn WakeAllConditionVariable(condition: *mut usize);
     fn ReleaseSRWLockExclusive(lock: *mut usize);
     fn CreateThread(security: *const u8, stack: usize, start: extern "system" fn(*mut u8) -> u32, arg: *mut u8, flags: u32, id: *mut u32) -> Handle;
     fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
@@ -699,6 +701,37 @@ impl Lock {
     }
     pub fn unlock(&self) {
         unsafe { ReleaseSRWLockExclusive(self.0.get()) }
+    }
+}
+
+// `WaitOnAddress` is not in KERNEL32.dll: one lock and one condition for every word.
+// ponytail: a wake wakes every sleeping thread; a table of conditions if thousands sleep.
+struct Sleepers(core::cell::UnsafeCell<[usize; 2]>);
+
+unsafe impl Sync for Sleepers {}
+
+static SLEEPERS: Sleepers = Sleepers(core::cell::UnsafeCell::new([0; 2]));
+
+/// Sleeps while `word` is `seen`.
+pub fn wait(word: &core::sync::atomic::AtomicU32, seen: u32) {
+    let [lock, condition] = unsafe { &mut *SLEEPERS.0.get() };
+    unsafe {
+        AcquireSRWLockExclusive(lock);
+        if word.load(core::sync::atomic::Ordering::SeqCst) == seen {
+            SleepConditionVariableSRW(condition, lock, u32::MAX, 0);
+        }
+        ReleaseSRWLockExclusive(lock);
+    }
+}
+
+/// Wakes those sleeping on `word`.
+pub fn wake(_word: &core::sync::atomic::AtomicU32) {
+    let [lock, condition] = unsafe { &mut *SLEEPERS.0.get() };
+    unsafe {
+        // Passing through the lock: a thread between its test and its sleep is not missed.
+        AcquireSRWLockExclusive(lock);
+        ReleaseSRWLockExclusive(lock);
+        WakeAllConditionVariable(condition);
     }
 }
 

@@ -830,6 +830,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             None => 0,
                             Some(t) => heap.make(t),
                         },
+                        StrOp::PipeNew | StrOp::PipeRetain | StrOp::PipeRelease | StrOp::PipePut | StrOp::PipeTake | StrOp::PipeClose | StrOp::Spawn => {
+                            unreachable!("stopped by `Inst::Threads`")
+                        }
                         StrOp::Workers => unreachable!("built only: `kova run` answers one question at a time"),
                         StrOp::Parallel | StrOp::Next => unreachable!("built only: `kova run` does one element at a time"),
                         StrOp::JsonQuote => {
@@ -1172,6 +1175,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::FaultIf(..) => {}
                 // `kova run` runs such a program as native code (main.rs `native_run`).
                 Inst::Extern(_, _, _, loc) => return Err(fault(Fault::ExternInterpreted, loc)),
+                Inst::Threads(loc) => return Err(fault(Fault::ThreadsInterpreted, loc)),
                 Inst::ListCheck(l, i, loc) => {
                     let length = heap.length(locals[*l]) as i64;
                     if !(0..length).contains(&locals[*i]) {

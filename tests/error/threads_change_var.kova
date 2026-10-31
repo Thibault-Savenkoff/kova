@@ -1,0 +1,7 @@
+import threads
+
+fn main {
+    let s := threads.Shared<Int>.new(0)
+    s.change { n: Int => n + 1 }
+}
+// error: `change` lends the value: write `x: var Int =>`

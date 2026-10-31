@@ -42,7 +42,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicI64, Ordering::Relaxed};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst}};
 
 #[global_allocator]
 static MEMORY: sys::Memory = sys::Memory;
@@ -143,6 +143,7 @@ unsafe fn c_text<'a>(p: *const u8) -> &'a [u8] {
 /// Runs the program, then stops it (called by `sys`'s entry point once it knows `args`).
 fn run() -> ! {
     unsafe { kova_main() };
+    every_thread_ended();
     exit(leaks())
 }
 
@@ -290,6 +291,8 @@ const ERROR_PREFIX: usize = 0;
 const LEAK_ALLOCATED: usize = 7;
 const LEAK_LIVE: usize = 8;
 const FAULT_INDEX: i64 = 9;
+const FAULT_CLOSED: i64 = 39;
+const FAULT_DEADLOCK: i64 = 40;
 const SERVING: usize = 18;
 const SERVING_FILES: usize = 19;
 const THIS_COMPUTER: usize = 20;
@@ -1270,7 +1273,9 @@ pub extern "C" fn kova_workers(n: i64, worker: i64, env: i64) -> i64 {
     let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
     // A thread the system cannot start (no memory left): the others answer. They never end.
     for _ in 1..n {
+        THREADS.fetch_add(1, SeqCst);
         if sys::spawn(worker, env).is_none() {
+            THREADS.fetch_sub(1, SeqCst);
             break;
         }
     }
@@ -1291,11 +1296,219 @@ pub extern "C" fn kova_parallel(n: i64, length: i64, worker: i64, env: i64) -> i
     extern "C" fn member(job: i64) {
         let &(worker, env, next) = unsafe { &*(job as *const (extern "C" fn(i64, i64), i64, i64)) };
         worker(env, next);
+        thread_ended();
     }
-    let threads: Vec<sys::Thread> = (1..n.min(length)).map_while(|_| sys::spawn(member, &job as *const _ as i64)).collect();
+    let start = |_| {
+        THREADS.fetch_add(1, SeqCst);
+        let thread = sys::spawn(member, &job as *const _ as i64);
+        if thread.is_none() {
+            THREADS.fetch_sub(1, SeqCst);
+        }
+        thread
+    };
+    let threads: Vec<sys::Thread> = (1..n.min(length)).map_while(start).collect();
     worker(env, job.2);
     threads.into_iter().for_each(sys::join);
     0
+}
+
+// ---- PLAN Part 4 "Threads" ----
+
+/// A Channel, a Task and a Shared are one thing: a queue of boxes, each a List of one value, that
+/// several handles share. A Task is a queue its thread puts the result in; a Shared is a queue of
+/// one box, so taking it is locking the value and putting it back is unlocking it.
+struct Pipe {
+    lock: sys::Lock,
+    /// Changes at each wake: a sleeping thread sleeps on it (`sys::wait`).
+    ring: AtomicU32,
+    refs: AtomicI64,
+    items: alloc::collections::VecDeque<i64>,
+    /// 0: no limit.
+    limit: i64,
+    closed: bool,
+    /// How many threads sleep on `ring`, counted in `WAITING`.
+    waiters: i64,
+    free: extern "C" fn(i64),
+}
+
+/// The threads that run, this one included, and those asleep on a Pipe: when they are as many,
+/// nothing can wake anyone. A thread in `sleep` or waiting for the network counts as running.
+static THREADS: AtomicI64 = AtomicI64::new(1);
+static WAITING: AtomicI64 = AtomicI64::new(0);
+static ENDED: AtomicU32 = AtomicU32::new(0);
+/// Where the last thread went to sleep: what a thread that ends says.
+static WAITED_AT: (AtomicI64, AtomicI64) = (AtomicI64::new(0), AtomicI64::new(0));
+
+#[allow(clippy::mut_from_ref)]
+fn pipe<'a>(h: i64) -> &'a mut Pipe {
+    unsafe { &mut *(h as *mut Pipe) }
+}
+
+impl Pipe {
+    /// Sleeps until `wake`. The lock is held on entry and on return.
+    fn wait(&mut self, line: i64, col: i64) {
+        let seen = self.ring.load(SeqCst);
+        self.waiters += 1;
+        WAITED_AT.0.store(line, Relaxed);
+        WAITED_AT.1.store(col, Relaxed);
+        if WAITING.fetch_add(1, SeqCst) + 1 == THREADS.load(SeqCst) {
+            kova_fault(FAULT_DEADLOCK, line, col);
+        }
+        self.lock.unlock();
+        while self.ring.load(SeqCst) == seen {
+            sys::wait(&self.ring, seen);
+        }
+        self.lock.lock();
+    }
+    /// Done by the thread that wakes the sleepers, not by them: a thread woken but not yet running
+    /// is not waiting any more.
+    fn wake(&mut self) {
+        self.ring.fetch_add(1, SeqCst);
+        WAITING.fetch_sub(self.waiters, SeqCst);
+        self.waiters = 0;
+        sys::wake(&self.ring);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_new(limit: i64, free: extern "C" fn(i64)) -> i64 {
+    made();
+    let items = alloc::collections::VecDeque::new();
+    let p = Pipe { lock: sys::Lock::new(), ring: AtomicU32::new(0), refs: AtomicI64::new(1), items, limit, closed: false, waiters: 0, free };
+    Box::into_raw(Box::new(p)) as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_retain(h: i64) -> i64 {
+    if h != 0 {
+        pipe(h).refs.fetch_add(1, Relaxed);
+    }
+    h
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_release(h: i64) -> i64 {
+    if h != 0 && pipe(h).refs.fetch_sub(1, AcqRel) == 1 {
+        let p = unsafe { Box::from_raw(h as *mut Pipe) };
+        p.items.iter().for_each(|&b| (p.free)(b));
+        LIVE.fetch_sub(1, Relaxed);
+    }
+    0
+}
+
+/// Waits while the pipe is full.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_put(h: i64, b: i64, line: i64, col: i64) -> i64 {
+    let p = pipe(h);
+    p.lock.lock();
+    while p.limit != 0 && p.items.len() as i64 >= p.limit && !p.closed {
+        p.wait(line, col);
+    }
+    if p.closed {
+        kova_fault(FAULT_CLOSED, line, col);
+    }
+    p.items.push_back(b);
+    p.wake();
+    p.lock.unlock();
+    0
+}
+
+/// Waits for a box: 0 once the pipe is closed and empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_take(h: i64, line: i64, col: i64) -> i64 {
+    let p = pipe(h);
+    p.lock.lock();
+    while p.items.is_empty() && !p.closed {
+        p.wait(line, col);
+    }
+    let b = p.items.pop_front().unwrap_or(0);
+    p.wake();
+    p.lock.unlock();
+    b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pipe_close(h: i64) -> i64 {
+    let p = pipe(h);
+    p.lock.lock();
+    p.closed = true;
+    p.wake();
+    p.lock.unlock();
+    0
+}
+
+/// A thread `threads.spawn` started; `done` once its stack may go.
+struct Job {
+    entry: extern "C" fn(i64, i64),
+    task: i64,
+    function: i64,
+    done: AtomicBool,
+}
+
+static STARTED: Locked<Vec<(sys::Thread, i64)>> = Locked::new(Vec::new());
+
+extern "C" fn job_begins(job: i64) {
+    let job = unsafe { &*(job as *const Job) };
+    (job.entry)(job.task, job.function);
+    thread_ended();
+    job.done.store(true, Release);
+}
+
+/// `entry(task, function)` on a new thread. Each new thread also joins those that ended: their
+/// stacks go then, and a program that starts threads for ever stays small.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_spawn(entry: extern "C" fn(i64, i64), task: i64, function: i64) -> i64 {
+    let ended = STARTED.with(|started| {
+        let mut ended = Vec::new();
+        let mut i = 0;
+        while i < started.len() {
+            if unsafe { &*(started[i].1 as *const Job) }.done.load(Acquire) {
+                ended.push(started.swap_remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        ended
+    });
+    for (thread, job) in ended {
+        sys::join(thread);
+        drop(unsafe { Box::from_raw(job as *mut Job) });
+    }
+    THREADS.fetch_add(1, SeqCst);
+    let job = Box::into_raw(Box::new(Job { entry, task, function, done: AtomicBool::new(false) })) as i64;
+    match sys::spawn(job_begins, job) {
+        Some(thread) => STARTED.with(|started| started.push((thread, job))),
+        // The system has no thread left: this one does the work.
+        None => {
+            job_begins(job);
+            drop(unsafe { Box::from_raw(job as *mut Job) });
+        }
+    }
+    0
+}
+
+fn thread_ended() {
+    let left = THREADS.fetch_sub(1, SeqCst) - 1;
+    if left > 0 && WAITING.load(SeqCst) == left {
+        kova_fault(FAULT_DEADLOCK, WAITED_AT.0.load(Relaxed), WAITED_AT.1.load(Relaxed));
+    }
+    ENDED.fetch_add(1, SeqCst);
+    sys::wake(&ENDED);
+}
+
+/// The end of `main`: a program ends when all its threads have.
+fn every_thread_ended() {
+    if THREADS.load(SeqCst) == 1 {
+        return;
+    }
+    thread_ended();
+    loop {
+        let seen = ENDED.load(SeqCst);
+        if THREADS.load(SeqCst) == 0 {
+            return;
+        }
+        sys::wait(&ENDED, seen);
+    }
 }
 
 /// The next element a `kova_parallel` worker does.

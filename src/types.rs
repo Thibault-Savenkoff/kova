@@ -17,6 +17,9 @@ use crate::locale::{self, t};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
+    /// `threads.Channel<T>`, `threads.Task<T>`, `threads.Shared<T>`: 1 slot, a handle; a copy is the
+    /// same channel (`runtime/kova.rs` `Pipe`).
+    Held(Held, Box<Type>),
     Int,
     Float,
     Bool,
@@ -116,6 +119,8 @@ impl Type {
             Type::Set(t) => format!("Set<{}>", t.text()),
             Type::Param(p) => p.name.clone(),
             Type::Any(i) => format!("any {i}"),
+            Type::Held(h, t) if **t == Type::Unit => format!("{}<Nothing>", h.name()),
+            Type::Held(h, t) => format!("{}<{}>", h.name(), t.text()),
             Type::Block(ps, r) | Type::Function(ps, r) => {
                 let r = (**r != Type::Unit).then(|| r.text());
                 crate::ast::block_text(ps.iter().map(Type::text).collect(), r)
@@ -147,6 +152,7 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Set(t) => Type::Set(sub(t)),
         Type::Block(ps, r) => Type::Block(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
         Type::Function(ps, r) => Type::Function(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
+        Type::Held(h, t) => Type::Held(*h, sub(t)),
         // `Stack<T>` → `Stack<Int>`: its fields change with it (when they are asked for).
         Type::Struct(d) if !d.args.is_empty() => {
             let template = d.from.as_ref().map_or(d, |(t, _)| t);
@@ -446,9 +452,9 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads"];
 /// Their types.
-pub const MODULE_TYPES: &[&str] = &["web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError", "log.Level"];
+pub const MODULE_TYPES: &[&str] = &["threads.Channel", "threads.Task", "threads.Shared", "web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError", "log.Level"];
 
 /// `web` written without `import web`, `get` or `Request` without `web.`, or a name from before
 /// the modules (`read_file`): what to write instead.
@@ -564,6 +570,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("read_line", "fn read_line -> String?"),
         ("system.args", "fn system.args -> List<String>"),
         ("system.exit", "fn system.exit(code: Int)"),
+        ("threads.spawn", "fn threads.spawn(job: {-> T}) -> threads.Task<T>"),
         ("web.get", "fn web.get(url: String) -> web.Response or web.WebError"),
         ("web.post(…) body(…)", "fn web.post(url: String) body(text: String) -> web.Response or web.WebError"),
         ("web.send", "fn web.send(request: web.Request) -> web.Response or web.WebError"),
@@ -890,7 +897,7 @@ pub fn is_copy(t: &Type) -> bool {
         // Borrowed for the call it is given to, never owned.
         Type::Block(..) => true,
         // It owns the copies of what it uses.
-        Type::Function(..) => false,
+        Type::Function(..) | Type::Held(..) => false,
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::Unit | Type::Error => true,
     }
 }
@@ -909,6 +916,8 @@ pub struct Info {
     /// Type name → the interfaces it follows (`struct Dog : Equal, Display`).
     pub follows: HashMap<String, Vec<String>>,
     pub extensions: Vec<Extension>,
+    /// The program uses threads: `kova run` builds it (`main.rs`).
+    pub threads: bool,
     /// By the `Expr::id` of a call to a generic function: the type given for each of its
     /// type parameters, in order (`larger(3, 4)` → `[Int]`).
     pub type_args: HashMap<usize, Vec<Type>>,
@@ -1061,7 +1070,7 @@ fn reaches(t: &Type, f: &dyn Fn(&ParamDef) -> bool) -> bool {
     match t {
         Type::Param(p) => f(p),
         Type::Tuple(ts) => ts.iter().any(|t| reaches(t, f)),
-        Type::Optional(t) | Type::List(t) | Type::Set(t) => reaches(t, f),
+        Type::Optional(t) | Type::List(t) | Type::Set(t) | Type::Held(_, t) => reaches(t, f),
         Type::Result(a, b) | Type::Map(a, b) => reaches(a, f) || reaches(b, f),
         Type::Struct(_) | Type::Enum(_) => t.args().iter().any(|t| reaches(t, f)),
         Type::Block(ps, r) | Type::Function(ps, r) => ps.iter().any(|t| reaches(t, f)) || reaches(r, f),
@@ -1081,6 +1090,7 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
         }
         (Type::Tuple(ps), Type::Tuple(ts)) => ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found)),
         (Type::Optional(p), Type::Optional(t)) | (Type::List(p), Type::List(t)) | (Type::Set(p), Type::Set(t)) => deduce(p, t, generics, found),
+        (Type::Held(h, p), Type::Held(k, t)) if h == k => deduce(p, t, generics, found),
         (Type::Result(p, q), Type::Result(t, u)) | (Type::Map(p, q), Type::Map(t, u)) => {
             deduce(p, t, generics, found);
             deduce(q, u, generics, found);
@@ -1164,6 +1174,9 @@ struct Checker<'a> {
     /// (`Animal.sound`), with `Self` as a `Type::Param`.
     interfaces: HashMap<String, usize>,
     defaults: Vec<(String, usize, usize)>,
+    /// The next block may end without a value: `threads.spawn { … }`, `s.change { … }`.
+    value_free: bool,
+    threads: bool,
     extensions: Vec<Extension>,
     follows: HashMap<String, Vec<String>>,
     type_args: HashMap<usize, Vec<Type>>,
@@ -1266,6 +1279,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         defaults: vec![],
         follows: HashMap::new(),
         extensions: vec![],
+        threads: false,
+        value_free: false,
         type_args: HashMap::new(),
         bounds: vec![],
         any_checks: vec![],
@@ -1468,6 +1483,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
     c.functions.insert("system.args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
     c.functions.insert("system.exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
+    let result = Rc::new(ParamDef { name: "T".to_string(), bounds: vec![] });
+    let job = Type::Function(vec![], Box::new(Type::Param(result.clone())));
+    let task = Type::Held(Held::Task, Box::new(Type::Param(result.clone())));
+    c.functions.insert("threads.spawn".into(), Signature { receiver: None, params: vec![(Mode::Move, job)], ret: task, generics: vec![result] });
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
@@ -1801,6 +1820,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         moves,
         wraps: c.wraps,
         extensions: c.extensions,
+        threads: c.threads,
         boxes,
         structs: c.structs,
         defaults,
@@ -1961,6 +1981,27 @@ fn bound_help(t: &Type, bound: &str) -> String {
     }
 }
 
+/// What a `Type::Held` is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Held {
+    Channel,
+    Task,
+    Shared,
+}
+
+impl Held {
+    pub fn name(self) -> &'static str {
+        match self {
+            Held::Channel => "threads.Channel",
+            Held::Task => "threads.Task",
+            Held::Shared => "threads.Shared",
+        }
+    }
+    fn named(name: &str) -> Option<Held> {
+        [Held::Channel, Held::Task, Held::Shared].into_iter().find(|h| h.name() == name)
+    }
+}
+
 /// The type parameters of `struct Stack<T>` or `extend Map<K, V>`, as types and as definitions.
 fn struct_params(t: &Type) -> (Vec<Type>, Vec<Rc<ParamDef>>) {
     let args = match t {
@@ -2049,6 +2090,11 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
         TypeAst::Generic(n, ts) if n.text == "Map" && ts.len() == 2 => match (type_of(&ts[0], structs), type_of(&ts[1], structs)) {
             (Type::Error, _) | (_, Type::Error) => Type::Error,
             (k, v) => Type::Map(Box::new(k), Box::new(v)),
+        },
+        TypeAst::Generic(n, ts) if Held::named(&n.text).is_some() && ts.len() == 1 => match type_of(&ts[0], structs) {
+            _ if is_nothing(&ts[0]) => Type::Held(Held::named(&n.text).unwrap(), Box::new(Type::Unit)),
+            Type::Error => Type::Error,
+            t => Type::Held(Held::named(&n.text).unwrap(), Box::new(t)),
         },
         TypeAst::Generic(n, ts) if n.text == "Set" && ts.len() == 1 => match type_of(&ts[0], structs) {
             Type::Error => Type::Error,
@@ -2961,6 +3007,11 @@ impl Checker<'_> {
             TypeAst::Name(n) if type_of(t, &self.structs) == Type::Error => self.unknown(n.span, t!("type_unknown", name = n.text), &n.text),
             TypeAst::Name(_) => {}
             TypeAst::Tuple(ts) => ts.iter().for_each(|t| self.report_unknown(t)),
+            TypeAst::Generic(n, ts) if Held::named(&n.text).is_some() => match &ts[..] {
+                [t] if is_nothing(t) => {}
+                [t] => self.report_unknown(t),
+                _ => self.error(n.span, t!("list_one_type", count = ts.len())),
+            },
             TypeAst::Generic(n, ts) => {
                 ts.iter().for_each(|t| self.report_unknown(t));
                 let types: Vec<Type> = ts.iter().map(|t| type_of(t, &self.structs)).collect();
@@ -2981,6 +3032,9 @@ impl Checker<'_> {
 
     /// `List<Int>`, or `Stack<Int>` from `template`, the struct `Stack<T>` (`None`: unknown name).
     fn generic(&mut self, n: &Name, template: Option<&Type>, types: &[Type]) -> Type {
+        if let (Some(h), [t]) = (Held::named(&n.text), types) {
+            return if *t == Type::Error { Type::Error } else { Type::Held(h, Box::new(t.clone())) };
+        }
         if n.text == "List" {
             return match types {
                 [Type::Error] => Type::Error,
@@ -3823,6 +3877,36 @@ impl Checker<'_> {
         sig.ret
     }
 
+    /// `c.send(1)`, `c.receive`, `c.close`, `t.wait`, `s.read`, `s.change { n: var Int => … }`.
+    fn held_method(&mut self, h: Held, inner: &Type, name: &Name, args: &[Expr]) -> Type {
+        let (params, result) = match (h, name.text.as_str()) {
+            (Held::Channel, "send") => (vec![(Mode::Move, inner.clone())], Type::Unit),
+            (Held::Channel, "receive") => (vec![], Type::Optional(Box::new(inner.clone()))),
+            (Held::Channel, "close") => (vec![], Type::Unit),
+            (Held::Task, "wait") | (Held::Shared, "read") => (vec![], inner.clone()),
+            (Held::Shared, "change") => {
+                let [Expr { kind: ExprKind::Block { params, body }, .. }] = args else {
+                    self.error(name.span, t!("block_expected", name = name.text, example = format!("s.change {{ x: var {} => … }}", inner.text())));
+                    return self.unchecked(args);
+                };
+                if params.len() != 1 || params[0].mode != Mode::Var {
+                    let span = params.first().map_or(name.span, |p| p.name.span);
+                    self.error(span, t!("change_needs_var", type = inner.text()));
+                    return Type::Error;
+                }
+                self.value_free = true;
+                let block = self.block_literal(params, body, Some(std::slice::from_ref(inner)), None);
+                return if let Type::Block(_, r) = block { *r } else { block };
+            }
+            _ => {
+                self.error(name.span, t!("no_method", type = h.name(), name = name.text));
+                return self.unchecked(args);
+            }
+        };
+        self.arguments(name, args, &params, &[]);
+        result
+    }
+
     /// `method` of a `t` that an `extend List<T>` adds, and what its type parameters are there.
     fn added_generic(&self, t: &Type, method: &str) -> Option<(Signature, Vec<Type>)> {
         let mut found = fitting(&self.extensions, t).into_iter().map(|(name, types)| (self.functions.get(&method_name(&name, method)), types));
@@ -4036,6 +4120,7 @@ impl Checker<'_> {
     /// Checks a block `{ x: Int => … }` against the parameters and the result expected (if known):
     /// its type, `{Int -> Bool}`. Its parameters are borrowed, like a function's.
     fn block_literal(&mut self, params: &[Param], body: &Block, wanted: Option<&[Type]>, result: Option<&Type>) -> Type {
+        let free = std::mem::take(&mut self.value_free);
         let written: Vec<Type> = (params.iter().enumerate())
             .map(|(i, p)| match (&p.ty, wanted.and_then(|ps| ps.get(i))) {
                 (TypeAst::Inferred, w) => w.cloned().unwrap_or(Type::Error),
@@ -4060,7 +4145,7 @@ impl Checker<'_> {
         }
         self.scopes.push(HashMap::new());
         for (p, t) in params.iter().zip(&written) {
-            self.declare(&p.name, t.clone(), VarKind::Param);
+            self.declare(&p.name, t.clone(), if p.mode == Mode::Var { VarKind::Var } else { VarKind::Param });
         }
         self.in_block += 1;
         // A loop around the block is not the block's: `break` cannot leave it.
@@ -4072,6 +4157,10 @@ impl Checker<'_> {
             }
             r if matches!(body.stmts.last(), Some(Stmt::Expr(_) | Stmt::If { otherwise: Some(_), .. } | Stmt::Match(_))) => {
                 self.block_value(body, r)
+            }
+            None if free => {
+                self.block(body, vec![]);
+                Type::Unit
             }
             _ => {
                 self.block(body, vec![]);
@@ -4405,6 +4494,22 @@ impl Checker<'_> {
             self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
             return Type::Optional(Box::new(Type::String));
         }
+        // `threads.Channel<Int>.new`, `threads.Shared<Int>.new(0)`.
+        if let (Some(h), [t]) = (Held::named(&ty.text), types) {
+            let inner = if is_nothing(t) { Type::Unit } else { self.written_type(t) };
+            self.threads = true;
+            let params = match (h, name.text.as_str()) {
+                (Held::Channel, "new") => vec![],
+                (Held::Channel, "limited") => vec![(Mode::Read, Type::Int)],
+                (Held::Shared, "new") => vec![(Mode::Move, inner.clone())],
+                _ => {
+                    self.diags.push(Diag::new(name.span, t!("no_static", type = ty.text, name = name.text)).help(t!("threads_made_help")));
+                    return self.unchecked(args);
+                }
+            };
+            self.arguments(name, args, &params, &[]);
+            return Type::Held(h, Box::new(inner));
+        }
         // `Map<String, Book>.from_json(text)`: a JSON object whose keys are not known before.
         if let ("Map", "from_json", [k, v]) = (ty.text.as_str(), name.text.as_str(), types) {
             let map = Type::Map(Box::new(self.written_type(k)), Box::new(self.written_type(v)));
@@ -4674,7 +4779,7 @@ impl Checker<'_> {
             // the type is written on the right (PLAN 2.5).
             Stmt::Declare { mutable, pattern, ty: None, value }
                 if matches!(&value.kind, ExprKind::StructLit { .. } | ExprKind::Variant { .. })
-                    || matches!(&value.kind, ExprKind::Static { ty, .. } if matches!(ty.text.as_str(), "Date" | "DateTime")) =>
+                    || matches!(&value.kind, ExprKind::Static { ty, .. } if matches!(ty.text.as_str(), "Date" | "DateTime") || Held::named(&ty.text).is_some()) =>
             {
                 let ty = self.expr(value);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
@@ -4836,8 +4941,14 @@ impl Checker<'_> {
             }
             Stmt::Each { name, value: None, mode, list, body } => {
                 let kind = if *mode == Mode::Move { VarKind::Let } else { VarKind::Element };
+                let mut kind = kind;
                 let elem = match self.expr(list) {
                     Type::List(elem) | Type::Set(elem) => *elem,
+                    // `for x in channel`: each value received is the loop's.
+                    Type::Held(Held::Channel, elem) => {
+                        kind = VarKind::Let;
+                        *elem
+                    }
                     Type::Map(..) => {
                         self.diags.push(Diag::new(name.span, t!("for_map_one_name")).help(t!("for_map_one_name_help", name = name.text)));
                         Type::Error
@@ -4875,6 +4986,7 @@ impl Checker<'_> {
                             self.functions.contains_key(&key) || self.completed(called, &key).is_some()
                         }
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each" | "each workers(…)"),
+                        Type::Held(..) => true,
                         Type::Map(..) => matches!(name.text.as_str(), "remove" | "each"),
                         Type::Set(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
@@ -5171,6 +5283,11 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                if let Type::Held(h, inner) = &t
+                    && name.text != "clone"
+                {
+                    return self.held_method(*h, inner, name, args);
+                }
                 // `[1, 2].total`: added by `extend List<T>`.
                 if let Some((sig, types)) = self.added_generic(&t, &name.text) {
                     for (g, given) in sig.generics.iter().zip(&types) {
@@ -5260,7 +5377,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Function(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Param(_) | Type::Any(_))
+                    && matches!(t, Type::Function(..) | Type::Held(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Param(_) | Type::Any(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -6051,6 +6168,10 @@ impl Checker<'_> {
             return r;
         }
         self.hidden(&name.text, name.span);
+        if name.text == "threads.spawn" {
+            self.threads = true;
+            self.value_free = matches!(args, [Expr { kind: ExprKind::Block { .. }, .. }]);
+        }
         // `random(1..=6)`: a range of `Int`s, written there (a range is not a value of its own).
         if (name.text == "random" && self.lookup("random").is_none()) || name.text == "secure.random" {
             match args {

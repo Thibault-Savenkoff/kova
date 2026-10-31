@@ -32,7 +32,7 @@ fn main {
 // expect: 0.75
 // expect: 6
 
-// `kova test` interprets: it stops at the call (tests/kova.rs `command_line`).
+// `kova test` builds a program that calls C (tests/kova.rs `command_line`).
 test "C from a test" {
     check c.abs(-1) = 1
 }

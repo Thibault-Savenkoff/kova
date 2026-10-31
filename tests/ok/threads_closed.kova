@@ -1,0 +1,9 @@
+import threads
+
+fn main {
+    let c := threads.Channel<Int>.new
+    c.close
+    c.send(1)
+}
+// code: 101
+// stderr: error: send on a closed channel

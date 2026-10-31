@@ -213,7 +213,7 @@ fn main {
 
 ## L'exécution
 
-Un programme avec `extern` tourne en code natif, même sous `kova run` : l'interpréteur ne peut pas
-appeler du C. `kova test` et le débogueur s'arrêtent au premier appel vers le C.
+Un programme avec `extern` tourne en code natif, même sous `kova run` et `kova test` : l'interpréteur
+ne peut pas appeler du C. Le débogueur s'arrête au premier appel vers le C.
 
 Pour les fenêtres, [`import ui`](/fr/guide/windows/) fait tout cela pour toi, sur chaque système.

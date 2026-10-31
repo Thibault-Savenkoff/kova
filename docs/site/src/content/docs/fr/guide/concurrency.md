@@ -72,10 +72,168 @@ Chaque fil commence avec sa propre copie de ce que le bloc lit, donc il n'y a ri
 verrouiller, et rien à oublier de verrouiller. Pour combiner des résultats, laisse `map` les
 rassembler, puis travaille sur la liste qu'il donne (`squares.fold(0) { … }`).
 
+## Tes propres fils
+
+`workers` répartit un seul travail. Quand le travail a plusieurs parties différentes, ou qu'une
+partie doit continuer pendant que le reste du programme fait autre chose, lance un fil toi-même avec
+[`threads.spawn`](/fr/library/threads/). Il prend un bloc, le lance tout de suite sur un nouveau fil
+et donne une `Task` : `wait` attend la fin du bloc et donne sa valeur.
+
+```kova
+import threads
+
+fn slow_sum(n: Int) -> Int {
+    var sum: Int := 0
+    for i in 1..=n {
+        sum += i
+    }
+    return sum
+}
+
+fn main {
+    let first: threads.Task<Int> := threads.spawn { slow_sum(1000) }
+    let second: threads.Task<Int> := threads.spawn { slow_sum(2000) }
+    print(first.wait + second.wait)
+}
+```
+
+```text
+2501500
+```
+
+Le bloc travaille sur ses propres copies de ce qu'il lit, comme une [fonction gardée dans une
+variable](/fr/guide/blocks/#garder-une-fonction), donc il ne peut pas changer une variable autour
+de lui. Sa dernière ligne est sa valeur ; un bloc sans valeur donne une `threads.Task<Nothing>`, et
+`wait` ne donne alors rien.
+
+Un programme se termine quand tous ses fils sont terminés, même si personne n'a appelé `wait`.
+
+## Passer des valeurs : les canaux
+
+Un `threads.Channel<T>` est un tuyau entre des fils. `send` met une valeur à un bout et `receive`
+sort la plus ancienne à l'autre bout, en attendant s'il n'y en a pas. Une boucle `for` reçoit jusqu'à
+ce que le canal soit fermé.
+
+Pour monter une équipe de travailleurs, lance-les d'abord, chacun en boucle sur le canal des tâches.
+Envoie ensuite les tâches, puis appelle `close` pour dire qu'il n'y en aura plus. La boucle de chaque
+travailleur se termine quand le canal est vide, et `wait` te dit qu'ils ont tous fini.
+
+```kova
+import threads
+
+fn main {
+    let jobs := threads.Channel<Int>.new
+    let results := threads.Channel<Int>.new
+    var team: List<threads.Task<Nothing>> := []
+    for i in 0..3 {
+        team.add(threads.spawn {
+            for n in jobs {
+                results.send(n * n)
+            }
+        })
+    }
+    for n in 1..=5 {
+        jobs.send(n)
+    }
+    jobs.close
+    for member in move team {
+        member.wait
+    }
+    results.close
+
+    var total: Int := 0
+    for square in results {
+        total += square
+    }
+    print(total)
+}
+```
+
+```text
+55
+```
+
+Trois choses font tenir l'ensemble :
+
+- Une copie d'un canal est **le même tuyau**. C'est comme ça que le bloc ci-dessus l'atteint : sa
+  copie de `jobs` et la tienne sont les deux bouts.
+- `send` **donne** sa valeur, donc une valeur n'est jamais dans deux fils à la fois.
+- `close` est le signal. Sans lui, les travailleurs attendraient pour toujours, et Kova arrêterait
+  le programme en le disant (plus bas).
+
+`threads.Channel<T>.new` garde autant de valeurs que tu en envoies. Si les envois peuvent prendre de
+l'avance sur les réceptions, `threads.Channel<T>.limited(10)` en garde 10 au plus, et `send` attend
+qu'il y ait de la place.
+
+## Partager une valeur : `threads.Shared`
+
+Quand des fils doivent tous voir une même valeur, un compteur ou un cache, mets-la dans un
+`threads.Shared<T>`. Une copie est la même valeur, comme pour un canal. `change` prête la valeur à un
+bloc, sans qu'aucun autre fil puisse y toucher avant la fin du bloc :
+
+```kova
+import threads
+
+fn main {
+    let count := threads.Shared<Int>.new(0)
+    var team: List<threads.Task<Nothing>> := []
+    for i in 0..4 {
+        team.add(threads.spawn {
+            for k in 0..1000 {
+                count.change { n: var Int => n += 1 }
+            }
+        })
+    }
+    for member in move team {
+        member.wait
+    }
+    print(count.read)
+}
+```
+
+```text
+4000
+```
+
+On écrit `n: var Int` parce que le bloc change ce qu'il emprunte. `change` donne la valeur du bloc,
+s'il en a une, ce qui permet de lire un nouveau numéro. `read` donne une copie de la valeur.
+
+Deux leçons des autres langages sont intégrées. Il n'y a pas de verrou à oublier : on n'atteint la
+valeur que par `change` et `read`. Et le bloc ne peut pas garder la valeur, puisqu'elle est seulement
+prêtée.
+
+Préfère un canal quand un fil peut posséder le travail, et `Shared` pour ce qui est vraiment commun :
+un `Shared` fait la queue entre les fils.
+
+## Quand tous les fils attendent
+
+Un fil qui attend une valeur que personne n'enverra bloquerait le programme en silence. Kova compte
+les fils endormis sur un canal, une `Task` ou un `Shared`. Quand ils le sont tous, plus rien ne peut
+les réveiller : le programme s'arrête avec une erreur à la ligne qui attendait.
+
+```kova
+import threads
+
+fn main {
+    let c := threads.Channel<Int>.new
+    print(c.receive)
+}
+```
+
+```txt
+erreur: tous les threads attendent, et rien ne peut les réveiller
+  --> main.kova:5:13
+```
+
+La cause habituelle est un canal jamais fermé. Un fil endormi dans `system.sleep` ou qui attend le
+réseau n'est pas compté : il se réveillera tout seul.
+
 ## À savoir
 
-- `kova run` prend un élément, ou une question, à la fois : seul le programme compilé utilise des
-  fils. Les résultats sont les mêmes dans les deux cas.
+- Avec `workers`, `kova run` prend un élément, ou une question, à la fois : là, seul le programme
+  compilé utilise des fils. Les résultats sont les mêmes dans les deux cas. Un programme qui utilise
+  `threads` tourne en code natif dans `kova run` et `kova test` aussi ; `kova debug` s'arrête au
+  premier fil.
 - `workers(1)` travaille un à la fois ; `workers(0)` arrête le programme, puisque rien ne tournerait.
 - `random` tire différemment dans chaque fil, donc un `random` dans le bloc donne d'autres nombres
   qu'un à la fois.

@@ -1,0 +1,4 @@
+fn main {
+    threads.spawn { 1 }
+}
+// error: unknown variable `threads`

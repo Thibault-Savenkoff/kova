@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
+use crate::types::Held;
 use crate::types::{Info, Type, enum_view, is_copy, method_name, narrowed, place_root};
 
 /// A visible name.
@@ -85,6 +86,8 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
     signatures.insert(method_name("Map", "remove"), (Some(Mode::Var), vec![Mode::Read]));
     signatures.insert(method_name("Set", "add"), (Some(Mode::Var), vec![Mode::Move]));
     signatures.insert(method_name("Set", "remove"), (Some(Mode::Var), vec![Mode::Read]));
+    signatures.insert(method_name(Held::Channel.name(), "send"), (Some(Mode::Read), vec![Mode::Move]));
+    signatures.insert(method_name(Held::Task.name(), "wait"), (Some(Mode::Move), vec![]));
     let mut functions: Vec<&Function> = f.functions.iter().collect();
     for s in &f.structs {
         for m in &s.methods {
@@ -465,6 +468,11 @@ impl Owner<'_> {
                 let names: Vec<&Name> = std::iter::once(name).chain(value).collect();
                 self.body_of_loop(body, &names, false);
             }
+            // Each value received is the loop's, and a channel changes under nobody.
+            Stmt::Each { name, list, body, .. } if matches!(self.info.types[list.id], Type::Held(..)) => {
+                self.borrow(list);
+                self.body_of_loop(body, &[name], false);
+            }
             Stmt::Each { name, value, list, body, mode } => {
                 self.borrow(list);
                 if *mode == Mode::Var {
@@ -627,6 +635,7 @@ impl Owner<'_> {
             Type::List(_) => method_name("List", &name.text),
             Type::Map(..) => method_name("Map", &name.text),
             Type::Set(_) => method_name("Set", &name.text),
+            Type::Held(h, _) => method_name(h.name(), &name.text),
             Type::Any(i) => method_name(i, &name.text),
             Type::Param(p) => p.bounds.iter().map(|b| method_name(b, &name.text)).find(|q| self.signatures.contains_key(q))?,
             _ => return None,

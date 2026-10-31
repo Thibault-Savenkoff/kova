@@ -824,6 +824,18 @@ impl Lock {
     }
 }
 
+/// Sleeps while `word` is `seen`.
+pub fn wait(word: &AtomicU32, seen: u32) {
+    // FUTEX_WAIT_PRIVATE.
+    unsafe { call(FUTEX, word.as_ptr() as usize, 128, seen as usize, 0, 0, 0) };
+}
+
+/// Wakes those sleeping on `word`.
+pub fn wake(word: &AtomicU32) {
+    // FUTEX_WAKE_PRIVATE.
+    unsafe { call(FUTEX, word.as_ptr() as usize, 129, i32::MAX as usize, 0, 0, 0) };
+}
+
 /// The stack of each thread, as big as the main thread's usually is (`ulimit -s`).
 const STACK: usize = 8 << 20;
 

@@ -72,10 +72,166 @@ Each thread starts with its own copy of what the block reads, so there is nothin
 and nothing to forget to lock. To combine results, let `map` gather them, then work on the list it
 gives (`squares.fold(0) { … }`).
 
+## Threads of your own
+
+`workers` shares out one piece of work. When the work has several different parts, or a part must
+go on while the rest of the program does something else, start a thread yourself with
+[`threads.spawn`](/library/threads/). It takes a block, runs it on a new thread at once, and gives
+a `Task`: `wait` waits for the end of the block and gives its value.
+
+```kova
+import threads
+
+fn slow_sum(n: Int) -> Int {
+    var sum: Int := 0
+    for i in 1..=n {
+        sum += i
+    }
+    return sum
+}
+
+fn main {
+    let first: threads.Task<Int> := threads.spawn { slow_sum(1000) }
+    let second: threads.Task<Int> := threads.spawn { slow_sum(2000) }
+    print(first.wait + second.wait)
+}
+```
+
+```text
+2501500
+```
+
+The block runs on its own copies of what it reads, like a [function kept in a
+variable](/guide/blocks/#keeping-a-function), so it cannot change a variable around it. Its last
+line is its value; a block without one gives a `threads.Task<Nothing>`, and `wait` then gives
+nothing.
+
+A program ends when all its threads have, even if nobody called `wait`.
+
+## Passing values: channels
+
+A `threads.Channel<T>` is a pipe between threads. `send` puts a value in at one end and `receive`
+takes the oldest one out at the other, waiting if there is none. A `for` loop receives until the
+channel is closed.
+
+To build a team of workers, start them first, each looping over the channel of jobs. Then send the
+jobs, and call `close` to say there are no more. Each worker's loop ends when the channel is empty,
+and `wait` tells you they are all done.
+
+```kova
+import threads
+
+fn main {
+    let jobs := threads.Channel<Int>.new
+    let results := threads.Channel<Int>.new
+    var team: List<threads.Task<Nothing>> := []
+    for i in 0..3 {
+        team.add(threads.spawn {
+            for n in jobs {
+                results.send(n * n)
+            }
+        })
+    }
+    for n in 1..=5 {
+        jobs.send(n)
+    }
+    jobs.close
+    for member in move team {
+        member.wait
+    }
+    results.close
+
+    var total: Int := 0
+    for square in results {
+        total += square
+    }
+    print(total)
+}
+```
+
+```text
+55
+```
+
+Three things make this hold together:
+
+- A copy of a channel is **the same pipe**. That is how the block above reaches it: its copy of
+  `jobs` and yours are the two ends.
+- `send` **gives** its value away, so a value is never in two threads at once.
+- `close` is the signal. Without it the workers would wait for ever, and Kova would stop the program
+  and say so (below).
+
+`threads.Channel<T>.new` holds as many values as you send. If senders may run ahead of receivers,
+`threads.Channel<T>.limited(10)` holds 10 at most, and `send` waits for room.
+
+## Sharing a value: `threads.Shared`
+
+When threads must all see one value, a counter or a cache, put it in a `threads.Shared<T>`. A copy
+of it is the same value, as with a channel. `change` lends the value to a block, with no other
+thread able to touch it until the block ends:
+
+```kova
+import threads
+
+fn main {
+    let count := threads.Shared<Int>.new(0)
+    var team: List<threads.Task<Nothing>> := []
+    for i in 0..4 {
+        team.add(threads.spawn {
+            for k in 0..1000 {
+                count.change { n: var Int => n += 1 }
+            }
+        })
+    }
+    for member in move team {
+        member.wait
+    }
+    print(count.read)
+}
+```
+
+```text
+4000
+```
+
+`n: var Int` is written because the block changes what it borrows. `change` gives the value of the
+block, if it has one, which lets a thread read the number it just made. `read` gives a copy of the
+value.
+
+Two lessons from other languages are built in. There is no lock to forget: the value can only be
+reached through `change` and `read`. And the block cannot keep the value, since it is only lent.
+
+Prefer a channel when one thread can own the work, and `Shared` for what really is common: a
+`Shared` makes threads queue for it.
+
+## When every thread waits
+
+A thread that waits for a value nobody will send would hang the program in silence. Kova counts the
+threads that sleep on a channel, a `Task` or a `Shared`. When all of them are asleep, nothing can
+wake them, so the program stops with an error at the line that waited:
+
+```kova
+import threads
+
+fn main {
+    let c := threads.Channel<Int>.new
+    print(c.receive)
+}
+```
+
+```txt
+error: every thread is waiting, and nothing can wake them
+  --> main.kova:5:13
+```
+
+The usual cause is a channel never closed. A thread asleep in `system.sleep` or waiting for the
+network is not counted: it will wake up by itself.
+
 ## What to know
 
-- `kova run` takes one element, or one question, at a time: only the built program uses threads.
-  The results are the same either way.
+- `kova run` takes one element, or one question, at a time with `workers`: only the built program
+  uses threads there. The results are the same either way. A program using `threads` runs as native
+  code in `kova run` and `kova test` too; `kova debug` stops at the first thread.
 - `workers(1)` works one at a time; `workers(0)` stops the program, since nothing would run.
 - `random` draws differently in each thread, so a `random` inside the block gives other numbers
   than one at a time.

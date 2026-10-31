@@ -12,6 +12,8 @@ pub const SLASH: char = '/';
 
 mod c {
     unsafe extern "C" {
+        pub fn __ulock_wait(operation: u32, address: *mut u8, value: u64, timeout: u32) -> i32;
+        pub fn __ulock_wake(operation: u32, address: *mut u8, value: u64) -> i32;
         pub fn write(fd: i32, b: *const u8, n: usize) -> isize;
         pub fn read(fd: i32, b: *mut u8, n: usize) -> isize;
         pub fn open(path: *const u8, flags: i32, ...) -> i32;
@@ -556,6 +558,18 @@ impl Lock {
     pub fn unlock(&self) {
         unsafe { c::os_unfair_lock_unlock(self.0.get()) }
     }
+}
+
+/// Sleeps while `word` is `seen`.
+pub fn wait(word: &core::sync::atomic::AtomicU32, seen: u32) {
+    // UL_COMPARE_AND_WAIT, without a time limit.
+    unsafe { c::__ulock_wait(1, word.as_ptr() as *mut u8, seen as u64, 0) };
+}
+
+/// Wakes those sleeping on `word`.
+pub fn wake(word: &core::sync::atomic::AtomicU32) {
+    // UL_COMPARE_AND_WAIT | ULF_WAKE_ALL.
+    unsafe { c::__ulock_wake(0x101, word.as_ptr() as *mut u8, 0) };
 }
 
 /// A thread `spawn` started.

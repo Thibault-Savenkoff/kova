@@ -1,0 +1,8 @@
+import threads
+
+fn main {
+    let c := threads.Channel<Int>.new
+    print(c.receive)
+}
+// code: 101
+// stderr: error: every thread is waiting, and nothing can wake them

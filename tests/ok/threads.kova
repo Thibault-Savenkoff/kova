@@ -1,0 +1,141 @@
+// Threads: a Task, a Channel, a Shared; what is printed does not depend on their order.
+import threads
+
+struct Job {
+    n: Int
+    name: String
+}
+
+struct Pool {
+    jobs: threads.Channel<Int>
+    done: threads.Shared<Int>
+}
+
+fn square(n: Int) -> Int := n * n
+
+fn answer -> Int := 41
+
+fn count_all<T>(c: threads.Channel<T>, l: List<T>) -> Int {
+    for x in l {
+        c.send(x.clone)
+    }
+    c.close
+    var n: Int := 0
+    for x in c {
+        n += 1
+    }
+    return n
+}
+
+fn main {
+    let t: threads.Task<Int> := threads.spawn { square(7) }
+    print(t.wait)
+    let word: String := "hello"
+    let s: threads.Task<String> := threads.spawn { word.to_upper }
+    print(s.wait)
+    print(word)
+    print(threads.spawn(answer).wait)
+    let done: threads.Task<Nothing> := threads.spawn {
+        var i: Int := 0
+        i += 1
+    }
+    done.wait
+
+    let jobs := threads.Channel<Job>.new
+    let out := threads.Channel<String>.new
+    var workers: List<threads.Task<Nothing>> := []
+    for i in 0..3 {
+        workers.add(threads.spawn {
+            for j in jobs {
+                out.send("{j.name}: {square(j.n)}")
+            }
+        })
+    }
+    for i in 1..=6 {
+        jobs.send(Job { n := i, name := "job" })
+    }
+    jobs.close
+    for w in move workers {
+        w.wait
+    }
+    out.close
+    var got: List<String> := []
+    for line in out {
+        got.add(move line)
+    }
+    print(got.sorted)
+
+    let count := threads.Shared<Int>.new(0)
+    let names := threads.Shared<List<String>>.new([])
+    var tasks: List<threads.Task<Int>> := []
+    for i in 0..4 {
+        tasks.add(threads.spawn {
+            for k in 0..1000 {
+                count.change { n: var Int => n += 1 }
+            }
+            names.change { l: var List<String> => l.add("t") }
+            i
+        })
+    }
+    var sum: Int := 0
+    for task in move tasks {
+        sum += task.wait
+    }
+    print(sum)
+    print(count.read)
+    print(names.read)
+    let next: Int := count.change { n: var Int =>
+        n += 1
+        n
+    }
+    print(next)
+
+    let small := threads.Channel<Int>.limited(1)
+    threads.spawn {
+        for i in 0..5 {
+            small.send(i)
+        }
+        small.close
+    }
+    var total: Int := 0
+    for x in small {
+        total += x
+    }
+    print(total)
+    print(small.receive)
+    print(count)
+
+    let p := Pool { jobs := threads.Channel<Int>.new, done := threads.Shared<Int>.new(0) }
+    let q: Pool := p.clone
+    threads.spawn {
+        q.jobs.send(5)
+    }
+    print(p.jobs.receive)
+    print(count_all(threads.Channel<String>.new, ["a", "b"]))
+    let doubled: List<Int> := [1, 2, 3].map workers(2) { x: Int =>
+        p.done.change { n: var Int => n += x }
+        x * 2
+    }
+    print(doubled)
+    print(p.done.read)
+    let text := threads.Shared<String>.new("a")
+    text.change { t2: var String => t2 := t2 + "b" }
+    print(text.read)
+}
+// expect: 49
+// expect: HELLO
+// expect: hello
+// expect: 41
+// expect: ["job: 1", "job: 16", "job: 25", "job: 36", "job: 4", "job: 9"]
+// expect: 6
+// expect: 4000
+// expect: ["t", "t", "t", "t"]
+// expect: 4001
+// expect: 10
+// expect: none
+// expect: threads.Shared<Int>
+// expect: 5
+// expect: 2
+// expect: [2, 4, 6]
+// expect: 6
+// expect: ab

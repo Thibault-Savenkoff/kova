@@ -37,6 +37,7 @@ use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKin
 use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
+use crate::types::Held;
 use crate::types::{CType, c_layout, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
@@ -110,7 +111,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
         // Its box: the function, how to free and copy the box, what the function holds.
-        Type::Function(..) => vec![Scalar::Int],
+        Type::Function(..) | Type::Held(..) => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -130,7 +131,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Function(..) => vec![Some(t.clone())],
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Function(..) | Type::Held(..) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(|t| heap(&t))).collect(),
@@ -317,6 +318,8 @@ pub enum Inst {
     /// `dst := the address of a function with these C parameters and result`, made by codegen
     /// around function `f` (its trampoline), for C to call back (PLAN Part 4 "`extern`, step 2").
     Callback(Local, usize, Vec<CType>, CType),
+    /// `threads` start here: only native code has them (`kova test`, `kova debug` stop).
+    Threads(Loc),
     /// `results := (the function in this local)(args)`: calls a block.
     CallIndirect(Slots, Local, Slots),
     /// `dst := "text"`: a new String.
@@ -384,6 +387,14 @@ pub enum StrOp {
     ReadBytes,
     /// `files.write_bytes` and `append_bytes`: path, List, 1 to add at the end.
     WriteBytes,
+    /// `threads`: a queue of boxes shared by handles (`runtime/kova.rs` `Pipe`).
+    PipeNew,
+    PipeRetain,
+    PipeRelease,
+    PipePut,
+    PipeTake,
+    PipeClose,
+    Spawn,
     /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
     NotBytes,
     /// A List of bytes to a text (`shared::bytes_text`), 0 if it has no such text.
@@ -795,6 +806,8 @@ pub enum Fault {
     NullPointer,
     /// An `extern` call under `kova test` or `kova debug`, which interpret.
     ExternInterpreted,
+    ThreadsInterpreted,
+    ChannelLimit,
 }
 
 impl Fault {
@@ -822,6 +835,8 @@ impl Fault {
             Fault::NullText => "fault_null_text",
             Fault::NullPointer => "fault_null_pointer",
             Fault::ExternInterpreted => "fault_extern_interpreted",
+            Fault::ThreadsInterpreted => "fault_threads_interpreted",
+            Fault::ChannelLimit => "fault_channel_limit",
             Fault::BadKey => "fault_bad_key",
             Fault::PasswordSettings => "fault_password_settings",
         }
@@ -2465,6 +2480,11 @@ impl<'a> Translator<'a> {
     fn free_slot(&mut self, l: Local, kind: &Type) {
         match kind {
             Type::String | Type::BigInt => self.emit(Inst::Free(l)),
+            Type::Held(..) => {
+                let done = self.int_local();
+                self.emit(Inst::Str(done, StrOp::PipeRelease, vec![l]));
+                self.emit(Inst::Const(l, 0));
+            }
             Type::List(elem) | Type::Set(elem) if plain(elem) => self.emit(Inst::ListFree(l)),
             Type::Map(k, v) if plain(k) && plain(v) => self.emit(Inst::ListFree(l)),
             list => {
@@ -2482,6 +2502,7 @@ impl<'a> Translator<'a> {
             match kind {
                 None => self.emit(Inst::Copy(d, l)),
                 Some(Type::String | Type::BigInt) => self.emit(Inst::Str(d, StrOp::Clone, vec![l])),
+                Some(Type::Held(..)) => self.emit(Inst::Str(d, StrOp::PipeRetain, vec![l])),
                 Some(list) => {
                     let f = self.helper(Helper::Clone(list));
                     self.emit(Inst::Call(vec![d], f, vec![l]));
@@ -3218,6 +3239,7 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Binary(i, Op::Plus, i, by, loc));
                 self.go(End::Jump(head), exit);
             }
+            Stmt::Each { name, list, body, .. } if matches!(self.ty(list), Type::Held(..)) => self.each_received(name, list, body),
             Stmt::Each { name, value, mode, list, body } => {
                 let elem = match self.ty(list) {
                     Type::List(elem) | Type::Set(elem) => *elem,
@@ -3453,7 +3475,7 @@ impl<'a> Translator<'a> {
                 self.temps.push((text, Type::String));
                 m.push(Piece::Value(text, Show::String));
             }
-            Type::Block(..) | Type::Function(..) => m.push(Piece::Text(ty.text())),
+            Type::Block(..) | Type::Function(..) | Type::Held(..) => m.push(Piece::Text(ty.text())),
             Type::Date | Type::DateTime => self.date_pieces(v[0], ty, m),
             // `Pointer(140245…)`: its address, which only means something to C.
             Type::Pointer => {
@@ -4969,6 +4991,160 @@ impl<'a> Translator<'a> {
         v
     }
 
+    /// A new `Pipe` of values of type `inner`; what is left in it when it goes is freed.
+    fn pipe_open(&mut self, inner: &Type, limit: Local) -> Local {
+        let free = self.helper(Helper::Drop(Type::List(Box::new(inner.clone()))));
+        let (fun, h) = (self.int_local(), self.int_local());
+        self.emit(Inst::FuncRef(fun, free));
+        self.emit(Inst::Str(h, StrOp::PipeNew, vec![limit, fun]));
+        h
+    }
+
+    fn site(&mut self, loc: Loc) -> [Local; 2] {
+        [self.constant(loc.packed()), self.constant(loc.col as i64)]
+    }
+
+    /// Gives the value `v` (now the pipe's) to the pipe, in a box of its own.
+    fn pipe_put(&mut self, h: Local, v: &[Local], loc: Loc) {
+        let b = self.int_local();
+        self.emit(Inst::ListNew(b, v.len()));
+        self.push(b, v);
+        self.pipe_give(h, b, loc);
+    }
+
+    fn pipe_give(&mut self, h: Local, b: Local, loc: Loc) {
+        let ([line, col], done) = (self.site(loc), self.int_local());
+        self.emit(Inst::Str(done, StrOp::PipePut, vec![h, b, line, col]));
+    }
+
+    /// Waits for a box: 0 once the pipe is closed and empty.
+    fn pipe_take(&mut self, h: Local, loc: Loc) -> Local {
+        let ([line, col], b) = (self.site(loc), self.int_local());
+        self.emit(Inst::Str(b, StrOp::PipeTake, vec![h, line, col]));
+        b
+    }
+
+    /// `threads.spawn { … }`: a Task, whose thread runs the function and gives its result to the
+    /// Task. The function is the thread's, so it runs on its own copies.
+    fn spawn(&mut self, e: &Expr, block: &Expr) -> Slots {
+        let task = self.ty(e);
+        let Type::Held(_, inner) = &task else { unreachable!("checked by the type checker") };
+        let loc = self.loc(e.span);
+        self.emit(Inst::Threads(loc));
+        let f = self.owned(block)[0];
+        let kept = self.ty(block);
+        let one = self.constant(1);
+        let h = self.pipe_open(inner, one);
+        let mut t = self.inner(Type::Unit);
+        let (own, function) = (t.int_local(), t.int_local());
+        t.current = t.new_block();
+        let result = t.call_block(&[function], vec![], inner);
+        t.pipe_put(own, &result, loc);
+        t.free_value(&[function], &kept);
+        t.free_value(&[own], &task);
+        t.finish(End::Return(vec![]));
+        let name = format!("thread in {}", t.owner.trim_start_matches("block in "));
+        let entry = t.function(name, 2, vec![]);
+        let num = self.made_function(entry);
+        let (fun, theirs, done) = (self.int_local(), self.int_local(), self.int_local());
+        self.emit(Inst::FuncRef(fun, num));
+        self.emit(Inst::Str(theirs, StrOp::PipeRetain, vec![h]));
+        self.emit(Inst::Str(done, StrOp::Spawn, vec![fun, theirs, f]));
+        self.track(&[h], &task);
+        vec![h]
+    }
+
+    /// `c.send(x)`, `c.receive`, `c.close`, `t.wait`, `s.read`, `s.change { … }`.
+    fn held_method(&mut self, e: &Expr, receiver: &Expr, name: &ast::Name, args: &[Expr]) -> Slots {
+        let Type::Held(_, inner) = self.ty(receiver) else { unreachable!("checked by the caller") };
+        let (loc, zero) = (self.loc(name.span), self.constant(0));
+        match name.text.as_str() {
+            "wait" => {
+                let h = self.owned(receiver)[0];
+                let b = self.pipe_take(h, loc);
+                let v = self.load(b, zero, &inner);
+                self.emit(Inst::ListFree(b));
+                self.free_slot(h, &self.ty(receiver));
+                self.track(&v, &inner);
+                v
+            }
+            "send" => {
+                let h = self.expr1(receiver);
+                let x = if let ExprKind::Mark(_, x) = &args[0].kind { x } else { &args[0] };
+                let v = self.owned(x);
+                self.pipe_put(h, &v, loc);
+                vec![]
+            }
+            "close" => {
+                let (h, done) = (self.expr1(receiver), self.int_local());
+                self.emit(Inst::Str(done, StrOp::PipeClose, vec![h]));
+                vec![]
+            }
+            "receive" => {
+                let h = self.expr1(receiver);
+                let b = self.pipe_take(h, loc);
+                let ty = self.ty(e);
+                let dst = self.new_slots(&ty);
+                dst.iter().for_each(|&d| self.emit(Inst::Const(d, 0)));
+                let (yes, done) = (self.new_block(), self.new_block());
+                self.go(End::Branch(b, yes, done), yes);
+                let one = self.constant(1);
+                self.emit(Inst::Copy(dst[0], one));
+                let v = self.load(b, zero, &inner);
+                self.copy(&dst[1..], &v);
+                self.emit(Inst::ListFree(b));
+                self.go(End::Jump(done), done);
+                self.track(&dst, &ty);
+                dst
+            }
+            "read" => {
+                let h = self.expr1(receiver);
+                let b = self.pipe_take(h, loc);
+                let v = self.load(b, zero, &inner);
+                let c = self.clone_value(&v, &inner);
+                self.pipe_give(h, b, loc);
+                self.track(&c, &inner);
+                c
+            }
+            _ => {
+                let h = self.expr1(receiver);
+                let b = self.pipe_take(h, loc);
+                let v = self.load(b, zero, &inner);
+                let ExprKind::Block { params, body } = &args[0].kind else { unreachable!("checked by the type checker") };
+                let ty = self.ty(e);
+                let r = self.inline(params, body, vec![(v.clone(), (*inner).clone())], (ty != Type::Unit).then_some(&ty));
+                for (k, &s) in v.iter().enumerate() {
+                    self.emit(Inst::ListStore(b, zero, k, s));
+                }
+                self.pipe_give(h, b, loc);
+                self.track(&r, &ty);
+                r
+            }
+        }
+    }
+
+    /// `for x in channel`: until it is closed and empty.
+    fn each_received(&mut self, name: &ast::Name, list: &Expr, body: &Block) {
+        let Type::Held(_, inner) = self.ty(list) else { unreachable!("checked by the caller") };
+        let (h, loc, zero) = (self.expr1(list), self.loc(list.span), self.constant(0));
+        let (head, b_body, next, exit) = (self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        self.go(End::Jump(head), head);
+        let b = self.pipe_take(h, loc);
+        self.go(End::Branch(b, b_body, exit), b_body);
+        let v = self.load(b, zero, &inner);
+        self.emit(Inst::ListFree(b));
+        let base = self.names.len();
+        self.loops.push((next, exit, base));
+        self.names.push(Scope { borrowed: false, vars: HashMap::from([(name.text.clone(), (v, *inner))]) });
+        self.block(body);
+        self.free_scopes(base);
+        self.names.truncate(base);
+        self.go(End::Jump(next), next);
+        self.write_back(self.loops.len());
+        self.loops.pop();
+        self.go(End::Jump(head), exit);
+    }
+
     /// `x.clone` on an `any`: the copy of its box, not a method of the interface.
     fn is_clone(&self, receiver: &Expr, name: &ast::Name) -> bool {
         let Type::Any(i) = self.ty(receiver) else { return false };
@@ -5331,12 +5507,13 @@ impl<'a> Translator<'a> {
                 let (p, _) = self.place(e);
                 self.read(&p)
             }
+            ExprKind::Call { name, args } if name.text == "threads.spawn" => self.spawn(e, &args[0]),
             ExprKind::Call { name, args } => {
                 if let n @ ("print" | "write") = name.text.as_str() {
                     let vals = self.expr(&args[0]);
                     let newline = n == "print";
                     match &self.given(&args[0]) {
-                        ty @ (Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime | Type::Pointer) => {
+                        ty @ (Type::Held(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Date | Type::DateTime | Type::Pointer) => {
                             let ty = ty.clone();
                             let mut pieces = vec![];
                             self.value_pieces(&vals, &ty, &mut pieces);
@@ -5666,6 +5843,29 @@ impl<'a> Translator<'a> {
                 let v = vec![method, url[0], headers, body, seconds, follow];
                 self.track(&v, &crate::types::request());
                 v
+            }
+            ExprKind::Static { ty, name, args, .. } if ty.text.starts_with("threads.") => {
+                let t = self.ty(e);
+                let Type::Held(held, inner) = &t else { unreachable!("checked by the type checker") };
+                let loc = self.loc(e.span);
+                self.emit(Inst::Threads(loc));
+                let limit = match (held, name.text.as_str()) {
+                    (Held::Shared, _) => self.constant(1),
+                    (_, "limited") => {
+                        let (n, one, bad) = (self.expr1(&args[0]), self.constant(1), self.int_local());
+                        self.emit(Inst::Binary(bad, Op::Lt, n, one, NOWHERE));
+                        self.emit(Inst::FaultIf(bad, Fault::ChannelLimit, loc));
+                        n
+                    }
+                    _ => self.constant(0),
+                };
+                let h = self.pipe_open(inner, limit);
+                if *held == Held::Shared {
+                    let v = self.owned(&args[0]);
+                    self.pipe_put(h, &v, loc);
+                }
+                self.track(&[h], &t);
+                vec![h]
             }
             ExprKind::Static { ty, name, args, .. } if ty.text == "List" && matches!(name.text.as_str(), "from_hex" | "from_base64" | "from_base64url") => {
                 let (code, l) = (self.expr1(&args[0]), self.int_local());
@@ -6147,7 +6347,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.ty(receiver), Type::Function(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) =>
+                    && matches!(self.ty(receiver), Type::Function(..) | Type::Held(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) =>
             {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
@@ -6393,6 +6593,9 @@ impl<'a> Translator<'a> {
                     }
                     other => unreachable!("List method `{other}` checked by the type checker"),
                 }
+            }
+            ExprKind::Method { receiver, name, args } if matches!(self.ty(receiver), Type::Held(..)) && name.text != "clone" => {
+                self.held_method(e, receiver, name, args)
             }
             ExprKind::Method { receiver, name, args } => {
                 let v = self.expr1(receiver);

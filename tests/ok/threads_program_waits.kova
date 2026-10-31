@@ -1,0 +1,13 @@
+// The program ends when its threads have.
+import threads
+import system
+
+fn main {
+    threads.spawn {
+        system.sleep(0.05)
+        print("late")
+    }
+    print("first")
+}
+// expect: first
+// expect: late
