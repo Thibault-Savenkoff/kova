@@ -262,6 +262,10 @@ pub fn chance(b: &mut [u8]) {
 
 // ---- The network: `ws2_32.dll`, which every Windows has too ----
 
+unsafe extern "system" {
+    fn CancelIoEx(file: usize, overlapped: *const u8) -> i32;
+}
+
 #[link(name = "ws2_32")]
 unsafe extern "system" {
     fn WSAStartup(version: u16, data: *mut u8) -> i32;
@@ -376,8 +380,12 @@ impl Network for Net {
         }
     }
 
+    /// `shutdown` alone leaves a blocked `recv` waiting: its waiting is an operation of the socket.
     fn wake(&mut self, s: &usize) {
-        unsafe { shutdown(*s, 2) };
+        unsafe {
+            shutdown(*s, 2);
+            CancelIoEx(*s, null());
+        }
     }
 
     fn close(&mut self, s: usize) {

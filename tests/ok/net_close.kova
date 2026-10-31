@@ -32,11 +32,11 @@ fn datagram(socket: net.Socket) -> String {
 
 fn main {
     let listener: net.Listener := net.listen(0)?
-    let socket: net.Socket := net.udp(0)?
+    let socket: net.Socket := net.udp(0) within(10.0)?
     print(listener.port >= 1024)
     print(socket.port >= 1024)
 
-    let link: net.Link := net.connect("127.0.0.1", listener.port)?
+    let link: net.Link := net.connect("127.0.0.1", listener.port) within(10.0)?
     let served: net.Link := listener.accept?
     let reading: threads.Task<String> := threads.spawn { received(link) }
     system.sleep(0.1)
