@@ -588,6 +588,11 @@ pub enum BinOp {
     Times,
     Div,
     Rem,
+    BitOr,
+    BitXor,
+    BitAnd,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl BinOp {
@@ -609,6 +614,11 @@ impl BinOp {
             Times => "*",
             Div => "/",
             Rem => "%",
+            BitOr => "|",
+            BitXor => "^",
+            BitAnd => "&",
+            ShiftLeft => "<<",
+            ShiftRight => ">>",
         }
     }
 }

@@ -21,6 +21,10 @@ const LEVELS: &[(&[(&str, BinOp)], bool)] = &[
     (&[("=", BinOp::Eq), ("!=", BinOp::Ne)], false),
     (&[("<", BinOp::Lt), ("<=", BinOp::Le), (">", BinOp::Gt), (">=", BinOp::Ge)], false),
     (&[("..", BinOp::Range), ("..=", BinOp::RangeInclusive)], false),
+    (&[("|", BinOp::BitOr)], true),
+    (&[("^", BinOp::BitXor)], true),
+    (&[("&", BinOp::BitAnd)], true),
+    (&[("<<", BinOp::ShiftLeft), (">>", BinOp::ShiftRight)], true),
     (&[("+", BinOp::Plus), ("-", BinOp::Minus)], true),
     (&[("*", BinOp::Times), ("/", BinOp::Div), ("%", BinOp::Rem)], true),
 ];
@@ -1932,7 +1936,16 @@ impl Parser<'_> {
             return Ok(self.expr(span, ExprKind::Is(Box::new(left), ty)));
         }
         let mut seen = false;
-        while let Some(&(s, op)) = ops.iter().find(|(s, _)| self.is_sym(s)) {
+        loop {
+            // `>>` is two `>`, stuck together: the end of `List<List<Int>>` is too.
+            let shift = ops[0].0 == "<<"
+                && self.is_sym(">")
+                && self.kind_at(1) == Kind::Sym(">")
+                && self.token().span.end == self.t[self.pos + 1].span.start;
+            if shift {
+                self.advance();
+            }
+            let Some(&(s, op)) = ops.iter().find(|(s, _)| if shift { *s == ">>" } else { self.is_sym(s) }) else { break };
             if seen && !chainable {
                 let span = self.token().span;
                 self.diags.push(

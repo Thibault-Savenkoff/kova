@@ -13,6 +13,8 @@ sidebar:
 | `/` | `Int`, `BigInt` | the quotient, cut towards zero (`7 / 2` is `3`, `-7 / 2` is `-3`) |
 | `/` | `Float` | the exact quotient (`7.0 / 2.0` is `3.5`) |
 | `%` | `Int`, `BigInt` | the remainder, with the sign of the number divided |
+| `&`, `\|`, `^` | `Int` | and, or, exclusive or, bit by bit: `flags & 4`. |
+| `<<`, `>>` | `Int` | moves the bits left or right, the sign kept by `>>`: `1 << 3`. The shift goes from 0 to 63, otherwise the program stops. |
 | `-x` | `Int`, `Float`, `BigInt` | the opposite |
 | `= != < <= > >=` | numbers, `Char`, `Bool` (`=`, `!=`) | a `Bool` |
 | `&& \|\| !` | `Bool` | and, or, not; the right side is computed only when needed |

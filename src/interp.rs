@@ -1212,7 +1212,7 @@ fn compute_float(op: Op, a: f64, b: f64) -> Result<i64, Fault> {
         Op::Le => (a <= b) as i64,
         Op::Gt => (a > b) as i64,
         Op::Ge => (a >= b) as i64,
-        Op::Rem => unreachable!("`%` refused on Floats by the type checker"),
+        Op::Rem | Op::BitOr | Op::BitXor | Op::BitAnd | Op::ShiftLeft | Op::ShiftRight => unreachable!("refused on Floats by the type checker"),
     })
 }
 
@@ -1234,6 +1234,12 @@ fn compute(op: Op, a: i64, b: i64) -> Result<i64, Fault> {
         Op::Le => (a <= b) as i64,
         Op::Gt => (a > b) as i64,
         Op::Ge => (a >= b) as i64,
+        Op::BitOr => a | b,
+        Op::BitXor => a ^ b,
+        Op::BitAnd => a & b,
+        Op::ShiftLeft | Op::ShiftRight if !(0..64).contains(&b) => return Err(Fault::Shift),
+        Op::ShiftLeft => a << b,
+        Op::ShiftRight => a >> b,
     })
 }
 

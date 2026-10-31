@@ -1,0 +1,31 @@
+fn main {
+    print(12 & 10)
+    print(12 | 3)
+    print(12 ^ 10)
+    print(1 << 4)
+    print(-16 >> 2)
+    print(1 + 2 << 3)
+    print(6 & 3 | 8)
+    print(1 < 2 && (3 & 1) = 1)
+    print(0xff & 0x0f)
+    let flags: Int := 0b101
+    let lists: List<List<Int>> := [[flags >> 1]]
+    print(lists)
+    print(1 << 63 >> 63)
+    let n: Int := 64
+    print(1 << n)
+}
+// expect: 8
+// expect: 15
+// expect: 6
+// expect: 16
+// expect: -4
+// expect: 24
+// expect: 10
+// expect: true
+// expect: 15
+// expect: [[2]]
+// expect: -1
+// code: 101
+// stderr: error: a shift goes from 0 to 63
+// stderr: bits.kova:16:13

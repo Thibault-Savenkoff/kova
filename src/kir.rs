@@ -703,6 +703,11 @@ pub enum Op {
     Le,
     Gt,
     Ge,
+    BitOr,
+    BitXor,
+    BitAnd,
+    ShiftLeft,
+    ShiftRight,
 }
 
 pub enum End {
@@ -721,6 +726,8 @@ pub enum Fault {
     BadConversion,
     Index,
     NotText,
+    /// `1 << 64`: a shift goes from 0 to 63.
+    Shift,
     /// `split("")` or `replace("", …)`: an empty text cannot be looked for.
     EmptyText,
     /// `exit(300)`: a program's exit code is between 0 and 255.
@@ -760,6 +767,7 @@ impl Fault {
     pub fn key(self) -> &'static str {
         match self {
             Fault::Overflow => "fault_overflow",
+            Fault::Shift => "fault_shift",
             Fault::DivisionByZero => "fault_division_by_zero",
             Fault::BadConversion => "fault_bad_conversion",
             Fault::Index => "fault_index",
@@ -6362,6 +6370,11 @@ fn kir_op(op: BinOp) -> Op {
         BinOp::Times => Op::Times,
         BinOp::Div => Op::Div,
         BinOp::Rem => Op::Rem,
+        BinOp::BitOr => Op::BitOr,
+        BinOp::BitXor => Op::BitXor,
+        BinOp::BitAnd => Op::BitAnd,
+        BinOp::ShiftLeft => Op::ShiftLeft,
+        BinOp::ShiftRight => Op::ShiftRight,
         BinOp::Eq => Op::Eq,
         BinOp::Ne => Op::Ne,
         BinOp::Lt => Op::Lt,

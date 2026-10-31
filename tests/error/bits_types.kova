@@ -1,0 +1,6 @@
+fn main {
+    print(1.5 & 1)
+    print(1 << true)
+}
+// error: `&` works on two `Int`s
+// error: `<<` works on two `Int`s

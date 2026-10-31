@@ -13,6 +13,8 @@ sidebar:
 | `/` | `Int`, `BigInt` | le quotient, coupé vers zéro (`7 / 2` vaut `3`, `-7 / 2` vaut `-3`) |
 | `/` | `Float` | le quotient exact (`7.0 / 2.0` vaut `3.5`) |
 | `%` | `Int`, `BigInt` | le reste, du signe du nombre divisé |
+| `&`, `\|`, `^` | `Int` | et, ou, ou exclusif, bit par bit : `flags & 4`. |
+| `<<`, `>>` | `Int` | décale les bits à gauche ou à droite, `>>` garde le signe : `1 << 3`. Le décalage va de 0 à 63, sinon le programme s'arrête. |
 | `-x` | `Int`, `Float`, `BigInt` | l'opposé |
 | `= != < <= > >=` | nombres, `Char`, `Bool` (`=`, `!=`) | un `Bool` |
 | `&& \|\| !` | `Bool` | et, ou, non ; le côté droit n'est calculé que si besoin |

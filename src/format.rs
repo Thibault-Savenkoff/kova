@@ -183,6 +183,8 @@ fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Opti
     let method = matches!(a.kind, Kind::Keyword(_)) && before.is_some_and(|t| t.kind == Kind::Sym("."));
     let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
+        // `a >> 2` is two `>`: they stay together, the spaces go around them.
+        (Kind::Sym(">"), Kind::Sym(">")) if a.span.end == b.span.start => false,
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
         // `color := .Red`, `f(a, .Red)`: a short case of an enum, not a method.
         (_, Kind::Sym(".")) if !g && !value_before(Some(&a)) && !matches!(a.kind, Kind::Sym("(" | "[")) => true,

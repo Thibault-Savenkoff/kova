@@ -5037,6 +5037,15 @@ impl Checker<'_> {
             ExprKind::Binary(op, a, b) => {
                 use BinOp::*;
                 match op {
+                    BitOr | BitXor | BitAnd | ShiftLeft | ShiftRight => {
+                        for x in [a, b] {
+                            let t = self.expr(x);
+                            if !matches!(t, Type::Int | Type::Error) {
+                                self.diags.push(Diag::new(x.span, t!("bits_need_ints", op = op.text())).help(t!("bits_need_ints_help")));
+                            }
+                        }
+                        Type::Int
+                    }
                     Or | And => {
                         self.expect(a, &Type::Bool);
                         // `x != none && x > 3`: `x` is its value on the right.

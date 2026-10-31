@@ -1212,7 +1212,7 @@ impl Generator<'_> {
             Op::Le => compare(self, FloatCC::LessThanOrEqual),
             Op::Gt => compare(self, FloatCC::GreaterThan),
             Op::Ge => compare(self, FloatCC::GreaterThanOrEqual),
-            Op::Rem => unreachable!("`%` refused on Floats by the type checker"),
+            Op::Rem | Op::BitOr | Op::BitXor | Op::BitAnd | Op::ShiftLeft | Op::ShiftRight => unreachable!("refused on Floats by the type checker"),
         }
     }
 
@@ -1249,6 +1249,14 @@ impl Generator<'_> {
                     let b = self.b.ins().select(minus_one, one, b);
                     self.b.ins().srem(a, b)
                 }
+            }
+            Op::BitOr => self.b.ins().bor(a, b),
+            Op::BitXor => self.b.ins().bxor(a, b),
+            Op::BitAnd => self.b.ins().band(a, b),
+            Op::ShiftLeft | Op::ShiftRight => {
+                let outside = self.b.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, b, 63);
+                self.fault_if(outside, Fault::Shift, loc);
+                if op == Op::ShiftLeft { self.b.ins().ishl(a, b) } else { self.b.ins().sshr(a, b) }
             }
             Op::Eq => compare(self, IntCC::Equal),
             Op::Ne => compare(self, IntCC::NotEqual),

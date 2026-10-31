@@ -44,6 +44,7 @@ lang fr {
     tests_summary := "{passed} réussi(s), {failed} raté(s) sur {total}"
 
     // ---- Runtime (also in built executables) ----
+    fault_shift := "un décalage va de 0 à 63"
     fault_overflow := "dépassement d'entier"
     fault_division_by_zero := "division par zéro"
     fault_bad_conversion := "conversion impossible : ce Float ne tient pas dans un Int"
@@ -145,6 +146,8 @@ lang fr {
     const_word := "une constante est un `let` en haut du fichier"
     const_word_help := "`let limit: Int := 10`"
     empty_map_colon := "une Map vide s'écrit `[]`, là où son type est connu"
+    bits_need_ints := "`{op}` marche sur deux `Int`"
+    bits_need_ints_help := "les bits d'un `Int` : `flags & 4`, `1 << 3`"
     function_alone := "`{name}` est une fonction : appelez-la avec `{name}(…)`, ou donnez-la là où un bloc est attendu"
     habit_equal := "Kova compare avec un seul `=` : écrivez `a = b`"
     habit_assign := "Kova donne une valeur avec `:=`, et garde `=` pour comparer"

@@ -78,6 +78,7 @@ pub const RUNTIME: &[&str] = &[
     "extern_no_function",
     // `x?` in `main`.
     "try_none",
+    "fault_shift",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.
