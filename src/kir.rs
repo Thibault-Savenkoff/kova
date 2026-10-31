@@ -615,6 +615,8 @@ pub enum StrOp {
     UiAct,
     /// `ui.place(…) size(…)`: where the window must go at the next `ui.show`.
     UiPlace,
+    /// `ui.dialog(kind, title, text)`: what the person chose, "" if nothing.
+    UiDialog,
     /// `ui.room(0 | 1)`: the width or height of the `ui.fill` canvas being made; `ui.room(2)`:
     /// a new view starts, from the first canvas.
     UiRoom,
@@ -5798,7 +5800,7 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw" | "ui.act" | "ui.put" | "ui.room") = name.text.as_str() {
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw" | "ui.act" | "ui.put" | "ui.room" | "ui.dialog") = name.text.as_str() {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
                     let op = match n {
@@ -5810,6 +5812,7 @@ impl<'a> Translator<'a> {
                         "ui.act" => StrOp::UiAct,
                         "ui.put" => StrOp::UiPlace,
                         "ui.room" => StrOp::UiRoom,
+                        "ui.dialog" => StrOp::UiDialog,
                         _ => StrOp::PasswordMatches,
                     };
                     self.emit(Inst::Str(t, op, vals));

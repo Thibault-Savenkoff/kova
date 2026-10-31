@@ -1,0 +1,67 @@
+// Menus, dialogs (each answered by a line of the input) and images on a canvas.
+// stdin: 0
+// stdin: 1
+// stdin: /tmp/a.txt
+// stdin: 2
+// stdin: 
+// stdin: 3
+// stdin: yes
+// stdin: 
+// expect: [Menus] menu File(Open, Save, , Quit) column(button "0  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open, Save, , Quit) column(button "1  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: (open file "Open")
+// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 /tmp/a.txt false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: (save file "Save")
+// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 not saved false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: (confirm "Quit")
+// expect: (message "Bye")
+// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 not saved true", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: (close)
+import ui
+
+enum Event {
+    Plus
+    Open
+    Save
+    Quit
+}
+
+struct App {
+    n: Int
+    path: String
+    sure: Bool
+}
+
+fn view(app: App) -> ui.View {
+    let plus: ui.View := ui.button("{app.n} {app.path} {app.sure}", Event.Plus)
+    let area: ui.View := ui.canvas(50, 50) { d: ui.Draw =>
+        d.image("logo.png", 1, 2)
+        d.image("logo.png", 3, 4) size(5, 6)
+    }
+    return ui.column([plus, area]).menus([
+        ui.menu("File", [ui.item("Open", Event.Open), ui.item("Save", Event.Save), ui.separator, ui.item("Quit", Event.Quit)]),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Plus => app.n += 1
+        .Open => match ui.open_file("Open") {
+            none => app.path := "nothing"
+            p => app.path := p.clone
+        }
+        .Save => match ui.save_file("Save") name("x.txt") {
+            none => app.path := "not saved"
+            p => app.path := p.clone
+        }
+        .Quit => {
+            app.sure := ui.confirm("Quit", "Sure?")
+            ui.message("Bye", "bye")
+            ui.close
+        }
+    }
+}
+
+fn main {
+    ui.run("Menus", App { n := 0, path := "", sure := false }, view, update)
+}

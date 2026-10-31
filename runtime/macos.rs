@@ -721,7 +721,7 @@ mod dl {
 /// cursor. The program runs its own event loop until something happens: the button clicked, a
 /// field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is closed.
 /// `KOVA_UI_HIDDEN` never shows the window.
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     use crate::Global;
     // `WAITING`: nothing yet, -1: the window closed.
     static CLICKED: Global<i64> = Global::new(WAITING);
@@ -889,6 +889,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     let pool = (kit.push)();
     let w = kit.window;
     (kit.send_two)(w, kit.sel("setTitle:"), kit.text(title));
+    static MENUS: crate::Global<Option<Vec<crate::shared::UiMenu>>> = crate::Global::new(None);
+    if MENUS.get().as_deref() != Some(menus) {
+        mac_menus(kit, menus);
+        *MENUS.get() = Some(menus.to_vec());
+    }
     let shape = crate::shared::ui_shape(view);
     if shape == *SHAPE.get() {
         // The same views: only the texts that differ change.
@@ -1338,6 +1343,21 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
                     line_to(context, *x2 as f64, *y2 as f64);
                     stroke(context);
                 }
+                Op::Image { x, y, w, h, path } => {
+                    static IMAGES: crate::Global<Vec<(String, Id)>> = crate::Global::new(Vec::new());
+                    if !IMAGES.get().iter().any(|i| i.0 == *path) {
+                        let image = (kit.send_two)(kit.send(kit.class("NSImage"), "alloc"), kit.sel("initWithContentsOfFile:"), kit.text(path));
+                        IMAGES.get().push((path.clone(), image));
+                    }
+                    let image = IMAGES.get().iter().find(|i| i.0 == *path).map_or(core::ptr::null_mut(), |i| i.1);
+                    if !image.is_null() {
+                        let own = (kit.fitting)(image, kit.sel("size"));
+                        let place = Rect { x: *x as f64, y: *y as f64, width: if *w > 0 { *w as f64 } else { own.width }, height: if *h > 0 { *h as f64 } else { own.height } };
+                        // NSCompositingOperationSourceOver = 2; a flipped view keeps it upright.
+                        let draw: extern "C" fn(Id, Id, Rect, Rect, u64, f64, bool, Id) = t(kit.send as usize);
+                        draw(image, kit.sel("drawInRect:fromRect:operation:fraction:respectFlipped:hints:"), place, Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, 2, 1.0, true, core::ptr::null_mut());
+                    }
+                }
                 Op::Text { x, y, size, color, text } => {
                     let named = |name: &str| symbol(appkit, name).map_or(core::ptr::null_mut(), |p| *(p as *const Id));
                     let keys = [named("NSFontAttributeName"), named("NSForegroundColorAttributeName")];
@@ -1499,6 +1519,80 @@ fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::sh
         None => kit.send(kit.class("NSColor"), if matches!(leaf, Input(..)) { "textColor" } else { "labelColor" }),
     };
     (kit.send_two)(view, kit.sel("setTextColor:"), color);
+}
+
+/// The menu bar, which every Mac program has: the program's menu (Quit), then Edit, without which
+/// a text field has no copy or paste, then the program's own. An item's tag is its event's number.
+fn mac_menus(kit: &Kit, menus: &[crate::shared::UiMenu]) {
+    let bar = kit.send(kit.send(kit.class("NSMenu"), "alloc"), "init");
+    let item: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+    let entry = |label: &str, action: &str, key: &str| {
+        let selector = if action.is_empty() { core::ptr::null_mut() } else { kit.sel(action) };
+        item(kit.send(kit.class("NSMenuItem"), "alloc"), kit.sel("initWithTitle:action:keyEquivalent:"), kit.text(label), selector, kit.text(key))
+    };
+    let top = |title: &str, sub: Id| {
+        let e = entry(title, "", "");
+        (kit.send_two)(e, kit.sel("setSubmenu:"), sub);
+        (kit.send_two)(bar, kit.sel("addItem:"), e);
+    };
+    let new_menu = |title: &str| (kit.send_two)(kit.send(kit.class("NSMenu"), "alloc"), kit.sel("initWithTitle:"), kit.text(title));
+    let app = new_menu("");
+    (kit.send_two)(app, kit.sel("addItem:"), entry("Quit", "terminate:", "q"));
+    top("", app);
+    let edit = new_menu("Edit");
+    for (label, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+        (kit.send_two)(edit, kit.sel("addItem:"), entry(label, action, key));
+    }
+    top("Edit", edit);
+    for m in menus {
+        let sub = new_menu(&m.title);
+        for (label, event) in &m.items {
+            let e = match event {
+                Some(n) => {
+                    let e = entry(label, "clicked:", "");
+                    (kit.send_two)(e, kit.sel("setTarget:"), kit.target);
+                    (kit.send_id)(e, kit.sel("setTag:"), *n as i64);
+                    e
+                }
+                None => kit.send(kit.class("NSMenuItem"), "separatorItem"),
+            };
+            (kit.send_two)(sub, kit.sel("addItem:"), e);
+        }
+        top(&m.title, sub);
+    }
+    (kit.send_two)(kit.send(kit.class("NSApplication"), "sharedApplication"), kit.sel("setMainMenu:"), bar);
+}
+
+/// `ui.dialog`: AppKit's own, whose `runModal` waits for the answer.
+pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    let kit = KIT.get().as_ref()?;
+    if kind >= 3 {
+        let alert = kit.send(kit.send(kit.class("NSAlert"), "alloc"), "init");
+        (kit.send_two)(alert, kit.sel("setMessageText:"), kit.text(title));
+        (kit.send_two)(alert, kit.sel("setInformativeText:"), kit.text(text));
+        for name in if kind == 3 { &["OK"][..] } else { &["Yes", "No"][..] } {
+            (kit.send_two)(alert, kit.sel("addButtonWithTitle:"), kit.text(name));
+        }
+        // NSAlertFirstButtonReturn
+        return ((kit.send_int)(alert, kit.sel("runModal")) == 1000).then(|| "yes".into());
+    }
+    let panel = kit.send(kit.class(if kind == 1 { "NSSavePanel" } else { "NSOpenPanel" }), if kind == 1 { "savePanel" } else { "openPanel" });
+    (kit.send_two)(panel, kit.sel("setMessage:"), kit.text(title));
+    match kind {
+        1 => {
+            (kit.send_two)(panel, kit.sel("setNameFieldStringValue:"), kit.text(text));
+        }
+        2 => {
+            (kit.send_id)(panel, kit.sel("setCanChooseDirectories:"), 1);
+            (kit.send_id)(panel, kit.sel("setCanChooseFiles:"), 0);
+        }
+        _ => {}
+    }
+    // NSModalResponseOK
+    if (kit.send_int)(panel, kit.sel("runModal")) != 1 {
+        return None;
+    }
+    Some(mac_text(kit, kit.send(kit.send(panel, "URL"), "path")))
 }
 
 /// What each `NSTableView` of the view shows.

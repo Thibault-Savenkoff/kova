@@ -2046,11 +2046,26 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
     }
     flush();
     let mut typed = String::new();
-    let clicked = sys::ui_show(title, &shared::ui_tree(view), width as i32, height as i32, &acts, &mut typed);
+    let (menus, view) = shared::ui_menus(view);
+    let clicked = sys::ui_show(title, &shared::ui_tree(view), &menus, width as i32, height as i32, &acts, &mut typed);
     if clicked <= -2 {
         UI_TYPED.with(|now| *now = typed);
     }
     clicked
+}
+
+/// `ui.dialog`: called during `update`, the window waits meanwhile.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_ui_dialog(kind: i64, title: i64, text: i64) -> i64 {
+    if sys::var("KOVA_UI_SCRIPT").is_some() {
+        OUT.with(|out| out.extend_from_slice(alloc::format!("({} {:?})\n", shared::ui_dialog_name(kind), text_of(title)).as_bytes()));
+        flush();
+        let line = INPUT.with(|(input, at)| read_line(input, at));
+        return if line > 0 { line } else { new_text(b"") };
+    }
+    flush();
+    let chosen = sys::ui_dialog(kind, text_of(title), text_of(text));
+    new_text(chosen.unwrap_or_default().as_bytes())
 }
 
 /// What the field that changed last holds (`ui.typed`).

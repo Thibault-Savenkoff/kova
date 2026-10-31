@@ -12,7 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 43] = [
+const OWN: [&str; 51] = [
+    "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
     "checkbox", "slider", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
@@ -35,19 +36,20 @@ private:
     events: List<EVENT>
     typed: List<EVENT?>
     canvas: Bool := false
+    bar: String := ""
 
     fn styled(self, key: String, value: Int) -> View {
         return self.written("S{key}{value}:{self.text}")
     }
 
     fn written(self, text: String) -> View {
-        return View { text := text.clone, events := self.events.clone, typed := self.typed.clone, canvas := self.canvas }
+        return View { text := text.clone, events := self.events.clone, typed := self.typed.clone, canvas := self.canvas, bar := self.bar.clone }
     }
 
     fn hearing(self, key: String, event: EVENT?) -> View {
         var typed: List<EVENT?> := self.typed.clone
         typed.add(event.clone)
-        return View { text := "S{key}0:{self.text}", events := self.events.clone, typed := typed, canvas := self.canvas }
+        return View { text := "S{key}0:{self.text}", events := self.events.clone, typed := typed, canvas := self.canvas, bar := self.bar.clone }
     }
 
 public:
@@ -95,8 +97,73 @@ public:
     {
         var events: List<EVENT> := self.events.clone
         events.add(event.clone)
-        return View { text := "SE{ms}:{self.text}", events := events, typed := self.typed.clone, canvas := self.canvas }
+        return View { text := "SE{ms}:{self.text}", events := events, typed := self.typed.clone, canvas := self.canvas, bar := self.bar.clone }
     }
+
+    // The window's menus: on the whole view, which `view` gives.
+    fn menus(self, all: List<Menu>) -> View {
+        var events: List<EVENT> := self.events.clone
+        var body: String := ""
+        for m in all {
+            body := body + "{one_line(m.title)}\n"
+            for i in m.items {
+                match i.event {
+                    none => body := body + "\t-\n"
+                    e => {
+                        body := body + "\t{events.length} {one_line(i.label)}\n"
+                        events.add(e.clone)
+                    }
+                }
+            }
+        }
+        return View { text := self.text.clone, events := events, typed := self.typed.clone, canvas := self.canvas, bar := "Y{body.length}:{body}" }
+    }
+}
+
+struct Item {
+private:
+    label: String
+    event: EVENT?
+}
+
+struct Menu {
+private:
+    title: String
+    items: List<Item>
+}
+
+fn menu(title: String, items: List<Item>) -> Menu {
+    return Menu { title := title.clone, items := items.clone }
+}
+
+fn item(label: String, event: EVENT) -> Item {
+    return Item { label := label.clone, event := event.clone }
+}
+
+fn separator -> Item {
+    return Item { label := "", event := none }
+}
+
+// What the person picked, `none` if they gave up. Called from `update`, these wait for the answer.
+fn open_file(title: String) -> String? {
+    return answer(0, title, "")
+}
+
+// `name`: the file name offered.
+fn save_file(title: String) name(name: String := "") -> String? {
+    return answer(1, title, name)
+}
+
+fn open_folder(title: String) -> String? {
+    return answer(2, title, "")
+}
+
+fn message(title: String, text: String) {
+    ui.dialog(3, title, text)
+}
+
+fn confirm(title: String, text: String) -> Bool {
+    return ui.dialog(4, title, text) != ""
 }
 
 struct Mouse {
@@ -133,6 +200,11 @@ public:
 
     fn line(self, x: Int, y: Int) to(x2: Int, y2: Int) color(c: Color := black) thickness(n: Int := 1) {
         ui.draw("L {x} {y} {x2} {y2} {number(c)} {n}\n")
+    }
+
+    // An image file at (x, y). `size`: another size than the file's own.
+    fn image(self, path: String, x: Int, y: Int) size(w: Int := 0, h: Int := 0) {
+        ui.draw("I {x} {y} {w} {h} {path.length}:{path}\n")
     }
 
     fn text(self, s: String, x: Int, y: Int) size(n: Int := 16) color(c: Color := black) {
@@ -347,7 +419,7 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame
         ui.room(2)
         let v: View := VIEW(s)
         let animating: Bool := frame < frames.length
-        let clicked: Int := ui.show(title, if animating { "SE{FRAME}:{v.text}" } else { v.text.clone }, w, h)
+        let clicked: Int := ui.show(title, "{v.bar}{if animating { "SE{FRAME}:" } else { "" }}{v.text}", w, h)
         if clicked = -1 {
             return
         }
@@ -423,6 +495,11 @@ fn pressed -> Key? {
     return Key { name := t[4..t.length] }
 }
 
+fn answer(kind: Int, title: String, text: String) -> String? {
+    let got: String := ui.dialog(kind, title, text)
+    return if got = "" { none } else { got }
+}
+
 fn one_line(s: String) -> String {
     return s.replace("\n") with(" ")
 }
@@ -438,6 +515,11 @@ fn picked(count: Int, changed: {Int -> EVENT}) -> EVENT? {
     }
 }
 
+fn require_no_menus(v: View)
+    require v.bar = "" else "menus go on the whole view, the one `view` gives"
+{
+}
+
 fn group(kind: String, items: List<View>, a: Align) -> View {
     let place: String := match a {
         .Left => "L"
@@ -450,6 +532,7 @@ fn group(kind: String, items: List<View>, a: Align) -> View {
     var events: List<EVENT> := []
     var typed: List<EVENT?> := []
     for v in items {
+        require_no_menus(v)
         out := out + v.text
         for e in v.events {
             events.add(e.clone)

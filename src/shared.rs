@@ -917,7 +917,37 @@ pub struct UiTable {
     /// -1: none.
     pub selected: i32,
     /// Its number among the fields.
+    #[allow(dead_code)]
     pub number: usize,
+}
+
+/// A menu of the window: its title, and its items with the number of their event; `None` a line
+/// between two groups.
+#[derive(Clone, PartialEq, Debug)]
+pub struct UiMenu {
+    pub title: String,
+    pub items: Vec<(String, Option<usize>)>,
+}
+
+/// A view's text gives its menus first: `Y12:File\n\t3 Open\n`, then the rest of the view.
+pub fn ui_menus(text: &str) -> (Vec<UiMenu>, &str) {
+    let Some(after) = text.strip_prefix('Y') else { return (Vec::new(), text) };
+    let Some((size, rest)) = after.split_once(':') else { return (Vec::new(), text) };
+    let end = rest.char_indices().nth(size.parse().unwrap_or(0)).map_or(rest.len(), |(at, _)| at);
+    let (body, view) = rest.split_at(end);
+    let mut menus: Vec<UiMenu> = Vec::new();
+    for line in body.lines() {
+        match (line.strip_prefix('\t'), menus.last_mut()) {
+            (None, _) => menus.push(UiMenu { title: line.into(), items: Vec::new() }),
+            (Some("-"), Some(m)) => m.items.push((String::new(), None)),
+            (Some(item), Some(m)) => {
+                let (number, label) = item.split_once(' ').unwrap_or((item, ""));
+                m.items.push((label.into(), number.parse().ok()));
+            }
+            _ => {}
+        }
+    }
+    (menus, view)
 }
 
 /// `ui.canvas`: its size, its drawing, and the numbers (counted with the fields) of what hears the
@@ -943,6 +973,8 @@ pub enum UiOp {
     Circle { x: i32, y: i32, r: i32, color: u32, outline: i32 },
     Line { x: i32, y: i32, x2: i32, y2: i32, color: u32, thickness: i32 },
     Text { x: i32, y: i32, size: i32, color: u32, text: String },
+    /// An image file; a size of 0: the file's own.
+    Image { x: i32, y: i32, w: i32, h: i32, path: String },
 }
 
 /// What `ui.draw` gathered, one line per thing drawn (src/ui.rs).
@@ -981,6 +1013,12 @@ fn ui_ops(text: &str) -> Vec<UiOp> {
             'L' => {
                 let [x, y, x2, y2, color] = n(5);
                 UiOp::Line { x, y, x2, y2, color: color as u32, thickness: n(1)[0] }
+            }
+            'I' => {
+                let [x, y, w, h, length] = n(5);
+                let path = chars.by_ref().take(length as usize).collect();
+                chars.next();
+                UiOp::Image { x, y, w, h, path }
             }
             _ => {
                 let [x, y, size, color, length] = n(5);
@@ -1037,6 +1075,16 @@ impl UiQueue {
 /// What `ui.act(n)` asks of the window, in words: a test sees it in the output. `0`: no system
 /// frame, said before the window opens.
 #[allow(dead_code)]
+pub fn ui_dialog_name(kind: i64) -> &'static str {
+    match kind {
+        0 => "open file",
+        1 => "save file",
+        2 => "open folder",
+        3 => "message",
+        _ => "confirm",
+    }
+}
+
 pub fn ui_act_name(act: i64) -> &'static str {
     match act {
         0 => "no frame",
@@ -1319,6 +1367,9 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
 
 /// `column(text "0 clics", button "Go")`: what `KOVA_UI_SCRIPT` prints instead of a window.
 pub fn ui_describe(text: &str) -> String {
+    let (menus, text) = ui_menus(text);
+    let named = |m: &UiMenu| format!("{}({})", m.title, m.items.iter().map(|i| i.0.as_str()).collect::<Vec<_>>().join(", "));
+    let menus: String = menus.iter().map(|m| format!("menu {} ", named(m))).collect();
     fn write(node: &UiNode, out: &mut String) {
         let group = |name: &str, parts: &[UiNode], out: &mut String| {
             out.push_str(name);
@@ -1378,12 +1429,13 @@ pub fn ui_describe(text: &str) -> String {
                         UiOp::Circle { x, y, r, color, outline } => format!(" circle({x} {y} {r} #{color:06x} {outline})"),
                         UiOp::Line { x, y, x2, y2, color, thickness } => format!(" line({x} {y} {x2} {y2} #{color:06x} {thickness})"),
                         UiOp::Text { x, y, size, color, text } => format!(" text({x} {y} {size} #{color:06x} {text:?})"),
+                        UiOp::Image { x, y, w, h, path } => format!(" image({x} {y} {w} {h} {path:?})"),
                     });
                 }
             }
         }
     }
-    let mut out = String::new();
+    let mut out = menus;
     write(&ui_tree(text), &mut out);
     out
 }

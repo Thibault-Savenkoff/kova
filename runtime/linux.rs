@@ -1091,7 +1091,7 @@ mod dl {
 /// widgets only take the new texts, so a field being typed into keeps its cursor. The button
 /// clicked, a field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is
 /// closed (or when GTK is missing or there is no display).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     // The library (0 = not looked for yet, 1 = missing), the window, what happened (`WAITING`:
     // nothing yet, -1: the window closed), the text of the field that changed.
     static GTK: Global<usize> = Global::new(0);
@@ -1130,6 +1130,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let get: extern "C" fn(P) -> u32 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_drop_down_get_selected").unwrap_or(0)) };
         valued(format!("{}", get(d)), number as usize);
     }
+    extern "C" fn menu_picked(_action: P, _parameter: P, number: P) {
+        *CLICKED.get() = number as i64;
+    }
     extern "C" fn row_chosen(_list: P, row: P, number: P) {
         if !row.is_null() {
             let get: extern "C" fn(P) -> i32 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_list_box_row_get_index").unwrap_or(0)) };
@@ -1161,7 +1164,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
             changed: changed as usize,
-            values: [toggled as usize, slid as usize, chosen as usize, row_chosen as usize],
+            values: [toggled as usize, slid as usize, chosen as usize, row_chosen as usize, menu_picked as usize],
         };
         if *WINDOW.get() == 0 {
             // The program's name, for the taskbar (on Wayland, the window's app id).
@@ -1206,7 +1209,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         *GTK_WINDOW.get() = w as usize;
         let set_title: extern "C" fn(P, *const u8) = t(f("gtk_window_set_title"));
         set_title(w, c_string(title).as_ptr());
-        let shape = crate::shared::ui_shape(view);
+        let shape = alloc::format!("{menus:?}{}", crate::shared::ui_shape(view));
         if shape == *SHAPE.get() {
             // The same widgets: only the texts that differ change.
             let label_text: extern "C" fn(P) -> *const u8 = t(f("gtk_label_get_text"));
@@ -1276,8 +1279,16 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             if !*GTK_BARE.get() {
                 g.margins.iter().for_each(|margin| margin(root, 16));
             }
+            let content = if menus.is_empty() {
+                root
+            } else {
+                let both = (g.boxed)(1, 0);
+                (g.append)(both, gtk_menu_bar(&g, w, menus));
+                (g.append)(both, root);
+                both
+            };
             let set_child: extern "C" fn(P, P) = t(f("gtk_window_set_child"));
-            set_child(w, root);
+            set_child(w, content);
             *SHAPE.get() = shape;
             // The keys go to the canvas that hears them.
             let focus: extern "C" fn(P) -> i32 = t(f("gtk_widget_grab_focus"));
@@ -1533,6 +1544,28 @@ extern "C" fn gtk_paint(area: P, cairo: P, width: i32, height: i32, _data: P) {
                     line_to(cairo, *x2 as f64, *y2 as f64);
                     stroke(cairo);
                 }
+                Image { x, y, w, h, path } => {
+                    if !GTK_IMAGES.get().iter().any(|i| i.0 == *path) {
+                        let load: extern "C" fn(*const u8, *mut P) -> P = t(f("gdk_pixbuf_new_from_file"));
+                        GTK_IMAGES.get().push((path.clone(), load(c_string(path).as_ptr(), null_mut())));
+                    }
+                    let pixbuf = GTK_IMAGES.get().iter().find(|i| i.0 == *path).map_or(null_mut(), |i| i.1);
+                    if !pixbuf.is_null() {
+                        let size: [extern "C" fn(P) -> i32; 2] = [t(f("gdk_pixbuf_get_width")), t(f("gdk_pixbuf_get_height"))];
+                        let (own_w, own_h) = (size[0](pixbuf) as f64, size[1](pixbuf) as f64);
+                        let save: extern "C" fn(P) = t(f("cairo_save"));
+                        let restore: extern "C" fn(P) = t(f("cairo_restore"));
+                        let translate: extern "C" fn(P, f64, f64) = t(f("cairo_translate"));
+                        let scale: extern "C" fn(P, f64, f64) = t(f("cairo_scale"));
+                        let source: extern "C" fn(P, P, f64, f64) = t(f("gdk_cairo_set_source_pixbuf"));
+                        save(cairo);
+                        translate(cairo, *x as f64, *y as f64);
+                        scale(cairo, if *w > 0 { *w as f64 / own_w } else { 1.0 }, if *h > 0 { *h as f64 / own_h } else { 1.0 });
+                        source(cairo, pixbuf, 0.0, 0.0);
+                        paint(cairo);
+                        restore(cairo);
+                    }
+                }
                 Text { x, y, size, color: c, text } => {
                     color(*c);
                     font_size(cairo, *size as f64);
@@ -1659,7 +1692,7 @@ struct Gtk {
     clicked: usize,
     changed: usize,
     /// What hears a check box, a slider, a drop-down list and a list.
-    values: [usize; 4],
+    values: [usize; 5],
 }
 
 impl Gtk {
@@ -1667,6 +1700,118 @@ impl Gtk {
         symbol(self.library, name).unwrap_or(0)
     }
 }
+
+/// The window's menus: a model of `GMenu`s, whose items start actions of an action group.
+fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
+    use core::mem::transmute as t;
+    unsafe {
+        let new_menu: extern "C" fn() -> P = t(g.get("g_menu_new"));
+        let append: extern "C" fn(P, *const u8, *const u8) = t(g.get("g_menu_append"));
+        let section: extern "C" fn(P, *const u8, P) = t(g.get("g_menu_append_section"));
+        let submenu: extern "C" fn(P, *const u8, P) = t(g.get("g_menu_append_submenu"));
+        let new_group: extern "C" fn() -> P = t(g.get("g_simple_action_group_new"));
+        let new_action: extern "C" fn(*const u8, P) -> P = t(g.get("g_simple_action_new"));
+        let add_action: extern "C" fn(P, P) = t(g.get("g_action_map_add_action"));
+        let insert: extern "C" fn(P, *const u8, P) = t(g.get("gtk_widget_insert_action_group"));
+        let bar_of: extern "C" fn(P) -> P = t(g.get("gtk_popover_menu_bar_new_from_model"));
+        let (bar, group) = (new_menu(), new_group());
+        for m in menus {
+            let (sub, mut part) = (new_menu(), new_menu());
+            for (label, event) in &m.items {
+                match event {
+                    Some(n) => {
+                        let action = new_action(c_string(&format!("i{n}")).as_ptr(), null_mut());
+                        (g.connect)(action, c"activate".as_ptr() as *const u8, g.values[4], *n as P, null_mut(), 0);
+                        add_action(group, action);
+                        append(part, c_string(label).as_ptr(), c_string(&format!("kova.i{n}")).as_ptr());
+                    }
+                    None => {
+                        section(sub, null(), part);
+                        part = new_menu();
+                    }
+                }
+            }
+            section(sub, null(), part);
+            submenu(bar, c_string(&m.title).as_ptr(), sub);
+        }
+        insert(window, c"kova".as_ptr() as *const u8, group);
+        bar_of(bar)
+    }
+}
+
+/// `ui.dialog`. GTK's dialogs answer later: its loop runs until they do. None if the person gave
+/// up, and on a GTK older than 4.10.
+pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    use core::mem::transmute as t;
+    static REPLY: Global<Option<Option<String>>> = Global::new(None);
+    extern "C" fn filed(dialog: P, result: P, finish: P) {
+        let finish: extern "C" fn(P, P, *mut P) -> P = unsafe { t(finish) };
+        let file = finish(dialog, result, null_mut());
+        *REPLY.get() = Some(if file.is_null() {
+            None
+        } else {
+            let path: extern "C" fn(P) -> *const u8 = unsafe { t(gtk_symbol("g_file_get_path")) };
+            Some(gtk_text(path(file)))
+        });
+    }
+    extern "C" fn answered(dialog: P, result: P, _: P) {
+        let finish: extern "C" fn(P, P, *mut P) -> i32 = unsafe { t(gtk_symbol("gtk_alert_dialog_choose_finish")) };
+        *REPLY.get() = Some((finish(dialog, result, null_mut()) == 0).then(|| "yes".into()));
+    }
+    if *GTK_LIBRARY.get() < 2 {
+        return None;
+    }
+    let f = gtk_symbol;
+    let window = *GTK_WINDOW.get() as P;
+    *REPLY.get() = None;
+    unsafe {
+        if kind >= 3 {
+            let new = f("gtk_alert_dialog_new");
+            if new == 0 {
+                return None;
+            }
+            let new: extern "C" fn(*const u8) -> P = t(new);
+            let detail: extern "C" fn(P, *const u8) = t(f("gtk_alert_dialog_set_detail"));
+            let buttons: extern "C" fn(P, *const *const u8) = t(f("gtk_alert_dialog_set_buttons"));
+            let cancel: extern "C" fn(P, i32) = t(f("gtk_alert_dialog_set_cancel_button"));
+            let choose: extern "C" fn(P, P, P, usize, P) = t(f("gtk_alert_dialog_choose"));
+            let d = new(c_string(&title.replace('%', "%%")).as_ptr());
+            detail(d, c_string(text).as_ptr());
+            let names: [*const u8; 3] = if kind == 3 { [c"OK".as_ptr().cast(), null(), null()] } else { [c"Yes".as_ptr().cast(), c"No".as_ptr().cast(), null()] };
+            buttons(d, names.as_ptr());
+            cancel(d, if kind == 3 { 0 } else { 1 });
+            choose(d, window, null_mut(), answered as usize, null_mut());
+        } else {
+            let new = f("gtk_file_dialog_new");
+            if new == 0 {
+                return None;
+            }
+            let new: extern "C" fn() -> P = t(new);
+            let set_title: extern "C" fn(P, *const u8) = t(f("gtk_file_dialog_set_title"));
+            let d = new();
+            set_title(d, c_string(title).as_ptr());
+            if kind == 1 {
+                let name: extern "C" fn(P, *const u8) = t(f("gtk_file_dialog_set_initial_name"));
+                name(d, c_string(text).as_ptr());
+            }
+            let (ask, finish) = match kind {
+                0 => ("gtk_file_dialog_open", "gtk_file_dialog_open_finish"),
+                1 => ("gtk_file_dialog_save", "gtk_file_dialog_save_finish"),
+                _ => ("gtk_file_dialog_select_folder", "gtk_file_dialog_select_folder_finish"),
+            };
+            let ask: extern "C" fn(P, P, P, usize, usize) = t(f(ask));
+            ask(d, window, null_mut(), filed as usize, f(finish));
+        }
+        let iteration: extern "C" fn(P, i32) -> i32 = t(f("g_main_context_iteration"));
+        while REPLY.get().is_none() {
+            iteration(null_mut(), 1);
+        }
+    }
+    REPLY.get().take().flatten()
+}
+
+/// The images a canvas drew: read once.
+static GTK_IMAGES: Global<Vec<(String, P)>> = Global::new(Vec::new());
 
 /// The line `k` of a `GtkListBox` selected, the others not.
 fn gtk_select(g: &Gtk, list: P, k: i32) {

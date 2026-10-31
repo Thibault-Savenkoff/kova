@@ -884,7 +884,7 @@ pub fn symbol(library: usize, name: &str) -> Option<usize> {
 /// being typed into keeps its cursor. The button clicked, a field changed (`shared::ui_changed`,
 /// its text in `typed`), or -1 once the window is closed. `KOVA_UI_HIDDEN` never shows the window (to drive it
 /// from another program).
-pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     static WINDOW: Global<Handle> = Global::new(0);
     static CONTROLS: Global<Vec<Handle>> = Global::new(Vec::new());
     static SHAPE: Global<String> = Global::new(String::new());
@@ -1080,6 +1080,12 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let win = WIN.get().as_ref().unwrap();
         let w = *WINDOW.get();
         (win.set_text)(w, wide(title).as_ptr());
+        static MENUS: Global<Vec<crate::shared::UiMenu>> = Global::new(Vec::new());
+        if *MENUS.get() != menus {
+            win_menus(w, menus);
+            MENUS.get().clear();
+            MENUS.get().extend_from_slice(menus);
+        }
         let shape = crate::shared::ui_shape(view);
         let same = shape == *SHAPE.get();
         if !same {
@@ -1444,6 +1450,9 @@ fn win_draw(dc: Handle, canvas: &crate::shared::UiCanvas) {
         };
         open(&mut g);
         filled(g, 0xffffff, fill_rect, [0, 0, canvas.width, canvas.height]);
+        let image_of: extern "system" fn(*const u16, *mut Handle) -> i32 = t(f("GdipCreateBitmapFromFile"));
+        let measure: [extern "system" fn(Handle, *mut u32) -> i32; 2] = [t(f("GdipGetImageWidth")), t(f("GdipGetImageHeight"))];
+        let draw_image: extern "system" fn(Handle, Handle, i32, i32, i32, i32) -> i32 = t(f("GdipDrawImageRectI"));
         for op in &canvas.ops {
             if !matches!(op, Text { .. }) {
                 open(&mut g);
@@ -1455,6 +1464,21 @@ fn win_draw(dc: Handle, canvas: &crate::shared::UiCanvas) {
                 Circle { x, y, r, color, outline: 0 } => filled(g, *color, fill_oval, [x - r, y - r, 2 * r, 2 * r]),
                 Circle { x, y, r, color, outline } => lined(g, *color, *outline, draw_oval, [x - r + outline / 2, y - r + outline / 2, 2 * r - outline, 2 * r - outline]),
                 Line { x, y, x2, y2, color, thickness } => lined(g, *color, *thickness, draw_line, [*x, *y, *x2, *y2]),
+                Image { x, y, w, h, path } => {
+                    static IMAGES: Global<Vec<(String, Handle)>> = Global::new(Vec::new());
+                    if !IMAGES.get().iter().any(|i| i.0 == *path) {
+                        let mut image = 0;
+                        image_of(wide(path).as_ptr(), &mut image);
+                        IMAGES.get().push((path.clone(), image));
+                    }
+                    let image = IMAGES.get().iter().find(|i| i.0 == *path).map_or(0, |i| i.1);
+                    if image != 0 {
+                        let (mut own_w, mut own_h) = (0, 0);
+                        measure[0](image, &mut own_w);
+                        measure[1](image, &mut own_h);
+                        draw_image(g, image, *x, *y, if *w > 0 { *w } else { own_w as i32 }, if *h > 0 { *h } else { own_h as i32 });
+                    }
+                }
                 Text { x, y, size, color, text } => {
                     if g != 0 {
                         finish(g);
@@ -1615,6 +1639,78 @@ fn win_common() {
             let start: extern "system" fn() = unsafe { core::mem::transmute(f) };
             start();
         }
+    }
+}
+
+/// The window's menu bar. An item's id is its event's number + 1, as a button's, so its WM_COMMAND
+/// is a click.
+fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
+    let Some(user) = library("user32.dll") else { return };
+    let f = |name: &str| symbol(user, name).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let new_bar: extern "system" fn() -> Handle = t(f("CreateMenu"));
+        let new_popup: extern "system" fn() -> Handle = t(f("CreatePopupMenu"));
+        let append: extern "system" fn(Handle, u32, usize, *const u16) -> i32 = t(f("AppendMenuW"));
+        let set: extern "system" fn(Handle, Handle) -> i32 = t(f("SetMenu"));
+        let draw: extern "system" fn(Handle) -> i32 = t(f("DrawMenuBar"));
+        let bar = new_bar();
+        for m in menus {
+            let popup = new_popup();
+            for (label, event) in &m.items {
+                match event {
+                    Some(n) => append(popup, 0, n + 1, wide(label).as_ptr()),
+                    None => append(popup, 0x800, 0, null()), // MF_SEPARATOR
+                };
+            }
+            append(bar, 0x10, popup as usize, wide(&m.title).as_ptr()); // MF_POPUP
+        }
+        set(window, if menus.is_empty() { 0 } else { bar });
+        draw(window);
+    }
+}
+
+/// `ui.dialog`: the system's own, which wait for the answer.
+pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    use core::mem::transmute as t;
+    let owner = *WIN_WINDOW.get();
+    let call = |dll: &str, name: &str| library(dll).and_then(|l| symbol(l, name));
+    unsafe {
+        if kind >= 3 {
+            let boxed: extern "system" fn(Handle, *const u16, *const u16, u32) -> i32 = t(call("user32.dll", "MessageBoxW")?);
+            // MB_OK | MB_ICONINFORMATION, MB_YESNO | MB_ICONQUESTION; IDOK = 1, IDYES = 6.
+            let (style, yes) = if kind == 3 { (0x40, 1) } else { (0x24, 6) };
+            return (boxed(owner, wide(text).as_ptr(), wide(title).as_ptr(), style) == yes).then(|| "yes".into());
+        }
+        let title = wide(title);
+        let mut path = alloc::vec![0u16; 4096];
+        if kind == 2 {
+            let browse: extern "system" fn(*const [u64; 8]) -> usize = t(call("shell32.dll", "SHBrowseForFolderW")?);
+            let path_of: extern "system" fn(usize, *mut u16) -> i32 = t(call("shell32.dll", "SHGetPathFromIDListW")?);
+            let info: [u64; 8] = [owner as u64, 0, path.as_mut_ptr() as u64, title.as_ptr() as u64, 0x41, 0, 0, 0];
+            let chosen = browse(&info);
+            if chosen == 0 || path_of(chosen, path.as_mut_ptr()) == 0 {
+                return None;
+            }
+        } else {
+            let name = wide(text);
+            path[..name.len()].copy_from_slice(&name);
+            // `OPENFILENAMEW`, by the place of each field. OFN_NOCHANGEDIR, then
+            // OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST or OFN_OVERWRITEPROMPT.
+            let mut info = [0u64; 19];
+            info[0] = 152;
+            info[1] = owner as u64;
+            info[6] = path.as_mut_ptr() as u64;
+            info[7] = path.len() as u64;
+            info[11] = title.as_ptr() as u64;
+            info[12] = 8 | if kind == 0 { 0x1800 } else { 2 };
+            let ask: extern "system" fn(*mut [u64; 19]) -> i32 = t(call("comdlg32.dll", if kind == 0 { "GetOpenFileNameW" } else { "GetSaveFileNameW" })?);
+            if ask(&mut info) == 0 {
+                return None;
+            }
+        }
+        let n = path.iter().position(|&c| c == 0).unwrap_or(path.len());
+        Some(String::from_utf16_lossy(&path[..n]))
     }
 }
 

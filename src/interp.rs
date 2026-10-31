@@ -1290,6 +1290,12 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 _ => -1,
                             }
                         }
+                        StrOp::UiDialog => {
+                            writeln!(out, "({} {:?})", crate::shared::ui_dialog_name(locals[a[0]]), s(1)).unwrap();
+                            let mut line = String::new();
+                            let _ = std::io::stdin().read_line(&mut line);
+                            heap.make(line.trim_end_matches(['\n', '\r']).to_string())
+                        }
                         StrOp::UiTyped => {
                             let t = heap.ui_typed.clone();
                             heap.make(t)
