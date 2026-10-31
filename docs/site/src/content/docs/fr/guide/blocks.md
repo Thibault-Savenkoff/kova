@@ -129,28 +129,156 @@ bloc : elle n'entre jamais dans une variable.
 Un bloc s'exécute à l'intérieur d'une autre fonction, à un moment choisi par elle. Donc :
 
 - `return`, `break`, `continue` et `?` ne peuvent pas s'écrire dans un bloc : ils quitteraient une
-  fonction ou une boucle qui ne tourne peut-être plus. La valeur du bloc est sa dernière ligne ;
-- un bloc ne s'écrit qu'en argument. Il n'est jamais rangé dans une variable ou une struct, donc il
-  ne peut jamais survivre aux variables qu'il utilise :
+  fonction ou une boucle qui ne tourne peut-être plus. La valeur du bloc est sa dernière ligne.
+
+## Garder une fonction
+
+Un bloc donné à une fonction est prêté pour cet appel, et il peut changer les variables autour de
+lui. Pour garder du code pour plus tard, mets-le dans un endroit qui a un type de bloc : une
+variable, un champ, une liste, le résultat d'une fonction. Son type s'écrit comme celui d'un
+paramètre bloc, et le bloc s'écrit de la même façon. Un nom de fonction marche aussi :
+
+```kova
+fn double(x: Int) -> Int := x * 2
+
+fn main {
+    let twice: {Int -> Int} := double
+    let square: {Int -> Int} := { x: Int => x * x }
+    print(twice(4))
+    print(square(4))
+}
+```
+
+```text
+8
+16
+```
+
+Une fonction gardée prend sa propre copie de ce qu'elle utilise autour d'elle. C'est pour ça qu'elle
+peut vivre plus longtemps que la fonction qui l'a créée. `adder` est terminée quand `add3` tourne,
+et `n` n'existe plus, mais `add3` tient son propre `n` :
+
+```kova
+fn adder(n: Int) -> {Int -> Int} {
+    return { x: Int => x + n }
+}
+
+fn main {
+    let add3: {Int -> Int} := adder(3)
+    print(add3(4))
+    print(adder(10)(4))
+}
+```
+
+```text
+7
+14
+```
+
+Comme elle tient une copie, elle voit la valeur du moment où elle a été créée, et les changements
+suivants ne l'atteignent pas. Elle ne peut pas non plus changer cette copie, sinon appeler `f(1)`
+deux fois pourrait donner deux réponses différentes sans que rien ne se voie à l'appel :
 
 ```kova
 fn main {
-    let double := { x: Int => x * 2 }
+    var count: Int := 0
+    let next: {-> Int} := {
+        count += 1
+        count
+    }
 }
 ```
 
 ```txt
-erreur: un bloc `{ … }` ne s'écrit qu'en argument d'une fonction : `l.each { x: Int => print(x) }`
- --> main.kova:2:19
+erreur: une fonction gardée dans une variable ne peut pas changer `count` : elle en tient sa propre copie
+ --> main.kova:4:9
   |
-2 |     let double := { x: Int => x * 2 }
-  |                   ^
+4 |         count += 1
+  |         ^^^^^
+  = aide : utilisez une `struct` avec une méthode `var self` pour garder un état qui change
 ```
 
-Ces deux règles rendent les blocs simples à suivre : un bloc s'exécute toujours pendant l'appel
-auquel on le donne, et quand l'appel se termine, le bloc disparaît. Quand du code doit être gardé
-et choisi plus tard, une [enum](/fr/guide/enums-and-match/) qui liste les actions possibles, avec
-un `match`, dit la même chose plus clairement.
+Une fonction gardée est une valeur comme une `String` : `let b: {Int -> Int} := a` la déplace,
+`a.clone` la copie, et on ne peut pas en comparer deux avec `=`.
+
+### Des fonctions dans les champs et les listes
+
+Un champ qui tient une fonction s'appelle comme une méthode. C'est comme ça qu'un bouton se souvient
+de ce qu'il fait, et qu'une liste d'étapes s'exécute l'une après l'autre :
+
+```kova
+struct Button {
+    label: String
+    on_click: {String -> String}
+}
+
+fn main {
+    let button: Button := Button { label := "OK", on_click := { who: String => "{who} clicked" } }
+    print(button.on_click("Ada"))
+
+    let steps: List<{Int -> Int}> := [{ x: Int => x + 1 }, { x: Int => x * 10 }]
+    print(steps[1](5))
+    var value: Int := 1
+    for step in steps {
+        value := step(value)
+    }
+    print(value)
+}
+```
+
+```text
+Ada clicked
+50
+20
+```
+
+Une fonction sans paramètres s'appelle en écrivant son nom seul, comme partout en Kova. Là où une
+fonction est attendue, ce même nom donne la fonction elle-même au lieu de l'appeler.
+
+### Garder une fonction reçue
+
+Un paramètre bloc est seulement prêté : il peut utiliser des variables de l'appelant, donc il ne
+peut pas être gardé.
+
+```kova
+fn keep(f: {Int -> Int}) -> {Int -> Int} {
+    return f
+}
+
+fn main {
+    print(keep({ x: Int => x })(1))
+}
+```
+
+```txt
+erreur: `f` est un bloc prêté pour cet appel : il ne peut pas être gardé
+ --> main.kova:2:12
+  |
+2 |     return f
+  |            ^
+  = aide : pour le garder, écrivez `f: move {…}` dans les paramètres
+```
+
+Avec `move`, la fonction appartient à celui qui la reçoit. Combiner deux fonctions en une nouvelle
+marche comme ça, et les génériques s'appliquent comme d'habitude :
+
+```kova
+fn then<A, B, C>(f: move {A -> B}, g: move {B -> C}) -> {A -> C} {
+    return { x: A => g(f(x)) }
+}
+
+fn main {
+    let size: {String -> String} := then({ s: String => s.length }, { n: Int => "{n} letters" })
+    print(size("Kova"))
+}
+```
+
+```text
+4 letters
+```
+
+Une fonction gardée peut aussi aller partout où un bloc est attendu, sans `move` : `[1, 2].map(add3)`
+la prête pour l'appel.
 
 ## Des blocs sur plusieurs fils
 

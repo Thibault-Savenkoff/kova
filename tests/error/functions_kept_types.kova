@@ -1,0 +1,34 @@
+// A function kept: what the checker refuses.
+struct Holder {
+    f: {Int -> Int}
+}
+fn keep(f: {Int -> Int}) -> {Int -> Int} {
+    return f
+}
+fn wrap(g: {Int -> Int}) -> {Int -> Int} {
+    return { x: Int => g(x) }
+}
+fn main {
+    let a: {Int -> Int} := { x: Int => x }
+    let b: {Int -> Int} := { x: Int => x }
+    print(a = b)
+    let c: Holder := Holder { f := a.clone }
+    print(c = c)
+    print(c.to_json)
+    let m: Map<{Int -> Int}, Int> := []
+    print(m.length)
+    print(a(1, 2))
+    let w: {Int -> Int} := { s: String => 1 }
+    print(3(1))
+    let n: {Int -> Int} := 3
+}
+// error: `f` is a block lent for this call: it cannot be kept
+// error: `g` is a block lent for this call: it cannot be kept
+// error: `=` cannot compare `{Int -> Int}` values
+// error: `=` cannot compare `Holder` values
+// error: `Holder.to_json` cannot hold `f`
+// error: `{Int -> Int}` cannot be the key of a Map
+// error: `a` takes 1 argument(s), 2 given
+// error: `s` must be of type `Int`
+// error: this is not a function: `Int`
+// error: different types: `{Int -> Int}` expected, `Int` given

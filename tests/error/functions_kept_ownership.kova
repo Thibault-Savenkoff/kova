@@ -1,0 +1,19 @@
+// A function kept holds copies: it changes nothing, and it moves like a String.
+fn main {
+    var n: Int := 0
+    let f: {-> Int} := {
+        n += 1
+        n
+    }
+    print(f)
+    let name: String := "a"
+    let k: {-> String} := { name }
+    print(k)
+    let a: {Int -> Int} := { x: Int => x }
+    let b: {Int -> Int} := a
+    print(a(1))
+    print(b(1))
+}
+// error: a function kept in a variable cannot change `n`
+// error: `name` is moved in a block
+// error: `a` was moved

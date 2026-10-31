@@ -1,0 +1,89 @@
+// expect: 6
+// expect: <2>
+// expect: 11
+// expect: true
+// expect: hello
+// expect: 42
+// expect: true
+// expect: <9>
+// expect: 7
+// expect: 7
+// expect: 101
+// expect: [2]
+// expect: [11, 12, 13]
+
+struct Counter {
+    n: Int
+    fn adder(self) -> { Int -> Int } {
+        return { x: Int => x + self.n }
+    }
+}
+
+struct Menu {
+    action: {-> String}?
+    steps: List < { Int -> Int } >
+        fn add(var self, step: move { Int -> Int }) {
+            self.steps.add(move step)
+        }
+    fn run(self, start: Int) -> Int {
+        var x: Int := start
+        for s in self.steps {
+            x := s(x)
+        }
+        return x
+    }
+}
+
+enum Handler {
+    Silent
+    Call(f: {Int -> String})
+}
+
+fn compose<A, B, C>(f: move { A -> B }, g: move { B -> C }) -> { A -> C } {
+    return { x: A => g(f(x)) }
+}
+
+fn show(n: Int) -> String := "<{n}>"
+
+fn apply(f: {Int -> Int}, x: Int) -> Int := f(x)
+
+fn main {
+    let c: Counter := Counter { n := 5 }
+    let f: {Int -> Int} := c.adder
+    print(f(1))
+    let h: {Int -> String} := compose({ x: Int => x + 1 }, show)
+    print(h(1))
+    var m: Menu := Menu { action := none, steps := [] }
+    m.add { x: Int => x * 2 }
+    m.add(f.clone)
+    print(m.run(3))
+    print(m.action = none)
+    m.action := { "hello" }
+    match m.action {
+        some => print(some)
+        none => print("nothing")
+    }
+    var routes: Map < String, { Int -> Int } > := []
+    routes["double"] := { x: Int => x * 2 }
+    match routes["double"] {
+        some => print(some(21))
+        none => print("no")
+    }
+    print(routes["other"] = none)
+    let e: Handler := Handler.Call(show)
+    match e {
+        .Silent => print("silent")
+        .Call(g) => print(g(9))
+    }
+    let t: ({ Int -> Int }, Int) := (f, 2)
+    print(t.0 (t.1))
+    print(apply(t.0, 2))
+    print(apply({ x: Int => x + 100 }, 1))
+    print([1, 2].filter { x: Int => t.0 (x) > 6 })
+    let fs: List < { Int -> Int } > := [1, 2, 3].map { k: Int => adder2(k) }
+    print(fs.map { g: {Int -> Int} => g(10) })
+}
+
+fn adder2(n: Int) -> { Int -> Int } {
+    return { x: Int => x + n }
+}

@@ -128,28 +128,155 @@ never goes into a variable.
 A block runs inside another function, at a moment chosen by that function. So:
 
 - `return`, `break`, `continue` and `?` cannot be written in a block: they would leave a function
-  or a loop that may no longer be running. The block's value is its last line;
-- a block is only written as an argument. It is never stored in a variable or a struct, so it can
-  never outlive the variables it uses:
+  or a loop that may no longer be running. The block's value is its last line.
+
+## Keeping a function
+
+A block given to a function is lent for that call, and it can change the variables around it. To
+keep code for later, put it in a place that has a block type: a variable, a field, a list, a
+function's result. Its type is written like a block parameter's, and the block is written the same
+way. A function name works too:
+
+```kova
+fn double(x: Int) -> Int := x * 2
+
+fn main {
+    let twice: {Int -> Int} := double
+    let square: {Int -> Int} := { x: Int => x * x }
+    print(twice(4))
+    print(square(4))
+}
+```
+
+```text
+8
+16
+```
+
+A kept function takes its own copy of what it uses around it. That is why it can outlive the
+function that made it. `adder` has finished when `add3` runs, and `n` is gone, but `add3` holds its
+own `n`:
+
+```kova
+fn adder(n: Int) -> {Int -> Int} {
+    return { x: Int => x + n }
+}
+
+fn main {
+    let add3: {Int -> Int} := adder(3)
+    print(add3(4))
+    print(adder(10)(4))
+}
+```
+
+```text
+7
+14
+```
+
+Since it holds a copy, it sees the value from the moment it was made, and later changes do not
+reach it. It cannot change that copy either, otherwise calling `f(1)` twice could give two different
+answers with nothing visible at the call:
 
 ```kova
 fn main {
-    let double := { x: Int => x * 2 }
+    var count: Int := 0
+    let next: {-> Int} := {
+        count += 1
+        count
+    }
 }
 ```
 
 ```txt
-error: a block `{ … }` is only written as a function's argument: `l.each { x: Int => print(x) }`
- --> main.kova:2:19
+error: a function kept in a variable cannot change `count`: it holds its own copy
+ --> main.kova:4:9
   |
-2 |     let double := { x: Int => x * 2 }
-  |                   ^
+4 |         count += 1
+  |         ^^^^^
+  = help: use a `struct` with a `var self` method to keep a state that changes
 ```
 
-These two rules keep blocks simple to follow: a block is always run during the call it is given
-to, and when the call ends, the block is gone. When code must be kept and chosen later, an
-[enum](/guide/enums-and-match/) listing the possible actions, with a `match`, says the same thing
-more clearly.
+A kept function is a value like a `String`: `let b: {Int -> Int} := a` moves it, `a.clone` copies it,
+and two of them cannot be compared with `=`.
+
+### Functions in fields and lists
+
+A field holding a function is called like a method. This is how a button remembers what it does,
+and how a list of steps is run one after the other:
+
+```kova
+struct Button {
+    label: String
+    on_click: {String -> String}
+}
+
+fn main {
+    let button: Button := Button { label := "OK", on_click := { who: String => "{who} clicked" } }
+    print(button.on_click("Ada"))
+
+    let steps: List<{Int -> Int}> := [{ x: Int => x + 1 }, { x: Int => x * 10 }]
+    print(steps[1](5))
+    var value: Int := 1
+    for step in steps {
+        value := step(value)
+    }
+    print(value)
+}
+```
+
+```text
+Ada clicked
+50
+20
+```
+
+A function without parameters is called by writing its name alone, as everywhere in Kova. Where a
+function is expected, the same name gives the function itself instead of calling it.
+
+### Keeping a function that was given
+
+A block parameter is only lent: it may use variables of the caller, so it cannot be kept.
+
+```kova
+fn keep(f: {Int -> Int}) -> {Int -> Int} {
+    return f
+}
+
+fn main {
+    print(keep({ x: Int => x })(1))
+}
+```
+
+```txt
+error: `f` is a block lent for this call: it cannot be kept
+ --> main.kova:2:12
+  |
+2 |     return f
+  |            ^
+  = help: to keep it, write `f: move {…}` in the parameters
+```
+
+With `move`, the function belongs to the one who receives it. Combining two functions into a new
+one works that way, and generics apply as usual:
+
+```kova
+fn then<A, B, C>(f: move {A -> B}, g: move {B -> C}) -> {A -> C} {
+    return { x: A => g(f(x)) }
+}
+
+fn main {
+    let size: {String -> String} := then({ s: String => s.length }, { n: Int => "{n} letters" })
+    print(size("Kova"))
+}
+```
+
+```text
+4 letters
+```
+
+A kept function can also go wherever a block is expected, without `move`: `[1, 2].map(add3)` lends it
+for the call.
 
 ## Blocks on several threads
 

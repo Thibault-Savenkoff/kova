@@ -469,8 +469,7 @@ impl Parser<'_> {
             return self.block_type();
         }
         if self.is_sym("{") {
-            let span = self.token().span;
-            return self.error(span, t!("block_type_place"));
+            return self.function_type();
         }
         // `any Animal`: a value of any type following the interface `Animal`.
         if self.is_keyword("any") {
@@ -496,6 +495,14 @@ impl Parser<'_> {
             return self.error(open.to(close), t!("tuple_too_small"));
         }
         Ok(TypeAst::Tuple(types))
+    }
+
+    /// A block type outside a parameter: the value is kept, not lent for a call.
+    fn function_type(&mut self) -> R<TypeAst> {
+        match self.block_type()? {
+            TypeAst::Block(ps, r) => Ok(TypeAst::Function(ps, r)),
+            t => Ok(t),
+        }
     }
 
     /// `{Int -> Bool}`, `{Int}`, `{-> Bool}`, `{}`: a parameter's block type.
@@ -1301,7 +1308,11 @@ impl Parser<'_> {
             self.expect(":")?;
             let mode = self.mode();
             self.copy_mark(params.len());
-            let ty = if self.is_sym("{") { self.block_type()? } else { self.type_()? };
+            let ty = match self.is_sym("{") {
+                true if mode == Mode::Move => self.function_type()?,
+                true => self.block_type()?,
+                false => self.type_()?,
+            };
             let default = if self.is_sym(":=") {
                 self.advance();
                 let e = self.expression()?;
@@ -1992,6 +2003,20 @@ impl Parser<'_> {
                 e = self.expr(e.span.to(end), ExprKind::Index(Box::new(e), Box::new(index)));
                 continue;
             }
+            // `actions[0](3)`: the `(` on the same line, like `[`.
+            if self.is_sym("(") && !self.src[e.span.end..self.token().span.start].contains('\n') {
+                self.advance();
+                let mut args = vec![];
+                while !self.is_sym(")") {
+                    args.push(self.inner_expr()?);
+                    if !self.is_sym(")") {
+                        self.expect(",")?;
+                    }
+                }
+                let end = self.expect(")")?;
+                e = self.expr(e.span.to(end), ExprKind::Apply(Box::new(e), args));
+                continue;
+            }
             // `x?`: on the same line (a `?` never starts a line anyway).
             if self.is_sym("?") {
                 let end = self.advance().span;
@@ -2192,6 +2217,10 @@ impl Parser<'_> {
     }
 
     fn atom(&mut self) -> R<Expr> {
+        // `let f: {Int -> Int} := { x: Int => x * 2 }`.
+        if self.is_sym("{") && !self.no_literal {
+            return self.block_literal();
+        }
         let t = self.token();
         let kind = match t.kind {
             Kind::Int(v) => ExprKind::Int(v),

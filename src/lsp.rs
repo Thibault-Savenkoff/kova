@@ -1265,6 +1265,7 @@ fn in_expr(e: &Expr, cursor: usize, vars: &mut Vec<(String, String)>) {
             in_expr(x, cursor, vars)
         }
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => each(&mut [&**a, &**b].into_iter()),
+        ExprKind::Apply(f, args) => each(&mut std::iter::once(&**f).chain(args)),
         ExprKind::MapLit(pairs) => each(&mut pairs.iter().flat_map(|(k, v)| [k, v])),
         ExprKind::StructLit { fields, base, .. } => each(&mut fields.iter().map(|(_, v)| v).chain(base.as_deref())),
         ExprKind::Else(a, b) => each(&mut [&**a, &**b].into_iter()),

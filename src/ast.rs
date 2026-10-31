@@ -353,6 +353,8 @@ pub enum TypeAst {
     Any(Name),
     /// `{Int -> Bool}`: a block taking an `Int` and giving a `Bool` (only a parameter's type).
     Block(Vec<TypeAst>, Option<Box<TypeAst>>),
+    /// The same type where the value is kept: a variable, a field, a result, `f: move {…}`.
+    Function(Vec<TypeAst>, Option<Box<TypeAst>>),
     /// A block's parameter whose type comes from what the block is given to.
     Inferred,
 }
@@ -367,7 +369,7 @@ impl TypeAst {
             TypeAst::Optional(t) => format!("{}?", t.text()),
             TypeAst::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             TypeAst::Any(n) => format!("any {}", n.text),
-            TypeAst::Block(ps, r) => block_text(ps.iter().map(TypeAst::text).collect(), r.as_ref().map(|r| r.text())),
+            TypeAst::Block(ps, r) | TypeAst::Function(ps, r) => block_text(ps.iter().map(TypeAst::text).collect(), r.as_ref().map(|r| r.text())),
             TypeAst::Inferred => String::new(),
         }
     }
@@ -541,6 +543,8 @@ pub enum ExprKind {
     /// `scores[i]`: an element of a List (a place, like a field); `scores[1..3]`: a new List of
     /// copies of some elements (not a place).
     Index(Box<Expr>, Box<Expr>),
+    /// `actions[0](3)`, `make(2)(3)`: calls the function a value holds.
+    Apply(Box<Expr>, Vec<Expr>),
     /// `t.0`
     Field(Box<Expr>, usize),
     /// `Dog { name := "Rex", age := 3 }`: the fields in the written order. `base`: the value of

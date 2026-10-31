@@ -1,0 +1,102 @@
+// expect: 8
+// expect: 5
+// expect: 14
+// expect: 7
+// expect: 11
+// expect: Hello Ada
+// expect: 25
+// expect: 6
+// expect: 4
+// expect: 9
+// expect: 3
+// expect: 7
+// expect: [4, 5]
+// expect: hi!
+// expect: 7
+// expect: again!
+// expect: still!
+// expect: Rex
+// expect: Tom
+// expect: 104
+// expect: 22
+// expect: 2
+// expect: [104, 105, 106]
+
+struct Button {
+    label: String
+    on_click: {String -> String}
+    on_done: {-> Int}
+}
+
+fn double(x: Int) -> Int := x * 2
+
+fn seven -> Int := 7
+
+fn adder(n: Int) -> { Int -> Int } {
+    return { x: Int => x + n }
+}
+
+fn greeter(name: String) -> { String -> String } {
+    return { greeting: String => "{greeting} {name}" }
+}
+
+fn compose(f: move { Int -> Int }, g: move { Int -> Int }) -> { Int -> Int } {
+    return { x: Int => g(f(x)) }
+}
+
+fn twice<T>(f: {T -> T}, x: T) -> T := f(f(x))
+
+fn main {
+    // A named function, then a block using nothing.
+    let f: {Int -> Int} := double
+    print(f(4))
+    var g: {Int -> Int} := { x: Int => x + 1 }
+    print(g(4))
+    // Reassigning frees the old box.
+    let base: Int := 10
+    g := { x: Int => x + base }
+    print(g(4))
+    // A returned closure.
+    let add3: {Int -> Int} := adder(3)
+    print(add3(4))
+    print(adder(5)(6))
+    // It holds a String of its own.
+    let hello: {String -> String} := greeter("Ada")
+    print(hello("Hello"))
+    // A List of functions.
+    let all: List < { Int -> Int } > := [double, adder(1), { x: Int => x * x }]
+    print(all[2](5))
+    for h in all {
+        print(h(3))
+    }
+    print(all.length)
+    // Lent to a block parameter and to a List method.
+    print(twice(add3, 1))
+    print([1, 2].map(add3))
+    // A field.
+    var who: String := "Rex"
+    let b: Button := Button { label := "go", on_click := { s: String => "{s}!" }, on_done := seven }
+    print(b.on_click("hi"))
+    print(b.on_done)
+    let c: Button := b.clone
+    print(c.on_click("again"))
+    print(b.on_click("still"))
+    // Keeps a copy: a later change is not seen.
+    let keep: {-> String} := { who.clone }
+    who := "Tom"
+    print(keep)
+    print(who)
+    // Composition takes them.
+    let both: {Int -> Int} := compose(move add3, adder(100))
+    print(both(1))
+    // Moved around, cloned.
+    let moved: {Int -> Int} := g
+    let other: {Int -> Int} := moved.clone
+    print(moved(1) + other(1))
+    let maybe: {Int -> Int}? := double
+    match maybe {
+        some => print(some(1))
+        none => print("no")
+    }
+    print([1, 2, 3].map workers(2) { x: Int => both(x) })
+}

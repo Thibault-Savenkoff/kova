@@ -544,7 +544,7 @@ impl Owner<'_> {
     fn give(&mut self, e: &Expr) {
         let ty = &self.info.types[e.id];
         // `body` alone calls a block: a new value, like any call's.
-        if is_copy(ty) || self.info.invoked.contains(&e.id) {
+        if is_copy(ty) || self.info.invoked.contains(&e.id) || self.info.filled.contains_key(&e.id) {
             return self.borrow(e);
         }
         match &e.kind {
@@ -681,9 +681,14 @@ impl Owner<'_> {
             self.diags.push(Diag::new(block.span, t!("workers_block")));
             return;
         }
-        let changed: Vec<(String, Span)> = (self.uses.get(&block.id).into_iter().flatten()).filter_map(|(n, c)| Some((n.clone(), (*c)?))).collect();
+        self.unchanged(block.id, "workers_change", "workers_change_help");
+    }
+
+    /// A block that runs on its own copies (`workers`, a function kept) changes nothing around it.
+    fn unchanged(&mut self, block: usize, message: &str, help: &str) {
+        let changed: Vec<(String, Span)> = (self.uses.get(&block).into_iter().flatten()).filter_map(|(n, c)| Some((n.clone(), (*c)?))).collect();
         for (name, span) in changed {
-            self.diags.push(Diag::new(span, t!("workers_change", name = name)).help(t!("workers_change_help")));
+            self.diags.push(Diag::new(span, crate::locale::text(message, &[("name", &name)])).help(crate::locale::text(help, &[])));
         }
     }
 
@@ -916,8 +921,16 @@ impl Owner<'_> {
             ExprKind::If { cond, then, otherwise } => self.if_value(cond, then, otherwise),
             ExprKind::Interp(parts) => self.parts(parts.iter()),
             ExprKind::Block { params, body } => {
-                let value = matches!(&self.info.types[e.id], Type::Block(_, r) if **r != Type::Unit);
+                let ty = &self.info.types[e.id];
+                let (kept, value) = (matches!(ty, Type::Function(..)), matches!(ty, Type::Block(_, r) | Type::Function(_, r) if **r != Type::Unit));
                 self.block_literal(e.id, params, body, value);
+                if kept {
+                    self.unchanged(e.id, "kept_change", "kept_change_help");
+                }
+            }
+            ExprKind::Apply(callee, args) => {
+                self.borrow(callee);
+                args.iter().for_each(|a| self.borrow(a));
             }
             ExprKind::Int(_)
             | ExprKind::Float(_)

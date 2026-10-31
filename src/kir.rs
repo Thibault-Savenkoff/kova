@@ -109,6 +109,8 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
         Type::Int | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Box(_) => vec![Scalar::Int],
         // The function's number, then the box of what the block uses around it.
         Type::Block(..) => vec![Scalar::Int, Scalar::Int],
+        // Its box: the function, how to free and copy the box, what the function holds.
+        Type::Function(..) => vec![Scalar::Int],
         Type::Float => vec![Scalar::Float],
         Type::Tuple(ts) => ts.iter().flat_map(scalars).collect(),
         Type::Struct(_) => members(t).iter().flat_map(scalars).collect(),
@@ -128,7 +130,7 @@ pub fn scalars(t: &Type) -> Vec<Scalar> {
 /// For each slot of a value of this type: what it owns (`String` or `List<T>`), to free or copy.
 fn heap(t: &Type) -> Vec<Option<Type>> {
     match t {
-        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) => vec![Some(t.clone())],
+        Type::String | Type::BigInt | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_) | Type::Function(..) => vec![Some(t.clone())],
         Type::Tuple(_) | Type::Struct(_) => members(t).iter().flat_map(heap).collect(),
         // The other variants' slots hold 0: freeing or copying them does nothing.
         Type::Enum(d) => std::iter::once(None).chain(variant_fields(d).flat_map(|t| heap(&t))).collect(),
@@ -1184,6 +1186,9 @@ impl<'a> Translator<'a> {
         if let Type::Any(interface) = ty {
             return self.any_helper(h, interface, v[0]);
         }
+        if let Type::Function(..) = ty {
+            return self.function_helper(h, v[0]);
+        }
         if let (Helper::Show(_), Some(d)) = (h, enum_view(ty)) {
             let text = self.show_enum(&v, &d, ty);
             self.finish(End::Return(vec![text]));
@@ -1893,6 +1898,35 @@ impl<'a> Translator<'a> {
     }
 
     /// Frees, copies or shows the value of an `any` through its real type.
+    /// Frees or copies a function's box, whatever it holds: the box knows how (`kept_function`).
+    /// 0 (no function: a field of another variant of an enum) stays 0.
+    fn function_helper(mut self, h: &Helper, b: Local) -> Function {
+        let (zero, copy, f) = (self.constant(0), self.constant(0), self.int_local());
+        let (work, done) = (self.new_block(), self.new_block());
+        self.go(End::Branch(b, work, done), work);
+        let name = match h {
+            Helper::Drop(_) => {
+                self.emit(Inst::ListLoad(f, b, zero, 1));
+                let (holds, free) = (self.new_block(), self.new_block());
+                self.go(End::Branch(f, holds, free), holds);
+                self.emit(Inst::CallIndirect(vec![], f, vec![b]));
+                self.go(End::Jump(free), free);
+                self.emit(Inst::ListFree(b));
+                "drop function"
+            }
+            _ => {
+                self.emit(Inst::ListLoad(f, b, zero, 2));
+                self.emit(Inst::CallIndirect(vec![copy], f, vec![b]));
+                "clone function"
+            }
+        };
+        self.go(End::Jump(done), done);
+        let results = if matches!(h, Helper::Drop(_)) { vec![] } else { vec![copy] };
+        let scalars = vec![Scalar::Int; results.len()];
+        self.finish(End::Return(results));
+        self.function(name.to_string(), 1, scalars)
+    }
+
     fn any_helper(mut self, h: &Helper, interface: &str, b: Local) -> Function {
         let ty = Type::Any(interface.to_string());
         let (name, result) = match h {
@@ -3395,7 +3429,7 @@ impl<'a> Translator<'a> {
                 self.temps.push((text, Type::String));
                 m.push(Piece::Value(text, Show::String));
             }
-            Type::Block(..) => m.push(Piece::Text(ty.text())),
+            Type::Block(..) | Type::Function(..) => m.push(Piece::Text(ty.text())),
             Type::Date | Type::DateTime => self.date_pieces(v[0], ty, m),
             // `Pointer(140245…)`: its address, which only means something to C.
             Type::Pointer => {
@@ -4108,6 +4142,9 @@ impl<'a> Translator<'a> {
     /// uses around it (`Info::captures`). The block's function reads them from the box and writes
     /// them back before returning; `give_back` copies them into the variables after the call.
     fn block_value_of(&mut self, e: &Expr, params: &[ast::Param], body: &Block) -> Slots {
+        if matches!(self.ty(e), Type::Function(..)) {
+            return self.kept_function(e, params, body);
+        }
         let Type::Block(ps, r) = self.ty(e) else { unreachable!("block checked by the type checker") };
         let held = self.held(e);
         let slots: Slots = held.iter().flat_map(|(_, v, _)| v.clone()).collect();
@@ -4118,9 +4155,101 @@ impl<'a> Translator<'a> {
             env
         };
         self.envs.push((env, held.iter().map(|(_, v, _)| v.clone()).collect()));
-        let mut t = self.inner((*r).clone());
+        let num = self.block_function(params, body, &ps, &r, &held, 0);
+        let fun = self.int_local();
+        self.emit(Inst::FuncRef(fun, num));
+        vec![fun, env]
+    }
+
+    /// A block kept in a variable, a field, a result (PLAN Part 4 "Functions in variables"): a box
+    /// `[function, what frees what it holds (0: nothing), what copies the box, copies of the
+    /// variables it uses…]`. It owns those copies and changes none of them (`ownership.rs`).
+    fn kept_function(&mut self, e: &Expr, params: &[ast::Param], body: &Block) -> Slots {
+        let ty = self.ty(e);
+        let Type::Function(ps, r) = &ty else { unreachable!("block checked by the type checker") };
+        let held = self.held(e);
+        let num = self.block_function(params, body, ps, r, &held, 3);
+        let free = self.free_held(&held);
+        let copy = self.copy_held(&held);
+        let (env, a, b, c) = (self.int_local(), self.int_local(), self.int_local(), self.int_local());
+        self.emit(Inst::FuncRef(a, num));
+        match free {
+            Some(f) => self.emit(Inst::FuncRef(b, f)),
+            None => self.emit(Inst::Const(b, 0)),
+        }
+        self.emit(Inst::FuncRef(c, copy));
+        let mut slots = vec![a, b, c];
+        for (_, v, t) in &held {
+            slots.extend(self.clone_value(v, t));
+        }
+        self.emit(Inst::ListNew(env, slots.len()));
+        self.push(env, &slots);
+        let v = vec![env];
+        self.track(&v, &ty);
+        v
+    }
+
+    /// The function that frees the copies held in a box, if some of them own something.
+    fn free_held(&mut self, held: &[(String, Slots, Type)]) -> Option<usize> {
+        if held.iter().all(|(_, _, t)| plain(t)) {
+            return None;
+        }
+        let mut t = self.inner(Type::Unit);
+        let b = t.int_local();
+        t.current = t.new_block();
+        let zero = t.constant(0);
+        let mut k = 3;
+        for (_, _, ty) in held {
+            let v = t.new_slots(ty);
+            for &l in &v {
+                t.emit(Inst::ListLoad(l, b, zero, k));
+                k += 1;
+            }
+            t.free_value(&v, ty);
+        }
+        t.finish(End::Return(vec![]));
+        let name = format!("free {}", t.owner);
+        let f = t.function(name, 1, vec![]);
+        Some(self.made_function(f))
+    }
+
+    /// The function that copies a box and what it holds.
+    fn copy_held(&mut self, held: &[(String, Slots, Type)]) -> usize {
+        let mut t = self.inner(Type::Int);
+        let b = t.int_local();
+        t.current = t.new_block();
+        let zero = t.constant(0);
+        let mut slots = vec![];
+        for k in 0..3 {
+            let l = t.int_local();
+            t.emit(Inst::ListLoad(l, b, zero, k));
+            slots.push(l);
+        }
+        for (_, _, ty) in held {
+            let v = t.new_slots(ty);
+            for &l in &v {
+                t.emit(Inst::ListLoad(l, b, zero, slots.len()));
+                slots.push(l);
+            }
+            let c = t.clone_value(&v, ty);
+            slots.truncate(slots.len() - v.len());
+            slots.extend(c);
+        }
+        let copy = t.int_local();
+        t.emit(Inst::ListNew(copy, slots.len()));
+        t.push(copy, &slots);
+        t.finish(End::Return(vec![copy]));
+        let name = format!("copy {}", t.owner);
+        let f = t.function(name, 1, vec![Scalar::Int]);
+        self.made_function(f)
+    }
+
+    /// A block's function: takes its box, then its parameters. What it uses around it is in the
+    /// box from slot `first`; lent (`first` = 0), it writes it back before returning.
+    fn block_function(&mut self, params: &[ast::Param], body: &Block, ps: &[Type], r: &Type, held: &[(String, Slots, Type)], first: usize) -> usize {
+        let mut t = self.inner(r.clone());
         let inner_env = t.int_local();
-        for (p, ty) in params.iter().zip(&ps) {
+        for (p, ty) in params.iter().zip(ps) {
             let v = t.new_slots(ty);
             t.names[0].vars.insert(p.name.text.clone(), (v, ty.clone()));
         }
@@ -4128,32 +4257,31 @@ impl<'a> Translator<'a> {
         t.current = t.new_block();
         let zero = t.constant(0);
         let mut inside = vec![];
-        for (name, _, ty) in &held {
+        for (name, _, ty) in held {
             let v = t.new_slots(ty);
             t.names[0].vars.insert(name.clone(), (v.clone(), ty.clone()));
             inside.extend(v);
         }
         for (k, &l) in inside.iter().enumerate() {
-            t.emit(Inst::ListLoad(l, inner_env, zero, k));
+            t.emit(Inst::ListLoad(l, inner_env, zero, first + k));
         }
         let v = if *r == Type::Unit {
             t.block(body);
             vec![]
         } else {
-            t.block_value(body, &r)
+            t.block_value(body, r)
         };
         // The temporaries of its last line (its value is owned, not among them).
         t.free_temps(0);
-        for (k, &l) in inside.iter().enumerate() {
-            t.emit(Inst::ListStore(inner_env, zero, k, l));
+        if first == 0 {
+            for (k, &l) in inside.iter().enumerate() {
+                t.emit(Inst::ListStore(inner_env, zero, k, l));
+            }
         }
         t.finish(End::Return(v));
         let name = t.owner.clone();
-        let f = t.function(name, nb_params, scalars(&r));
-        let num = self.made_function(f);
-        let fun = self.int_local();
-        self.emit(Inst::FuncRef(fun, num));
-        vec![fun, env]
+        let f = t.function(name, nb_params, scalars(r));
+        self.made_function(f)
     }
 
     /// `l.map workers(n) { … }`, `l.each workers(n) { … }` (PLAN Part 4 "Several things at once"):
@@ -4308,7 +4436,16 @@ impl<'a> Translator<'a> {
     /// Calls the block `b` (its function and its box) with `vals`.
     fn call_block(&mut self, b: &[Local], vals: Slots, ty: &Type) -> Slots {
         let result = self.new_slots(ty);
-        self.emit(Inst::CallIndirect(result.clone(), b[0], [vec![b[1]], vals].concat()));
+        // A function kept has one slot, its box, whose first number is the function to call.
+        let (fun, env) = match *b {
+            [fun, env] => (fun, env),
+            _ => {
+                let (fun, zero) = (self.int_local(), self.constant(0));
+                self.emit(Inst::ListLoad(fun, b[0], zero, 0));
+                (fun, b[0])
+            }
+        };
+        self.emit(Inst::CallIndirect(result.clone(), fun, [vec![env], vals].concat()));
         result
     }
 
@@ -5004,6 +5141,11 @@ impl<'a> Translator<'a> {
 
     fn expr(&mut self, e: &Expr) -> Slots {
         let v = self.value(e);
+        if self.info.lent.contains(&e.id) {
+            let (fun, zero) = (self.int_local(), self.constant(0));
+            self.emit(Inst::ListLoad(fun, v[0], zero, 0));
+            return vec![fun, v[0]];
+        }
         let v = self.boxed(e, v, false);
         self.wrapped(e, v)
     }
@@ -5074,6 +5216,15 @@ impl<'a> Translator<'a> {
                 r
             }
             ExprKind::Mark(_, x) => self.expr(x),
+            // `actions[0](3)`: calls the function a value holds.
+            ExprKind::Apply(callee, args) => {
+                let b = self.expr(callee);
+                let vals = args.iter().flat_map(|a| self.expr(a)).collect();
+                let ty = self.ty(e);
+                let r = self.call_block(&b, vals, &ty);
+                self.track(&r, &ty);
+                r
+            }
             // `[]` or `Map<String, Int>()` where a Map is expected.
             ExprKind::List(_) | ExprKind::New(_) if matches!(self.ty(e), Type::Map(..)) => {
                 let ty = self.ty(e);
@@ -5949,7 +6100,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Method { receiver, name, .. }
                 if name.text == "clone"
-                    && matches!(self.ty(receiver), Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) =>
+                    && matches!(self.ty(receiver), Type::Function(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Any(_)) =>
             {
                 let ty = self.ty(receiver);
                 let v = self.expr(receiver);
@@ -6386,6 +6537,10 @@ pub fn names_in(e: &Expr, names: &mut Vec<String>) {
             args.iter().for_each(|a| names_in(a, names))
         }
         ExprKind::Match(m) => names_in(&m.subject, names),
+        ExprKind::Apply(f, args) => {
+            names_in(f, names);
+            args.iter().for_each(|a| names_in(a, names));
+        }
         ExprKind::Try(x) | ExprKind::Outcome { value: x, .. } | ExprKind::Is(x, _) => names_in(x, names),
         ExprKind::Else(x, y) => {
             names_in(x, names);

@@ -895,7 +895,7 @@ fn debugger() {
     let path = std::fs::canonicalize("tests/debug/method.kova").unwrap().display().to_string();
     e.send("initialize", json!({"adapterID": "kova"}));
     e.ask("launch", json!({"program": path}));
-    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 7}]}));
+    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 8}]}));
     e.send("configurationDone", json!({}));
     assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
     assert_eq!(e.evaluate("self.name", None), "Rex");

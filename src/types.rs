@@ -57,6 +57,9 @@ pub enum Type {
     Param(Rc<ParamDef>),
     /// `{Int -> Bool}`: a block, only as a parameter (it never outlives its call); `Unit` if it gives nothing.
     Block(Vec<Type>, Box<Type>),
+    /// A function kept in a variable, a field, a result: written like a block, but it owns copies
+    /// of what it uses, so it may outlive the call that made it.
+    Function(Vec<Type>, Box<Type>),
     /// Never written nor checked: how the KIR lays out a field holding its own type again
     /// (`next: Cell?` in `Cell`), one slot, the address of a List of one element (`kir::laid_out`).
     Box(Box<Type>),
@@ -113,7 +116,7 @@ impl Type {
             Type::Set(t) => format!("Set<{}>", t.text()),
             Type::Param(p) => p.name.clone(),
             Type::Any(i) => format!("any {i}"),
-            Type::Block(ps, r) => {
+            Type::Block(ps, r) | Type::Function(ps, r) => {
                 let r = (**r != Type::Unit).then(|| r.text());
                 crate::ast::block_text(ps.iter().map(Type::text).collect(), r)
             }
@@ -143,6 +146,7 @@ pub fn substitute(t: &Type, s: &[(String, Type)]) -> Type {
         Type::Map(k, v) => Type::Map(sub(k), sub(v)),
         Type::Set(t) => Type::Set(sub(t)),
         Type::Block(ps, r) => Type::Block(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
+        Type::Function(ps, r) => Type::Function(ps.iter().map(|t| substitute(t, s)).collect(), sub(r)),
         // `Stack<T>` → `Stack<Int>`: its fields change with it (when they are asked for).
         Type::Struct(d) if !d.args.is_empty() => {
             let template = d.from.as_ref().map_or(d, |(t, _)| t);
@@ -885,6 +889,8 @@ pub fn is_copy(t: &Type) -> bool {
         Type::Any(_) => false,
         // Borrowed for the call it is given to, never owned.
         Type::Block(..) => true,
+        // It owns the copies of what it uses.
+        Type::Function(..) => false,
         Type::Int | Type::Float | Type::Bool | Type::Char | Type::Date | Type::DateTime | Type::Pointer | Type::Unit | Type::Error => true,
     }
 }
@@ -935,6 +941,8 @@ pub struct Info {
     pub filled: HashMap<usize, Expr>,
     /// The `Expr::id`s that call a block: `test(x)`, and `body` alone (a block without parameters).
     pub invoked: HashSet<usize>,
+    /// The values of type `Function` given where a block is expected: lent for the call.
+    pub lent: HashSet<usize>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
     /// `ownership.rs`); the KIR gives them to the block in its box.
     pub captures: HashMap<usize, Vec<String>>,
@@ -1035,7 +1043,7 @@ fn reaches(t: &Type, f: &dyn Fn(&ParamDef) -> bool) -> bool {
         Type::Optional(t) | Type::List(t) | Type::Set(t) => reaches(t, f),
         Type::Result(a, b) | Type::Map(a, b) => reaches(a, f) || reaches(b, f),
         Type::Struct(_) | Type::Enum(_) => t.args().iter().any(|t| reaches(t, f)),
-        Type::Block(ps, r) => ps.iter().any(|t| reaches(t, f)) || reaches(r, f),
+        Type::Block(ps, r) | Type::Function(ps, r) => ps.iter().any(|t| reaches(t, f)) || reaches(r, f),
         _ => false,
     }
 }
@@ -1059,7 +1067,7 @@ fn deduce(param: &Type, given: &Type, generics: &[Rc<ParamDef>], found: &mut Vec
         (Type::Struct(_), Type::Struct(_)) | (Type::Enum(_), Type::Enum(_)) if param.owner() == given.owner() => {
             param.args().iter().zip(given.args()).for_each(|(p, t)| deduce(p, t, generics, found));
         }
-        (Type::Block(ps, p), Type::Block(ts, t)) => {
+        (Type::Block(ps, p) | Type::Function(ps, p), Type::Block(ts, t) | Type::Function(ts, t)) => {
             ps.iter().zip(ts).for_each(|(p, t)| deduce(p, t, generics, found));
             deduce(p, t, generics, found);
         }
@@ -1151,6 +1159,11 @@ struct Checker<'a> {
     /// Number of open blocks (`{ x: Int => … }`): `return`, `break`, `continue` and `x?` cannot leave them.
     in_block: usize,
     invoked: HashSet<usize>,
+    lent: HashSet<usize>,
+    /// Inside a function being kept: the scopes from there on are its own.
+    keeping: Option<usize>,
+    /// The fields read as a value, where a function is expected: not called.
+    field_values: HashSet<usize>,
     types: Vec<Type>,
     wraps: Vec<bool>,
     /// `File::private`, without the methods a type writes for an interface (always visible).
@@ -1237,6 +1250,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         in_contract: false,
         in_block: 0,
         invoked: HashSet::new(),
+        lent: HashSet::new(),
+        keeping: None,
+        field_values: HashSet::new(),
         types: vec![Type::Error; nb_exprs],
         wraps: vec![false; nb_exprs],
         private: f.private.iter().cloned().collect(),
@@ -1744,7 +1760,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
-    let (spans, seen, hints, matches, invoked) = (c.spans, c.seen, c.hints, c.matches, c.invoked);
+    let (spans, seen, hints, matches, invoked, lent) = (c.spans, c.seen, c.hints, c.matches, c.invoked, c.lent);
     let info = Info {
         types: c.types,
         moves,
@@ -1765,6 +1781,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         tested: c.tested,
         filled: c.filled,
         invoked,
+        lent,
         captures: HashMap::new(),
         externs,
         callbacks: c.callbacks,
@@ -1998,6 +2015,10 @@ pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
             let r = r.as_ref().map_or(Type::Unit, |r| type_of(r, structs));
             if ps.contains(&Type::Error) || r == Type::Error { Type::Error } else { Type::Block(ps, Box::new(r)) }
         }
+        TypeAst::Function(ps, r) => match type_of(&TypeAst::Block(ps.clone(), r.clone()), structs) {
+            Type::Block(ps, r) => Type::Function(ps, r),
+            t => t,
+        },
     }
 }
 
@@ -2074,6 +2095,7 @@ pub fn changes_in(e: &Expr, name: &str) -> bool {
         }
         ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => changes_in(a, name) || changes_in(b, name),
         ExprKind::Tuple(es) | ExprKind::List(es) | ExprKind::SetLit(es) => any(es),
+        ExprKind::Apply(f, args) => changes_in(f, name) || any(args),
         ExprKind::MapLit(pairs) => pairs.iter().any(|(k, v)| changes_in(k, name) || changes_in(v, name)),
         ExprKind::StructLit { fields, .. } => fields.iter().any(|(_, v)| changes_in(v, name)),
         ExprKind::Interp(parts) => parts.iter().any(|p| matches!(p, Part::Code(e) if changes_in(e, name))),
@@ -2645,7 +2667,14 @@ impl Checker<'_> {
     /// The type of a field, building the structs it uses first (see `define`).
     fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
         match t {
-            // Refused by the parser: a block type is only a parameter's.
+            // ponytail: `f: {Node -> Int}` in `Node` counts as containing itself, though it only
+            // holds a box; opened when a program needs it.
+            TypeAst::Function(ps, r) => {
+                let params: Vec<Type> = ps.iter().map(|t| self.field_type(f, decls, t, open)).collect();
+                let result = r.as_ref().map_or(Type::Unit, |r| self.field_type(f, decls, r, open));
+                if params.contains(&Type::Error) || result == Type::Error { Type::Error } else { Type::Function(params, Box::new(result)) }
+            }
+            // Refused by the parser: a lent block is only a parameter's.
             TypeAst::Block(..) | TypeAst::Inferred => Type::Error,
             TypeAst::Any(n) => {
                 self.any_type(n);
@@ -2870,7 +2899,7 @@ impl Checker<'_> {
                 }
                 self.report_unknown(e);
             }
-            TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.report_unknown(t)),
+            TypeAst::Block(ps, r) | TypeAst::Function(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.report_unknown(t)),
             TypeAst::Inferred => {}
         }
     }
@@ -3203,6 +3232,11 @@ impl Checker<'_> {
             self.types[e.id] = self.block_literal(params, body, Some(ps), Some(r));
             return;
         }
+        if let Type::Function(ps, r) = expected
+            && self.kept(e, ps, r)
+        {
+            return;
+        }
         // `repeat(n - 1, body)`: where a block is expected, its name gives it along without calling it.
         if let (ExprKind::Var(n), Type::Block(..)) = (&e.kind, expected)
             && matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))
@@ -3224,6 +3258,17 @@ impl Checker<'_> {
         if let (ExprKind::Var(n), Type::Block(ps, r)) = (&e.kind, expected)
             && self.named_block(e, n, ps, Some(r))
         {
+            return;
+        }
+        // `l.each(f)` with a function kept in `f`: lent for the call.
+        if let Type::Block(ps, r) = expected {
+            let t = self.passed(e);
+            match &t {
+                Type::Function(fs, q) if fs == ps && q == r => {
+                    self.lent.insert(e.id);
+                }
+                _ => self.mismatch(e, t, expected),
+            }
             return;
         }
         // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
@@ -3296,6 +3341,20 @@ impl Checker<'_> {
         if let Type::Optional(inner) = expected {
             if let ExprKind::None = e.kind {
                 self.types[e.id] = expected.clone();
+                return;
+            }
+            // `{Int -> Int}?`: a block or the name of a function, typed by where they go.
+            let named = |c: &Self, n: &str| c.lookup(n).is_none() && c.functions.contains_key(n);
+            if matches!(**inner, Type::Function(..))
+                && match &e.kind {
+                    ExprKind::Block { .. } => true,
+                    ExprKind::Var(n) => named(self, n),
+                    ExprKind::Call { name, args } => args.is_empty() && named(self, &name.text),
+                    _ => false,
+                }
+            {
+                self.expect(e, inner);
+                self.wraps[e.id] = true;
                 return;
             }
             // Typed by where they go: `[]`, `2` as a Float.
@@ -3578,6 +3637,13 @@ impl Checker<'_> {
             match typed.get(i).cloned().flatten() {
                 // Already typed to deduce `T`: a `T` given for a `T?` still becomes one.
                 Some(given) if matches!(t, Type::Optional(inner) if **inner == given) => self.wraps[value.id] = true,
+                Some(Type::Function(ps, r)) if Type::Block(ps.clone(), r.clone()) == *t => {
+                    self.lent.insert(value.id);
+                }
+                // `compose({ x: Int => x + 1 }, g)`: a block written there is kept.
+                Some(Type::Block(ps, r)) if Type::Function(ps.clone(), r.clone()) == *t && matches!(value.kind, ExprKind::Block { .. }) => {
+                    self.types[value.id] = t.clone();
+                }
                 Some(given) => self.mismatch(value, given, t),
                 None if matches!(t, Type::Block(..)) && self.extern_names.contains(&name.text) => self.callback(value, t),
                 None => self.expect(value, t),
@@ -3605,7 +3671,7 @@ impl Checker<'_> {
                     );
                 }
                 // A computed value (`keep(make_name)`) is given without a marker.
-                (Mode::Move, Mode::Read) if !is_copy(t) && place_root(value, &self.types).is_some() && !self.invoked.contains(&value.id) => self.diags.push(
+                (Mode::Move, Mode::Read) if !is_copy(t) && place_root(value, &self.types).is_some() && !self.filled.contains_key(&value.id) && !self.invoked.contains(&value.id) => self.diags.push(
                     Diag::new(a.span, t!("move_mark_missing", name = name.text, arg = arg))
                         .help(t!("move_mark_missing_help", arg = arg)),
                 ),
@@ -3759,7 +3825,7 @@ impl Checker<'_> {
         let fold = base == "fold";
         let expected = if fold || workers { 2 } else { 1 };
         let block = args.last().filter(|b| {
-            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if self.functions.contains_key(n) || matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
+            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if self.functions.contains_key(n) || matches!(self.lookup(n), Some(Variable { ty: Type::Block(..) | Type::Function(..), .. }))))
         });
         let Some(block) = block else {
             let example = match name.text.as_str() {
@@ -3803,7 +3869,13 @@ impl Checker<'_> {
             ExprKind::Var(n) if self.named_block(block, n, &params_wanted, result.as_ref()) => self.types[block.id].clone(),
             // `l.each(f)`: a block parameter given along.
             _ => {
-                let t = self.passed(block);
+                let t = match self.passed(block) {
+                    Type::Function(ps, r) => {
+                        self.lent.insert(block.id);
+                        Type::Block(ps, r)
+                    }
+                    t => t,
+                };
                 let r = match (&result, &t) {
                     (Some(r), _) => r.clone(),
                     (None, Type::Block(_, r)) => (**r).clone(),
@@ -3830,9 +3902,11 @@ impl Checker<'_> {
     /// its type, `{Int -> Bool}`. Its parameters are borrowed, like a function's.
     fn block_literal(&mut self, params: &[Param], body: &Block, wanted: Option<&[Type]>, result: Option<&Type>) -> Type {
         let written: Vec<Type> = (params.iter().enumerate())
-            .map(|(i, p)| match &p.ty {
-                TypeAst::Inferred => wanted.and_then(|ps| ps.get(i)).cloned().unwrap_or(Type::Error),
-                ty => self.written_type(ty),
+            .map(|(i, p)| match (&p.ty, wanted.and_then(|ps| ps.get(i))) {
+                (TypeAst::Inferred, w) => w.cloned().unwrap_or(Type::Error),
+                // `fs.map { f: {Int -> Int} => f(1) }`: an element that is a function, lent.
+                (ty, Some(w @ Type::Function(ps, r))) if self.written_type(ty) == Type::Block(ps.clone(), r.clone()) => w.clone(),
+                (ty, _) => self.written_type(ty),
             })
             .collect();
         if let Some(ps) = wanted {
@@ -3925,10 +3999,68 @@ impl Checker<'_> {
         true
     }
 
+    /// `e` where a function to keep is expected (PLAN Part 4 "Functions in variables"): a block
+    /// written there, the name of a function, or a value; `f` alone is not called there.
+    fn kept(&mut self, e: &Expr, ps: &[Type], r: &Type) -> bool {
+        let function = Type::Function(ps.to_vec(), Box::new(r.clone()));
+        match &e.kind {
+            ExprKind::Block { params, body } => {
+                self.spans[e.id] = e.span;
+                let outer = self.keeping.replace(self.keeping.unwrap_or(self.scopes.len()));
+                self.block_literal(params, body, Some(ps), Some(r));
+                self.keeping = outer;
+                self.types[e.id] = function;
+                true
+            }
+            ExprKind::Var(n) if self.named_block(e, n, ps, Some(r)) => {
+                self.keep_named(e, function);
+                true
+            }
+            // `on_click := close`: a function without parameters is written like a call.
+            ExprKind::Call { name, args } if args.is_empty() && ps.is_empty() && self.named_block(e, &name.text, ps, Some(r)) => {
+                self.keep_named(e, function);
+                true
+            }
+            ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. })) => {
+                self.passed(e);
+                self.diags.push(Diag::new(e.span, t!("block_kept", name = n)).help(t!("block_kept_help", name = n)));
+                true
+            }
+            ExprKind::Var(_) => {
+                let t = self.passed(e);
+                self.mismatch(e, t, &function);
+                true
+            }
+            ExprKind::Method { .. } => {
+                self.field_values.insert(e.id);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// The type of `e` if it is the name of a function, not a variable.
+    fn named_signature(&self, e: &Expr) -> Option<Type> {
+        let n = match &e.kind {
+            ExprKind::Var(n) => n,
+            ExprKind::Call { name, args } if args.is_empty() => &name.text,
+            _ => return None,
+        };
+        let f = self.functions.get(n).filter(|f| self.lookup(n).is_none() && f.receiver.is_none() && f.generics.is_empty())?;
+        Some(Type::Function(f.params.iter().map(|(_, t)| t.clone()).collect(), Box::new(f.ret.clone())))
+    }
+
+    /// The block `Checker::named_block` made for `e` is kept, not lent.
+    fn keep_named(&mut self, e: &Expr, function: Type) {
+        let id = self.filled[&e.id].id;
+        self.types[id] = function.clone();
+        self.types[e.id] = function;
+    }
+
     /// A block given along by its name (`repeat(n - 1, body)`, not called), or a block written there.
     fn passed(&mut self, value: &Expr) -> Type {
         let ExprKind::Var(n) = &value.kind else { return self.expr(value) };
-        let Some(Variable { ty: ty @ Type::Block(..), span, .. }) = self.lookup(n) else { return self.expr(value) };
+        let Some(Variable { ty: ty @ (Type::Block(..) | Type::Function(..)), span, .. }) = self.lookup(n) else { return self.expr(value) };
         let (ty, decl) = (ty.clone(), *span);
         self.mention_variable(n, &ty, value.span, decl);
         self.spans[value.id] = value.span;
@@ -4304,7 +4436,7 @@ impl Checker<'_> {
                 self.exposes(owner, t);
                 self.exposes(owner, e);
             }
-            TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.exposes(owner, t)),
+            TypeAst::Block(ps, r) | TypeAst::Function(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.exposes(owner, t)),
             TypeAst::Inferred => {}
         }
     }
@@ -4344,6 +4476,13 @@ impl Checker<'_> {
 
     /// Notes for the editor that the variable `name` of type `ty`, declared at `decl`, is written at `span`.
     fn mention_variable(&mut self, name: &str, ty: &Type, span: Span, decl: Span) {
+        // A function kept would outlive the block lent to the function it was made in.
+        if matches!(ty, Type::Block(..))
+            && let Some(start) = self.keeping
+            && self.scopes.iter().rposition(|s| s.contains_key(name)).is_some_and(|at| at < start)
+        {
+            self.diags.push(Diag::new(span, t!("block_kept", name = name)).help(t!("block_kept_help", name = name)));
+        }
         self.seen.push(Seen { span, decl, text: format!("{name}: {}", ty.text()) });
     }
 
@@ -4650,7 +4789,7 @@ impl Checker<'_> {
                     self.mention_variable(name, &ty, e.span, decl);
                     match ty {
                         // `body` alone calls the block, like a function without parameters (Eiffel).
-                        Type::Block(ps, r) if ps.is_empty() => {
+                        Type::Block(ps, r) | Type::Function(ps, r) if ps.is_empty() => {
                             self.invoked.insert(e.id);
                             *r
                         }
@@ -4945,7 +5084,7 @@ impl Checker<'_> {
                 }
                 // `.clone` on any value made of several slots: a deep copy (its Strings are copied too).
                 if name.text == "clone"
-                    && matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Param(_) | Type::Any(_))
+                    && matches!(t, Type::Function(..) | Type::Struct(_) | Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::Tuple(_) | Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Param(_) | Type::Any(_))
                     && !t.is_field("clone")
                 {
                     if !args.is_empty() {
@@ -4981,6 +5120,18 @@ impl Checker<'_> {
                         return Type::Error;
                     };
                     self.hidden(&method_name(&t.owner(), &name.text), name.span);
+                    // `button.on_click(3)`, or `button.on_click` for a function without parameters.
+                    if let Type::Function(ps, _) = ft
+                        && (!args.is_empty() || ps.is_empty())
+                        && !self.field_values.contains(&e.id)
+                    {
+                        let field = self.fresh(e.span, ExprKind::Method { receiver: receiver.clone(), name: name.clone(), args: vec![] });
+                        self.field_values.insert(field.id);
+                        let apply = self.fresh(e.span, ExprKind::Apply(Box::new(field), args.clone()));
+                        let r = self.expr(&apply);
+                        self.filled.insert(e.id, apply);
+                        return r;
+                    }
                     if !args.is_empty() {
                         self.error(name.span, t!("no_arguments", name = name.text));
                     }
@@ -5046,6 +5197,24 @@ impl Checker<'_> {
                 }
                 if *maybe { Type::Optional(Box::new(result.clone())) } else { result.clone() }
             }
+            ExprKind::Apply(callee, args) => {
+                if matches!(callee.kind, ExprKind::Method { .. }) {
+                    self.field_values.insert(callee.id);
+                }
+                match self.passed(callee) {
+                    Type::Function(ps, r) | Type::Block(ps, r) => {
+                        let params: Vec<(Mode, Type)> = ps.into_iter().map(|t| (Mode::Read, t)).collect();
+                        let name = Name { text: self.src[callee.span.start..callee.span.end].to_string(), span: callee.span };
+                        self.arguments(&name, args, &params, &[]);
+                        *r
+                    }
+                    Type::Error => Type::Error,
+                    t => {
+                        self.error(callee.span, t!("not_a_function", type = t.text()));
+                        Type::Error
+                    }
+                }
+            }
             ExprKind::Unary(UnOp::Neg, x) => {
                 // `-9223372036854775808`: the only case where the number alone would be too big.
                 if let ExprKind::Int(v) = x.kind
@@ -5099,6 +5268,7 @@ impl Checker<'_> {
                             None => {}
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
+                            Some(Type::Function(..)) => self.error(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())),
                             Some(culprit @ Type::Any(_)) => self.diags.push(
                                 Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(t!("any_compare_help", type = culprit.text())),
                             ),
@@ -5672,9 +5842,9 @@ impl Checker<'_> {
 
     fn call(&mut self, id: usize, name: &Name, args: &[Expr]) -> Type {
         // `test(x)`: a block parameter, called.
-        if let Some(Variable { ty: Type::Block(ps, r), span, .. }) = self.lookup(&name.text) {
-            let (ps, r, decl) = (ps.clone(), (**r).clone(), *span);
-            self.mention_variable(&name.text, &Type::Block(ps.clone(), Box::new(r.clone())), name.span, decl);
+        if let Some(Variable { ty: ty @ (Type::Block(ps, r) | Type::Function(ps, r)), span, .. }) = self.lookup(&name.text) {
+            let (ty, ps, r, decl) = (ty.clone(), ps.clone(), (**r).clone(), *span);
+            self.mention_variable(&name.text, &ty, name.span, decl);
             self.invoked.insert(id);
             let params: Vec<(Mode, Type)> = ps.into_iter().map(|t| (Mode::Read, t)).collect();
             self.arguments(name, args, &params, &[]);
@@ -5732,7 +5902,18 @@ impl Checker<'_> {
                     ExprKind::Mark(_, x) => &**x,
                     _ => a,
                 };
-                let t = if matches!(p, Type::Block(..)) { self.passed(value) } else { self.expr(value) };
+                // A function by its name: its signature gives `T`, and `arguments` makes the block.
+                let function = matches!(p, Type::Block(..) | Type::Function(..)).then(|| self.named_signature(value)).flatten();
+                if let Some(t) = function {
+                    deduce(p, &t, &sig.generics, &mut found);
+                    continue;
+                }
+                let outer = self.keeping;
+                if matches!(p, Type::Function(..)) {
+                    self.keeping = outer.or(Some(self.scopes.len()));
+                }
+                let t = if matches!(p, Type::Block(..) | Type::Function(..)) { self.passed(value) } else { self.expr(value) };
+                self.keeping = outer;
                 deduce(p, &t, &sig.generics, &mut found);
                 typed[i] = Some(t);
             }
