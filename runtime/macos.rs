@@ -1563,6 +1563,35 @@ fn mac_menus(kit: &Kit, menus: &[crate::shared::UiMenu]) {
     (kit.send_two)(kit.send(kit.class("NSApplication"), "sharedApplication"), kit.sel("setMainMenu:"), bar);
 }
 
+/// `sound.play`: `NSSound` plays on a thread of its own; this one waits for the end. It may run in
+/// a program without a window, so it finds what it needs itself.
+pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
+    use core::mem::transmute as t;
+    let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return false };
+    let f = |name: &str| symbol(objc, name).unwrap_or(0);
+    unsafe {
+        let class: extern "C" fn(*const u8) -> Id = t(f("objc_getClass"));
+        let sel: extern "C" fn(*const u8) -> Id = t(f("sel_registerName"));
+        let push: extern "C" fn() -> Id = t(f("objc_autoreleasePoolPush"));
+        let pop: extern "C" fn(Id) = t(f("objc_autoreleasePoolPop"));
+        let send = f("objc_msgSend");
+        let plain: extern "C" fn(Id, Id) -> Id = t(send);
+        let with_data: extern "C" fn(Id, Id, *const u8, u64) -> Id = t(send);
+        let with: extern "C" fn(Id, Id, Id) -> Id = t(send);
+        let asks: extern "C" fn(Id, Id) -> bool = t(send);
+        let pool = push();
+        let data = with_data(class(c"NSData".as_ptr().cast()), sel(c"dataWithBytes:length:".as_ptr().cast()), whole.as_ptr(), whole.len() as u64);
+        let made = plain(class(c"NSSound".as_ptr().cast()), sel(c"alloc".as_ptr().cast()));
+        let player = with(made, sel(c"initWithData:".as_ptr().cast()), data);
+        let played = !player.is_null() && asks(player, sel(c"play".as_ptr().cast()));
+        while played && asks(player, sel(c"isPlaying".as_ptr().cast())) {
+            sleep(0.01);
+        }
+        pop(pool);
+        played
+    }
+}
+
 /// `ui.dialog`: AppKit's own, whose `runModal` waits for the answer.
 pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
     let kit = KIT.get().as_ref()?;

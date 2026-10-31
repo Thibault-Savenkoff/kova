@@ -1810,6 +1810,40 @@ pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
     REPLY.get().take().flatten()
 }
 
+/// `sound.play`: PulseAudio's simple library, which PipeWire answers too.
+pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
+    use core::mem::transmute as t;
+    let Some(pulse) = library("libpulse-simple.so.0") else { return false };
+    let f = |name: &str| symbol(pulse, name).unwrap_or(0);
+    // `pa_sample_format_t`: U8, S16LE, S24LE, S32LE.
+    let format: u32 = match wav.bits {
+        8 => 0,
+        16 => 3,
+        24 => 9,
+        _ => 7,
+    };
+    let mut spec = [0u8; 12];
+    spec[..4].copy_from_slice(&format.to_le_bytes());
+    spec[4..8].copy_from_slice(&wav.rate.to_le_bytes());
+    spec[8] = wav.channels as u8;
+    unsafe {
+        let new: extern "C" fn(*const u8, *const u8, i32, *const u8, *const u8, *const u8, *const u8, *const u8, *mut i32) -> P = t(f("pa_simple_new"));
+        let write: extern "C" fn(P, *const u8, usize, *mut i32) -> i32 = t(f("pa_simple_write"));
+        let drain: extern "C" fn(P, *mut i32) -> i32 = t(f("pa_simple_drain"));
+        let free: extern "C" fn(P) = t(f("pa_simple_free"));
+        let mut failure = 0;
+        let name = c_string(crate::ARGS.get().first().map_or("kova", |a| a.rsplit('/').next().unwrap_or(a)));
+        // PA_STREAM_PLAYBACK = 1.
+        let stream = new(null(), name.as_ptr(), 1, null(), c"sound".as_ptr().cast(), spec.as_ptr(), null(), null(), &mut failure);
+        if stream.is_null() {
+            return false;
+        }
+        let played = write(stream, wav.samples.as_ptr(), wav.samples.len(), &mut failure) == 0 && drain(stream, &mut failure) == 0;
+        free(stream);
+        played
+    }
+}
+
 /// The images a canvas drew: read once.
 static GTK_IMAGES: Global<Vec<(String, P)>> = Global::new(Vec::new());
 

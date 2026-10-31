@@ -1670,6 +1670,13 @@ fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
     }
 }
 
+/// `sound.play`: SND_MEMORY, which waits for the end.
+pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
+    let Some(play) = library("winmm.dll").and_then(|l| symbol(l, "PlaySoundW")) else { return false };
+    let play: extern "system" fn(*const u8, usize, u32) -> i32 = unsafe { core::mem::transmute(play) };
+    play(whole.as_ptr(), 0, 4) != 0
+}
+
 /// `ui.dialog`: the system's own, which wait for the answer.
 pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
     use core::mem::transmute as t;

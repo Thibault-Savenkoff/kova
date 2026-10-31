@@ -615,6 +615,8 @@ pub enum StrOp {
     UiAct,
     /// `ui.place(…) size(…)`: where the window must go at the next `ui.show`.
     UiPlace,
+    /// `sound.raw(data)`: 0 played, 1 not a WAV, 2 nothing to play it on.
+    Sound,
     /// `ui.dialog(kind, title, text)`: what the person chose, "" if nothing.
     UiDialog,
     /// `ui.room(0 | 1)`: the width or height of the `ui.fill` canvas being made; `ui.room(2)`:
@@ -5748,6 +5750,12 @@ impl<'a> Translator<'a> {
                     let out = self.int_local();
                     self.emit(Inst::Str(out, StrOp::NetBytes, vals));
                     self.temps.push((out, Type::List(Box::new(Type::Int))));
+                    return vec![out];
+                }
+                if name.text == "sound.raw" {
+                    let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
+                    let out = self.int_local();
+                    self.emit(Inst::Str(out, StrOp::Sound, vals));
                     return vec![out];
                 }
                 if name.text == "system.cores" {

@@ -2054,6 +2054,16 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
     clicked
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_sound(data: i64) -> i64 {
+    let data = bytes_of(data);
+    match shared::wav(&data) {
+        None => 1,
+        Some(wav) if sys::sound(&data, &wav) => 0,
+        _ => 2,
+    }
+}
+
 /// `ui.dialog`: called during `update`, the window waits meanwhile.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_dialog(kind: i64, title: i64, text: i64) -> i64 {

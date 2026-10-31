@@ -3,10 +3,10 @@
 // stdin: 1
 // stdin: /tmp/a.txt
 // stdin: 2
-// stdin: 
+// stdin:
 // stdin: 3
 // stdin: yes
-// stdin: 
+// stdin:
 // expect: [Menus] menu File(Open, Save, , Quit) column(button "0  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: [Menus] menu File(Open, Save, , Quit) column(button "1  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: (open file "Open")

@@ -1,0 +1,16 @@
+// expect: err(sound.Error.NotFound("no such file.wav"))
+// expect: err(sound.Error.NotSound)
+// expect: [82, 73, 70, 70, 40, 0, 0, 0, 87, 65, 86, 69]
+// expect: 48
+// expect: [255, 127, 1, 128]
+
+import sound
+
+fn main {
+    print(sound.play("no such file.wav"))
+    print(sound.play_bytes([1, 2, 3]))
+    let w: List<Int> := sound.wav([1.0, -1.0])
+    print(w[0..12])
+    print(w.length)
+    print(w[44..48])
+}

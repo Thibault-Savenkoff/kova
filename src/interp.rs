@@ -1296,6 +1296,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let _ = std::io::stdin().read_line(&mut line);
                             heap.make(line.trim_end_matches(['\n', '\r']).to_string())
                         }
+                        // `kova run` and `kova test` run a program that plays sounds as native code.
+                        StrOp::Sound => 2,
                         StrOp::UiTyped => {
                             let t = heap.ui_typed.clone();
                             heap.make(t)

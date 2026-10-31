@@ -1085,6 +1085,40 @@ pub fn ui_dialog_name(kind: i64) -> &'static str {
     }
 }
 
+/// An uncompressed WAV: what `sound.play` plays.
+#[allow(dead_code)]
+pub struct Wav<'a> {
+    pub channels: u32,
+    pub rate: u32,
+    pub bits: u32,
+    pub samples: &'a [u8],
+}
+
+#[allow(dead_code)]
+pub fn wav(data: &[u8]) -> Option<Wav<'_>> {
+    if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return None;
+    }
+    let (mut at, mut format) = (12, None);
+    while at + 8 <= data.len() {
+        let size = u32::from_le_bytes(data[at + 4..at + 8].try_into().ok()?) as usize;
+        let body = &data[at + 8..data.len().min((at + 8).saturating_add(size))];
+        match &data[at..at + 4] {
+            b"fmt " if body.len() >= 16 => {
+                let small = |k: usize| u16::from_le_bytes([body[k], body[k + 1]]) as u32;
+                format = Some((small(0), small(2), u32::from_le_bytes(body[4..8].try_into().ok()?), small(14)));
+            }
+            b"data" => {
+                let (kind, channels, rate, bits) = format?;
+                return (kind == 1 && matches!(bits, 8 | 16 | 24 | 32) && channels > 0).then_some(Wav { channels, rate, bits, samples: body });
+            }
+            _ => {}
+        }
+        at = (at + 8).saturating_add(size + (size & 1));
+    }
+    None
+}
+
 pub fn ui_act_name(act: i64) -> &'static str {
     match act {
         0 => "no frame",

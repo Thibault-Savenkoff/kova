@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite", "sound"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -467,6 +467,7 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "net" => include_str!("library/net.kova"),
         "websocket" => include_str!("library/websocket.kova"),
         "sqlite" => include_str!("library/sqlite.kova"),
+        "sound" => include_str!("library/sound.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })
@@ -1488,6 +1489,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     // What src/library/net.kova is written with.
     let read = |ts: Vec<Type>| ts.into_iter().map(|t| (Mode::Read, t)).collect::<Vec<_>>();
     let bytes = Type::List(Box::new(Type::Int));
+    c.functions.insert("sound.raw".into(), Signature::new(None, read(vec![bytes.clone()]), Type::Int));
     c.functions.insert("net.raw".into(), Signature::new(None, read(vec![Type::Int, Type::String, Type::Int, Type::Int]), Type::Int));
     let raw_bytes = read(vec![Type::Int, Type::String, Type::Int, bytes.clone(), Type::Int]);
     c.functions.insert("net.raw_bytes".into(), Signature::new(None, raw_bytes, bytes));
@@ -6231,7 +6233,7 @@ impl Checker<'_> {
             return r;
         }
         self.hidden(&name.text, name.span);
-        if name.text.contains("workers(…)") {
+        if name.text.contains("workers(…)") || name.text == "sound.raw" {
             self.threads = true;
         }
         if name.text == "threads.spawn" {
