@@ -1,6 +1,8 @@
+import system
+
 struct Weekday { code: Int }
 
-fn sleep(seconds: Float) {}
+fn read_line(seconds: Float) {}
 
 fn half(n: Int) -> Int or String {
     return ok(n / 2)
@@ -29,7 +31,7 @@ fn main {
     print("{half(2)}")
 }
 // error: `Weekday` is a built-in type: choose another name
-// error: `sleep` is a built-in function
+// error: `read_line` is a built-in function
 // error: the function must return `… or String`; it returns `Int?`
 // error: the function must return `… or String`; it returns `Int or Bool`
 // error: `ok(…)` needs a type

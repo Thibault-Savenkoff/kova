@@ -29,9 +29,9 @@ fn main {
     let pair: (Wrap, Box) := (Wrap.Inner(Shape.Dot), Box.Many(["z"]))
     print(pair)
 }
-// expect: Wrap.Inner(s: Shape.Circle(radius: 1.5))
-// expect: Wrap.Bag(xs: [1, 2])
-// expect: Wrap.Inner(s: Shape.Circle(radius: 1.5)) and Wrap.Bag(xs: [1, 2])
+// expect: Wrap.Inner(Shape.Circle(1.5))
+// expect: Wrap.Bag([1, 2])
+// expect: Wrap.Inner(Shape.Circle(1.5)) and Wrap.Bag([1, 2])
 // expect: Box.Empty
-// expect: [Box.Many(items: ["x", "y"]), Box.Empty, Box.Many(items: [])]
-// expect: (Wrap.Inner(s: Shape.Dot), Box.Many(items: ["z"]))
+// expect: [Box.Many(["x", "y"]), Box.Empty, Box.Many([])]
+// expect: (Wrap.Inner(Shape.Dot), Box.Many(["z"]))

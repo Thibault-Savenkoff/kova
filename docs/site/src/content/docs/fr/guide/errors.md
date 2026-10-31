@@ -286,7 +286,7 @@ fn main {
 ```
 
 ```text
-AppError.Io(error: NotFound("missing.txt"))
+AppError.Io(NotFound("missing.txt"))
 ```
 
 ## Quand c'est le programme qui se trompe
@@ -295,5 +295,5 @@ AppError.Io(error: NotFound("missing.txt"))
 mot au lieu d'un nombre, un fichier qui a été effacé. Une erreur dans le programme lui-même (une
 position après la fin d'une liste, une division par zéro, un [contrat](/fr/guide/contracts-and-tests/)
 non respecté) n'est pas quelque chose à traiter : le programme s'arrête tout de suite, dit quoi et
-où, et se termine avec le code de sortie 101. Pour s'arrêter exprès, `exit(code)` termine le
+où, et se termine avec le code de sortie 101. Pour s'arrêter exprès, `system.exit(code)` termine le
 programme avec ce code.

@@ -16,9 +16,9 @@ is downloaded, and there is no package to choose between three that do almost th
 | [Numbers, Bool and Char](/library/numbers/) | `Int`, `Float`, `BigInt`: operators, maths |
 | [List](/library/list/) | ordered lists, blocks, sorting, statistics |
 | [Map and Set](/library/map-and-set/) | values by key, values kept once |
-| [Dates and time](/library/dates/) | `Date`, `DateTime`, `Weekday`, `now`, `sleep` |
+| [Dates and time](/library/dates/) | `Date`, `DateTime`, `Weekday` |
 | [JSON and CSV](/library/json-and-csv/) | reading and writing them into your own structs |
-| [system, args and the terminal](/library/system/) | `print`, `read_line`, `args`, `exit` |
+| [system, args and the terminal](/library/system/) | `print`, `read_line`, `system.args`, `system.exit` |
 | [secure and chance](/library/secure/) | `random` |
 
 ## With an import

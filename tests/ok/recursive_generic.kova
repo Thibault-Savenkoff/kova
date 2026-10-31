@@ -28,6 +28,6 @@ fn main {
     let x := A { b := [B { a := none, n := 1 }] }
     print(x)
 }
-// expect: Tree<String> { value: "a", kids: [Tree<String> { value: "b", kids: [] }] }
+// expect: Tree<String> { value := "a", kids := [Tree<String> { value := "b", kids := [] }] }
 // expect: 2
-// expect: A { b: [B { a: none, n: 1 }] }
+// expect: A { b := [B { a := none, n := 1 }] }

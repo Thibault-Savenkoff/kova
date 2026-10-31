@@ -56,6 +56,4 @@ fn main {
 // expect: 0
 // expect: true
 // expect: false
-// code: 101
-// stderr: error: this List is empty: `mean` and `median` need at least one number
-// stderr: chance_stats.kova:39:20
+// expect: none

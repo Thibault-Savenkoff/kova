@@ -1,10 +1,10 @@
+import system
+
 fn main {
     let a: Int := random(6)
     let b: Int := random(1.0..2.0)
-    sleep(1)
-    let now: Int := 3
+    system.sleep(1)
 }
 // error: `random` draws from a range of `Int`s
 // error: different types: `Int` expected, `Float` given
 // error: different types: `Int` expected, `Float` given
-// error: `now` is a function without parameters: no variable can have its name

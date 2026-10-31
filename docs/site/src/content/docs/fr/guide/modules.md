@@ -121,7 +121,7 @@ false
 ```
 
 Sans l'`import`, le compilateur dit lequel écrire. Ce que chaque programme a sans import (`print`,
-`args`, `random`, textes, listes, dates, JSON…) est listé dans
+`random`, textes, listes, dates, JSON…) est listé dans
 [la bibliothèque](/fr/library/overview/).
 
 ## Tests et modules

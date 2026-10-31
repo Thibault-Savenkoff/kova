@@ -9,7 +9,7 @@ Tout passe par une seule commande :
 
 | Commande | Fait |
 | --- | --- |
-| `kova run app.kova [mots…]` | vérifie le programme et le lance tout de suite ; les mots deviennent ses `args` |
+| `kova run app.kova [mots…]` | vérifie le programme et le lance tout de suite ; les mots deviennent ses `system.args` |
 | `kova build app.kova` | fait un exécutable natif à côté du fichier |
 | `kova test app.kova ["nom"]` | lance les blocs `test` du programme, ou seulement celui nommé |
 | `kova fmt app.kova…` | met les fichiers en page de la façon standard, sur place |
@@ -90,6 +90,6 @@ programme. L'éditeur le lance à l'enregistrement.
 | `0` | le programme s'est terminé normalement |
 | `1` | Kova a refusé le programme (une erreur dans le code), ou un test a échoué |
 | `101` | le programme s'est arrêté sur une erreur pendant qu'il tournait : un indice hors de la liste, un dépassement, un contrat rompu… |
-| autre | ce que le programme a donné à `exit(code)` |
+| autre | ce que le programme a donné à `system.exit(code)` |
 
 Un exécutable compilé se termine avec les mêmes codes.

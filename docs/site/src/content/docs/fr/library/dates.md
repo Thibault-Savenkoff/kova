@@ -95,14 +95,16 @@ l'ordinateur (`TZ`, ou le réglage du système).
 
 | Fonction | Donne |
 | --- | --- |
-| `now -> Float` | les secondes depuis 1970, avec une fraction : pour mesurer combien de temps prend quelque chose. |
-| `sleep(seconds: Float)` | attend ce temps-là. |
+| `system.clock -> Float` | les secondes depuis 1970, avec une fraction : pour mesurer combien de temps prend quelque chose. |
+| `system.sleep(seconds: Float)` | attend ce temps-là. |
 
 ```kova
+import system
+
 fn main {
-    let start: Float := now
-    sleep(0.1)
-    print(now - start >= 0.05)
+    let start: Float := system.clock
+    system.sleep(0.1)
+    print(system.clock - start >= 0.05)
 }
 ```
 

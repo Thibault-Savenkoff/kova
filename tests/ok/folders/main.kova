@@ -10,6 +10,6 @@ fn main {
     print(sq.corner)
 }
 // expect: true
-// expect: shapes.circle.Circle { center: shapes.point.Point { x: 1.0, y: 2.0 }, radius: 2.0 }
+// expect: shapes.circle.Circle { center := shapes.point.Point { x := 1.0, y := 2.0 }, radius := 2.0 }
 // expect: 9.0
-// expect: shapes.point.Point { x: 0.0, y: 0.0 }
+// expect: shapes.point.Point { x := 0.0, y := 0.0 }

@@ -7,19 +7,19 @@ fn total(words: List<String>) -> Int {
             sum += n
         } else {
             print("not a number: {w}")
-            exit(2)
+            system.exit(2)
         }
     }
     return sum
 }
 
 fn main {
-    let words: List<String> := args
+    let words: List<String> := system.args
     print(words.length)
-    print(args)
+    print(system.args)
     let name: String := "still alive"
     if words.length = 2 {
-        exit(3)
+        system.exit(3)
     }
     print(total(words))
     print("never printed")
@@ -28,3 +28,4 @@ fn main {
 // expect: 2
 // expect: ["12", "30"]
 // code: 3
+import system

@@ -506,7 +506,7 @@ pub fn find_all(re: &Regex, text: &str) -> Vec<String> {
     found
 }
 
-/// `s.replace_all(p) with(new)`.
+/// `s.replace_matches(p) with(new)`.
 pub fn replace_all(re: &Regex, text: &str, new: &str) -> String {
     let t: Vec<char> = text.chars().collect();
     let (mut out, mut kept) = (String::new(), 0);

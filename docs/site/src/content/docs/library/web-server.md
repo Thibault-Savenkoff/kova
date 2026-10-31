@@ -32,7 +32,7 @@ fn main {
 ```
 
 `web.serve(8080)` answers each question with what its [block](/guide/blocks/) gives, until the
-program stops (`exit(0)` in a case stops it). Open `http://localhost:8080/` in a browser to see it.
+program stops (`system.exit(0)` in a case stops it). Open `http://localhost:8080/` in a browser to see it.
 
 When it starts, the server writes where to open it, then a line for each question it answers, on
 the error output:

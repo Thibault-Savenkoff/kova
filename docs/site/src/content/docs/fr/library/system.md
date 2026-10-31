@@ -14,8 +14,6 @@ Celles-ci n'ont besoin d'aucun import :
 | `print(value)` | écrit la valeur et un saut de ligne sur la sortie. N'importe quelle valeur : `print(rex)` montre ses champs. |
 | `write(value)` | pareil, sans le saut de ligne. |
 | `read_line -> String?` | la ligne suivante de l'entrée, sans son saut de ligne ; `none` à la fin de l'entrée. |
-| `args -> List<String>` | les mots donnés après le nom du programme : `kova run app.kova a b`, `./app a b`. |
-| `exit(code: Int)` | termine le programme tout de suite avec ce code de sortie (0 veut dire réussite). |
 
 ```kova
 fn main {
@@ -58,6 +56,10 @@ import system
 | Fonction | Donne |
 | --- | --- |
 | `system.env(name: String) -> String?` | la valeur d'une variable d'environnement, `none` si elle n'est pas définie. |
+| `system.args -> List<String>` | les mots donnés après le nom du programme : `kova run app.kova a b`, `./app a b`. |
+| `system.exit(code: Int)` | termine le programme tout de suite avec ce code de sortie (0 veut dire réussite). |
+| `system.clock -> Float` | les secondes depuis 1970, avec une fraction : pour mesurer une durée. |
+| `system.sleep(seconds: Float)` | attend ce temps-là. |
 | `system.run(program: String) -> system.Finished or system.RunError` | lance un programme sans arguments, et l'attend. |
 | `system.run(program) args(words: List<String>) -> system.Finished or system.RunError` | pareil avec des arguments. |
 

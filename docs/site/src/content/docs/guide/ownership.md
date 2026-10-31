@@ -95,8 +95,8 @@ fn main {
 ```
 
 ```text
-Point { x: 1, y: 2 }
-Point { x: 1, y: 2 }
+Point { x := 1, y := 2 }
+Point { x := 1, y := 2 }
 ```
 
 ## Rule 3: a call borrows, unless it says otherwise

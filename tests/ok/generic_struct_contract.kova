@@ -18,5 +18,5 @@ fn main {
 // stderr: error: pop on an empty stack
 // stderr: generic_struct_contract.kova:5:17
 // stderr:   require self.items.length > 0
-// stderr:   values: self = Stack<String> { items: [] }
+// stderr:   values: self = Stack<String> { items := [] }
 // stderr: generic_struct_contract.kova:14:13

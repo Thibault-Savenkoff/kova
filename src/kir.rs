@@ -483,9 +483,9 @@ pub enum StrOp {
     /// `s.matches(pattern)`: 1 or 0 (`src/regex.rs`; the pattern was checked by the checker).
     Matches,
     /// `s.find_all(pattern)`: a new `List<String>`.
-    FindAll,
-    /// `s.replace_all(pattern) with(new)`: a new String.
-    ReplaceAll,
+    AllMatches,
+    /// `s.replace_matches(pattern) with(new)`: a new String.
+    ReplaceMatches,
     /// `s.groups(pattern)`: a new `List<String>`, or 0 if nothing matches.
     Groups,
     /// `List<Book>.from_csv(text)` (src/csv.rs): (text, the fields as `csv_spec` writes them) → a
@@ -583,7 +583,7 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "contains" => StrOp::Contains,
         "starts_with" => StrOp::StartsWith,
         "ends_with" => StrOp::EndsWith,
-        "replace" => StrOp::Replace,
+        "replace(…) with(…)" => StrOp::Replace,
         "split" => StrOp::Split,
         "words" => StrOp::Words,
         "lines" => StrOp::Lines,
@@ -594,8 +594,8 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "repeat" => StrOp::Repeat,
         "wrapped" => StrOp::Wrap,
         "matches" => StrOp::Matches,
-        "find_all" => StrOp::FindAll,
-        "replace_all(…) with(…)" => StrOp::ReplaceAll,
+        "all_matches" => StrOp::AllMatches,
+        "replace_matches(…) with(…)" => StrOp::ReplaceMatches,
         "sha256" => StrOp::Sha256,
         "hmac_sha256" => StrOp::Hmac,
         "to_base64" => StrOp::ToBase64,
@@ -731,7 +731,6 @@ pub enum Fault {
     /// `serve(8080) workers(0)`.
     BadWorkers,
     /// `[].mean`, `[].median`.
-    NoElements,
     /// `secure.token(-1)`.
     NegativeSize,
     /// `secure.encrypt(text) key("abc")`: not a key made by `secure.key`.
@@ -766,7 +765,6 @@ impl Fault {
             Fault::BadTime => "fault_bad_time",
             Fault::CannotServe => "fault_cannot_serve",
             Fault::BadWorkers => "fault_workers",
-            Fault::NoElements => "fault_no_elements",
             Fault::NegativeSize => "fault_negative_size",
             Fault::Int32Range => "fault_int32",
             Fault::TextWithZero => "fault_text_zero",
@@ -1929,8 +1927,8 @@ impl<'a> Translator<'a> {
                 pieces.push(Piece::Text(")".into()));
             } else {
                 pieces.push(Piece::Text(format!("{}.{name}", ty.text())));
-                for (j, (field, t)) in fields.iter().enumerate() {
-                    pieces.push(Piece::Text(format!("{}{field}: ", if j == 0 { "(" } else { ", " })));
+                for (j, (_, t)) in fields.iter().enumerate() {
+                    pieces.push(Piece::Text((if j == 0 { "(" } else { ", " }).into()));
                     let t = &laid_out(&d.name, t);
                     let n = scalars(t).len();
                     self.value_pieces(&v[at..at + n], t, &mut pieces);
@@ -3288,7 +3286,7 @@ impl<'a> Translator<'a> {
                 m.push(Piece::Text(format!("{} {{ ", ty.text())));
                 for (i, ((name, _), t)) in d.fields().iter().zip(members(ty)).enumerate() {
                     let sep = if i > 0 { ", " } else { "" };
-                    m.push(Piece::Text(format!("{sep}{name}: ")));
+                    m.push(Piece::Text(format!("{sep}{name} := ")));
                     let (start, n) = slice_of(ty, i);
                     self.value_pieces(&v[start..start + n], &t, m);
                 }
@@ -5162,13 +5160,13 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(clicked, StrOp::UiShow, vals));
                     return vec![clicked];
                 }
-                if name.text == "now" {
+                if name.text == "system.clock" {
                     let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);
                     self.emit(Inst::Str(bits, StrOp::Now, vec![]));
                     self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
                     return vec![x];
                 }
-                if name.text == "sleep" {
+                if name.text == "system.sleep" {
                     let (s, bits, done) = (self.expr1(&args[0]), self.int_local(), self.int_local());
                     self.emit(Inst::Convert(bits, Conversion::ToBits, s, NOWHERE));
                     self.emit(Inst::Str(done, StrOp::Sleep, vec![bits]));
@@ -5296,13 +5294,13 @@ impl<'a> Translator<'a> {
                     self.track(&v, &self.ty(e));
                     return v;
                 }
-                if name.text == "args" {
+                if name.text == "system.args" {
                     let l = self.int_local();
                     self.emit(Inst::Str(l, StrOp::Args, vec![]));
                     self.temps.push((l, self.ty(e)));
                     return vec![l];
                 }
-                if name.text == "exit" {
+                if name.text == "system.exit" {
                     let code = self.expr1(&args[0]);
                     let (low, high, (zero, max)) = (self.int_local(), self.int_local(), (self.constant(0), self.constant(255)));
                     self.emit(Inst::Binary(low, Op::Lt, code, zero, NOWHERE));
@@ -5994,14 +5992,16 @@ impl<'a> Translator<'a> {
                     "mean" | "median" => {
                         let (n, zero) = (self.int_local(), self.constant(0));
                         self.emit(Inst::ListLength(n, list));
-                        let (empty, loc) = (self.int_local(), self.loc(name.span));
-                        self.emit(Inst::Binary(empty, Op::Eq, n, zero, NOWHERE));
-                        self.emit(Inst::FaultIf(empty, Fault::NoElements, loc));
+                        let (present, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);
+                        self.emit(Inst::Binary(present, Op::Ne, n, zero, NOWHERE));
+                        self.emit(Inst::Convert(x, Conversion::FromBits, zero, NOWHERE));
+                        let (some, after) = (self.new_block(), self.new_block());
+                        self.go(End::Branch(present, some, after), some);
                         let (float, bits) = (self.constant((*elem == Type::Float) as i64), self.int_local());
                         self.emit(Inst::Str(bits, if name.text == "mean" { StrOp::Mean } else { StrOp::Median }, vec![list, float]));
-                        let x = self.new_slots(&Type::Float)[0];
                         self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
-                        vec![x]
+                        self.go(End::Jump(after), after);
+                        vec![present, x]
                     }
                     "join" => {
                         let (sep, text) = (self.expr1(&args[0]), self.int_local());
@@ -6149,7 +6149,7 @@ impl<'a> Translator<'a> {
                     self.temps.push((copy, Type::BigInt));
                     return vec![copy];
                 }
-                if self.ty(receiver) == Type::Int && name.text == "to_big" {
+                if self.ty(receiver) == Type::Int && name.text == "to_bigint" {
                     let digits = self.int_local();
                     self.emit(Inst::Str(digits, StrOp::Format(Show::Int), vec![v]));
                     self.temps.push((digits, Type::BigInt));

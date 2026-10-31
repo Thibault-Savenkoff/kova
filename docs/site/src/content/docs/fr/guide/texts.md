@@ -65,7 +65,7 @@ fn main {
 ```
 
 ```text
-Dog { name: "Rex" }
+Dog { name := "Rex" }
 [1, 2, 3]
 12
 ```
@@ -123,7 +123,7 @@ fn main {
     let clean: String := s.trim.to_lower
     print(clean)
     print(clean.split(", "))
-    print(clean.replace("world", "Kova"))
+    print(clean.replace("world") with("Kova"))
     print(clean.starts_with("hello"))
 }
 ```

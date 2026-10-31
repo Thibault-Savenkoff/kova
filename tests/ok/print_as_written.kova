@@ -1,0 +1,21 @@
+struct Dog {
+    name: String
+    age: Int
+}
+
+enum Shape {
+    Rect(w: Float, h: Float)
+    Dot
+}
+
+fn main {
+    print(Dog { name := "Rex", age := 3 })
+    print(Shape.Rect(2.0, 3.0))
+    print(Shape.Dot)
+    let none_yet: List<Int> := []
+    print(none_yet.median)
+}
+// expect: Dog { name := "Rex", age := 3 }
+// expect: Shape.Rect(2.0, 3.0)
+// expect: Shape.Dot
+// expect: none

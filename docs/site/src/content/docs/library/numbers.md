@@ -39,7 +39,7 @@ A whole number of 64 bits, from −9,223,372,036,854,775,808 to 9,223,372,036,85
 | `n.max(other: Int) -> Int` | the larger of the two. |
 | `n.pow(e: Int) -> Int` | `n` to the power `e`; `e` must not be negative. |
 | `n.to_float -> Float` | the same number as a `Float`. |
-| `n.to_big -> BigInt` | the same number as a `BigInt`. |
+| `n.to_bigint -> BigInt` | the same number as a `BigInt`. |
 | `n.to_char -> Char?` | the character whose Unicode code is `n` (`65.to_char` is `'A'`), `none` if there is none. |
 | `n.to_string -> String` | its digits. |
 
@@ -122,14 +122,14 @@ becomes a `BigInt` where one is expected.
 | `b.to_int -> Int?` | the same number as an `Int`, `none` if it does not fit. |
 | `b.to_string -> String` | its digits. |
 
-The operators `+ - * / %`, the comparisons and `-b` work on `BigInt`s, and `n.to_big` turns an `Int`
+The operators `+ - * / %`, the comparisons and `-b` work on `BigInt`s, and `n.to_bigint` turns an `Int`
 into one.
 
 ```kova
 fn main {
     var f: BigInt := 1
     for i in 1..=30 {
-        f := f * i.to_big
+        f := f * i.to_bigint
     }
     print(f)
     print(f.to_int)

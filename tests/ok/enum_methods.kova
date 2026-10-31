@@ -82,15 +82,15 @@ fn main {
     }
     print(k)
 }
-// expect: [Item.Priced(label: "tea", amount: 2.5), Item.Counted(n: 3), Item.Pair(both: (1, "one")), Item.Priced(label: "gift", amount: 0.0)]
+// expect: [Item.Priced("tea", 2.5), Item.Counted(3), Item.Pair((1, "one")), Item.Priced("gift", 0.0)]
 // expect: tea costs 2.5
 // expect: 3 of them
 // expect: 1 and one
 // expect: gift costs 0.0
 // expect: tea
 // expect: 30
-// expect: Shop { name: "Corner", best: Item.Priced(label: "cake", amount: 4.25) }
-// expect: best: Item.Priced(label: "cake", amount: 4.25)
+// expect: Shop { name := "Corner", best := Item.Priced("cake", 4.25) }
+// expect: best: Item.Priced("cake", 4.25)
 // expect: many
 // expect: n3
 // expect: 7

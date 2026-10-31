@@ -17,4 +17,4 @@ fn main {
 // expect: dog Al
 // code: 101
 // stderr: error: dog Rexy has a long name
-// stderr: values: d = Dog { name: "Rexy" }
+// stderr: values: d = Dog { name := "Rexy" }

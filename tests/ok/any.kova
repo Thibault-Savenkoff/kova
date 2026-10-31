@@ -130,18 +130,18 @@ fn main {
 // expect: a cat with 3 lives
 // expect: a cat with 9 lives
 // expect: I say meow
-// expect: [Dog { name: "Fido" }, a cat with 7 lives, Dog { name: "Rex" }]
+// expect: [Dog { name := "Fido" }, a cat with 7 lives, Dog { name := "Rex" }]
 // expect: meowmeow
-// expect: Dog { name: "Max" }
+// expect: Dog { name := "Max" }
 // expect: 7.0
 // expect: thing: a cat with 2 lives
 // expect: thing: label z
 // expect: label w
-// expect: Dog { name: "Max" }
-// expect: Dog { name: "y" }
-// expect: Dog { name: "Odie" }
-// expect: Zoo { pet: Dog { name: "Z" } }
+// expect: Dog { name := "Max" }
+// expect: Dog { name := "y" }
+// expect: Dog { name := "Odie" }
+// expect: Zoo { pet := Dog { name := "Z" } }
 // expect: woof
-// expect: Dog { name: "S" }
-// expect: Stack<any Animal> { items: [a cat with 2 lives] }
-// expect: (1, Dog { name: "P" })
+// expect: Dog { name := "S" }
+// expect: Stack<any Animal> { items := [a cat with 2 lives] }
+// expect: (1, Dog { name := "P" })

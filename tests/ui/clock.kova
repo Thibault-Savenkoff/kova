@@ -1,5 +1,6 @@
 // A clock and a canvas in a real window, hidden (`KOVA_UI_HIDDEN`): the system's own code runs.
 import ui
+import system
 
 enum Event {
     Tick
@@ -24,7 +25,7 @@ fn update(n: var Int, e: Event) {
     n := n + 1
     print(n)
     if n = 5 {
-        exit(0)
+        system.exit(0)
     }
 }
 

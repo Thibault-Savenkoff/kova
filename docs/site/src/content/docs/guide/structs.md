@@ -23,7 +23,7 @@ fn main {
 
 ```text
 Rex
-Dog { name: "Rex", age: 4 }
+Dog { name := "Rex", age := 4 }
 ```
 
 - `Dog { name := "Rex", age := 3 }` makes a value: every field is given, in any order. A missing
@@ -56,9 +56,9 @@ fn main {
 ```
 
 ```text
-Dog { name: "Rex", age: 1 }
-Dog { name: "Fido", age: 3 }
-Dog { name: "Fido", age: 4 }
+Dog { name := "Rex", age := 1 }
+Dog { name := "Fido", age := 3 }
+Dog { name := "Fido", age := 4 }
 ```
 
 `...fido` copies its fields, so `fido` stays usable. A field's own value reads no variable.

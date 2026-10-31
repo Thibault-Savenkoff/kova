@@ -1,14 +1,15 @@
 // `exit` with no `args`: an empty List.
 fn stop -> Int {
-    exit(0)
+    system.exit(0)
 }
 
 fn main {
-    print(args.length)
-    if args.length = 0 {
-        exit(7)
+    print(system.args.length)
+    if system.args.length = 0 {
+        system.exit(7)
     }
     print(stop)
 }
 // expect: 0
 // code: 7
+import system

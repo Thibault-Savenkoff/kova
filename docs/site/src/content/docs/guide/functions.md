@@ -124,7 +124,7 @@ false
 
 The function's full name is `between(…) upto(…)`; each part has its parameters. The library uses
 this everywhere a plain list of arguments would be ambiguous: `files.copy(a) to(b)`,
-`s.replace_all(pattern) with(text)`, `secure.encrypt(text) key(k)`. Again this is Smalltalk's
+`s.replace_matches(pattern) with(text)`, `secure.encrypt(text) key(k)`. Again this is Smalltalk's
 idea (`dict at: 1 put: x`): at the call, it is clear which argument is which, without looking at
 the declaration.
 

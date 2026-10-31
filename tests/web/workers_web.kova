@@ -2,9 +2,10 @@
 // own threads it then makes (`pthread_create`). `/web` is never asked.
 
 import web
+import system
 
 fn main {
-    let port: Int? := args[0].to_int
+    let port: Int? := system.args[0].to_int
     if port = none {
         return
     }
@@ -13,7 +14,7 @@ fn main {
     web.serve(port) workers(4) log(web.Log.Off) { q: web.Request =>
         match q.path {
             "/slow" => {
-                sleep(1.0)
+                system.sleep(1.0)
                 web.Answer.text("slow")
             }
             "/web" => match web.get("http://127.0.0.1:1/") {
@@ -21,10 +22,10 @@ fn main {
                 err(e) => web.Answer.status(502)
             }
             "/stop" => {
-                exit(0)
+                system.exit(0)
                 web.Answer.status(500)
             }
-            _ => match ages[q.path.replace("/", "")] {
+            _ => match ages[q.path.replace("/") with("")] {
                 none => web.Answer.status(404)
                 age => web.Answer.text("{greeting} {age}")
             }

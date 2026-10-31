@@ -89,8 +89,8 @@ what must not be guessed, use [`secure`](/library/secure/).
 
 | Method | On | Gives |
 | --- | --- | --- |
-| `l.mean -> Float` | `List<Int>`, `List<Float>` | the average. An empty list stops the program. |
-| `l.median -> Float` | `List<Int>`, `List<Float>` | the middle value once sorted (the mean of the two middle ones for an even length). |
+| `l.mean -> Float?` | `List<Int>`, `List<Float>` | the average; `none` on an empty list. |
+| `l.median -> Float?` | `List<Int>`, `List<Float>` | the middle value once sorted (the mean of the two middle ones for an even length). |
 | `l.join(separator: String) -> String` | `List<String>` | the texts with `separator` between each. |
 
 ```kova

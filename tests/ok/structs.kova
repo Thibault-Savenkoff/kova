@@ -71,18 +71,18 @@ fn main {
     let u: (String, Dog) := t.clone
     print(u.1)
 }
-// expect: Dog { name: "Rex", age: 3 }
+// expect: Dog { name := "Rex", age := 3 }
 // expect: Rex
 // expect: 4
-// expect: Rex is 3: Dog { name: "Rex", age: 3 }
-// expect: Point { x: 10, y: 7 }
-// expect: Point { x: 1, y: 2 }
-// expect: Point { x: 0, y: 0 }
-// expect: Kennel { owner: "Ann", dog: Dog { name: "Rex", age: 3 }, spot: (4, 'b') }
-// expect: Dog { name: "Rex!", age: 4 }
+// expect: Rex is 3: Dog { name := "Rex", age := 3 }
+// expect: Point { x := 10, y := 7 }
+// expect: Point { x := 1, y := 2 }
+// expect: Point { x := 0, y := 0 }
+// expect: Kennel { owner := "Ann", dog := Dog { name := "Rex", age := 3 }, spot := (4, 'b') }
+// expect: Dog { name := "Rex!", age := 4 }
 // expect: spot 4c
 // expect: 7
 // expect: Empty {}
 // expect: Empty {}
 // expect: Fido II Twin
-// expect: Dog { name: "Twin", age: 1 }
+// expect: Dog { name := "Twin", age := 1 }

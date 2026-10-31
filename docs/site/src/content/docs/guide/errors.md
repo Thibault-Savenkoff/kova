@@ -286,7 +286,7 @@ fn main {
 ```
 
 ```text
-AppError.Io(error: NotFound("missing.txt"))
+AppError.Io(NotFound("missing.txt"))
 ```
 
 ## When the program itself is wrong
@@ -295,4 +295,4 @@ AppError.Io(error: NotFound("missing.txt"))
 number, a file that was deleted. A mistake in the program itself (a position past the end of a list,
 a division by zero, a [contract](/guide/contracts-and-tests/) broken) is not something to handle:
 the program stops at once, says what and where, and ends with the exit code 101. To stop on
-purpose, `exit(code)` ends the program with that code.
+purpose, `system.exit(code)` ends the program with that code.

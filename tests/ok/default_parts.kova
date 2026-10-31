@@ -50,8 +50,8 @@ fn main {
 // expect: bye Rex.
 // expect: Rex walks 1 km
 // expect: Rex walks 5 km
-// expect: Dog { name: "Max3" }
-// expect: Dog { name: "Max7" }
+// expect: Dog { name := "Max3" }
+// expect: Dog { name := "Max7" }
 // expect: Rex barks 1
 // expect: Rex barks 2
 // expect: Max barks 1

@@ -16,17 +16,19 @@ aux trois endroits où c'est sûr et utile.
 `n` fils :
 
 ```kova
+import system
+
 fn slow_square(n: Int) -> Int {
-    sleep(0.2)
+    system.sleep(0.2)
     return n * n
 }
 
 fn main {
     let numbers: List<Int> := [1, 2, 3, 4, 5, 6, 7, 8]
-    let start: Float := now
+    let start: Float := system.clock
     let squares: List<Int> := numbers.map workers(8) { n: Int => slow_square(n) }
     print(squares)
-    print("{now - start} seconds")
+    print("{system.clock - start} seconds")
 }
 ```
 

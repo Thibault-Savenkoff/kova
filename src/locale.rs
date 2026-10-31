@@ -63,7 +63,6 @@ pub const RUNTIME: &[&str] = &[
     "stop_with_ctrl_c",
     // `serve(…) workers(0)`.
     "fault_workers",
-    "fault_no_elements",
     "fault_negative_size",
     "fault_bad_key",
     "fault_password_settings",
@@ -289,8 +288,8 @@ mod tests {
         }
         assert_eq!(RUNTIME[0], "error_prefix", "the runtime reads the prefix at index 0");
         assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "the runtime reads them at 7 and 8");
-        assert_eq!(RUNTIME[29], "log_unknown_level", "the runtime reads it at 29");
-        assert_eq!(RUNTIME[35..37], ["extern_no_library", "extern_no_function"], "the runtime reads them at 35 and 36");
+        assert_eq!(RUNTIME[28], "log_unknown_level", "the runtime reads it at 28");
+        assert_eq!(RUNTIME[34..36], ["extern_no_library", "extern_no_function"], "the runtime reads them at 34 and 35");
         let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
         let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
         assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");

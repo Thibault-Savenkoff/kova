@@ -51,8 +51,8 @@ fn main {
 // expect: ["bbb", "cc", "dddd", "e"] 4
 // expect: 4
 // expect: ["bbb", "cc", "dddd", "e"]
-// expect: Dog { name: "Rex", tricks: ["sit", "roll"] }
-// expect: [Dog { name: "Rex", tricks: ["sit", "roll"] }, Dog { name: "Max", tricks: [] }]
+// expect: Dog { name := "Rex", tricks := ["sit", "roll"] }
+// expect: [Dog { name := "Rex", tricks := ["sit", "roll"] }, Dog { name := "Max", tricks := [] }]
 // expect: roll
 // expect: [["x", "o"], [], ["o"]]
 // expect: ["x", "o"]

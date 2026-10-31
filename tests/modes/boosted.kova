@@ -29,9 +29,10 @@ fn first<T>(l: List<T>) -> Int
 fn main {
     let rex := Dog { name := "Rex" }
     let pet: any Animal := Dog { name := "Pet" }
-    match args[0] {
+    match system.args[0] {
         "any" => print(pet.sound),
         "generic" => print(first([1, 2])),
         _ => print(rex.age),
     }
 }
+import system

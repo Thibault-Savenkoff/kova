@@ -33,5 +33,5 @@ fn main {
         }
     }
 }
-// expect: AppError.Io(error: NotFound("nowhere.txt"))
+// expect: AppError.Io(NotFound("nowhere.txt"))
 // expect: could not read: NotFound("nowhere.txt")

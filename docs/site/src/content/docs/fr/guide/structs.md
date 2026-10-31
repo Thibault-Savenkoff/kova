@@ -23,7 +23,7 @@ fn main {
 
 ```text
 Rex
-Dog { name: "Rex", age: 4 }
+Dog { name := "Rex", age := 4 }
 ```
 
 - `Dog { name := "Rex", age := 3 }` crée une valeur : chaque champ est donné, dans n'importe quel
@@ -56,9 +56,9 @@ fn main {
 ```
 
 ```text
-Dog { name: "Rex", age: 1 }
-Dog { name: "Fido", age: 3 }
-Dog { name: "Fido", age: 4 }
+Dog { name := "Rex", age := 1 }
+Dog { name := "Fido", age := 3 }
+Dog { name := "Fido", age := 4 }
 ```
 
 `...fido` copie ses champs, donc `fido` reste utilisable. La valeur propre d'un champ ne lit aucune

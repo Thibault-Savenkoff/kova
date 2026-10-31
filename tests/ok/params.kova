@@ -105,8 +105,8 @@ fn main {
 // expect: 4
 // expect: 6
 // expect: 6
-// expect: Dog { name: "Rex", age: 7 }
-// expect: Dog { name: "Bob", age: 7 }
+// expect: Dog { name := "Rex", age := 7 }
+// expect: Dog { name := "Bob", age := 7 }
 // expect: 0
 // expect: ("x!", 2)
 // expect: a5

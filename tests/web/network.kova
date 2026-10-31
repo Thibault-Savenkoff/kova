@@ -2,13 +2,14 @@
 // the program's first word; with a second word, it stays on this computer (`serve`).
 
 import web
+import system
 
 fn main {
-    let port: Int? := args[0].to_int
+    let port: Int? := system.args[0].to_int
     if port = none {
         return
     }
-    if args.length > 1 {
+    if system.args.length > 1 {
         web.serve(port) { q: web.Request =>
             web.Answer.text("here")
         }

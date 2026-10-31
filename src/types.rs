@@ -486,6 +486,10 @@ fn member_like<'a>(name: &str, known: &[&'a str]) -> Option<&'a str> {
         "lower" | "toLowerCase" => "to_lower",
         "str" | "toString" => "to_string",
         "strip" => "trim",
+        "replace" => "replace(…) with(…)",
+        "find_all" => "all_matches",
+        "replace_all(…) with(…)" | "replace_all" => "replace_matches(…) with(…)",
+        "to_big" => "to_bigint",
         _ => "",
     };
     known.iter().find(|k| **k == usual).copied().or_else(|| closest(name, known.iter().copied()))
@@ -504,7 +508,7 @@ fn module_help(name: &str) -> Option<String> {
         return Some(t!("module_import", module = name));
     }
     const RENAMED: &[(&str, &str)] =
-        &[("read_file", "files.read"), ("make_dir", "files.make_folder"), ("write_file", "files.write"), ("append_file", "files.append"), ("list_dir", "files.list"), ("remove_file", "files.remove")];
+        &[("read_file", "files.read"), ("make_dir", "files.make_folder"), ("now", "system.clock"), ("write_file", "files.write"), ("append_file", "files.append"), ("list_dir", "files.list"), ("remove_file", "files.remove")];
 
     let base = name.split(' ').next()?.trim_end_matches("(…)");
     let last = |full: &&str| full.split_once('.').is_some_and(|(_, n)| n == base);
@@ -521,7 +525,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("files.write", "fn files.write(path: String, text: String) -> Nothing or files.IoError"),
         ("files.append", "fn files.append(path: String, text: String) -> Nothing or files.IoError"),
         ("files.exists", "fn files.exists(path: String) -> Bool"),
-        ("files.list", "fn files.list(path: String) -> List<String> or files.IoError"),
+        ("files.list", "fn files.list(folder: String) -> List<String> or files.IoError"),
         ("files.make_folder", "fn files.make_folder(path: String) -> Nothing or files.IoError"),
         ("files.remove", "fn files.remove(path: String) -> Nothing or files.IoError"),
         ("files.copy(…) to(…)", "fn files.copy(path: String) to(destination: String) -> Nothing or files.IoError"),
@@ -533,8 +537,8 @@ pub const LIBRARY: &[(&str, &str)] =
         ("system.env", "fn system.env(name: String) -> String?"),
         ("system.run", "fn system.run(program: String) -> system.Finished or system.RunError"),
         ("system.run(…) args(…)", "fn system.run(program: String) args(words: List<String>) -> system.Finished or system.RunError"),
-        ("now", "fn now -> Float"),
-        ("sleep", "fn sleep(seconds: Float)"),
+        ("system.clock", "fn system.clock -> Float"),
+        ("system.sleep", "fn system.sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
         ("secure.random", "fn secure.random(from..to) -> Int"),
         ("secure.token", "fn secure.token(bytes: Int) -> String"),
@@ -551,8 +555,8 @@ pub const LIBRARY: &[(&str, &str)] =
         ("log.error", "fn log.error(text: String)"),
         ("log.level", "fn log.level(level: log.Level)"),
         ("read_line", "fn read_line -> String?"),
-        ("args", "fn args -> List<String>"),
-        ("exit", "fn exit(code: Int)"),
+        ("system.args", "fn system.args -> List<String>"),
+        ("system.exit", "fn system.exit(code: Int)"),
         ("web.get", "fn web.get(url: String) -> web.Response or web.WebError"),
         ("web.post(…) body(…)", "fn web.post(url: String) body(text: String) -> web.Response or web.WebError"),
         ("web.send", "fn web.send(request: web.Request) -> web.Response or web.WebError"),
@@ -724,7 +728,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "to_bool", Type::Bool, true),
     (Type::String, "to_date", Type::Date, true),
     (Type::String, "to_datetime", Type::DateTime, true),
-    (Type::Int, "to_big", Type::BigInt, false),
+    (Type::Int, "to_bigint", Type::BigInt, false),
     // `none` if it is too big for an `Int`.
     (Type::BigInt, "to_int", Type::Int, true),
     (Type::BigInt, "clone", Type::BigInt, false),
@@ -781,9 +785,9 @@ pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter",
 pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
-    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
+    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace(…) with(…)", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "wrapped", "matches", "all_matches", "replace_matches(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
-pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
+pub const PATTERN_METHODS: &[&str] = &["matches", "all_matches", "replace_matches(…) with(…)", "groups"];
 
 /// `` `length`, `add` ``.
 fn quoted(names: &[&str]) -> String {
@@ -828,7 +832,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "lines" => (vec![], list(s())),
         "trim" => (vec![], s()),
         "contains" | "starts_with" | "ends_with" => (vec![s()], Type::Bool),
-        "replace" => (vec![s(), s()], s()),
+        "replace(…) with(…)" => (vec![s(), s()], s()),
         "split" => (vec![s()], list(s())),
         "words" => (vec![], list(s())),
         "chars" => (vec![], list(Type::Char)),
@@ -837,8 +841,8 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "repeat" => (vec![Type::Int], s()),
         "wrapped" => (vec![Type::Int], s()),
         "matches" => (vec![s()], Type::Bool),
-        "find_all" => (vec![s()], list(s())),
-        "replace_all(…) with(…)" => (vec![s(), s()], s()),
+        "all_matches" => (vec![s()], list(s())),
+        "replace_matches(…) with(…)" => (vec![s(), s()], s()),
         "groups" => (vec![s()], Type::Optional(Box::new(list(s())))),
         // PLAN Part 4 "The library after Python, step 4".
         "sha256" | "to_base64" | "to_base64url" => (vec![], s()),
@@ -1384,7 +1388,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("system.run".into(), Signature::new(None, paths(1), ran()));
     c.functions.insert("system.run(…) args(…)".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(string())))], ran()));
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
-    c.functions.insert("now".into(), Signature::new(None, vec![], Type::Float));
+    c.functions.insert("system.clock".into(), Signature::new(None, vec![], Type::Float));
     // What `ui.run` calls (src/ui.rs): shows a view, gives the button clicked, -1 once closed.
     c.functions.insert("ui.show".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, string()), (Mode::Read, Type::Int), (Mode::Read, Type::Int)], Type::Int));
     c.functions.insert("ui.typed".into(), Signature::new(None, vec![], string()));
@@ -1406,10 +1410,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         c.functions.insert(format!("secure.password_hash{parts}"), Signature::new(None, params, string()));
     }
     c.functions.insert("secure.password_matches(…) hash(…)".into(), Signature::new(None, two(), Type::Bool));
-    c.functions.insert("sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
+    c.functions.insert("system.sleep".into(), Signature::new(None, vec![(Mode::Read, Type::Float)], Type::Unit));
     c.functions.insert("read_line".into(), Signature::new(None, vec![], Type::Optional(Box::new(string()))));
-    c.functions.insert("args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
-    c.functions.insert("exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
+    c.functions.insert("system.args".into(), Signature::new(None, vec![], Type::List(Box::new(string()))));
+    c.functions.insert("system.exit".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
@@ -2004,8 +2008,8 @@ fn stops(b: &Block, loops: bool) -> bool {
         Stmt::Break(_) | Stmt::Continue(_) => loops,
         Stmt::If { then, otherwise: Some(otherwise), .. } => stops(then, loops) && stops(otherwise, loops),
         Stmt::Match(m) => !m.arms.is_empty() && m.arms.iter().all(|a| stops(&a.body, loops)),
-        // `exit(1)` stops the program: nothing after it runs.
-        Stmt::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) => name.text == "exit",
+        // `system.exit(1)` stops the program: nothing after it runs.
+        Stmt::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) => name.text == "system.exit",
         _ => false,
     })
 }
@@ -3070,7 +3074,7 @@ impl Checker<'_> {
     fn function_name(&mut self, name: &Name) -> bool {
         // A module's own functions are `module.name`: its variables never meet the program's.
         let taken = self.functions.get(name.text.as_str()).is_some_and(|f| f.params.is_empty())
-            && (["read_line", "args", "now"].contains(&name.text.as_str()) || file_number(self.src, name.span.start) == 0);
+            && (name.text == "read_line" || file_number(self.src, name.span.start) == 0);
         if taken {
             self.diags.push(
                 Diag::new(name.span, t!("function_name_taken", name = name.text)).help(t!("function_name_taken_help", name = name.text)),
@@ -3353,7 +3357,7 @@ impl Checker<'_> {
     }
 
     /// A number written directly, like `3` or `-2`, is a `BigInt` where one is expected
-    /// (`let f: BigInt := 1`, `f * 2`), whatever its size. A variable still needs `.to_big`.
+    /// (`let f: BigInt := 1`, `f * 2`), whatever its size. A variable still needs `.to_bigint`.
     fn as_big(&mut self, e: &Expr) -> bool {
         let inner = match &e.kind {
             ExprKind::Int(_) | ExprKind::BigInt(_) => None,
@@ -3671,7 +3675,7 @@ impl Checker<'_> {
                 if !matches!(elem, Type::Int | Type::Float | Type::Error) {
                     self.error(name.span, t!("stats_needs_numbers", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
                 }
-                (vec![], Type::Float)
+                (vec![], Type::Optional(Box::new(Type::Float)))
             }
             "to_json" => {
                 let list = Type::List(Box::new(elem.clone()));

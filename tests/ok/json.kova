@@ -126,7 +126,7 @@ fn main {
     lists
 }
 // expect: {"title":"Le \"Petit\" Prince","price":9.5,"pages":96,"read":true,"author":{"name":"Saint-Ex","born":null},"tags":["conte","été"],"notes":{"a":1,"b":2}}
-// expect: Book { title: "Le "Petit" Prince", price: 9.5, pages: 96, read: true, author: Author { name: "Saint-Ex", born: none }, tags: ["conte", "été"], notes: ["a" := 1, "b" := 2] }
+// expect: Book { title := "Le "Petit" Prince", price := 9.5, pages := 96, read := true, author := Author { name := "Saint-Ex", born := none }, tags := ["conte", "été"], notes := ["a" := 1, "b" := 2] }
 // expect: true
 // expect: missing: price
 // expect: error: NotJson(1)
@@ -138,18 +138,18 @@ fn main {
 // expect: err(WrongKind("pages"))
 // expect: err(WrongKind("author.name"))
 // expect: err(WrongKind("notes.y"))
-// expect: ok(Book { title: "x", price: 100.0, pages: 2, read: false, author: Author { name: "A", born: none }, tags: [], notes: ["z" := 5] })
+// expect: ok(Book { title := "x", price := 100.0, pages := 2, read := false, author := Author { name := "A", born := none }, tags := [], notes := ["z" := 5] })
 // expect: {"value":1,"kids":[{"value":2,"kids":[]},{"value":3,"kids":[{"value":4,"kids":[]}]}]}
-// expect: ok(Node { value: 1, kids: [Node { value: 2, kids: [] }, Node { value: 3, kids: [Node { value: 4, kids: [] }] }] })
+// expect: ok(Node { value := 1, kids := [Node { value := 2, kids := [] }, Node { value := 3, kids := [Node { value := 4, kids := [] }] }] })
 // expect: {"v":1,"next":{"v":2,"next":null}}
-// expect: ok(Cell { v: 1, next: Cell { v: 2, next: none } })
-// expect: ok(Cell { v: 1, next: none })
+// expect: ok(Cell { v := 1, next := Cell { v := 2, next := none } })
+// expect: ok(Cell { v := 1, next := none })
 // expect: err(WrongKind("next.v"))
 // expect: {"a":1,"b":2}
-// expect: ok(Pair<Int> { a: -9223372036854775808, b: 9223372036854775807 })
+// expect: ok(Pair<Int> { a := -9223372036854775808, b := 9223372036854775807 })
 // expect: err(WrongKind("a"))
 // expect: err(WrongKind("a"))
-// expect: ok(Pair<String> { a: "é😀A"/", b: "" })
+// expect: ok(Pair<String> { a := "é😀A"/", b := "" })
 // expect: err(NotJson(1))
 // expect: {"f":[0.1,1.5e-5,1e16,-0.0,0.3333333333333333,1.2345678901234568e20,null,null],"i":[0,-1,42]}
 // expect: {"a":"x","b":"y"}
@@ -158,14 +158,14 @@ fn main {
 // expect: err(NotJson(1))
 // expect: err(NotJson(1))
 // expect: [{"name":"A","born":1},{"name":"B","born":null}]
-// expect: ok([Author { name: "A", born: 1 }, Author { name: "B", born: none }])
+// expect: ok([Author { name := "A", born := 1 }, Author { name := "B", born := none }])
 // expect: err(Missing("[1].name"))
 // expect: err(WrongKind("[1]"))
 // expect: err(WrongKind("."))
 // expect: err(WrongKind("[1][1]"))
 // expect: [1.5,2.0]
 // expect: {"x":{"name":"X","born":3}}
-// expect: ok(["x" := Author { name: "X", born: 3 }])
+// expect: ok(["x" := Author { name := "X", born := 3 }])
 // expect: ok(["b" := 3, "a" := 1])
 // expect: err(WrongKind("a"))
 // expect: err(WrongKind("."))

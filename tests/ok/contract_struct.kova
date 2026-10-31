@@ -14,4 +14,4 @@ fn main {
 // expect: 4
 // code: 101
 // stderr: error: Max is too old: 25
-// stderr: values: d = Dog { name: "Max", age: 25 }
+// stderr: values: d = Dog { name := "Max", age := 25 }

@@ -121,7 +121,7 @@ fn main {
 // expect: 2
 // expect: 2
 // expect: 2
-// expect: Stack<Int> { items: [1] }
+// expect: Stack<Int> { items := [1] }
 // expect: "b"
 // expect: "a"
 // expect: none
@@ -133,5 +133,5 @@ fn main {
 // expect: (1, "one")
 // expect: 2
 // expect: age = 3
-// expect: Entry<String, Int> { key: "age", value: 3 }
+// expect: Entry<String, Int> { key := "age", value := 3 }
 // expect: 1

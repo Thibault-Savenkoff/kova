@@ -82,6 +82,6 @@ fn main {
 // expect: "tres"
 // expect: "three"
 // expect: ["ada" := [1, 2], "bob" := []]
-// expect: Dog { name: "Rex", age: 3 }
+// expect: Dog { name := "Rex", age := 3 }
 // expect: 1
 // expect: ["a" := 1]

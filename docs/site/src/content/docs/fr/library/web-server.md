@@ -32,7 +32,7 @@ fn main {
 ```
 
 `web.serve(8080)` répond à chaque question avec ce que donne son [bloc](/fr/guide/blocks/), jusqu'à
-ce que le programme s'arrête (`exit(0)` dans un cas l'arrête). Ouvre `http://localhost:8080/` dans
+ce que le programme s'arrête (`system.exit(0)` dans un cas l'arrête). Ouvre `http://localhost:8080/` dans
 un navigateur pour le voir.
 
 Au démarrage, le serveur écrit où l'ouvrir, puis une ligne pour chaque question à laquelle il

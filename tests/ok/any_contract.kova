@@ -19,5 +19,5 @@ fn main {
 // stderr: error: not a cat
 // stderr: any_contract.kova:10:13
 // stderr:   require a.sound = "meow"
-// stderr:   values: a = Dog { name: "Rex" }
+// stderr:   values: a = Dog { name := "Rex" }
 // stderr: any_contract.kova:16:11

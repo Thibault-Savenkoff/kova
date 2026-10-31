@@ -55,7 +55,7 @@ fn main {
     print(set.length)
 }
 // expect: [1, 2, 3, 4, 5, 6, 7, 8, 9]
-// expect: Tree<String> { value: "m", left: Tree<String> { value: "a", left: none, right: none }, right: none }
-// expect: A { name: "x", b: B { count: 2, a: A { name: "y", b: none } } }
+// expect: Tree<String> { value := "m", left := Tree<String> { value := "a", left := none, right := none }, right := none }
+// expect: A { name := "x", b := B { count := 2, a := A { name := "y", b := none } } }
 // expect: 1
 // expect: 1

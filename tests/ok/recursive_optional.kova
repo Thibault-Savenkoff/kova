@@ -81,18 +81,18 @@ fn main {
         n => print(n)
     }
 }
-// expect: Cell { value: 1, next: Cell { value: 2, next: Cell { value: 3, next: none } } }
+// expect: Cell { value := 1, next := Cell { value := 2, next := Cell { value := 3, next := none } } }
 // expect: 6
 // expect: 3
-// expect: Cell { value: 1, next: Cell { value: 10, next: none } }
-// expect: Cell { value: 5, next: none }
+// expect: Cell { value := 1, next := Cell { value := 10, next := none } }
+// expect: Cell { value := 5, next := none }
 // expect: true
 // expect: false
 // expect: 49995000
 // expect: 10000
-// expect: Expr.Add(left: Expr.Num(value: 2), right: Expr.Times(left: Expr.Num(value: 3), right: Expr.Minus(inner: Expr.Num(value: 4))))
+// expect: Expr.Add(Expr.Num(2), Expr.Times(Expr.Num(3), Expr.Minus(Expr.Num(4))))
 // expect: -10
 // expect: false
 // expect: true
 // expect: 14
-// expect: Cell { value: 1, next: Cell { value: 0, next: none } }
+// expect: Cell { value := 1, next := Cell { value := 0, next := none } }

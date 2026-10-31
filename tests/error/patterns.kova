@@ -2,8 +2,8 @@ fn main {
     let p: String := "a+"
     print("aa".matches(p))
     print("aa".matches("(a"))
-    print("aa".find_all("[z-a]"))
-    print("aa".replace_all("""a\q""") with(""))
+    print("aa".all_matches("[z-a]"))
+    print("aa".replace_matches("""a\q""") with(""))
     print("aa".groups("""a{3,1}"""))
     print("aa".matches("*a"))
 }

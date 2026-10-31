@@ -12,7 +12,7 @@ extern c from "c" {
 }
 
 fn main {
-    match args[0] {
+    match system.args[0] {
         "library" => print(nope.f),
         "function" => print(c.missing),
         "int32" => print(c.abs(5000000000)),
@@ -21,3 +21,4 @@ fn main {
         _ => print(c.address("KOVA_SURELY_NOT_SET")),
     }
 }
+import system

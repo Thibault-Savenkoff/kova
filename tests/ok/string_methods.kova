@@ -24,9 +24,9 @@ fn main {
     print(name.starts_with("kova"))
     print(name.ends_with(".kova"))
     print(name.ends_with("kova.kova.kova"))
-    print(name.replace("kova", "lisaac"))
-    print("aaa".replace("aa", "b"))
-    print("a-b-c".replace("-", ""))
+    print(name.replace("kova") with("lisaac"))
+    print("aaa".replace("aa") with("b"))
+    print("a-b-c".replace("-") with(""))
     for c in "ok".chars {
         print(c.to_int)
     }

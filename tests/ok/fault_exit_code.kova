@@ -1,6 +1,8 @@
+import system
+
 fn main {
-    exit(256)
+    system.exit(256)
 }
 // code: 101
 // stderr: error: an exit code is between 0 and 255
-// stderr: fault_exit_code.kova:2:10
+// stderr: fault_exit_code.kova:4:17

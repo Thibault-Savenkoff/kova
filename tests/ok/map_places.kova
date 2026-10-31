@@ -53,7 +53,7 @@ fn main {
     print(points.length)
     print(points[Point { x := 1, y := 2 }])
 }
-// expect: Census { ages: ["Ada" := 37, "Bob" := 4] }
+// expect: Census { ages := ["Ada" := 37, "Bob" := 4] }
 // expect: 2
 // expect: ["the" := 3, "cat" := 1, "and" := 2, "hat" := 1, "bat" := 1]
 // expect: [Color.Red := 3, Color.Green := 4]

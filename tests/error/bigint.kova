@@ -8,7 +8,7 @@ fn main {
     print(b.size)
 }
 // error: different types: `BigInt` expected, `Int` given
-// error: Kova never converts a variable by itself: use `.to_big`, or `.to_int` (an `Int?`: `none` if too big)
+// error: Kova never converts a variable by itself: use `.to_bigint`, or `.to_int` (an `Int?`: `none` if too big)
 // error: different types: `Int` expected, `BigInt` given
 // error: this number is too big for an `Int` (at most 9223372036854775807): write `BigInt` as its type
 // error: `BigInt` has no method `size`

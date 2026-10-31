@@ -108,7 +108,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         .filter(|(w, out)| **out && w[0].kind == Kind::Keyword("fn") && w[1].kind == Kind::Ident)
         .filter(|(w, _)| !matches!(w[2].kind, Kind::Sym("(" | "<")) || w[3].kind == Kind::Sym(")"))
         .map(|(w, _)| source[w[1].span.start..w[1].span.end].to_string())
-        .chain(["read_line".to_string(), "args".to_string(), "now".to_string()]);
+        .chain(["read_line".to_string()]);
     // A constant is a function without parameters (`Parser::constant`).
     let constants: HashSet<String> = tokens
         .windows(2)

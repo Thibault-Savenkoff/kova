@@ -77,16 +77,16 @@ fn main {
 }
 // expect: 12.0
 // expect: 9.0
-// expect: Shape.Circle(radius: 2.0)
+// expect: Shape.Circle(2.0)
 // expect: Shape.Dot
 // expect: true
 // expect: Light.Green
 // expect: false
-// expect: [Message.Say(text: "hi"), Message.Move(x: 1, y: 2), Message.Quit]
+// expect: [Message.Say("hi"), Message.Move(1, 2), Message.Quit]
 // expect: say hi
 // expect: 3
 // expect: quit
-// expect: [Message.Say(text: "hi"), Message.Move(x: 1, y: 2), Message.Quit]
+// expect: [Message.Say("hi"), Message.Move(1, 2), Message.Quit]
 // expect: owned
 // expect: not say
 // expect: loop 1

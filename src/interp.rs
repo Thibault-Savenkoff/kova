@@ -910,13 +910,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             heap.make(t)
                         }
                         StrOp::Matches => crate::regex::matches(&pattern(s(1)), s(0)) as i64,
-                        StrOp::ReplaceAll => {
+                        StrOp::ReplaceMatches => {
                             let t = crate::regex::replace_all(&pattern(s(1)), s(0), s(2));
                             heap.make(t)
                         }
-                        StrOp::FindAll | StrOp::Groups => {
+                        StrOp::AllMatches | StrOp::Groups => {
                             let found = match op {
-                                StrOp::FindAll => Some(crate::regex::find_all(&pattern(s(1)), s(0))),
+                                StrOp::AllMatches => Some(crate::regex::find_all(&pattern(s(1)), s(0))),
                                 _ => crate::regex::groups(&pattern(s(1)), s(0)),
                             };
                             match found {

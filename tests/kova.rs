@@ -862,7 +862,7 @@ fn debugger() {
     e.send("configurationDone", json!({}));
 
     assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
-    assert_eq!(e.variables(0), ["rex = Dog { name: \"Rex\", age: 3 }", "names = [\"a\", \"b\"]"]);
+    assert_eq!(e.variables(0), ["rex = Dog { name := \"Rex\", age := 3 }", "names = [\"a\", \"b\"]"]);
     // The console: what `print` would write; the variables are only borrowed.
     assert_eq!(e.evaluate("rex.age + 1", None), "4");
     assert_eq!(e.evaluate("\"{rex.name} has {names.length} names\"", Some(0)), "Rex has 2 names");
@@ -874,13 +874,13 @@ fn debugger() {
     assert_eq!(e.go("stepIn"), "step");
     assert_eq!(e.stack(), [("older".to_string(), 8), ("main".to_string(), 15)]);
     e.go("next");
-    assert_eq!(e.variables(1), ["d = Dog { name: \"Rex\", age: 3 }", "years = 4"]);
+    assert_eq!(e.variables(1), ["d = Dog { name := \"Rex\", age := 3 }", "years = 4"]);
     assert_eq!(e.evaluate("years * d.age", Some(1)), "12");
     assert_eq!(e.evaluate("names.length", Some(0)), "2");
     e.go("stepOut");
     assert_eq!(e.stack(), [("main".to_string(), 16)]);
     assert_eq!(e.go("continue"), "breakpoint");
-    assert_eq!(e.variables(0), ["rex = (given away)", "names = [\"a\", \"b\"]", "next = 4", "gone = Dog { name: \"Rex\", age: 3 }"]);
+    assert_eq!(e.variables(0), ["rex = (given away)", "names = [\"a\", \"b\"]", "next = 4", "gone = Dog { name := \"Rex\", age := 3 }"]);
     assert_eq!(e.evaluate("rex.name", None), "(given away)");
     assert_eq!(e.evaluate("gone.name", None), "Rex");
     e.send("continue", json!({"threadId": 1}));

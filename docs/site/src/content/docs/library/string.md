@@ -102,7 +102,7 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 | `s.reversed -> String` | the characters of `s`, last one first. |
 | `s.to_upper -> String` | `s` in capitals, accented letters too (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` in small letters. |
-| `s.replace(old: String, new: String) -> String` | `s` with every `old` replaced by `new`. `old` cannot be `""`. |
+| `s.replace(old: String) with(new: String) -> String` | `s` with every `old` replaced by `new`. `old` cannot be `""`. |
 | `s.repeat(n: Int) -> String` | `s` written `n` times one after another. |
 | `s.wrapped(width: Int) -> String` | `s` cut into lines of at most `width` characters, between words. |
 
@@ -110,7 +110,7 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 fn main {
     print("  hello \n".trim)
     print("Été".to_upper)
-    print("a-b-a".replace("a", "x"))
+    print("a-b-a".replace("a") with("x"))
     print("ab".repeat(3))
     print("Kova checks every pattern before the program runs.".wrapped(20))
 }
@@ -200,16 +200,16 @@ patterns are the usual regular expressions:
 | Method | Gives |
 | --- | --- |
 | `s.matches(pattern: String) -> Bool` | whether the **whole** text fits the pattern. |
-| `s.find_all(pattern: String) -> List<String>` | every piece of `s` that fits, from left to right. |
-| `s.replace_all(pattern: String) with(new: String) -> String` | `s` with every piece that fits replaced by `new`. |
+| `s.all_matches(pattern: String) -> List<String>` | every piece of `s` that fits, from left to right. |
+| `s.replace_matches(pattern: String) with(new: String) -> String` | `s` with every piece that fits replaced by `new`. |
 | `s.groups(pattern: String) -> List<String>?` | the groups `(…)` of the first piece that fits, or `none` if none does. |
 
 ```kova
 fn main {
     let line: String := "12 apples, 7 pears and 145 plums"
-    print(line.find_all("""\d+"""))
+    print(line.all_matches("""\d+"""))
     print("ana@example.org".matches("[a-z.]+@[a-z.]+"))
-    print("a   b \t c".replace_all("""\s+""") with(" "))
+    print("a   b \t c".replace_matches("""\s+""") with(" "))
     let parts: List<String>? := "on 2026-10-25".groups("""(\d+)-(\d+)-(\d+)""")
     if parts != none {
         print("{parts[2]}/{parts[1]}/{parts[0]}")

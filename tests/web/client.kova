@@ -1,6 +1,7 @@
 // `get` and `post` against the small server of tests/kova.rs (`web`): its port, then a port
 // where nothing answers, are the program's words.
 
+import system
 import web
 
 fn show(answer: web.Response or web.WebError) {
@@ -24,7 +25,7 @@ fn status(answer: web.Response or web.WebError) {
 }
 
 fn main {
-    let site: String := "http://127.0.0.1:{args[0]}"
+    let site: String := "http://127.0.0.1:{system.args[0]}"
     show(web.get("{site}/hello"))
     show(web.get("{site}/missing"))
     show(web.get("{site}/pieces"))
@@ -43,7 +44,7 @@ fn main {
     }
     show(web.get("{site}/loop"))
     show(web.get("{site}/nonsense"))
-    show(web.get("http://127.0.0.1:{args[1]}/"))
+    show(web.get("http://127.0.0.1:{system.args[1]}/"))
     show(web.get("http://no-such-host.invalid/"))
     show(web.get("ftp://127.0.0.1/"))
     // A `Request`, built step by step.

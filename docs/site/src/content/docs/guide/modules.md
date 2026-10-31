@@ -118,7 +118,7 @@ false
 ```
 
 Without the `import`, the compiler says which one to write. What every program has without an
-import (`print`, `args`, `random`, texts, lists, dates, JSON…) is listed in
+import (`print`, `random`, texts, lists, dates, JSON…) is listed in
 [the library](/library/overview/).
 
 ## Tests and modules

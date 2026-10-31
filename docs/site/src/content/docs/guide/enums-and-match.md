@@ -255,7 +255,7 @@ fn main {
 ```
 
 ```text
-Counter.On(count: 3)
+Counter.On(3)
 ```
 
 Two enums are always there: `T?` (a value or `none`) and `T or E` (a result or an error), the

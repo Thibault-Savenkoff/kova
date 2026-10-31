@@ -2,15 +2,16 @@
 // stops it) or `start` (only the addresses).
 
 import web
+import system
 
 fn main {
-    let port: Int? := args[0].to_int
+    let port: Int? := system.args[0].to_int
     if port = none {
         return
     }
-    if args[1] = "off" {
+    if system.args[1] = "off" {
         web.serve(port) log(web.Log.Off) { q: web.Request =>
-            exit(0)
+            system.exit(0)
             web.Answer.status(500)
         }
     }

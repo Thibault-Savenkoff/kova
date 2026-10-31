@@ -2,13 +2,14 @@
 // fails on `fail` (a message on stderr, code 101), and ends with code 3 on `three`.
 
 fn main {
-    print(args)
+    print(system.args)
     print("é ok")
-    let zero: Int := args.length - args.length
-    if args.length > 0 && args[0] = "fail" {
+    let zero: Int := system.args.length - system.args.length
+    if system.args.length > 0 && system.args[0] = "fail" {
         print(1 / zero)
     }
-    if args.length > 0 && args[0] = "three" {
-        exit(3)
+    if system.args.length > 0 && system.args[0] = "three" {
+        system.exit(3)
     }
 }
+import system

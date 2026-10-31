@@ -39,5 +39,5 @@ fn main {
 }
 // expect: 19
 // expect: 2026-10-25 03:04:05
-// expect: c.Shape { id: -7, inner: c.Inner { flag: true, ratio: 2.5 }, link: none, count: 1099511627776 }
+// expect: c.Shape { id := -7, inner := c.Inner { flag := true, ratio := 2.5 }, link := none, count := 1099511627776 }
 // expect: 5.0

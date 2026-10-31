@@ -1,4 +1,6 @@
-let started: Float := now
+import system
+
+let started: Float := system.clock
 
 fn main {
     print(started)

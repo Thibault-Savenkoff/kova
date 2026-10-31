@@ -17,9 +17,9 @@ presque la même chose.
 | [Nombres, Bool et Char](/fr/library/numbers/) | `Int`, `Float`, `BigInt` : opérateurs, maths |
 | [List](/fr/library/list/) | listes ordonnées, blocs, tri, statistiques |
 | [Map et Set](/fr/library/map-and-set/) | valeurs par clé, valeurs gardées une fois |
-| [Dates et heures](/fr/library/dates/) | `Date`, `DateTime`, `Weekday`, `now`, `sleep` |
+| [Dates et heures](/fr/library/dates/) | `Date`, `DateTime`, `Weekday` |
 | [JSON et CSV](/fr/library/json-and-csv/) | les lire et les écrire dans tes propres structs |
-| [system, args et le terminal](/fr/library/system/) | `print`, `read_line`, `args`, `exit` |
+| [system, args et le terminal](/fr/library/system/) | `print`, `read_line`, `system.args`, `system.exit` |
 | [secure et le hasard](/fr/library/secure/) | `random` |
 
 ## Avec un import

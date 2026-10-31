@@ -104,7 +104,7 @@ quel.
 | `s.reversed -> String` | les caractères de `s`, le dernier en premier. |
 | `s.to_upper -> String` | `s` en majuscules, lettres accentuées comprises (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` en minuscules. |
-| `s.replace(old: String, new: String) -> String` | `s` avec chaque `old` remplacé par `new`. `old` ne peut pas être `""`. |
+| `s.replace(old: String) with(new: String) -> String` | `s` avec chaque `old` remplacé par `new`. `old` ne peut pas être `""`. |
 | `s.repeat(n: Int) -> String` | `s` écrit `n` fois à la suite. |
 | `s.wrapped(width: Int) -> String` | `s` coupé en lignes d'au plus `width` caractères, entre les mots. |
 
@@ -112,7 +112,7 @@ quel.
 fn main {
     print("  hello \n".trim)
     print("Été".to_upper)
-    print("a-b-a".replace("a", "x"))
+    print("a-b-a".replace("a") with("x"))
     print("ab".repeat(3))
     print("Kova checks every pattern before the program runs.".wrapped(20))
 }
@@ -202,16 +202,16 @@ changer. Les motifs de Kova sont les expressions régulières habituelles :
 | Méthode | Donne |
 | --- | --- |
 | `s.matches(pattern: String) -> Bool` | si **tout** le texte correspond au motif. |
-| `s.find_all(pattern: String) -> List<String>` | chaque morceau de `s` qui correspond, de gauche à droite. |
-| `s.replace_all(pattern: String) with(new: String) -> String` | `s` avec chaque morceau qui correspond remplacé par `new`. |
+| `s.all_matches(pattern: String) -> List<String>` | chaque morceau de `s` qui correspond, de gauche à droite. |
+| `s.replace_matches(pattern: String) with(new: String) -> String` | `s` avec chaque morceau qui correspond remplacé par `new`. |
 | `s.groups(pattern: String) -> List<String>?` | les groupes `(…)` du premier morceau qui correspond, ou `none` si aucun. |
 
 ```kova
 fn main {
     let line: String := "12 apples, 7 pears and 145 plums"
-    print(line.find_all("""\d+"""))
+    print(line.all_matches("""\d+"""))
     print("ana@example.org".matches("[a-z.]+@[a-z.]+"))
-    print("a   b \t c".replace_all("""\s+""") with(" "))
+    print("a   b \t c".replace_matches("""\s+""") with(" "))
     let parts: List<String>? := "on 2026-10-25".groups("""(\d+)-(\d+)-(\d+)""")
     if parts != none {
         print("{parts[2]}/{parts[1]}/{parts[0]}")

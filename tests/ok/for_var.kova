@@ -77,7 +77,7 @@ fn main {
 // expect: ["A", "B", "C"]
 // expect: ["A!", "bee", "C"]
 // expect: ["A!A!", "bee", "CC"]
-// expect: Kennel { dogs: [Dog { name: "Rex", age: 4 }, Dog { name: "Fido", age: 6 }] }
+// expect: Kennel { dogs := [Dog { name := "Rex", age := 4 }, Dog { name := "Fido", age := 6 }] }
 // expect: 30
 // expect: [10, 20, 30, 4]
 // expect: [[1, 4, 0], [9, 0]]

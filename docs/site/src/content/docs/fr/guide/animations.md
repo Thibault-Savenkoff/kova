@@ -515,10 +515,12 @@ fn view(step: Int) -> ui.View {
 Compter les pas suppose que chaque image prend 16 millisecondes. Une vue plus longue à construire
 allonge l'animation, sans sauter d'image. `ui.animate` se comporte de la même façon.
 
-Quand la durée compte plus que chaque image, mesure-la. `now` donne les secondes depuis 1970, avec
+Quand la durée compte plus que chaque image, mesure-la. `system.clock` donne les secondes depuis 1970, avec
 une fraction. Garde le départ dans l'état, et calcule `t` depuis le temps réellement écoulé :
 
 ```kova
+import system
+
 struct App {
     started: Float
     running: Bool
@@ -527,12 +529,12 @@ struct App {
 fn update(app: var App, e: Event) {
     match e {
         .Start => {
-            app.started := now
+            app.started := system.clock
             app.running := true
         }
         .Tick => {
             if app.running {
-                let t: Float := ((now - app.started) / 0.8).min(1.0)
+                let t: Float := ((system.clock - app.started) / 0.8).min(1.0)
                 ui.place(100, 100) size(between(320, 800, smooth(t)), 400)
                 app.running := t < 1.0
             }

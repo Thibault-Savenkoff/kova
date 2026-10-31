@@ -86,7 +86,7 @@ fn main {
 ```
 
 ```text
-Dog { name: "Rex", age: 4 }
+Dog { name := "Rex", age := 4 }
 large, 30 kg
 ```
 

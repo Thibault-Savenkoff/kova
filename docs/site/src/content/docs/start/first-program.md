@@ -54,11 +54,13 @@ system. [Building](/tools/command/) lists them all.
 
 ## Giving the program words
 
-What follows the file name on the command line reaches the program as `args`, a list of texts:
+What follows the file name on the command line reaches the program as `system.args`, a list of texts:
 
 ```kova
+import system
+
 fn main {
-    for word in args {
+    for word in system.args {
         print("Hello, {word}!")
     }
 }

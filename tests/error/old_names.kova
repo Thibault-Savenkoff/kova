@@ -1,0 +1,10 @@
+fn main {
+    print("a".replace("a", "b"))
+    print("a".find_all("a"))
+    print(5.to_big)
+    print(now)
+}
+// error: `String` has no method `replace`
+// error: `String` has no method `find_all`
+// error: `Int` has no method `to_big`
+// error: unknown variable `now`

@@ -32,7 +32,7 @@ fn tables -> Nothing or CsvError {
     let out: String := books.to_csv
     print(out)
     let again: List<Book> := List<Book>.from_csv(out)?
-    print(again.to_csv separator(';') = out.replace(",", ";"))
+    print(again.to_csv separator(';') = out.replace(",") with(";"))
     let numbers: String := "title,pages,price,read,bought\nx,1,2.0,true,2026-10-25\ny,2,0.1,false,2026-10-25\nz,3,1e21,false,2026-10-25\n"
     print(List<Book>.from_csv(numbers)?.to_csv = numbers)
     let rows: List<List<String>> := List<List<String>>.from_csv("a,b\n\"x,y\",\"deux\nlignes\"\n")?

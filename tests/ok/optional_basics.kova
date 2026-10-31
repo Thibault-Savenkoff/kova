@@ -111,8 +111,8 @@ fn main {
 // expect: none
 // expect: "Ann"
 // expect: true
-// expect: Dog { name: "Rex", owner: "Ann" }
-// expect: Dog { name: "Max", owner: none }
+// expect: Dog { name := "Rex", owner := "Ann" }
+// expect: Dog { name := "Max", owner := none }
 // expect: none
 // expect: "Ann"
 // expect: [1, none, 3]

@@ -54,12 +54,14 @@ n'importe quel système. [La commande](/fr/tools/command/) les liste tous.
 
 ## Donner des mots au programme
 
-Ce qui suit le nom du fichier sur la ligne de commande arrive au programme dans `args`, une liste
+Ce qui suit le nom du fichier sur la ligne de commande arrive au programme dans `system.args`, une liste
 de textes :
 
 ```kova
+import system
+
 fn main {
-    for word in args {
+    for word in system.args {
         print("Hello, {word}!")
     }
 }

@@ -55,10 +55,10 @@ fn main {
 // expect: nobody
 // expect: Ada
 // expect: "Ada"
-// expect: Dog { name: "Rex", age: 1, tags: ["new"] }
-// expect: Dog { name: "Fido", age: 5, tags: ["new"] }
-// expect: Dog { name: "Fido", age: 6, tags: ["new"] }
-// expect: Dog { name: "Fido", age: 5, tags: ["new"] }
+// expect: Dog { name := "Rex", age := 1, tags := ["new"] }
+// expect: Dog { name := "Fido", age := 5, tags := ["new"] }
+// expect: Dog { name := "Fido", age := 6, tags := ["new"] }
+// expect: Dog { name := "Fido", age := 5, tags := ["new"] }
 // expect: 0 a
 // expect: 1 b
 // expect: 1

@@ -2,6 +2,7 @@
 // ends it; `/count` says how many questions came before.
 
 import web
+import system
 
 struct Book {
     title: String
@@ -17,7 +18,7 @@ fn echo(q: web.Request) -> web.Answer {
 }
 
 fn main {
-    let port: Int? := args[0].to_int
+    let port: Int? := system.args[0].to_int
     if port = none {
         return
     }
@@ -36,7 +37,7 @@ fn main {
             "/html" => web.Answer.text("<p>hi</p>").header("Content-Type") is("text/html")
             "/count" => web.Answer.text("{count}")
             "/stop" => {
-                exit(0)
+                system.exit(0)
                 web.Answer.status(500)
             }
             _ => web.Answer.file("tests/web/site" + q.path)

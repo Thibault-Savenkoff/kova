@@ -39,7 +39,7 @@ fn main {
 // expect: 0001-01-01
 // expect: 9999-12-31
 // expect: 2024-02-29
-// expect: Event { name: "fête", when: 2000-03-01 }
+// expect: Event { name := "fête", when := 2000-03-01 }
 // expect: true
 // expect: true
 // expect: false

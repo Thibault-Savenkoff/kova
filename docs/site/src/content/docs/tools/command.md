@@ -9,7 +9,7 @@ Everything goes through one command:
 
 | Command | Does |
 | --- | --- |
-| `kova run app.kova [words…]` | checks the program and runs it at once; the words become its `args` |
+| `kova run app.kova [words…]` | checks the program and runs it at once; the words become its `system.args` |
 | `kova build app.kova` | makes a native executable next to the file |
 | `kova test app.kova ["name"]` | runs the program's `test` blocks, or only the one named |
 | `kova fmt app.kova…` | lays the files out the standard way, in place |
@@ -89,6 +89,6 @@ on save.
 | `0` | the program ended normally |
 | `1` | Kova refused the program (an error in the code), or a test failed |
 | `101` | the program stopped on an error while running: an index out of bounds, an overflow, a broken contract… |
-| other | what the program gave to `exit(code)` |
+| other | what the program gave to `system.exit(code)` |
 
 A built executable ends with the same codes.

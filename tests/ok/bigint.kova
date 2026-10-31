@@ -2,7 +2,7 @@
 fn factorial(n: Int) -> BigInt {
     var f: BigInt := 1
     for i in 1..=n {
-        f := f * i.to_big
+        f := f * i.to_bigint
     }
     return f
 }

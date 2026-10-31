@@ -8,4 +8,4 @@ fn main {
     print(geo.Point.from_json(text))
 }
 // expect: {"x":1,"y":2}
-// expect: ok(geo.Point { x: 1, y: 2 })
+// expect: ok(geo.Point { x := 1, y := 2 })

@@ -93,14 +93,16 @@ system's setting).
 
 | Function | Gives |
 | --- | --- |
-| `now -> Float` | the seconds since 1970, with a fraction: for measuring how long something takes. |
-| `sleep(seconds: Float)` | waits that long. |
+| `system.clock -> Float` | the seconds since 1970, with a fraction: for measuring how long something takes. |
+| `system.sleep(seconds: Float)` | waits that long. |
 
 ```kova
+import system
+
 fn main {
-    let start: Float := now
-    sleep(0.1)
-    print(now - start >= 0.05)
+    let start: Float := system.clock
+    system.sleep(0.1)
+    print(system.clock - start >= 0.05)
 }
 ```
 

@@ -126,7 +126,7 @@ false
 
 Le nom complet de la fonction est `between(…) upto(…)` ; chaque partie a ses paramètres. La
 bibliothèque s'en sert partout où une simple liste d'arguments serait ambiguë :
-`files.copy(a) to(b)`, `s.replace_all(pattern) with(text)`, `secure.encrypt(text) key(k)`. C'est
+`files.copy(a) to(b)`, `s.replace_matches(pattern) with(text)`, `secure.encrypt(text) key(k)`. C'est
 encore l'idée de Smalltalk (`dict at: 1 put: x`) : à l'appel, on voit quel argument est lequel,
 sans aller lire la déclaration.
 

@@ -89,8 +89,8 @@ répéter. Pour ce qui ne doit pas pouvoir être deviné, utilise [`secure`](/fr
 
 | Méthode | Sur | Donne |
 | --- | --- | --- |
-| `l.mean -> Float` | `List<Int>`, `List<Float>` | la moyenne. Une liste vide arrête le programme. |
-| `l.median -> Float` | `List<Int>`, `List<Float>` | la valeur du milieu une fois triée (la moyenne des deux du milieu pour une longueur paire). |
+| `l.mean -> Float?` | `List<Int>`, `List<Float>` | la moyenne ; `none` sur une liste vide. |
+| `l.median -> Float?` | `List<Int>`, `List<Float>` | la valeur du milieu une fois triée (la moyenne des deux du milieu pour une longueur paire). |
 | `l.join(separator: String) -> String` | `List<String>` | les textes avec `separator` entre chacun. |
 
 ```kova

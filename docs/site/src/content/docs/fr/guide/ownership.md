@@ -96,8 +96,8 @@ fn main {
 ```
 
 ```text
-Point { x: 1, y: 2 }
-Point { x: 1, y: 2 }
+Point { x := 1, y := 2 }
+Point { x := 1, y := 2 }
 ```
 
 ## Règle 3 : un appel emprunte, sauf s'il dit autre chose

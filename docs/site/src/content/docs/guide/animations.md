@@ -511,10 +511,12 @@ fn view(step: Int) -> ui.View {
 Counting steps supposes each image takes 16 milliseconds. A view that takes longer to build makes the
 animation longer, without skipping an image. `ui.animate` behaves the same way.
 
-When the duration matters more than each image, measure it. `now` gives the seconds since 1970, with
+When the duration matters more than each image, measure it. `system.clock` gives the seconds since 1970, with
 a fraction. Keep the start in the state, and compute `t` from the time really spent:
 
 ```kova
+import system
+
 struct App {
     started: Float
     running: Bool
@@ -523,12 +525,12 @@ struct App {
 fn update(app: var App, e: Event) {
     match e {
         .Start => {
-            app.started := now
+            app.started := system.clock
             app.running := true
         }
         .Tick => {
             if app.running {
-                let t: Float := ((now - app.started) / 0.8).min(1.0)
+                let t: Float := ((system.clock - app.started) / 0.8).min(1.0)
                 ui.place(100, 100) size(between(320, 800, smooth(t)), 400)
                 app.running := t < 1.0
             }

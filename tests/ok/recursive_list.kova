@@ -58,6 +58,6 @@ fn main {
 // expect: 4
 // expect: a
 // expect: changed
-// expect: Node { name: "root", kids: [Node { name: "changed", kids: [Node { name: "a1", kids: [] }] }, Node { name: "b", kids: [] }] }
+// expect: Node { name := "root", kids := [Node { name := "changed", kids := [Node { name := "a1", kids := [] }] }, Node { name := "b", kids := [] }] }
 // expect: 4
 // expect: 10000

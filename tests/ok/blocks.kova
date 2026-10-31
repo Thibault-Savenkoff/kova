@@ -49,5 +49,5 @@ fn main {
 // expect: 42
 // expect: 12;5;18;7;
 // expect: ["Rex", "Fido"]
-// expect: [Dog { name: "Fido", age: 5 }]
+// expect: [Dog { name := "Fido", age := 5 }]
 // expect: bbccc

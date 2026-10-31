@@ -68,9 +68,9 @@ fn main {
 }
 // expect: [10, 7, 4]
 // expect: ["z!", "b+"]
-// expect: [Dog { name: "Rexy", age: 2 }, Dog { name: "Bob", age: 9 }]
+// expect: [Dog { name := "Rexy", age := 2 }, Dog { name := "Bob", age := 9 }]
 // expect: [[1, 20], [33, 4]]
 // expect: ([2.5, 0.25], 2)
-// expect: Best { items: [6, 6], best: 4 }
+// expect: Best { items := [6, 6], best := 4 }
 // expect: 9
 // expect: [["y", "w"]]

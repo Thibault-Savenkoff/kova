@@ -14,13 +14,13 @@ fn folder -> String
 fn show(r: Nothing or files.IoError, dir: String) {
     match r {
         ok => print("ok")
-        err(e) => print("{e}".replace(dir, "D"))
+        err(e) => print("{e}".replace(dir) with("D"))
     }
 }
 
 fn found(pattern: String, dir: String) -> Nothing or files.IoError {
-    let all: List<String> := files.matching(pattern.replace("D", dir))?
-    print(all.map { f: String => f.replace(dir, "D") })
+    let all: List<String> := files.matching(pattern.replace("D") with(dir))?
+    print(all.map { f: String => f.replace(dir) with("D") })
     return ok
 }
 
@@ -40,7 +40,7 @@ fn main {
     print(files.size("{dir}/src/c.txt"))
     match files.size(dir) {
         ok(n) => print(n)
-        err(e) => print("{e}".replace(dir, "D"))
+        err(e) => print("{e}".replace(dir) with("D"))
     }
     print(files.is_folder("{dir}/src"))
     print(files.is_folder("{dir}/a.txt"))

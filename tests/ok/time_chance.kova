@@ -1,11 +1,11 @@
 // Time and chance: only what is sure is printed (`KOVA_SEED` makes the numbers repeat).
 fn main {
-    let start: Float := now
+    let start: Float := system.clock
     print(start > 1700000000.0)
-    sleep(0.05)
-    let waited: Float := now - start
+    system.sleep(0.05)
+    let waited: Float := system.clock - start
     print(waited >= 0.04 && waited < 5.0)
-    sleep(-1.0)
+    system.sleep(-1.0)
     var seen: Set<Int> := Set[]
     var inside: Bool := true
     for i in 0..2000 {
@@ -29,3 +29,4 @@ fn main {
 // code: 101
 // stderr: error: this range holds no number to draw: `random(1..=6)` draws from 1 to 6
 // stderr: time_chance.kova:21:18
+import system

@@ -296,9 +296,9 @@ const THIS_COMPUTER: usize = 20;
 const THIS_COMPUTER_ONLY: usize = 21;
 const THIS_NETWORK: usize = 22;
 const STOP_WITH_CTRL_C: usize = 23;
-const LOG_UNKNOWN_LEVEL: usize = 29;
-const EXTERN_NO_LIBRARY: usize = 35;
-const EXTERN_NO_FUNCTION: usize = 36;
+const LOG_UNKNOWN_LEVEL: usize = 28;
+const EXTERN_NO_LIBRARY: usize = 34;
+const EXTERN_NO_FUNCTION: usize = 35;
 
 /// `fault` = the number of its text.
 #[unsafe(no_mangle)]

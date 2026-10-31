@@ -75,13 +75,13 @@ fn main {
     print(Dog.create("Bob").introduce)
     print(Dog.create("Ann").older(1))
 }
-// expect: Dog { name: "Rex", age: 0 }
+// expect: Dog { name := "Rex", age := 0 }
 // expect: woof
 // expect: Rex says woof
 // expect: 5
 // expect: 2
-// expect: Rex -> Dog { name: "Max", age: 3 }
-// expect: Kennel { dog: Dog { name: "Max", age: 5 }, count: 1 }
+// expect: Rex -> Dog { name := "Max", age := 3 }
+// expect: Kennel { dog := Dog { name := "Max", age := 5 }, count := 1 }
 // expect: Fido
 // expect: Bob says woof
 // expect: 1
