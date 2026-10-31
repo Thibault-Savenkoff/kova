@@ -1,0 +1,39 @@
+// expect: 200
+// expect: "application/octet-stream"
+// expect: [0, 255, 128, 10]
+// expect: true
+// expect: [1, 2, 3]
+
+import system
+import threads
+import web
+
+fn echo(port: Int) {
+    web.serve(port) log(web.Log.Off) { q: web.Request =>
+        web.Answer.bytes(q.bytes)
+    }
+}
+
+fn main {
+    let port: Int := random(30000..60000)
+    let data: List<Int> := [0, 255, 128, 10]
+    threads.spawn { echo(port) }
+    let address: String := "http://127.0.0.1:{port}/"
+    var tries: Int := 0
+    while tries < 50 {
+        tries += 1
+        match web.send(web.Request.post(address).bytes(data).header("content-type") is("application/x-test")) {
+            ok(r) => {
+                print(r.status)
+                print(r.header("content-type"))
+                print(r.bytes)
+                print(r.body.length > 0)
+                break
+            }
+            err(_) => system.sleep(0.05)
+        }
+    }
+    let plain: web.Response := web.send(web.Request.post(address).bytes([1, 2, 3]))?
+    print(plain.bytes)
+    system.exit(0)
+}

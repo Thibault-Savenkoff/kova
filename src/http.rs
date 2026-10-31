@@ -129,6 +129,8 @@ pub struct Answer {
     /// Where it came from, after the redirections.
     pub url: String,
     pub body: String,
+    /// The same body as it came: `body` is its text, with `�` where it was not one.
+    pub data: Vec<u8>,
     /// The headers, names in small letters, in their order; one name given twice is one entry,
     /// its values joined by `, ` (as HTTP allows).
     pub headers: Vec<(String, String)>,
@@ -140,7 +142,7 @@ pub struct Request<'a> {
     pub method: &'a str,
     pub url: &'a str,
     /// Sent when it is not empty.
-    pub body: &'a str,
+    pub body: &'a [u8],
     /// The program's own headers; they replace Kova's of the same name (`User-Agent`…).
     pub headers: Vec<(&'a str, &'a str)>,
     /// Whether the redirections are followed.
@@ -177,7 +179,7 @@ pub fn exchange<N: Network>(net: &mut N, r: &Request) -> Result<Answer, Fail> {
     }
     let mut url = r.url.to_string();
     let mut method = r.method.to_string();
-    let mut body = r.body.to_string();
+    let mut body = r.body.to_vec();
     for _ in 0..=10 {
         let answer = once(net, r, &method, &url, &body)?;
         let to = answer.headers.iter().find(|(n, _)| n == "location").map(|(_, v)| v.clone());
@@ -195,7 +197,7 @@ pub fn exchange<N: Network>(net: &mut N, r: &Request) -> Result<Answer, Fail> {
 }
 
 /// One request and its answer.
-fn once<N: Network>(net: &mut N, r: &Request, method: &str, url: &str, body: &str) -> Result<Answer, Fail> {
+fn once<N: Network>(net: &mut N, r: &Request, method: &str, url: &str, body: &[u8]) -> Result<Answer, Fail> {
     let u = parse_url(url).ok_or(Fail::BadUrl)?;
     let theirs = |name: &str| r.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(name));
     let mut request = format!("{method} {} HTTP/1.1\r\nHost: {}\r\n", u.path, u.authority);
@@ -214,12 +216,12 @@ fn once<N: Network>(net: &mut N, r: &Request, method: &str, url: &str, body: &st
         request += &format!("{name}: {value}\r\n");
     }
     request += "\r\n";
-    request += body;
+    let request = [request.as_bytes(), body].concat();
     let mut link = net.open(&u.host, u.port, u.secure, r.ms)?;
-    let read = net.send(&mut link, request.as_bytes()).and_then(|()| read_answer(net, &mut link, method == "HEAD"));
+    let read = net.send(&mut link, &request).and_then(|()| read_answer(net, &mut link, method == "HEAD"));
     net.close(link);
     let (status, headers, body) = read?;
-    Ok(Answer { status, url: url.to_string(), body: String::from_utf8_lossy(&body).into_owned(), headers })
+    Ok(Answer { status, url: url.to_string(), body: String::from_utf8_lossy(&body).into_owned(), data: body, headers })
 }
 
 /// Reads until the answer is complete (its length, its last piece, or the end of the connection).
@@ -592,6 +594,8 @@ pub struct Question {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    /// The same body as it came.
+    pub data: Vec<u8>,
 }
 
 /// Waits for the next question that can be read, from whichever connection sends it first. The
@@ -686,8 +690,8 @@ fn parse_question(got: &[u8]) -> Result<Option<Question>, Option<i64>> {
     if got.len() < end + 4 + length {
         return Ok(None);
     }
-    let body = core::str::from_utf8(&got[end + 4..end + 4 + length]).map_err(|_| Some(400))?.to_string();
-    Ok(Some(Question { method: method.to_string(), url: url.to_string(), headers, body }))
+    let data = got[end + 4..end + 4 + length].to_vec();
+    Ok(Some(Question { method: method.to_string(), url: url.to_string(), headers, body: String::from_utf8_lossy(&data).into_owned(), data }))
 }
 
 /// The bytes of an answer. Kova writes its length and `Connection: close` itself (the program's
@@ -709,9 +713,9 @@ pub fn answer_bytes(status: i64, headers: &[(&str, &str)], body: &[u8]) -> Vec<u
 /// Sends `serve`'s answer on `link`, then closes it. A file (`Answer.file`) is read now, its
 /// `content-type` found by its extension unless the program gave one; `read` reads it.
 /// Returns the status sent (a 500 if the answer could not be sent as it was).
-pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &[(&str, &str)], body: &str, file: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> i64 {
+pub fn reply<N: Network>(net: &mut N, mut link: N::Link, status: i64, headers: &[(&str, &str)], body: &[u8], file: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> i64 {
     let bytes = if file.is_empty() {
-        answer_bytes(status, headers, body.as_bytes())
+        answer_bytes(status, headers, body)
     } else if let Some(content) = read(file) {
         let mut headers = headers.to_vec();
         if !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")) {
@@ -918,14 +922,14 @@ mod tests {
     }
 
     fn exchange(net: &mut Fake, method: &str, url: &str, body: &str, follow: bool) -> Result<Answer, Fail> {
-        super::exchange(net, &Request { method, url, body, headers: vec![], follow, ms: 0 })
+        super::exchange(net, &Request { method, url, body: body.as_bytes(), headers: vec![], follow, ms: 0 })
     }
 
     #[test]
     fn headers() {
         let ok = "HTTP/1.1 204 No Content\r\n\r\n";
         let mut net = fake(&[ok]);
-        let r = Request { method: "PUT", url: "http://a/", body: "", headers: vec![("user-agent", "me"), ("X-Kind", "test")], follow: true, ms: 0 };
+        let r = Request { method: "PUT", url: "http://a/", body: b"", headers: vec![("user-agent", "me"), ("X-Kind", "test")], follow: true, ms: 0 };
         assert_eq!(super::exchange(&mut net, &r).unwrap().status, 204);
         assert_eq!(net.sent[0].2, "PUT / HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 0\r\nuser-agent: me\r\nX-Kind: test\r\n\r\n");
         for bad in [("X", "a\r\nEvil: 1"), ("Host", "b"), ("a b", "c"), ("", "d")] {
@@ -990,7 +994,7 @@ mod tests {
     fn questions() {
         let read = |text: &'static str| parse_question(text.as_bytes());
         let q = read("POST /books?a=1 HTTP/1.1\r\nHost: x\r\nX-A: 1\r\nx-a: 2\r\nContent-Length: 5\r\n\r\nhello").unwrap().unwrap();
-        assert_eq!(q, Question { method: "POST".into(), url: "/books?a=1".into(), headers: vec![("host".into(), "x".into()), ("x-a".into(), "1, 2".into()), ("content-length".into(), "5".into())], body: "hello".into() });
+        assert_eq!(q, Question { method: "POST".into(), url: "/books?a=1".into(), headers: vec![("host".into(), "x".into()), ("x-a".into(), "1, 2".into()), ("content-length".into(), "5".into())], body: "hello".into(), data: "hello".as_bytes().to_vec() });
         assert_eq!(read("GET / HTTP/1.1\r\n\r\n").unwrap().unwrap().body, "");
         for (text, status) in [("GET http://x/ HTTP/1.1\r\n\r\n", 400), ("GET / HTTP/1.1\r\nBad Name: 1\r\n\r\n", 400), ("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", 501), ("POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n", 413)] {
             assert_eq!(read(text), Err(Some(status)), "{text:?}");

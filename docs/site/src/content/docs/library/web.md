@@ -44,6 +44,7 @@ Redirections are followed, 10 at most; `page.url` says where it ended.
 | --- | --- |
 | `page.status -> Int` | the status: `200`, `404`… |
 | `page.body -> String` | the text of the answer |
+| `page.bytes -> List<Int>` | the same answer as bytes, for an image or an archive: `body` turns what is not text into `�` |
 | `page.url -> String` | the address that answered, after redirections |
 | `page.headers -> Map<String, String>` | every header, names in small letters |
 | `page.header(name) -> String?` | one header, whatever the capitals of `name` |
@@ -76,6 +77,7 @@ fn main {
 | `web.Request.get(url)`, `.post`, `.put`, `.patch`, `.delete`, `.head` | a request with that method |
 | `r.header(name) is(value)` | the request with this header |
 | `r.body(text)` | the request with this body |
+| `r.bytes(data: List<Int>)` | the request with these bytes as its body, sent instead of the text if any |
 | `r.seconds(s: Float)` | the most to wait for each step; `0` waits forever |
 | `r.no_redirections` | a redirection is given back as it is, instead of followed |
 

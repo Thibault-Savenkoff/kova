@@ -1264,8 +1264,8 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
     let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
-    let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, link as i64];
-    new_list(List { length: 1, width: 7, slots, index: 0, small: None })
+    let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, byte_list(q.data), link as i64];
+    new_list(List { length: 1, width: 8, slots, index: 0, small: None })
 }
 
 /// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
@@ -1610,10 +1610,12 @@ pub extern "C" fn kova_next(next: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_reply(link: i64, status: i64, headers: i64, body: i64, file: i64) -> i64 {
+pub extern "C" fn kova_reply(link: i64, status: i64, headers: i64, body: i64, file: i64, data: i64) -> i64 {
     let headers: Vec<(&str, &str)> = list(headers).words().chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect();
     let (link, asked) = *unsafe { alloc::boxed::Box::from_raw(link as *mut Asked) };
-    let sent = http::reply(&mut sys::Net, link, status, &headers, text_of(body), text_of(file), |p| sys::read_file(p).ok());
+    let data = bytes_of(data);
+    let body = if data.is_empty() { text_of(body).as_bytes() } else { &data };
+    let sent = http::reply(&mut sys::Net, link, status, &headers, body, text_of(file), |p| sys::read_file(p).ok());
     if let Some((from, method, url)) = asked {
         error(http::logged(kova_local_now(), from, &method, &url, sent).as_bytes());
     }
@@ -1647,12 +1649,13 @@ pub extern "C" fn kova_file_to_serve(path: i64) -> i64 {
 /// List of pairs), or minus the `WebError`'s number + 1 (src/http.rs `Fail::number`). Like
 /// src/interp.rs.
 #[unsafe(no_mangle)]
-pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, headers: i64, seconds: i64) -> i64 {
+pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, headers: i64, seconds: i64, data: i64) -> i64 {
     let headers = if headers == 0 { &[][..] } else { &list(headers).words()[..] };
+    let data = if data == 0 { Default::default() } else { bytes_of(data) };
     let r = http::Request {
         method: text_of(method),
         url: text_of(url),
-        body: text_of(body),
+        body: if data.is_empty() { text_of(body).as_bytes() } else { &data },
         headers: headers.chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect(),
         follow: follow != 0,
         ms: http::milliseconds(f64::from_bits(seconds as u64)),
@@ -1663,8 +1666,8 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
             let length = a.headers.len();
             let slots = a.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
             let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
-            let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers];
-            new_list(List { length: 1, width: 4, slots, index: 0, small: None })
+            let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers, byte_list(a.data)];
+            new_list(List { length: 1, width: 5, slots, index: 0, small: None })
         }
     }
 }

@@ -45,6 +45,7 @@ Les redirections sont suivies, 10 au plus ; `page.url` dit où ça s'est termin�
 | --- | --- |
 | `page.status -> Int` | le statut : `200`, `404`… |
 | `page.body -> String` | le texte de la réponse |
+| `page.bytes -> List<Int>` | la même réponse en octets, pour une image ou une archive : `body` change en `�` ce qui n'est pas du texte |
 | `page.url -> String` | l'adresse qui a répondu, après les redirections |
 | `page.headers -> Map<String, String>` | chaque en-tête, noms en minuscules |
 | `page.header(name) -> String?` | un en-tête, quelles que soient les majuscules de `name` |
@@ -78,6 +79,7 @@ fn main {
 | `web.Request.get(url)`, `.post`, `.put`, `.patch`, `.delete`, `.head` | une requête avec cette méthode |
 | `r.header(name) is(value)` | la requête avec cet en-tête |
 | `r.body(text)` | la requête avec ce corps |
+| `r.bytes(data: List<Int>)` | la requête avec ces octets pour corps, envoyés à la place du texte s'il y en a un |
 | `r.seconds(s: Float)` | le temps d'attente maximal pour chaque étape ; `0` attend pour toujours |
 | `r.no_redirections` | une redirection est rendue telle quelle, au lieu d'être suivie |
 

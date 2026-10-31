@@ -677,7 +677,7 @@ pub fn csv_error() -> Type {
 pub fn response() -> Type {
     let d = StructDef::new("web.Response".into(), vec![], false);
     let text = || Type::String;
-    d.set_fields(vec![("status".into(), Type::Int), ("url".into(), text()), ("body".into(), text()), ("headers".into(), Type::Map(Box::new(text()), Box::new(text())))]);
+    d.set_fields(vec![("status".into(), Type::Int), ("url".into(), text()), ("body".into(), text()), ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))), ("bytes".into(), Type::List(Box::new(Type::Int)))]);
     Type::Struct(d)
 }
 
@@ -694,6 +694,7 @@ pub fn request() -> Type {
         ("body".into(), text()),
         ("seconds".into(), Type::Float),
         ("follow".into(), Type::Bool),
+        ("bytes".into(), Type::List(Box::new(Type::Int))),
     ]);
     Type::Struct(d)
 }
@@ -704,7 +705,7 @@ pub fn request() -> Type {
 pub fn answer() -> Type {
     let d = StructDef::new("web.Answer".into(), vec![], false);
     let text = || Type::String;
-    d.set_fields(vec![("status".into(), Type::Int), ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))), ("body".into(), text()), ("file".into(), text())]);
+    d.set_fields(vec![("status".into(), Type::Int), ("headers".into(), Type::Map(Box::new(text()), Box::new(text()))), ("body".into(), text()), ("file".into(), text()), ("bytes".into(), Type::List(Box::new(Type::Int)))]);
     Type::Struct(d)
 }
 
@@ -723,8 +724,8 @@ pub const JSON_METHODS: [&str; 2] = ["from_json", "to_json"];
 /// `Request.get(url)`…: the methods of HTTP a request can start with.
 pub const REQUEST_STARTS: [&str; 6] = ["get", "post", "put", "patch", "delete", "head"];
 /// The methods giving a changed copy of a request: name, parameters.
-pub fn request_methods() -> [(&'static str, Vec<Type>); 4] {
-    [("header(…) is(…)", vec![Type::String, Type::String]), ("body", vec![Type::String]), ("seconds", vec![Type::Float]), ("no_redirections", vec![])]
+pub fn request_methods() -> [(&'static str, Vec<Type>); 5] {
+    [("header(…) is(…)", vec![Type::String, Type::String]), ("body", vec![Type::String]), ("bytes", vec![Type::List(Box::new(Type::Int))]), ("seconds", vec![Type::Float]), ("no_redirections", vec![])]
 }
 
 /// `serve(8080) log(Log.Off)`: what the server writes (PLAN Part 4 "The web server, what it
@@ -1427,6 +1428,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for (name, param) in ANSWER_MAKERS {
         c.functions.insert(method_name("web.Answer", name), Signature::new(None, vec![(Mode::Read, param)], answer()));
     }
+    c.functions.insert(method_name("web.Answer", "bytes"), Signature::new(None, vec![(Mode::Read, Type::List(Box::new(Type::Int)))], answer()));
     let header = vec![(Mode::Read, Type::String), (Mode::Read, Type::String)];
     c.functions.insert(method_name("web.Answer", "header(…) is(…)"), Signature::new(Some(Mode::Read), header, answer()));
     let block = Type::Block(vec![request()], Box::new(answer()));

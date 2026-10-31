@@ -54,6 +54,7 @@ the error output:
 | `q.header(name) -> String?` | a header, whatever its capitals |
 | `q.headers -> Map<String, String>` | every header, names in small letters |
 | `q.body -> String` | what was sent with a `POST` or a `PUT` |
+| `q.bytes -> List<Int>` | the same as bytes, for an upload: `body` turns what is not text into `�` |
 
 ## The answer: `web.Answer`
 
@@ -63,6 +64,7 @@ the error output:
 | `web.Answer.json(value)` | a struct, a list or a map as JSON, written like `to_json` |
 | `web.Answer.status(404)` | that status, with its name as the body (`404 Not Found`) |
 | `web.Answer.file(path)` | a file, its type from its name (`.html`, `.css`, `.png`…); `404` if it does not exist or the path goes up with `..` |
+| `web.Answer.bytes(data: List<Int>)` | bytes made by the program, as `application/octet-stream`; set another `content-type` with `.header(…) is(…)` |
 | `a.status(404)` | the answer with this status, keeping its body: `web.Answer.text("no such book").status(404)` |
 | `a.header(name) is(value)` | the answer with this header: `.header("Cache-Control") is("no-store")` |
 

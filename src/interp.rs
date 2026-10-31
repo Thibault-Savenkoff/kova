@@ -953,15 +953,18 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             }
                             let length = headers.len() / 2;
                             let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0, small: None });
-                            let slots = vec![heap.make(q.method), heap.make(q.url), headers, heap.make(q.body), 0, 0, conn];
-                            heap.add(Object::List { width: 7, length: 1, slots, index: 0, small: None })
+                            let data = heap.byte_list(q.data);
+                            let slots = vec![heap.make(q.method), heap.make(q.url), headers, heap.make(q.body), 0, 0, data, conn];
+                            heap.add(Object::List { width: 8, length: 1, slots, index: 0, small: None })
                         }
                         StrOp::Reply => {
                             let slots = heap.list(locals[a[2]]).2.clone();
                             let headers: Vec<(String, String)> = slots.chunks(2).map(|p| (heap.get(p[0]).to_string(), heap.get(p[1]).to_string())).collect();
                             let headers: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
                             let (link, asked) = heap.links[locals[a[0]] as usize].take().expect("answered once");
+                            let data = heap.bytes(locals[a[5]]);
                             let (body, file) = (heap.get(locals[a[3]]), heap.get(locals[a[4]]));
+                            let body = if data.is_empty() { body.as_bytes() } else { &data };
                             let status = crate::http::reply(&mut crate::web::System, link, locals[a[1]], &headers, body, file, |p| std::fs::read(p).ok());
                             if let Some((from, method, url)) = asked {
                                 out.flush().unwrap();
@@ -1092,6 +1095,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::Web => {
                             let (url, method, body) = (s(0).to_string(), s(1).to_string(), s(2).to_string());
+                            let data = if locals[a[6]] != 0 { heap.bytes(locals[a[6]]) } else { vec![] };
                             let mut headers = vec![];
                             if locals[a[4]] != 0 {
                                 let slots = heap.list(locals[a[4]]).2.clone();
@@ -1100,7 +1104,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let r = crate::http::Request {
                                 method: &method,
                                 url: &url,
-                                body: &body,
+                                body: if data.is_empty() { body.as_bytes() } else { &data },
                                 headers: headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect(),
                                 follow: locals[a[3]] != 0,
                                 ms: crate::http::milliseconds(f64::from_bits(locals[a[5]] as u64)),
@@ -1116,8 +1120,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                     }
                                     let length = headers.len() / 2;
                                     let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0, small: None });
-                                    let slots = vec![answer.status, heap.make(answer.url), heap.make(answer.body), headers];
-                                    heap.add(Object::List { width: 4, length: 1, slots, index: 0, small: None })
+                                    let data = heap.byte_list(answer.data);
+                                    let slots = vec![answer.status, heap.make(answer.url), heap.make(answer.body), headers, data];
+                                    heap.add(Object::List { width: 5, length: 1, slots, index: 0, small: None })
                                 }
                             }
                         }

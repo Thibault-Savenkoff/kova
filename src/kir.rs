@@ -1326,7 +1326,9 @@ impl<'a> Translator<'a> {
             let (name, value) = (self.text("content-type"), self.text(t));
             self.push(headers, &[name, value]);
         }
-        vec![status, headers, body, file]
+        let bytes = self.int_local();
+        self.emit(Inst::ListNew(bytes, 1));
+        vec![status, headers, body, file, bytes]
     }
 
     /// `Answer.file(path)`: the file (its `content-type` found when it is sent), or a 404.
@@ -1385,7 +1387,7 @@ impl<'a> Translator<'a> {
         let got = self.int_local();
         self.emit(Inst::Str(got, StrOp::Accept, vec![listener]));
         let q = self.load(got, zero, &request);
-        let link = self.node(got, zero, 6);
+        let link = self.node(got, zero, 7);
         self.emit(Inst::ListFree(got));
         let a = match (block, folder) {
             (Some(block), _) => self.run(block, given, vec![(q.clone(), request.clone())], Some(&answer)),
@@ -1400,7 +1402,7 @@ impl<'a> Translator<'a> {
             }
         };
         let done = self.int_local();
-        self.emit(Inst::Str(done, StrOp::Reply, vec![link, a[0], a[1], a[2], a[3]]));
+        self.emit(Inst::Str(done, StrOp::Reply, vec![link, a[0], a[1], a[2], a[3], a[4]]));
         self.free_value(&a, &answer);
         self.free_value(&q, &request);
         let after = self.new_block();
@@ -5669,7 +5671,7 @@ impl<'a> Translator<'a> {
                         None => (self.text("GET"), self.text("")),
                     };
                     let (follow, headers, seconds) = (self.constant(1), self.constant(0), self.seconds(DEFAULT_SECONDS));
-                    let v = self.io_result(StrOp::Web, vec![url, method, body, follow, headers, seconds], &ty);
+                    let v = self.io_result(StrOp::Web, vec![url, method, body, follow, headers, seconds, headers], &ty);
                     self.emit(Inst::Free(method));
                     if args.len() == 1 {
                         self.emit(Inst::Free(body));
@@ -5712,7 +5714,7 @@ impl<'a> Translator<'a> {
                     let r = self.expr(&args[0]);
                     let seconds = self.int_local();
                     self.emit(Inst::Convert(seconds, Conversion::ToBits, r[4], NOWHERE));
-                    return self.io_result(StrOp::Web, vec![r[1], r[0], r[3], r[5], r[2], seconds], &ty);
+                    return self.io_result(StrOp::Web, vec![r[1], r[0], r[3], r[5], r[2], seconds, r[6]], &ty);
                 }
                 if name.text == "ui.show" {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
@@ -5944,6 +5946,14 @@ impl<'a> Translator<'a> {
                         let body = self.json_text(&value, &t);
                         self.answer_made(status, Some("application/json"), body, empty)
                     }
+                    "bytes" => {
+                        let (data, body) = (self.owned(&args[0]), self.text(""));
+                        self.only_bytes(data[0], args[0].span);
+                        let mut a = self.answer_made(status, Some("application/octet-stream"), body, empty);
+                        self.free_value(&[a[4]], &Type::List(Box::new(Type::Int)));
+                        a[4] = data[0];
+                        a
+                    }
                     "status" => {
                         let n = self.expr1(&args[0]);
                         self.emit(Inst::Copy(status, n));
@@ -5966,7 +5976,9 @@ impl<'a> Translator<'a> {
                 let (method, headers) = (self.text(&name.text.to_uppercase()), self.int_local());
                 self.emit(Inst::ListNew(headers, 2));
                 let (body, seconds, follow) = (self.text(""), self.float_constant(DEFAULT_SECONDS), self.constant(1));
-                let v = vec![method, url[0], headers, body, seconds, follow];
+                let bytes = self.int_local();
+                self.emit(Inst::ListNew(bytes, 1));
+                let v = vec![method, url[0], headers, body, seconds, follow, bytes];
                 self.track(&v, &crate::types::request());
                 v
             }
@@ -6409,6 +6421,12 @@ impl<'a> Translator<'a> {
                         let body = self.owned(&args[0]);
                         self.emit(Inst::Free(v[3]));
                         self.emit(Inst::Copy(v[3], body[0]));
+                    }
+                    "bytes" => {
+                        let data = self.owned(&args[0]);
+                        self.only_bytes(data[0], args[0].span);
+                        self.free_value(&[v[6]], &Type::List(Box::new(Type::Int)));
+                        self.emit(Inst::Copy(v[6], data[0]));
                     }
                     "seconds" => {
                         let seconds = self.expr1(&args[0]);
