@@ -26,6 +26,13 @@ const code = await kovaRun(readFileSync(process.argv[2]), {
                 done();
             }),
         ),
+    file(path) {
+        try {
+            return readFileSync(path);
+        } catch (e) {
+            return e.code === "EISDIR" ? null : undefined;
+        }
+    },
     variables: { ...process.env, language: "en" },
 });
 process.exitCode = code;

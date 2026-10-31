@@ -52,6 +52,7 @@ Depuis n'importe quel système, `--target` compile pour n'importe quel autre :
 | `mac` | tous les Mac, dans un seul fichier (puces Apple et Intel) ; par défaut sur un Mac |
 | `mac-arm` | seulement les Mac à puce Apple |
 | `mac-intel` | seulement les Mac Intel |
+| `web` | un seul fichier `.html` qui tourne dans un navigateur ([Kova dans une page web](/fr/tools/web/)) |
 
 Chaque cible a besoin d'un petit morceau de Kova compilé pour elle, ajouté à Rust avant d'installer
 Kova ([Installation](/fr/start/install/#3-compiler-pour-dautres-systèmes-facultatif)) ; sinon

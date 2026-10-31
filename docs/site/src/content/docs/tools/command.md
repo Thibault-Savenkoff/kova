@@ -51,6 +51,7 @@ From any system, `--target` builds for any other:
 | `mac` | every Mac, in one file (Apple chips and Intel); the default on a Mac |
 | `mac-arm` | Macs with an Apple chip only |
 | `mac-intel` | Intel Macs only |
+| `web` | one `.html` file that runs in a browser ([Kova in a web page](/tools/web/)) |
 
 Each target needs a small piece of Kova compiled for it, added to Rust before installing Kova
 ([Installing](/start/install/#3-build-for-other-systems-optional)); `kova build` says which one is

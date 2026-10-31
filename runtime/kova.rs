@@ -1846,7 +1846,11 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
         follow: follow != 0,
         ms: http::milliseconds(f64::from_bits(seconds as u64)),
     };
-    match http::exchange(&mut network(), &r) {
+    #[cfg(target_family = "wasm")]
+    let Some(asked) = sys::fetch(&r) else { return 0 };
+    #[cfg(not(target_family = "wasm"))]
+    let asked = http::exchange(&mut network(), &r);
+    match asked {
         Err(f) => -(f.number() + 1),
         Ok(a) => {
             let length = a.headers.len();
@@ -2218,11 +2222,14 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
     let (title, view) = (text_of(title), text_of(view));
     let acts = UI_ACTS.with(core::mem::take);
     if sys::var("KOVA_UI_SCRIPT").is_some() {
-        OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
-        for act in &acts {
-            OUT.with(|out| out.extend_from_slice(alloc::format!("({})\n", shared::ui_act_name(*act)).as_bytes()));
+        // In a page, a wait for the next line runs this again from the top.
+        if !back_from_waiting() {
+            OUT.with(|out| out.extend_from_slice(alloc::format!("[{title}] {}\n", shared::ui_describe(view)).as_bytes()));
+            for act in &acts {
+                OUT.with(|out| out.extend_from_slice(alloc::format!("({})\n", shared::ui_act_name(*act)).as_bytes()));
+            }
+            flush();
         }
-        flush();
         if acts.contains(&1) {
             return -1;
         }
@@ -2239,6 +2246,13 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
     }
     flush();
     let mut typed = String::new();
+    #[cfg(target_family = "wasm")]
+    if let Some(clicked) = sys::ui_heard(&mut typed) {
+        if clicked <= -2 {
+            UI_TYPED.with(|now| *now = typed);
+        }
+        return clicked;
+    }
     let (menus, view) = shared::ui_menus(view);
     let clicked = sys::ui_show(title, &shared::ui_tree(view), &menus, width as i32, height as i32, &acts, &mut typed);
     if clicked <= -2 {
@@ -2261,14 +2275,40 @@ pub extern "C" fn kova_sound(data: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_ui_dialog(kind: i64, title: i64, text: i64) -> i64 {
     if sys::var("KOVA_UI_SCRIPT").is_some() {
-        OUT.with(|out| out.extend_from_slice(alloc::format!("({} {:?})\n", shared::ui_dialog_name(kind), text_of(title)).as_bytes()));
-        flush();
+        if !back_from_waiting() {
+            OUT.with(|out| out.extend_from_slice(alloc::format!("({} {:?})\n", shared::ui_dialog_name(kind), text_of(title)).as_bytes()));
+            flush();
+        }
         let line = INPUT.with(|(input, at)| read_line(input, at));
-        return if line > 0 { line } else { new_text(b"") };
+        return if line > 0 || leaving() { line } else { new_text(b"") };
     }
     flush();
     let chosen = sys::ui_dialog(kind, text_of(title), text_of(text));
+    if leaving() {
+        return 0;
+    }
     new_text(chosen.unwrap_or_default().as_bytes())
+}
+
+/// In a page, the built-in that waits runs again from the top when the program comes back.
+#[cfg(target_family = "wasm")]
+fn back_from_waiting() -> bool {
+    sys::rewinding()
+}
+
+#[cfg(target_family = "wasm")]
+fn leaving() -> bool {
+    sys::unwinding()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn back_from_waiting() -> bool {
+    false
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn leaving() -> bool {
+    false
 }
 
 /// What the field that changed last holds (`ui.typed`).
@@ -2327,7 +2367,7 @@ pub fn gl_stop(i: usize, detail: &[u8]) -> ! {
     exit(101)
 }
 
-const GPU_MISSING: usize = 43;
+pub const GPU_MISSING: usize = 43;
 
 /// Draws a frame of a `ui.gpu` in the OpenGL context each system has made current; `load` finds
 /// OpenGL's functions. The same on the three systems: only the context differs.

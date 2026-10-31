@@ -233,15 +233,13 @@ impl Data {
     }
 }
 
-/// What a built-in needs that a page does not have (yet): the program cannot be built.
+/// What a built-in needs that a page does not have: the program cannot be built.
 fn refused(op: StrOp) -> Option<&'static str> {
     Some(match op {
-        StrOp::ReadFile | StrOp::ReadBytes | StrOp::WriteBytes | StrOp::WriteFile | StrOp::AppendFile | StrOp::MakeDir | StrOp::RemoveFile | StrOp::ListDir | StrOp::Exists | StrOp::CopyFile | StrOp::MoveFile | StrOp::FileSize | StrOp::Modified | StrOp::IsFolder | StrOp::Matching | StrOp::FileSha256 | StrOp::CsvRead | StrOp::CsvWrite => "files",
         StrOp::Run => "system.run",
-        StrOp::Web | StrOp::Listen | StrOp::Accept | StrOp::Reply | StrOp::Net | StrOp::NetBytes => "web",
+        StrOp::Listen | StrOp::Accept | StrOp::Reply => "web.serve",
+        StrOp::Net | StrOp::NetBytes => "net",
         StrOp::Workers | StrOp::Parallel | StrOp::Spawn | StrOp::PipeNew => "threads",
-        StrOp::UiShow | StrOp::UiDialog => "ui",
-        StrOp::Sound => "sound",
         _ => return None,
     })
 }
@@ -266,7 +264,7 @@ fn reached(p: &Program, main: usize) -> Vec<usize> {
 
 /// A built-in that may leave the program waiting (runtime/web.rs `Suspended`).
 fn waits(op: StrOp) -> bool {
-    matches!(op, StrOp::Sleep | StrOp::ReadLine)
+    matches!(op, StrOp::Sleep | StrOp::ReadLine | StrOp::UiShow | StrOp::UiDialog | StrOp::Sound | StrOp::Web)
 }
 
 /// The functions that may wait: those with a waiting built-in, their callers, and whoever calls a

@@ -686,5 +686,5 @@ lang en {
     not_handled := "not handled yet"
     completion_default := "{help} (default)"
     completion_setting := "{values}: {help}"
-    web_refuses := "`{what}` does not work in a web page yet (`--target web`)."
+    web_refuses := "`{what}` cannot work in a web page (`--target web`)."
 }

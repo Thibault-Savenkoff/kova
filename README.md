@@ -75,7 +75,7 @@ their `-arm` variants); on a Mac, one executable runs on every Mac. To build Kov
 clone: install Rust with [rustup](https://rustup.rs), then
 
 ```sh
-rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
+rustup target add wasm32-unknown-unknown x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
     aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
 cargo install --path . --locked
 ```

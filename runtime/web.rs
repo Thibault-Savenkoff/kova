@@ -2,6 +2,8 @@
 // a few functions the page's JavaScript gives (runtime/web.js), and an allocator over the module's
 // memory. No files, threads or sockets here: `kova build` refuses the programs that use them.
 
+use alloc::collections::BTreeMap;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
@@ -9,6 +11,7 @@ use core::sync::atomic::AtomicU32;
 
 use crate::Global;
 use crate::http::{Fail, Network, Serve};
+use crate::shared::{UiAlign, UiMenu, UiNode, UiOp};
 
 #[link(wasm_import_module = "kova")]
 unsafe extern "C" {
@@ -26,6 +29,27 @@ unsafe extern "C" {
     fn time() -> f64;
     #[link_name = "chance"]
     fn host_chance(into: *mut u8, n: usize);
+    /// Shows a view (JSON, src: `ui_show`): 0, or 1 without WebGL, 2 if a shader does not compile.
+    fn ui_render(json: *const u8, n: usize) -> i32;
+    /// What happened: as `ui.show` says it (a Float: it may be `UI_RESIZED`), and `ui.typed`'s text.
+    fn ui_clicked() -> f64;
+    fn ui_typed(into: *mut u8, n: usize) -> usize;
+    fn ui_rooms() -> i32;
+    fn ui_room(k: i32, which: i32) -> i32;
+    fn ui_area(k: i32) -> i32;
+    fn ui_ask(kind: i32, title: *const u8, n: usize, text: *const u8, m: usize) -> i32;
+    fn play(wav: *const u8, n: usize);
+    /// The size of a file only the host has, -1 if it has none, -2 if it is a folder; then
+    /// `file_read` copies it.
+    fn file_size(path: *const u8, n: usize) -> i32;
+    fn file_read(into: *mut u8);
+    fn pick_file();
+    /// The size of the file picked (`file_read`; its name by `ui_typed`), or -1.
+    fn picked() -> i32;
+    fn download(name: *const u8, n: usize, data: *const u8, m: usize);
+    fn fetch_start(json: *const u8, n: usize, body: *const u8, m: usize);
+    /// The answer's size (`file_read`), -1 refused, -2 too late.
+    fn fetched() -> i32;
     /// A variable's value into `into`, at most `n` bytes: its whole size, or -1 without it. The
     /// page's own language is the variable "language".
     fn variable(name: *const u8, length: usize, into: *mut u8, n: usize) -> i32;
@@ -138,44 +162,140 @@ pub fn chance(b: &mut [u8]) {
     unsafe { host_chance(b.as_mut_ptr(), b.len()) }
 }
 
-// ---- No files in a page: every path answers "denied" (`IoError.Denied`) ----
+// ---- Files ----
+// A page has no disk: files live in its memory, from the start of the page to its end, and what
+// the user opens with `ui.open_file` comes in there. What is not there may be given by the host
+// (the tests read real files, `host.file`).
 
-const DENIED: i64 = 2;
+const MISSING: i64 = 1;
+const A_FOLDER: i64 = 3;
 
-pub fn kind(_path: &str) -> Result<bool, i64> {
-    Err(DENIED)
+/// By path, without `./`; `None` a folder.
+static FILES: Global<BTreeMap<String, Option<Vec<u8>>>> = Global::new(BTreeMap::new());
+
+fn cleaned(path: &str) -> String {
+    let mut p = path;
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest;
+    }
+    String::from(p.trim_end_matches('/'))
 }
 
-pub fn info(_path: &str, _follow: bool) -> Result<crate::Info, i64> {
-    Err(DENIED)
+/// A file only the host has, kept for good once read.
+fn known(path: &str) -> bool {
+    let files = FILES.get();
+    if files.contains_key(path) {
+        return true;
+    }
+    let n = unsafe { file_size(path.as_ptr(), path.len()) };
+    if n == -2 {
+        files.insert(path.into(), None);
+        return true;
+    }
+    if n < 0 {
+        return false;
+    }
+    let mut b = alloc::vec![0; n as usize];
+    unsafe { file_read(b.as_mut_ptr()) };
+    files.insert(path.into(), Some(b));
+    true
 }
 
-pub fn rename(_a: &str, _b: &str) -> Result<(), i64> {
-    Err(DENIED)
+fn parent_there(path: &str) -> bool {
+    match path.rsplit_once('/') {
+        Some((parent, _)) if !parent.is_empty() => FILES.get().get(parent).is_some_and(Option::is_none),
+        _ => true,
+    }
 }
 
-pub fn read_file(_path: &str) -> Result<Vec<u8>, i64> {
-    Err(DENIED)
+pub fn kind(path: &str) -> Result<bool, i64> {
+    let p = cleaned(path);
+    if p.is_empty() {
+        return Ok(true);
+    }
+    if known(&p) { Ok(FILES.get()[&p].is_none()) } else { Err(MISSING) }
 }
 
-pub fn write_file(_path: &str, _b: &[u8], _append: bool) -> Result<(), i64> {
-    Err(DENIED)
+pub fn info(path: &str, _follow: bool) -> Result<crate::Info, i64> {
+    let folder = kind(path)?;
+    let size = FILES.get().get(&cleaned(path)).and_then(|f| f.as_ref()).map_or(0, |f| f.len() as i64);
+    Ok(crate::Info { folder, link: false, size, modified: (now() / 1_000_000_000) as i64 })
 }
 
-pub fn make_dir(_path: &str) -> Result<(), i64> {
-    Err(DENIED)
+pub fn rename(a: &str, b: &str) -> Result<(), i64> {
+    let (a, b) = (cleaned(a), cleaned(b));
+    if !known(&a) {
+        return Err(MISSING);
+    }
+    let moved = FILES.get().remove(&a).unwrap();
+    FILES.get().insert(b, moved);
+    Ok(())
 }
 
-pub fn remove_file(_path: &str) -> Result<(), i64> {
-    Err(DENIED)
+pub fn read_file(path: &str) -> Result<Vec<u8>, i64> {
+    let p = cleaned(path);
+    if !known(&p) {
+        return Err(MISSING);
+    }
+    FILES.get()[&p].clone().ok_or(A_FOLDER)
 }
 
-pub fn list_dir(_path: &str) -> Result<Vec<String>, i64> {
-    Err(DENIED)
+pub fn write_file(path: &str, b: &[u8], append: bool) -> Result<(), i64> {
+    let p = cleaned(path);
+    if !parent_there(&p) {
+        return Err(MISSING);
+    }
+    if kind(&p) == Ok(true) {
+        return Err(A_FOLDER);
+    }
+    let held = FILES.get().entry(p).or_insert_with(|| Some(Vec::new())).as_mut().unwrap();
+    if !append {
+        held.clear();
+    }
+    held.extend_from_slice(b);
+    // A file named by `ui.save_file` goes to the user's downloads.
+    if SAVING.get().as_deref() == Some(path) {
+        unsafe { download(path.as_ptr(), path.len(), held.as_ptr(), held.len()) };
+    }
+    Ok(())
 }
+
+/// One folder; Err(0) if something is already there.
+pub fn make_dir(path: &str) -> Result<(), i64> {
+    let p = cleaned(path);
+    if known(&p) {
+        return Err(0);
+    }
+    FILES.get().insert(p, None);
+    Ok(())
+}
+
+pub fn remove_file(path: &str) -> Result<(), i64> {
+    let p = cleaned(path);
+    match kind(&p)? {
+        true => Err(A_FOLDER),
+        false => {
+            FILES.get().remove(&p);
+            Ok(())
+        }
+    }
+}
+
+pub fn list_dir(path: &str) -> Result<Vec<String>, i64> {
+    let p = cleaned(path);
+    if !kind(&p)? {
+        return Err(4);
+    }
+    let start = if p.is_empty() { p } else { format!("{p}/") };
+    let inside = FILES.get().keys().filter_map(|k| k.strip_prefix(start.as_str())).filter(|k| !k.contains('/'));
+    Ok(inside.map(String::from).collect())
+}
+
+/// The name `ui.save_file` gave.
+static SAVING: Global<Option<String>> = Global::new(None);
 
 pub fn run(_program: &str, _args: &[&str]) -> Result<(Vec<u8>, Vec<u8>, i64), i64> {
-    Err(DENIED)
+    Err(2)
 }
 
 // ---- Memory ----
@@ -286,20 +406,292 @@ pub fn symbol(_library: usize, _name: &str) -> Option<usize> {
     None
 }
 
-pub fn ui_show(_title: &str, _view: &crate::shared::UiNode, _menus: &[crate::shared::UiMenu], _width: i32, _height: i32, _acts: &[i64], _typed: &mut String) -> i64 {
-    -1
+// ---- Windows: a view becomes elements of the page (runtime/web.js) ----
+
+fn quoted(o: &mut String, s: &str) {
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if (c as u32) < 32 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
 }
 
+fn list<T>(o: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T)) {
+    o.push('[');
+    for (i, x) in items.iter().enumerate() {
+        if i > 0 {
+            o.push(',');
+        }
+        each(o, x);
+    }
+    o.push(']');
+}
+
+fn texts(o: &mut String, items: &[String]) {
+    list(o, items, |o, s| quoted(o, s));
+}
+
+fn numbers(o: &mut String, items: &[f32]) {
+    list(o, items, |o, v| o.push_str(&format!("{v}")));
+}
+
+fn or_null(n: Option<usize>) -> String {
+    n.map_or("null".into(), |n| format!("{n}"))
+}
+
+fn operation(o: &mut String, op: &UiOp) {
+    o.push('[');
+    match op {
+        UiOp::Clear(c) => o.push_str(&format!("\"C\",{c}")),
+        UiOp::Rect { x, y, w, h, color, outline } => o.push_str(&format!("\"R\",{x},{y},{w},{h},{color},{outline}")),
+        UiOp::Circle { x, y, r, color, outline } => o.push_str(&format!("\"O\",{x},{y},{r},{color},{outline}")),
+        UiOp::Line { x, y, x2, y2, color, thickness } => o.push_str(&format!("\"L\",{x},{y},{x2},{y2},{color},{thickness}")),
+        UiOp::Text { x, y, size, color, text } => {
+            o.push_str(&format!("\"T\",{x},{y},{size},{color},"));
+            quoted(o, text);
+        }
+        UiOp::Image { x, y, w, h, path } => {
+            o.push_str(&format!("\"I\",{x},{y},{w},{h},"));
+            quoted(o, path);
+        }
+        UiOp::Gpu => o.push_str("\"g\""),
+        UiOp::GlClear(c) => o.push_str(&format!("\"c\",{c}")),
+        UiOp::GlShader(vertex, fragment) => {
+            o.push_str("\"s\",");
+            quoted(o, vertex);
+            o.push(',');
+            quoted(o, fragment);
+        }
+        UiOp::GlUniform(name, values) => {
+            o.push_str("\"u\",");
+            quoted(o, name);
+            o.push(',');
+            numbers(o, values);
+        }
+        UiOp::GlTriangles(sizes, data) => {
+            o.push_str("\"v\",");
+            list(o, sizes, |o, s| o.push_str(&format!("{s}")));
+            o.push(',');
+            numbers(o, data);
+        }
+        UiOp::GlTexture(width, height, pixels) => {
+            o.push_str(&format!("\"x\",{width},{height},"));
+            list(o, pixels, |o, p| o.push_str(&format!("{p}")));
+        }
+    }
+    o.push(']');
+}
+
+fn node(o: &mut String, n: &UiNode) {
+    let side = |a: &UiAlign| *a as u8;
+    match n {
+        UiNode::Text(t) => {
+            o.push_str("[\"T\",");
+            quoted(o, t);
+        }
+        UiNode::Button(t, k) | UiNode::Input(t, k) => {
+            o.push_str(if matches!(n, UiNode::Button(..)) { "[\"B\"," } else { "[\"I\"," });
+            quoted(o, t);
+            o.push_str(&format!(",{k}"));
+        }
+        UiNode::Column(parts, a) | UiNode::Row(parts, a) => {
+            o.push_str(&format!("[\"{}\",{},", if matches!(n, UiNode::Row(..)) { 'R' } else { 'C' }, side(a)));
+            list(o, parts, node);
+        }
+        UiNode::Image(path, width) => {
+            o.push_str("[\"P\",");
+            quoted(o, path);
+            o.push_str(&format!(",{width}"));
+        }
+        UiNode::Styled(style, inner) => {
+            let color = style.color.map_or("null".into(), |c| format!("{c}"));
+            o.push_str(&format!("[\"S\",{color},{},{},", style.size, style.bold));
+            node(o, inner);
+        }
+        UiNode::Spaced(m, inner) => {
+            o.push_str(&format!("[\"M\",{m},"));
+            node(o, inner);
+        }
+        UiNode::Canvas(c) => {
+            o.push_str(&format!("[\"D\",{},{},{},{},{},", c.width, c.height, c.number, or_null(c.mouse), or_null(c.key)));
+            list(o, &c.ops, operation);
+        }
+        UiNode::Every(ms, k, inner) => {
+            o.push_str(&format!("[\"E\",{ms},{k},"));
+            node(o, inner);
+        }
+        UiNode::Check(label, on, k) => {
+            o.push_str("[\"X\",");
+            quoted(o, label);
+            o.push_str(&format!(",{on},{k}"));
+        }
+        UiNode::Slider(value, min, max, k) => o.push_str(&format!("[\"W\",{value},{min},{max},{k}")),
+        UiNode::Choice(items, selected, k) => {
+            o.push_str("[\"O\",");
+            texts(o, items);
+            o.push_str(&format!(",{selected},{k}"));
+        }
+        UiNode::Table(t) => {
+            o.push_str("[\"G\",");
+            texts(o, &t.headers);
+            o.push(',');
+            list(o, &t.rows, |o, r| texts(o, r));
+            o.push_str(&format!(",{},{}", t.selected, t.number));
+        }
+    }
+    o.push(']');
+}
+
+/// What the page last gave back, into `typed`.
+fn answer(typed: &mut String) -> i64 {
+    let mut b = alloc::vec![0; 1 << 12];
+    let clicked = unsafe { ui_clicked() } as i64;
+    let n = unsafe { ui_typed(b.as_mut_ptr(), b.len()) } as usize;
+    if n > b.len() {
+        b.resize(n, 0);
+        unsafe { ui_typed(b.as_mut_ptr(), b.len()) };
+    }
+    b.truncate(n);
+    *typed = String::from_utf8_lossy(&b).into_owned();
+    for k in 0..unsafe { ui_rooms() } {
+        crate::ui_room(k as usize, unsafe { ui_room(k, 0) }, unsafe { ui_room(k, 1) });
+    }
+    clicked
+}
+
+/// `ui.show`, back from waiting: what happened.
+pub fn ui_heard(typed: &mut String) -> Option<i64> {
+    arrived().then(|| answer(typed))
+}
+
+/// Shows the view, then the program leaves until something happens.
+pub fn ui_show(title: &str, view: &UiNode, menus: &[UiMenu], width: i32, height: i32, acts: &[i64], _typed: &mut String) -> i64 {
+    let mut o = String::from("{\"title\":");
+    quoted(&mut o, title);
+    o.push_str(",\"shape\":");
+    quoted(&mut o, &crate::shared::ui_shape(view));
+    o.push_str(",\"view\":");
+    node(&mut o, view);
+    o.push_str(",\"menus\":");
+    list(&mut o, menus, |o, m| {
+        o.push_str("{\"title\":");
+        quoted(o, &m.title);
+        o.push_str(",\"items\":");
+        list(o, &m.items, |o, (label, k)| {
+            o.push('[');
+            quoted(o, label);
+            o.push_str(&format!(",{}]", or_null(*k)));
+        });
+        o.push('}');
+    });
+    o.push_str(&format!(",\"width\":{width},\"height\":{height},\"acts\":"));
+    list(&mut o, acts, |o, a| o.push_str(&format!("{a}")));
+    o.push('}');
+    match unsafe { ui_render(o.as_ptr(), o.len()) } {
+        0 => {}
+        1 => crate::gl_stop(crate::GPU_MISSING, b""),
+        _ => {
+            let mut log = String::new();
+            answer(&mut log);
+            crate::gl_stop(crate::GPU_MISSING + 1, log.as_bytes());
+        }
+    }
+    leave();
+    0
+}
+
+/// The window's then the screen's x, y, width and height.
 pub fn ui_areas() -> Option<[i32; 8]> {
-    None
+    let mut areas = [0; 8];
+    areas.iter_mut().enumerate().for_each(|(k, a)| *a = unsafe { ui_area(k as i32) });
+    Some(areas)
 }
 
-pub fn ui_dialog(_kind: i64, _title: &str, _text: &str) -> Option<String> {
-    None
+/// `ui.message` and `ui.confirm` answer at once (the browser's own dialogs). `ui.open_file` waits
+/// for the user's file, which comes into the page's memory; `ui.save_file` gives a name, and
+/// writing to that name downloads the file. No folder can be picked.
+pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    match kind {
+        0 if !arrived() => {
+            leave();
+            unsafe { pick_file() };
+            None
+        }
+        0 => {
+            let n = unsafe { picked() };
+            if n < 0 {
+                return None;
+            }
+            let mut b = alloc::vec![0; n as usize];
+            unsafe { file_read(b.as_mut_ptr()) };
+            let mut name = String::new();
+            answer(&mut name);
+            FILES.get().insert(name.clone(), Some(b));
+            Some(name)
+        }
+        1 => {
+            let name = String::from(if text.is_empty() { "kova.txt" } else { text });
+            *SAVING.get() = Some(name.clone());
+            Some(name)
+        }
+        2 => None,
+        _ => (unsafe { ui_ask(kind as i32, title.as_ptr(), title.len(), text.as_ptr(), text.len()) } != 0).then(|| "yes".into()),
+    }
 }
 
-pub fn sound(_whole: &[u8], _wav: &crate::shared::Wav) -> bool {
-    false
+// ---- The web: `fetch`, so a site must allow other origins (CORS) ----
+
+/// `None` while the program leaves to wait.
+pub fn fetch(r: &crate::http::Request) -> Option<Result<crate::http::Answer, Fail>> {
+    if !arrived() {
+        if crate::http::parse_url(r.url).is_none() {
+            return Some(Err(Fail::BadUrl));
+        }
+        let mut o = String::from("{\"url\":");
+        quoted(&mut o, r.url);
+        o.push_str(",\"method\":");
+        quoted(&mut o, r.method);
+        o.push_str(&format!(",\"follow\":{},\"ms\":{},\"headers\":", r.follow, r.ms));
+        list(&mut o, &r.headers, |o, (name, value)| {
+            o.push('[');
+            quoted(o, name);
+            o.push(',');
+            quoted(o, value);
+            o.push(']');
+        });
+        o.push('}');
+        leave();
+        unsafe { fetch_start(o.as_ptr(), o.len(), r.body.as_ptr(), r.body.len()) };
+        return None;
+    }
+    let n = unsafe { fetched() };
+    if n < 0 {
+        return Some(Err(if n == -2 { Fail::Timeout } else { Fail::Refused }));
+    }
+    let mut b = alloc::vec![0; n as usize];
+    unsafe { file_read(b.as_mut_ptr()) };
+    // `status\nurl\nname: value\n…\n\nbody`
+    let end = b.windows(2).position(|w| w == b"\n\n").unwrap_or(b.len().saturating_sub(2));
+    let head = String::from_utf8_lossy(&b[..end]).into_owned();
+    let data = b[(end + 2).min(b.len())..].to_vec();
+    let mut lines = head.split('\n');
+    let status = lines.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let url = String::from(lines.next().unwrap_or(""));
+    let headers = lines.filter_map(|l| l.split_once(": ")).map(|(n, v)| (String::from(n), String::from(v))).collect();
+    Some(Ok(crate::http::Answer { status, url, body: String::from_utf8_lossy(&data).into_owned(), data, headers }))
+}
+
+pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
+    if !arrived() {
+        leave();
+        unsafe { play(whole.as_ptr(), whole.len()) };
+    }
+    true
 }
 
 // ---- No sockets from a page ----

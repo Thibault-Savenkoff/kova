@@ -92,7 +92,7 @@ cherchés qu'au lancement du programme.
 
 Chaque `kova` compile pour tous les systèmes : `kova build app.kova --target windows` crée un
 exécutable Windows depuis Linux ou un Mac, et ainsi de suite (`linux`, `linux-arm`, `windows`,
-`windows-arm`, `mac`, `mac-arm`, `mac-intel`). Sur Mac, `kova build` fait par défaut un seul
+`windows-arm`, `mac`, `mac-arm`, `mac-intel`, et `web` pour un navigateur). Sur Mac, `kova build` fait par défaut un seul
 exécutable pour tous les Mac.
 
 ## 3. Construire Kova lui-même (pour le modifier)
@@ -101,7 +101,7 @@ Kova est écrit en Rust. Avec Rust installé par [rustup](https://rustup.rs), de
 dépôt :
 
 ```sh
-rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
+rustup target add wasm32-unknown-unknown x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin \
     aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-pc-windows-msvc
 cargo install --path . --locked
 ```

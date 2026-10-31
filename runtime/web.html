@@ -8,15 +8,38 @@
 :root { color-scheme: light dark; }
 body { margin: 16px; font: 15px/1.45 ui-monospace, Menlo, Consolas, monospace; background: Canvas; color: CanvasText; }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+body.kova-frameless { margin: 0; }
 .stderr { color: #c33; }
+.kova-line { width: 100%; box-sizing: border-box; font: inherit; }
+#kova-window { display: flex; flex-direction: column; }
+body:has(.kova-fill-height) { height: 100vh; box-sizing: border-box; margin: 0; }
+#kova-window:has(.kova-fill-height) { height: 100%; }
+.kova-column { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.kova-row { display: flex; flex-direction: row; gap: 8px; }
+#kova-window > .kova-column, #kova-window > .kova-row { align-self: flex-start; }
+#kova-window > .kova-placing, .kova-column:has(> .kova-placing) { align-self: stretch; }
+.kova-fill-width { width: 100%; align-self: stretch; }
+.kova-fill-height { flex: 1 1 0; min-height: 0; display: block; }
+.kova-column:has(> .kova-fill-width) { align-self: stretch; }
+#kova-menus { display: flex; gap: 8px; }
+#kova-menus details { position: relative; }
+#kova-menus details > div { position: absolute; z-index: 1; display: flex; flex-direction: column; background: Canvas; border: 1px solid GrayText; padding: 4px; }
+button, input, select { font: inherit; }
+.kova-table { border-collapse: collapse; }
+.kova-table th, .kova-table td { padding: 2px 8px; text-align: left; }
+.kova-table tbody tr { cursor: default; }
+.kova-chosen { background: Highlight; color: HighlightText; }
 </style>
 </head>
 <body>
+<div id="kova-menus"></div>
+<div id="kova-window"></div>
 <pre id="kova-output"></pre>
 <script>
 {script}
 const kovaOutput = document.getElementById("kova-output");
 const kovaDecoders = [null, new TextDecoder(), new TextDecoder()];
+let kovaLine = null; // what the user typed for `read_line`
 kovaRun(Uint8Array.from(atob("{module}"), c => c.charCodeAt(0)), {
     write(fd, bytes) {
         const part = document.createElement("span");
@@ -24,6 +47,28 @@ kovaRun(Uint8Array.from(atob("{module}"), c => c.charCodeAt(0)), {
         part.textContent = kovaDecoders[fd].decode(bytes, { stream: true });
         kovaOutput.append(part);
     },
+    read(into) {
+        if (kovaLine === null) return -1;
+        const part = kovaLine.subarray(0, into.length);
+        into.set(part);
+        kovaLine = kovaLine.length > into.length ? kovaLine.subarray(into.length) : null;
+        return part.length;
+    },
+    input: () =>
+        new Promise(done => {
+            const field = document.createElement("input");
+            field.className = "kova-line";
+            field.onkeydown = e => {
+                if (e.key !== "Enter") return;
+                kovaLine = new TextEncoder().encode(field.value + "\n");
+                const echo = document.createElement("span");
+                echo.textContent = field.value + "\n";
+                field.replaceWith(echo);
+                done();
+            };
+            kovaOutput.append(field);
+            field.focus();
+        }),
     variables: { language: navigator.language.split("-")[0] },
 });
 </script>
