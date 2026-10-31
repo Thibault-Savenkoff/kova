@@ -421,11 +421,7 @@ Dock ou la barre des tâches. Les deux donnent un `ui.Area`, avec `x`, `y`, `wid
 `ui.place(x, y) size(width, height)` met la fenêtre à cet endroit, tout de suite.
 
 `ui.animate` amène la fenêtre sur une zone, en douceur. Tu l'appelles depuis `update`, Kova fait le
-reste :
-
-```kova
-Grow => ui.animate(ui.screen) time(1000)
-```
+reste : `ui.animate(ui.screen) time(1000)` remplit l'écran en une seconde.
 
 `time` est en millisecondes, 300 si tu ne le mets pas. Sans courbe, la fenêtre démarre lentement,
 accélère, puis arrive lentement, sans rebond.
@@ -434,94 +430,8 @@ Le but est n'importe quelle `ui.Area` : `ui.Area { x := 100, y := 100, width := 
 Le programme continue d'entendre les clics pendant l'animation, et un nouveau `ui.animate` remplace
 celui en cours.
 
-### Des courbes prêtes à copier
-
-Une courbe décide comment la fenêtre avance entre son départ et son but. C'est un bloc qui reçoit
-`t`, le temps écoulé, de `0.0` au départ à `1.0` à la fin, et qui donne où la fenêtre doit en être :
-`0.0` est le départ, `1.0` le but, `0.5` la moitié du chemin.
-
-```kova
-Grow => ui.animate(ui.screen) time(1000) curve { t: Float => t * t }
-```
-
-À la moitié du temps, `t * t` donne `0.25` : la fenêtre a fait le quart du chemin, donc elle accélère.
-Copie la courbe que tu veux après `curve` :
-
-| La fenêtre… | Courbe |
-| --- | --- |
-| garde la même vitesse | `{ t: Float => t }` |
-| démarre et arrive lentement (par défaut) | `{ t: Float => t * t * (3.0 - 2.0 * t) }` |
-| accélère jusqu'à la fin | `{ t: Float => t * t }` |
-| ralentit jusqu'à la fin | `{ t: Float => t * (2.0 - t) }` |
-
-Un rebond demande deux lignes. La dernière ligne d'un bloc est sa valeur, et `back` va de `-1.0` à
-`0.0`. Cette courbe dépasse le but d'environ 10 %, puis revient :
-
-```kova
-Grow => ui.animate(goal) time(800) curve { t: Float =>
-    let back: Float := t - 1.0
-    1.0 + 2.7 * back * back * back + 1.7 * back * back
-}
-```
-
-Dépasser le but ne se voit pas quand le but est tout l'écran : la fenêtre sort de l'écran. Dans ce
-cas, cette courbe ne dépasse jamais le but. La fenêtre touche les bords, se rétracte et revient,
-trois fois, de moins en moins :
-
-```kova
-Grow => ui.animate(ui.screen) time(1200) curve { t: Float =>
-    let back: Float := t - 1.0
-    1.0 + (t * Float.pi * 3.0).cos.abs * back * back * back
-}
-```
-
-Ajoute un `* back` à la fin pour un rebond plus petit. Un rebond se regarde plus longtemps qu'un
-simple déplacement : commence autour de 1000 millisecondes. La fenêtre finit là où la courbe arrive
-à `t = 1.0`, donc ta propre courbe doit y donner `1.0`.
-
-### Déplacer la fenêtre à chaque image
-
-Pour tout le reste, comme un trajet qui n'est pas une ligne droite, le programme déplace la fenêtre
-lui-même. Avec une horloge, `ui.place` suffit à faire une animation. Cette fenêtre grandit depuis le centre
-de l'écran, à la vitesse et avec la courbe que tu choisis :
-
-```kova
-import ui
-
-enum Event {
-    Grow
-    Tick
-}
-
-fn view(step: Int) -> ui.View {
-    return ui.button("Agrandir", Event.Grow).every(16, Event.Tick)
-}
-
-fn update(step: var Int, e: Event) {
-    match e {
-        Grow => step := 1
-        Tick => {
-            if step > 0 && step <= 30 {
-                let t: Float := step.to_float / 30.0
-                let eased: Float := t * t * (3.0 - 2.0 * t)
-                let s: ui.Area := ui.screen
-                let width: Int := 320 + ((s.width - 320).to_float * eased).to_int
-                let height: Int := 200 + ((s.height - 200).to_float * eased).to_int
-                ui.place(s.x + (s.width - width) / 2, s.y + (s.height - height) / 2) size(width, height)
-                step := step + 1
-            }
-        }
-    }
-}
-
-fn main {
-    ui.run("Agrandir", 0, view, update)
-}
-```
-
-```text
-[Agrandir] button "Agrandir" every(16)
-```
+Tu peux donner ta propre courbe, et construire n'importe quel autre mouvement avec une horloge et
+`ui.place` : [Animations](/fr/guide/animations/) explique comment, de la première image aux rebonds.
 
 Sous Linux, `ui.place` ne fait rien pour l'instant : Wayland ne laisse aucun programme choisir la
 place de sa fenêtre, et GTK 4 ne sait pas redimensionner une fenêtre ouverte. `ui.window` donne 0 pour

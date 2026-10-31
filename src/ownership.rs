@@ -224,7 +224,7 @@ impl Owner<'_> {
     }
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) {
-        self.borrow(cond);
+        self.condition(cond);
         let start = self.state.clone();
         self.narrow(&narrowed(cond, true));
         self.block_value(then);
@@ -351,6 +351,13 @@ impl Owner<'_> {
         self.pending.truncate(mark);
     }
 
+    /// A condition is over once it is answered: `if a.done { a.done := false }`.
+    fn condition(&mut self, cond: &Expr) {
+        let mark = self.pending.len();
+        self.borrow(cond);
+        self.pending.truncate(mark);
+    }
+
     fn stmt(&mut self, s: &Stmt) {
         let mark = self.pending.len();
         self.stmt_kind(s);
@@ -419,7 +426,7 @@ impl Owner<'_> {
                 l.continues = join(l.continues.take(), s);
             }
             Stmt::If { cond, then, otherwise } => {
-                self.borrow(cond);
+                self.condition(cond);
                 let start = self.state.clone();
                 self.narrow(&narrowed(cond, true));
                 self.block(then);
@@ -433,12 +440,12 @@ impl Owner<'_> {
                 self.state = join(after_then, self.state.take());
             }
             Stmt::While { cond, body } => {
-                self.borrow(cond);
+                self.condition(cond);
                 self.body_of_loop(body, &[], false);
             }
             Stmt::Loop { counter, start, end, body, .. } => {
-                self.borrow(start);
-                self.borrow(end);
+                self.condition(start);
+                self.condition(end);
                 self.body_of_loop(body, &[counter], false);
             }
             // The List (or Map) stays `pending` during the whole loop: frozen (PLAN 2.7.9).

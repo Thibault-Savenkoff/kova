@@ -84,7 +84,9 @@ impl Sources {
 
 /// The number of the file containing `pos` in a text made by `Sources` (0 for a single file).
 pub fn file_number(source: &str, pos: usize) -> usize {
-    source[..pos.min(source.len())].matches(SEPARATOR).count()
+    // `parser::PRELUDE`'s positions are in another text: any byte may come here.
+    let end = (0..=pos.min(source.len())).rev().find(|&p| source.is_char_boundary(p)).unwrap_or(0);
+    source[..end].matches(SEPARATOR).count()
 }
 
 /// Line and column (from 1, column in characters) of a byte position, in its own file.

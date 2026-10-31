@@ -3062,7 +3062,9 @@ impl Checker<'_> {
 
     /// A bare `main` calls `fn main`: no variable may take the name of a function without parameters.
     fn function_name(&mut self, name: &Name) -> bool {
-        let taken = self.functions.get(name.text.as_str()).is_some_and(|f| f.params.is_empty());
+        // A module's own functions are `module.name`: its variables never meet the program's.
+        let taken = self.functions.get(name.text.as_str()).is_some_and(|f| f.params.is_empty())
+            && (["read_line", "args", "now"].contains(&name.text.as_str()) || file_number(self.src, name.span.start) == 0);
         if taken {
             self.diags.push(
                 Diag::new(name.span, t!("function_name_taken", name = name.text)).help(t!("function_name_taken_help", name = name.text)),

@@ -1,0 +1,45 @@
+// A condition reads a field, the branch or the loop's body changes it.
+struct App {
+    running: Bool
+    left: Int
+}
+
+fn stop(app: var App) {
+    if app.running {
+        app.running := false
+    }
+}
+
+fn pick(app: var App) -> Int {
+    return if app.left > 2 {
+        app.left := 2
+        1
+    } else {
+        0
+    }
+}
+
+fn main {
+    var a := App { running := true, left := 3 }
+    stop(var a)
+    print(a.running)
+    while a.left > 0 {
+        a.left := a.left - 1
+    }
+    print(a.left)
+    a.left := 3
+    print(pick(var a))
+    print(a.left)
+    for i in 0..a.left {
+        a.left := 1
+        print(i)
+    }
+    print(a.left)
+}
+// expect: false
+// expect: 0
+// expect: 1
+// expect: 2
+// expect: 0
+// expect: 1
+// expect: 1
