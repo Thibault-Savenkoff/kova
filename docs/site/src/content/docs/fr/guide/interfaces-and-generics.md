@@ -256,7 +256,31 @@ the number 7
 
 `extend` marche sur `String`, `Int`, `Float`, `List<Int>`, `Map<String, Int>`, sur tes structs et sur
 celles d'un autre fichier. Une struct générique s'étend en entier, `extend Stack`, et ses méthodes
-utilisent son `T`. `extend List<T>` n'existe pas encore : choisis le type des éléments.
+utilisent son `T`.
+
+Un type de la bibliothèque s'étend pour tous ses éléments. Dans `extend List<T>`, une majuscule seule
+ou un nom avec une contrainte est un paramètre de type, et tout autre nom est un type :
+`extend List<Dog>` vise les Lists de `Dog`, `extend Map<String, V>` les Maps à clés textes.
+
+```kova
+extend List<T> {
+    fn second(self) -> T? := self.get(1)
+}
+
+extend List<T: Comparable> {
+    fn smallest(self) -> T? := self.sorted.get(0)
+}
+
+fn main {
+    print([3, 1, 2].second)
+    print(["b", "a"].smallest)
+}
+```
+
+```text
+1
+"a"
+```
 
 Il ne fait qu'ajouter. Une méthode qui existe déjà ne peut pas être remplacée, sinon le même
 `s.length` voudrait dire autre chose d'un programme à l'autre :

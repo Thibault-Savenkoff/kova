@@ -1998,9 +1998,10 @@ impl<'a> Translator<'a> {
         let result = self.new_slots(&ret);
         self.on_boxed(b, interface, |t, ty, v| {
             let name = method_name(&ty.owner(), method);
+            let (name, types) = t.added(ty, method).unwrap_or((name, ty.args().to_vec()));
             let (num, site) = match t.numbers.get(name.as_str()) {
                 Some(&num) => (num, t.sites[num]),
-                None => (t.helper(Helper::Instance(name.clone(), ty.args().to_vec())), t.generic_sites[name.as_str()]),
+                None => (t.helper(Helper::Instance(name.clone(), types)), t.generic_sites[name.as_str()]),
             };
             let mut vals: Slots = [v.clone(), args.concat()].concat();
             if site {
@@ -3832,7 +3833,7 @@ impl<'a> Translator<'a> {
     /// The call `id` of `name`; a generic one calls its copy for the types of this call
     /// (`larger<Int>`, `Stack.push<Int>`), with the caller's own `T` replaced too.
     fn call_at(&mut self, id: usize, name: &str, vals: Slots, places: Vec<(Place, Slots)>, span: Span, ty: &Type) -> Slots {
-        let Some(types) = self.info.type_args.get(&id) else {
+        let Some(types) = self.info.type_args.get(&id).filter(|_| self.generic_sites.contains_key(name)) else {
             return self.call(name, vals, places, span, ty);
         };
         let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
@@ -3844,10 +3845,11 @@ impl<'a> Translator<'a> {
     /// type checker only saw a `T`, in a copy of a generic function).
     fn call_on(&mut self, ty: &Type, method: &str, vals: Slots, places: Vec<(Place, Slots)>, span: Span, ret: &Type) -> Slots {
         let name = method_name(&ty.owner(), method);
-        if ty.args().is_empty() || !self.generic_sites.contains_key(name.as_str()) {
+        let (name, types) = self.added(ty, method).unwrap_or((name, ty.args().to_vec()));
+        if types.is_empty() || !self.generic_sites.contains_key(name.as_str()) {
             return self.call(&name, vals, places, span, ret);
         }
-        let types = ty.args().iter().map(|t| substitute(t, &self.subst)).collect();
+        let types = types.iter().map(|t| substitute(t, &self.subst)).collect();
         let num = self.helper(Helper::Instance(name.clone(), types));
         self.call_to(num, self.generic_sites[name.as_str()], vals, places, span, ret)
     }
@@ -4975,9 +4977,17 @@ impl<'a> Translator<'a> {
 
     /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
     fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Mode)> {
-        let q = method_name(&self.ty(receiver).owner(), &name.text);
+        let ty = self.ty(receiver);
+        let q = method_name(&ty.owner(), &name.text);
+        let q = if self.signatures.contains_key(&q) { q } else { self.added(&ty, &name.text)?.0 };
         let r = self.signatures.get(&q)?.0.expect("static function called on a value: refused by the type checker");
         Some((q, r))
+    }
+
+    /// `method` of `ty` as added by an `extend List<T>`: its name, and the types of its `T`.
+    fn added(&self, ty: &Type, method: &str) -> Option<(String, Vec<Type>)> {
+        let found = self.info.extensions_of(ty).into_iter().map(|(name, types)| (method_name(&name, method), types));
+        found.into_iter().find(|(q, _)| self.signatures.contains_key(q))
     }
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block, ty: &Type) -> Slots {

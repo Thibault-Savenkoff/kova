@@ -1,0 +1,12 @@
+struct Dog {
+    age: Int
+}
+
+extend List<T: Comparable> {
+    fn largest(self) -> T? := self.sorted.get(0)
+}
+
+fn main {
+    print([Dog { age := 1 }].largest)
+}
+// error: `largest` needs its `T` to follow `Comparable`, and `Dog` does not

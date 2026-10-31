@@ -618,6 +618,10 @@ impl Owner<'_> {
         if let Some((Some(r), ..)) = self.signatures.get(&added) {
             return Some((added, *r));
         }
+        let extensions = self.info.extensions_of(&self.info.types[receiver.id]);
+        if let Some((q, r)) = extensions.iter().map(|(e, _)| method_name(e, &name.text)).find_map(|q| Some((q.clone(), self.signatures.get(&q)?.0?))) {
+            return Some((q, r));
+        }
         let q = match &self.info.types[receiver.id] {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),

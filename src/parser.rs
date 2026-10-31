@@ -1151,8 +1151,13 @@ impl Parser<'_> {
     /// `extend String { fn shout(self) -> String … }`, `extend Int : Addable { … }`.
     fn extension(&mut self) -> R<Struct> {
         self.advance(); // extend
-        let ty = self.type_()?;
-        let name = Name { text: ty.text(), span: self.t[self.pos - 1].span };
+        let library = matches!(self.text(self.token().span).as_str(), "List" | "Map" | "Set");
+        let first = self.token().span;
+        let (ty, generics) = if library && self.kind_at(1) == Kind::Sym("<") { self.extended_generic()? } else { (self.type_()?, vec![]) };
+        // Two `extend List<T>` join; the same list with other bounds is another one.
+        let last = self.t[self.pos - 1].span;
+        let text = if generics.is_empty() { ty.text() } else { self.text(first.to(last)) };
+        let name = Name { text, span: last };
         let mut interfaces = vec![];
         if self.is_sym(":") {
             self.advance();
@@ -1180,7 +1185,47 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy: false, name, generics: vec![], interfaces, fields: vec![], variants: None, methods, extended: Some(ty) })
+        Ok(Struct { copy: false, name, generics, interfaces, fields: vec![], variants: None, methods, extended: Some(ty) })
+    }
+
+    /// `List<T>`, `Map<String, V: Display>`: one capital letter, or a name with a bound, is a type
+    /// parameter; any other name stays a type, so that `extend List<Dgo>` is an unknown type.
+    fn extended_generic(&mut self) -> R<(TypeAst, Vec<Generic>)> {
+        let span = self.advance().span;
+        let head = Name { text: self.text(span), span };
+        self.advance(); // <
+        let (mut types, mut generics) = (vec![], vec![]);
+        loop {
+            let ty = self.type_()?;
+            let mut bounds = vec![];
+            if self.is_sym(":") {
+                self.advance();
+                bounds.push(self.type_name()?);
+                while self.is_sym("+") {
+                    self.advance();
+                    bounds.push(self.type_name()?);
+                }
+            }
+            if let TypeAst::Name(n) = &ty
+                && (!bounds.is_empty() || (n.text.len() == 1 && n.text.starts_with(|c: char| c.is_ascii_uppercase())))
+            {
+                generics.push(Generic { name: n.clone(), bounds });
+            }
+            types.push(ty);
+            if !self.is_sym(",") {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(">")?;
+        // A Map's key and a Set's value are found with `=`.
+        if head.text != "List"
+            && let (Some(g), Some(TypeAst::Name(n))) = (generics.first_mut(), types.first())
+            && g.name.text == n.text
+        {
+            g.bounds.push(Name { text: "Equal".to_string(), span });
+        }
+        Ok((TypeAst::Generic(head, types), generics))
     }
 
     /// `interface Animal { fn sound(self) -> String … }`: signatures, and default methods with a body.

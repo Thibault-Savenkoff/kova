@@ -1,0 +1,81 @@
+interface Sized {
+    fn size(self) -> Int
+    fn big(self) -> Bool := self.size > 2
+}
+
+struct Dog {
+    name: String
+}
+
+extend List<T> {
+    fn second(self) -> T? := self.get(1)
+    fn last_two(self) -> List<T> := self.skip(self.length - 2)
+    fn twice(self) -> List<T> := self + self
+    fn add_both(var self, a: T, b: T) {
+        self.add(a.clone)
+        self.add(b.clone)
+    }
+}
+
+extend List<T>: Sized {
+    fn size(self) -> Int := self.length
+}
+
+extend List<T: Comparable> {
+    fn largest(self) -> T? {
+        let s: List<T> := self.sorted
+        return s.get(s.length - 1)
+    }
+}
+
+extend Map<K, V> {
+    fn size_text(self) -> String := "{self.length} entries"
+}
+
+extend Map<String, V> {
+    fn names(self) -> String := self.keys.sorted.join(", ")
+}
+
+extend Set<T> {
+    fn empty_too(self) -> Bool := self.length = 0
+}
+
+fn pick<T>(l: List<T>) -> T? := l.second
+
+fn measure<S: Sized>(x: S) -> Int := x.size
+
+fn main {
+    print([1, 2, 3].second)
+    print(["a", "b", "c"].last_two)
+    print([Dog { name := "a" }, Dog { name := "b" }].second)
+    print([1, 2].twice)
+    print([3, 9, 4].largest)
+    print(["x"].largest)
+    print(["a" := 1, "b" := 2].size_text)
+    print(["a" := 1, "b" := 2].names)
+    print([1 := 1].size_text)
+    print(Set[1].empty_too)
+    print(pick([1.5, 2.5]))
+    print(measure([1, 2, 3]))
+    print([1, 2, 3].big)
+    let boxed: any Sized := [1, 2]
+    print(boxed.size)
+    var grown: List<String> := ["a"]
+    grown.add_both("b", "c")
+    print(grown)
+}
+// expect: 2
+// expect: ["b", "c"]
+// expect: Dog { name := "b" }
+// expect: [1, 2, 1, 2]
+// expect: 9
+// expect: "x"
+// expect: 2 entries
+// expect: a, b
+// expect: 1 entries
+// expect: false
+// expect: 2.5
+// expect: 3
+// expect: true
+// expect: 2
+// expect: ["a", "b", "c"]

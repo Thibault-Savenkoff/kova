@@ -213,8 +213,7 @@ Vector { x := 2.0, y := 4.0 }
 6.0
 ```
 
-The parameter need not be of the same type: above, `Vector * Float` scales a vector. So
-`v * 2.0` works and `2.0 * v` does not, since `Float` has no such method. One operator is one
+The parameter need not be of the same type: `Vector * Float` scales a vector. One operator is one
 method, and Kova has no overloading, so a type cannot have both `Vector * Float` and
 `Vector * Vector`: give the second one a name, like `v.dot(w)`.
 

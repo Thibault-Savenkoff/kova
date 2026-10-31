@@ -908,6 +908,7 @@ pub struct Info {
     pub defaults: Vec<(String, usize, usize)>,
     /// Type name → the interfaces it follows (`struct Dog : Equal, Display`).
     pub follows: HashMap<String, Vec<String>>,
+    pub extensions: Vec<Extension>,
     /// By the `Expr::id` of a call to a generic function: the type given for each of its
     /// type parameters, in order (`larger(3, 4)` → `[Int]`).
     pub type_args: HashMap<usize, Vec<Type>>,
@@ -970,7 +971,13 @@ pub struct Seen {
 impl Info {
     /// Does the struct or enum `t` follow `interface`?
     pub fn follows(&self, t: &Type, interface: &str) -> bool {
-        self.follows.get(&t.owner()).is_some_and(|is| is.iter().any(|i| i == interface))
+        let owners = fitting(&self.extensions, t).into_iter().map(|(name, _)| name);
+        owners.chain([t.owner()]).any(|o| self.follows.get(&o).is_some_and(|is| is.iter().any(|i| i == interface)))
+    }
+
+    /// The `extend List<T>` that fit `t` (see `fitting`).
+    pub fn extensions_of(&self, t: &Type) -> Vec<(String, Vec<Type>)> {
+        fitting(&self.extensions, t)
     }
 }
 
@@ -1157,6 +1164,7 @@ struct Checker<'a> {
     /// (`Animal.sound`), with `Self` as a `Type::Param`.
     interfaces: HashMap<String, usize>,
     defaults: Vec<(String, usize, usize)>,
+    extensions: Vec<Extension>,
     follows: HashMap<String, Vec<String>>,
     type_args: HashMap<usize, Vec<Type>>,
     /// Each `any Animal` written, checked at the end (see `any_type`).
@@ -1257,6 +1265,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         interfaces: HashMap::new(),
         defaults: vec![],
         follows: HashMap::new(),
+        extensions: vec![],
         type_args: HashMap::new(),
         bounds: vec![],
         any_checks: vec![],
@@ -1768,10 +1777,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             impls.entry(it.clone()).or_default().push(t.clone());
         }
     }
-    // `Kennel<Int>`: each instance put in a box.
+    // `Kennel<Int>`, a `List<Int>` of `extend List<T>`: each instance put in a box.
     for (id, i) in c.boxes.iter().enumerate() {
         if let Some(i) = i
-            && !c.types[id].args().is_empty()
+            && (!c.types[id].args().is_empty() || !fitting(&c.extensions, &c.types[id]).is_empty())
             && !impls.get(i).is_some_and(|ts| ts.contains(&c.types[id]))
         {
             impls.entry(i.clone()).or_default().push(c.types[id].clone());
@@ -1791,6 +1800,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         types: c.types,
         moves,
         wraps: c.wraps,
+        extensions: c.extensions,
         boxes,
         structs: c.structs,
         defaults,
@@ -1951,10 +1961,33 @@ fn bound_help(t: &Type, bound: &str) -> String {
     }
 }
 
-/// The type parameters of `struct Stack<T>`, as types and as definitions.
+/// The type parameters of `struct Stack<T>` or `extend Map<K, V>`, as types and as definitions.
 fn struct_params(t: &Type) -> (Vec<Type>, Vec<Rc<ParamDef>>) {
-    let defs = t.args().iter().filter_map(|a| if let Type::Param(p) = a { Some(p.clone()) } else { None }).collect();
-    (t.args().to_vec(), defs)
+    let args = match t {
+        Type::List(e) | Type::Set(e) => vec![(**e).clone()],
+        Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+        t => t.args().to_vec(),
+    };
+    let defs: Vec<Rc<ParamDef>> = args.iter().filter_map(|a| if let Type::Param(p) = a { Some(p.clone()) } else { None }).collect();
+    (defs.iter().cloned().map(Type::Param).collect(), defs)
+}
+
+/// `extend List<T>`: methods for every type its `pattern` fits.
+pub struct Extension {
+    name: String,
+    pattern: Type,
+    params: Vec<Rc<ParamDef>>,
+}
+
+/// The extensions that fit `t`: each one's name, and the types of its parameters there.
+fn fitting(extensions: &[Extension], t: &Type) -> Vec<(String, Vec<Type>)> {
+    let fit = |e: &Extension| {
+        let mut found = vec![];
+        deduce(&e.pattern, t, &e.params, &mut found);
+        let types = e.params.iter().map(|p| Some(found.iter().find(|(n, _)| *n == p.name)?.1.clone())).collect::<Option<Vec<_>>>()?;
+        (substitute(&e.pattern, &found) == *t).then(|| (e.name.clone(), types))
+    };
+    extensions.iter().filter_map(fit).collect()
 }
 
 /// `Equal`, `Comparable`, `Display` (`parser::PRELUDE`).
@@ -2335,7 +2368,7 @@ impl Checker<'_> {
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,
             Type::Error => true,
-            t => primitive_follows(t, interface) || self.follows(&t.owner(), interface),
+            t => primitive_follows(t, interface) || self.follows(&t.owner(), interface) || fitting(&self.extensions, t).iter().any(|(name, _)| self.follows(name, interface)),
         }
     }
 
@@ -2599,9 +2632,16 @@ impl Checker<'_> {
             return Some(d.clone());
         }
         if let Some(t) = &s.extended {
+            let params = self.params(&s.generics, &|n| decls.contains_key(n));
+            let args: Vec<Type> = params.iter().cloned().map(Type::Param).collect();
+            let saved = self.open_struct(&args);
             let ty = self.written_type(t);
+            self.close_struct(saved);
             if matches!(ty, Type::Struct(_) | Type::Enum(_)) && !ty.args().is_empty() {
                 self.error(s.name.span, t!("extend_instance", name = ty.owner()));
+            }
+            if !params.is_empty() {
+                self.extensions.push(Extension { name: s.name.text.clone(), pattern: ty.clone(), params });
             }
             self.structs.insert(s.name.text.clone(), ty.clone());
             return Some(ty);
@@ -3037,8 +3077,8 @@ impl Checker<'_> {
             // ponytail: not a `Kennel<T>` inside a generic function: its box would need a number
             // per copy of the function.
             Type::Struct(_) | Type::Enum(_) => self.follows(&t.owner(), interface) && !reaches(t, &|_| true),
-            // `extend Int : Describe`.
-            _ => self.follows(&t.owner(), interface),
+            // `extend Int : Describe`, `extend List<T> : Describe`.
+            _ => (self.follows(&t.owner(), interface) || fitting(&self.extensions, t).iter().any(|(n, _)| self.follows(n, interface))) && !reaches(t, &|_| true),
         }
     }
 
@@ -3781,6 +3821,12 @@ impl Checker<'_> {
         }
         self.arguments(name, args, &sig.params, &[]);
         sig.ret
+    }
+
+    /// `method` of a `t` that an `extend List<T>` adds, and what its type parameters are there.
+    fn added_generic(&self, t: &Type, method: &str) -> Option<(Signature, Vec<Type>)> {
+        let mut found = fitting(&self.extensions, t).into_iter().map(|(name, types)| (self.functions.get(&method_name(&name, method)), types));
+        found.find_map(|(sig, types)| Some((sig?.clone(), types)))
     }
 
     /// A method of `Stack<T>` called on a `Stack<Int>`: its `T` is `Int` (kept for the KIR copy).
@@ -4822,6 +4868,7 @@ impl Checker<'_> {
                     // `button.on_click(3)`, or a method added by `extend`.
                     ExprKind::Method { .. } if self.filled.get(&called.id).is_some_and(|f| matches!(f.kind, ExprKind::Apply(..))) => true,
                     ExprKind::Method { receiver, name, .. } if self.functions.contains_key(&method_name(&self.types[receiver.id].owner(), &name.text)) => true,
+                    ExprKind::Method { receiver, name, .. } if self.added_generic(&self.types[receiver.id], &name.text).is_some() => true,
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => {
                             let key = method_name(&t.owner(), &name.text);
@@ -5124,6 +5171,18 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                // `[1, 2].total`: added by `extend List<T>`.
+                if let Some((sig, types)) = self.added_generic(&t, &name.text) {
+                    for (g, given) in sig.generics.iter().zip(&types) {
+                        let broken: Vec<&String> = g.bounds.iter().filter(|b| !self.satisfies(given, b)).collect();
+                        for b in broken {
+                            let d = Diag::new(name.span, t!("generic_bound", function = name.text, name = g.name, type = given.text(), bound = b));
+                            self.diags.push(d.help(bound_help(given, b)));
+                        }
+                    }
+                    let sig = self.for_types(e.id, sig, types);
+                    return self.method_call(receiver, &t.text(), name, args, sig);
+                }
                 // `"hi".shout`: added by `extend String`.
                 if !matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Param(_) | Type::Any(_) | Type::Error)
                     && let Some(sig) = self.functions.get(&method_name(&t.owner(), &name.text)).cloned()

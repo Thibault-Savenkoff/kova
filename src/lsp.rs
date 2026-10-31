@@ -749,7 +749,8 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     let hidden = |name: &str| (file.private.iter()).any(|(n, s)| *n == types::method_name(&owner, name) && s.start > root);
     let mut items = vec![];
     // `extend String { fn shout … }`.
-    if let Some(s) = file.structs.iter().find(|s| s.extended.is_some() && s.name.text == owner) {
+    let head = |n: &str| n.split('<').next().unwrap_or("").to_string();
+    for s in file.structs.iter().filter(|s| s.extended.is_some() && (s.name.text == owner || (!s.generics.is_empty() && head(&s.name.text) == head(&owner)))) {
         let added = s.methods.iter().filter(|m| m.receiver.is_some() && m.name.text.starts_with(char::is_alphabetic));
         items.extend(added.map(|m| item(&m.name.text, CompletionItemKind::METHOD, types::heading_text(m))));
     }
@@ -1404,6 +1405,8 @@ mod tests {
         assert!(text.contains(&"shout".to_string()) && !text.contains(&"*".to_string()), "{text:?}");
         let list = labels(&format!("{added}fn main {{\n    let l: List<Int> := [1]\n    l.|\n}}\n"));
         assert!(list.contains(&"total".to_string()), "{list:?}");
+        let any = labels("extend List<T> {\n    fn second(self) -> T? := self.get(1)\n}\nfn main {\n    let l: List<Int> := [1]\n    l.|\n}\n");
+        assert!(any.contains(&"second".to_string()), "{any:?}");
     }
 
     #[test]

@@ -217,9 +217,8 @@ Vector { x := 2.0, y := 4.0 }
 6.0
 ```
 
-Le paramètre n'a pas besoin d'être du même type : ci-dessus, `Vector * Float` agrandit un vecteur.
-Donc `v * 2.0` marche et `2.0 * v` non, puisque `Float` n'a pas cette méthode. Un opérateur est une
-méthode, et Kova n'a pas de surcharge : un type ne peut pas avoir à la fois `Vector * Float` et
+Le paramètre n'a pas besoin d'être du même type : `Vector * Float` agrandit un vecteur. Un opérateur
+est une méthode, et Kova n'a pas de surcharge : un type ne peut pas avoir à la fois `Vector * Float` et
 `Vector * Vector`. Donne un nom au second, comme `v.dot(w)`.
 
 `=` et `<` ne s'écrivent pas comme ça : ils viennent de [`Equal` et `Comparable`](#comparer-et-afficher).

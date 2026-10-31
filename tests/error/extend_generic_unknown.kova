@@ -1,0 +1,12 @@
+struct Dog {
+    age: Int
+}
+
+extend List<Dgo> {
+    fn a(self) -> Int := 1
+}
+
+fn main {
+    print(1)
+}
+// error: unknown type `Dgo`
