@@ -3063,9 +3063,11 @@ impl<'a> Translator<'a> {
                 self.bind(pattern, &slots, &ty);
             }
             // The value first, then the places (a call in the value may change a List: `l[0] := f(var l)`).
-            Stmt::Assign { target, op, value } => match op {
+            Stmt::Assign { target, op, value } => match op.filter(|_| !self.info.assign_ops.contains_key(&value.id)) {
                 // `(a, b) := (b, a)`: read everything before writing, otherwise `a` would be overwritten too early.
                 None => {
+                    // `total += v` with the method `+`: `total := total + v`.
+                    let value = self.info.assign_ops.get(&value.id).unwrap_or(value);
                     let v = self.owned(value);
                     let ty = self.given(value);
                     if let Some(vars) = self.reopen.take() {
@@ -3097,12 +3099,12 @@ impl<'a> Translator<'a> {
                         r
                     } else if ty == Type::BigInt {
                         let loc = self.loc(value.span);
-                        let r = self.big(*op, old, v, loc);
+                        let r = self.big(op, old, v, loc);
                         self.emit(Inst::Free(old));
                         r
                     } else {
                         let loc = self.loc(target.span());
-                        self.operation(kir_op(*op), old, v, self.is_float(value), loc)
+                        self.operation(kir_op(op), old, v, self.is_float(value), loc)
                     };
                     self.write(&place, &[r]);
                 }

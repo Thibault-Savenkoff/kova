@@ -943,6 +943,8 @@ pub struct Info {
     pub invoked: HashSet<usize>,
     /// The values of type `Function` given where a block is expected: lent for the call.
     pub lent: HashSet<usize>,
+    /// `v += w` with the method `+`, by the id of `w`: the call `v.+(w)`.
+    pub assign_ops: HashMap<usize, Expr>,
     /// By the `Expr::id` of a block: the variables from around it that it uses (filled by
     /// `ownership.rs`); the KIR gives them to the block in its box.
     pub captures: HashMap<usize, Vec<String>>,
@@ -1160,6 +1162,7 @@ struct Checker<'a> {
     in_block: usize,
     invoked: HashSet<usize>,
     lent: HashSet<usize>,
+    assign_ops: HashMap<usize, Expr>,
     /// Inside a function being kept: the scopes from there on are its own.
     keeping: Option<usize>,
     /// The fields read as a value, where a function is expected: not called.
@@ -1251,6 +1254,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         in_block: 0,
         invoked: HashSet::new(),
         lent: HashSet::new(),
+        assign_ops: HashMap::new(),
         keeping: None,
         field_values: HashSet::new(),
         types: vec![Type::Error; nb_exprs],
@@ -1760,7 +1764,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let moves = vec![false; c.types.len()];
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
-    let (spans, seen, hints, matches, invoked, lent) = (c.spans, c.seen, c.hints, c.matches, c.invoked, c.lent);
+    let (spans, seen, hints, matches, invoked, lent, assign_ops) = (c.spans, c.seen, c.hints, c.matches, c.invoked, c.lent, c.assign_ops);
     let info = Info {
         types: c.types,
         moves,
@@ -1782,6 +1786,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         filled: c.filled,
         invoked,
         lent,
+        assign_ops,
         captures: HashMap::new(),
         externs,
         callbacks: c.callbacks,
@@ -3441,13 +3446,7 @@ impl Checker<'_> {
         true
     }
 
-    /// `a op b`, both of the same type; `2 * x` with a `Float` `x` makes `2` a `Float`.
-    fn same_type(&mut self, a: &Expr, b: &Expr, allowed: &[Type], what: &str) -> Type {
-        let t = self.one_of(a, allowed, what);
-        self.like(a, t, b)
-    }
-
-    /// Checks `b` against the type `t` of `a` (see `same_type`).
+    /// Checks `b` against the type `t` of `a`: `2 * x` with a `Float` `x` makes `2` a `Float`.
     fn like(&mut self, a: &Expr, t: Type, b: &Expr) -> Type {
         if t != Type::Int || !matches!(a.kind, ExprKind::Int(_) | ExprKind::Unary(UnOp::Neg, _)) {
             self.expect(b, &t);
@@ -3490,6 +3489,11 @@ impl Checker<'_> {
     /// Checks that `e` has one of the `allowed` types; returns its type.
     fn one_of(&mut self, e: &Expr, allowed: &[Type], what: &str) -> Type {
         let t = self.expr(e);
+        self.is_one_of(e, t, allowed, what)
+    }
+
+    /// The same once `e`'s type `t` is known.
+    fn is_one_of(&mut self, e: &Expr, t: Type, allowed: &[Type], what: &str) -> Type {
         if t == Type::Error || allowed.contains(&t) || (what == "`+`" && matches!(t, Type::List(_) | Type::Set(_) | Type::Map(..))) {
             return t;
         }
@@ -3498,8 +3502,55 @@ impl Checker<'_> {
         let last = names.pop().unwrap_or_default();
         let names = if names.is_empty() { last } else { format!("{} {} {last}", names.join(", "), t!("word_or")) };
         let d = Diag::new(e.span, t!("applies_to", what = what, allowed = names, given = t.text()));
-        self.diags.push(if what == "`*`" && t == Type::String { d.help(t!("text_times_help")) } else { d });
+        self.diags.push(if what == "`*`" && t == Type::String {
+            d.help(t!("text_times_help"))
+        } else if matches!(t, Type::Struct(_) | Type::Enum(_)) {
+            d.help(t!("operator_help", op = what.trim_matches('`'), type = t.text()))
+        } else {
+            d
+        });
         Type::Error
+    }
+
+    /// The method `op` of a value of type `t`, and the type it is declared in.
+    fn operator(&self, t: &Type, op: &str) -> Option<(String, Signature)> {
+        let found = |owner: &str| Some((owner.to_string(), self.functions.get(&method_name(owner, op))?.clone()));
+        match t {
+            Type::Struct(_) | Type::Enum(_) => found(&t.owner()),
+            Type::Any(i) => found(i),
+            Type::Param(p) => p.bounds.iter().find_map(|b| {
+                let (owner, sig) = found(b)?;
+                Some((owner, sig.substitute(&[("Self".to_string(), t.clone())])))
+            }),
+            _ => None,
+        }
+    }
+
+    /// `a + b` where `a` has the method `+`: the call `a.+(b)`, of type `t` on the left. `id` is
+    /// the `Expr` it stands for, given by the caller to `Info::filled` or `Info::assign_ops`.
+    fn operator_call(&mut self, a: &Expr, t: &Type, b: &Expr, op: &str, span: Span, (owner, sig): (String, Signature)) -> Expr {
+        let name = Name { text: op.to_string(), span };
+        let call = self.fresh(span, ExprKind::Method { receiver: Box::new(a.clone()), name: name.clone(), args: vec![b.clone()] });
+        let sig = self.for_types(call.id, sig, t.args().to_vec());
+        self.hidden(&method_name(&owner, op), span);
+        self.types[call.id] = self.method_call(a, &owner, &name, std::slice::from_ref(b), sig);
+        self.spans[call.id] = span;
+        call
+    }
+
+    /// `x`, `x.age`, `l[0]` as an expression: the left side of `v += w`.
+    fn place_expr(&mut self, name: &Name, fields: &[Step], span: Span) -> Expr {
+        let mut e = self.fresh(name.span, ExprKind::Var(name.text.clone()));
+        for step in fields {
+            let kind = match step {
+                Step::Index(i) => ExprKind::Field(Box::new(e), *i),
+                Step::Name(n) => ExprKind::Method { receiver: Box::new(e), name: n.clone(), args: vec![] },
+                Step::At(i) => ExprKind::Index(Box::new(e), Box::new(i.clone())),
+            };
+            e = self.fresh(span, kind);
+        }
+        self.expr(&e);
+        e
     }
 
     /// The type of a `:=` target, checking that it may change.
@@ -4577,6 +4628,19 @@ impl Checker<'_> {
                     self.expect(value, &ty);
                     return;
                 }
+                // `total += v`: `total := total + v` with the method `+`.
+                if let (Some(o), Target::Place { name, fields, span }) = (op, target)
+                    && let Some(found) = self.operator(&ty, o.text())
+                {
+                    let place = self.place_expr(name, fields, *span);
+                    let call = self.operator_call(&place, &ty, value, o.text(), value.span, found);
+                    let r = self.types[call.id].clone();
+                    if r != ty {
+                        self.mismatch(value, r, &ty);
+                    }
+                    self.assign_ops.insert(value.id, call);
+                    return;
+                }
                 let concat = *op == Some(BinOp::Plus) && matches!(ty, Type::String | Type::List(_) | Type::Set(_) | Type::Map(..));
                 if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::BigInt | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
@@ -5304,10 +5368,21 @@ impl Checker<'_> {
                         self.error(e.span, t!("range_only_in_for", op = op.text()));
                         Type::Error
                     }
-                    Rem => self.same_type(a, b, &[Type::Int, Type::BigInt], "`%`"),
-                    Plus => self.same_type(a, b, &[Type::Int, Type::Float, Type::String, Type::BigInt], "`+`"),
-                    Minus | Times | Div => {
-                        self.same_type(a, b, &[Type::Int, Type::Float, Type::BigInt], &format!("`{}`", op.text()))
+                    Rem | Plus | Minus | Times | Div => {
+                        let t = self.expr(a);
+                        if let Some(found) = self.operator(&t, op.text()) {
+                            let call = self.operator_call(a, &t, b, op.text(), e.span, found);
+                            let r = self.types[call.id].clone();
+                            self.filled.insert(e.id, call);
+                            return r;
+                        }
+                        let allowed = match op {
+                            Rem => vec![Type::Int, Type::BigInt],
+                            Plus => vec![Type::Int, Type::Float, Type::String, Type::BigInt],
+                            _ => vec![Type::Int, Type::Float, Type::BigInt],
+                        };
+                        let t = self.is_one_of(a, t, &allowed, &format!("`{}`", op.text()));
+                        self.like(a, t, b)
                     }
                 }
             }

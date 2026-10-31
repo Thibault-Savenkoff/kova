@@ -192,6 +192,8 @@ fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Opti
         // `struct Dog : Animal`, but `x: Int` and `<T: Comparable>`.
         (_, Kind::Sym(":")) => heading && !in_generics,
         // `print(x)`, `ok(value)`, `List<Int>()`; `l[0]`, `self.items[0]`.
+        // `fn +(self, other: Vector)`.
+        (Kind::Sym(_), Kind::Sym("(")) if before.is_some_and(|t| t.kind == Kind::Keyword("fn")) => false,
         (_, Kind::Sym("(")) => !(named || matches!(a.kind, Kind::Keyword("ok" | "err"))),
         (_, Kind::Sym("[")) => !(named || matches!(a.kind, Kind::Str | Kind::Int(_)) || matches!(a.kind, Kind::Keyword("self" | "result"))),
         (Kind::Sym("{"), Kind::Sym("}")) => false,

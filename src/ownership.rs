@@ -388,6 +388,16 @@ impl Owner<'_> {
                 self.pending.truncate(mark);
                 self.assign(target);
             }
+            // `total += v` with the method `+`: `total := total + v`.
+            Stmt::Assign { target, op: Some(_), value } if self.info.assign_ops.contains_key(&value.id) => {
+                let call = self.info.assign_ops.remove(&value.id).unwrap();
+                self.target_free(target);
+                let mark = self.pending.len();
+                self.give(&call);
+                self.pending.truncate(mark);
+                self.assign(target);
+                self.info.assign_ops.insert(value.id, call);
+            }
             Stmt::Assign { target, op: Some(_), value } => {
                 self.target_free(target);
                 let mark = self.pending.len();

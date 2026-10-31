@@ -148,6 +148,49 @@ erreur: `owner` est emprunté ici : il ne peut pas être déplacé
 Une méthode sans paramètres s'appelle sans `()`, comme un champ : `account.summary`. Qui utilise
 le type n'a pas besoin de savoir lequel des deux c'est.
 
+## Les opérateurs sur tes types
+
+`+`, `-`, `*`, `/` et `%` marchent sur tes propres types quand le type a une méthode de ce nom. La
+méthode prend `self` et un paramètre, et `a + b` l'appelle sur `a` : c'est donc la valeur de gauche
+qui choisit la méthode. `+=` et les autres viennent avec : `total += a` est `total := total + a`.
+
+```kova
+struct Vector {
+    x: Float
+    y: Float
+
+    fn +(self, other: Vector) -> Vector := Vector { x := self.x + other.x, y := self.y + other.y }
+    fn *(self, k: Float) -> Vector := Vector { x := self.x * k, y := self.y * k }
+}
+
+fn main {
+    let a := Vector { x := 1.0, y := 2.0 }
+    let b := Vector { x := 3.0, y := 4.0 }
+    print(a + b)
+    print((a + b) * 2.0)
+
+    var total := Vector { x := 0.0, y := 0.0 }
+    total += a
+    total += b
+    print(total)
+}
+```
+
+```text
+Vector { x := 4.0, y := 6.0 }
+Vector { x := 8.0, y := 12.0 }
+Vector { x := 4.0, y := 6.0 }
+```
+
+Le paramètre n'a pas besoin d'être du même type : ci-dessus, `Vector * Float` agrandit un vecteur.
+Donc `v * 2.0` marche et `2.0 * v` non, puisque `Float` n'a pas cette méthode. Un opérateur est une
+méthode, et Kova n'a pas de surcharge : un type ne peut pas avoir à la fois `Vector * Float` et
+`Vector * Vector`. Donne un nom au second, comme `v.dot(w)`.
+
+`=` et `<` ne s'écrivent pas comme ça : ils viennent de [`Equal` et `Comparable`](#comparer-et-afficher).
+Une interface peut demander un opérateur, ce qui permet à une fonction générique de l'utiliser :
+`interface Addable { fn +(self, other: Self) -> Self }`.
+
 ## Comparer et afficher
 
 Une struct ne se compare avec `=` et `<`, ou ne s'affiche dans un texte, que si elle le dit, en

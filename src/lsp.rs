@@ -760,7 +760,8 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     match t {
         Type::Struct(_) | Type::Enum(_) => {
             if let Some(s) = file.structs.iter().find(|s| s.name.text == owner) {
-                let own = s.methods.iter().filter(|m| m.receiver.is_some() && !hidden(&m.name.text));
+                // `+` is written `a + b`, never after a dot.
+                let own = s.methods.iter().filter(|m| m.receiver.is_some() && !hidden(&m.name.text) && m.name.text.starts_with(char::is_alphabetic));
                 items.extend(own.map(method));
                 if s.variants.is_none() {
                     items.push(item("to_json", CompletionItemKind::METHOD, "-> String".into()));

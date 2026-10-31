@@ -1,0 +1,74 @@
+// expect: Vector { x := 4.0, y := 6.0 }
+// expect: Vector { x := 2.0, y := 2.0 }
+// expect: Vector { x := 8.0, y := 12.0 }
+// expect: true
+// expect: Vector { x := 4.0, y := 6.0 }
+// expect: Vector { x := 2.0, y := 3.0 }
+// expect: [Vector { x := 4.0, y := 6.0 }]
+// expect: Money { label := "EUR", cents := 300 }
+// expect: 6
+// expect: Money { label := "EUR/3", cents := 100 }
+// expect: Money { label := "EUR", cents := 6600 }
+// expect: Size { n := 6 }
+// expect: 3
+
+struct Vector : Equal {
+    x: Float
+    y: Float
+
+    fn +(self, other: Vector) -> Vector := Vector { x := self.x + other.x, y := self.y + other.y }
+    fn -(self, other: Vector) -> Vector := Vector { x := self.x - other.x, y := self.y - other.y }
+    fn *(self, k: Float) -> Vector := Vector { x := self.x * k, y := self.y * k }
+}
+
+struct Money {
+    label: String
+    cents: Int
+
+    fn +(self, other: Money) -> Money := Money { label := self.label.clone, cents := self.cents + other.cents }
+    fn %(self, n: Int) -> Int := self.cents % n
+    fn /(self, n: Int) -> Money := Money { label := "{self.label}/{n}", cents := self.cents / n }
+}
+
+interface Addable {
+    fn +(self, other: Self) -> Self
+}
+
+struct Size : Addable {
+    n: Int
+    fn +(self, other: Size) -> Size := Size { n := self.n + other.n }
+}
+
+struct Box<T> {
+    item: T
+    fn +(self, other: Int) -> Int := other + 1
+}
+
+fn total<T: Addable>(a: T, b: T, c: T) -> T := a + b + c
+
+fn main {
+    let a := Vector { x := 1.0, y := 2.0 }
+    let b := Vector { x := 3.0, y := 4.0 }
+    print(a + b)
+    print(b - a)
+    print((a + b) * 2.0)
+    print(a + b * 2.0 - a = b * 2.0)
+    var sum := Vector { x := 0.0, y := 0.0 }
+    for v in [a.clone, b.clone] {
+        sum += v
+    }
+    print(sum)
+    sum *= 0.5
+    print(sum)
+    var pos: List<Vector> := [a.clone]
+    pos[0] += b.clone
+    print(pos)
+    var m := Money { label := "EUR", cents := 250 }
+    m += Money { label := "x", cents := 50 }
+    print(m)
+    print(m % 7)
+    print(m / 3)
+    print(m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m + m)
+    print(total(Size { n := 1 }, Size { n := 2 }, Size { n := 3 }))
+    print(Box<Int> { item := 1 } + 2)
+}

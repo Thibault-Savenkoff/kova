@@ -155,6 +155,8 @@ lang en {
     block_kept := "`{name}` is a block lent for this call: it cannot be kept"
     block_kept_help := "to keep it, write `{name}: move \{…\}` in the parameters"
     not_a_function := "this is not a function: `{type}`"
+    operator_shape := "an operator method takes `self` and one parameter: `fn {op}(self, other: T) -> T`"
+    operator_help := "add `fn {op}(self, other: {type}) -> {type}` to `{type}`"
     function_alone := "`{name}` is a function: call it with `{name}(…)`, or give it where a block is expected"
     habit_equal := "Kova compares with one `=`: write `a = b`"
     habit_assign := "Kova gives a value with `:=`, and keeps `=` for comparing"

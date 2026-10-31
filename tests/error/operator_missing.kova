@@ -1,0 +1,10 @@
+// Without the method, the error says what to add.
+struct W {
+    n: Int
+}
+fn main {
+    let w := W { n := 1 }
+    print(w + w)
+}
+// error: `+` applies to `Int`, `Float`, `String` or `BigInt`, not to `W`
+// error: add `fn +(self, other: W) -> W` to `W`

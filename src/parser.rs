@@ -1260,7 +1260,14 @@ impl Parser<'_> {
     /// `fn name(params) -> Type`; `in_struct`: the first parameter may be `self`.
     fn function(&mut self, in_struct: bool) -> R<Function> {
         self.advance(); // fn
-        let mut name = self.value_name("what_function")?;
+        // `fn +(self, other: Vector) -> Vector`: what `a + b` calls (PLAN Part 4 "Operators").
+        let operator = in_struct && matches!(self.kind(), Kind::Sym("+" | "-" | "*" | "/" | "%"));
+        let mut name = if operator {
+            let span = self.advance().span;
+            Name { text: self.text(span), span }
+        } else {
+            self.value_name("what_function")?
+        };
         if !in_struct {
             self.alias_taken(&name, &crate::locale::text("what_function", &[]));
             name.text = self.qualified(name.text);
@@ -1280,6 +1287,9 @@ impl Parser<'_> {
             self.expect(",")?;
         }
         self.params(&mut params)?;
+        if operator && (receiver.is_none() || params.len() != 1) {
+            self.diags.push(Diag::new(name.span, t!("operator_shape", op = name.text)));
+        }
         // `fn put(value: Int) at(index: Int)`: a keyword message, named `put(…) at(…)`.
         let mut breaks = vec![];
         while self.next_part(self.t[self.pos - 1].span) && self.kind_at(1) == Kind::Sym("(") {

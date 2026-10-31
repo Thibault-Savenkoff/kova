@@ -1,0 +1,11 @@
+// An operator method takes `self` and one parameter.
+struct V {
+    n: Int
+    fn +(other: V) -> V := other
+    fn -(self) -> V := self
+}
+fn main {
+    print(1)
+}
+// error: an operator method takes `self` and one parameter: `fn +(self, other: T) -> T`
+// error: an operator method takes `self` and one parameter: `fn -(self, other: T) -> T`
