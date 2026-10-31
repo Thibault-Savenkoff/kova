@@ -9,6 +9,17 @@ fn main {
     print("false".to_bool)
     print("yes".to_bool)
     print("True".to_bool)
+    print("-00123456789012345678901234567890".to_bigint)
+    print("0".to_bigint)
+    print("-0".to_bigint)
+    print("1.5".to_bigint)
+    print("".to_bigint)
+    print("-".to_bigint)
+    print("x".yellow.magenta)
+    let big: BigInt? := "99999999999999999999".to_bigint
+    if big != none {
+        print(big + 1)
+    }
 }
 // expect: 0
 // expect: 1
@@ -19,3 +30,11 @@ fn main {
 // expect: false
 // expect: none
 // expect: none
+// expect: -123456789012345678901234567890
+// expect: 0
+// expect: 0
+// expect: none
+// expect: none
+// expect: none
+// expect: x
+// expect: 100000000000000000000

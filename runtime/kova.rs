@@ -495,6 +495,11 @@ pub extern "C" fn kova_str_trim(a: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn kova_str_to_bigint(a: i64) -> i64 {
+    bigint::parse(text_of(a)).map_or(0, |t| new_text(t.as_bytes()))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kova_str_reversed(a: i64) -> i64 {
     new_text(text_of(a).chars().rev().collect::<String>().as_bytes())
 }

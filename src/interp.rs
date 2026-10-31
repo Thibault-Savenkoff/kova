@@ -861,6 +861,10 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = s(0).trim_matches(|c: char| c.is_ascii_whitespace()).to_string();
                             heap.make(t)
                         }
+                        StrOp::ToBigInt => match crate::bigint::parse(s(0)) {
+                            Some(t) => heap.make(t),
+                            None => 0,
+                        },
                         StrOp::Reversed => {
                             let t: String = s(0).chars().rev().collect();
                             heap.make(t)

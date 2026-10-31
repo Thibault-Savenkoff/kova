@@ -726,6 +726,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "to_int", Type::Int, true),
     (Type::String, "to_float", Type::Float, true),
     (Type::String, "to_bool", Type::Bool, true),
+    (Type::String, "to_bigint", Type::BigInt, true),
     (Type::String, "to_date", Type::Date, true),
     (Type::String, "to_datetime", Type::DateTime, true),
     (Type::Int, "to_bigint", Type::BigInt, false),

@@ -389,6 +389,8 @@ pub enum StrOp {
     Run,
     /// `s.to_upper`, `s.to_lower`: a new String (`case_of`).
     ToUpper,
+    /// `s.to_bigint`: a new BigInt, or 0 if it is not a whole number.
+    ToBigInt,
     /// `s.reversed`: by character.
     Reversed,
     /// `s.to_bool`: 1 for "true", 0 for "false", 2 for anything else.
@@ -6096,6 +6098,14 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(at, op, vec![v]));
                     self.emit(Inst::Binary(present, Op::Ne, at, wrong, NOWHERE));
                     return vec![present, at];
+                }
+                if self.ty(receiver) == Type::String && name.text == "to_bigint" {
+                    let (big, zero, present) = (self.int_local(), self.constant(0), self.int_local());
+                    self.emit(Inst::Str(big, StrOp::ToBigInt, vec![v]));
+                    self.emit(Inst::Binary(present, Op::Ne, big, zero, NOWHERE));
+                    let v = vec![present, big];
+                    self.track(&v, &self.ty(e));
+                    return v;
                 }
                 if self.ty(receiver) == Type::String && name.text == "to_bool" {
                     let (answer, two, present, value) = (self.int_local(), self.constant(2), self.int_local(), self.int_local());

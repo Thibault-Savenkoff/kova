@@ -160,6 +160,7 @@ pour que le programme décide quoi faire alors :
 | `s.to_int -> Int?` | un nombre entier : `"42"`, `"-5"` (pas `"+5"`, `" 5"` ni `"1_000"`). |
 | `s.to_float -> Float?` | un nombre avec un point : `"2.5"`, `"1e3"`, `"-0.1"`. |
 | `s.to_bool -> Bool?` | exactement `"true"` ou `"false"`. |
+| `s.to_bigint -> BigInt?` | un nombre entier de n'importe quelle taille. |
 | `s.to_date -> Date?` | une date écrite `"2026-10-23"`, qui doit exister (`"2026-02-30"` donne `none`). |
 | `s.to_datetime -> DateTime?` | une date et une heure écrites `"2026-10-23 14:05:09"`. |
 

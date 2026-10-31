@@ -96,6 +96,16 @@ fn divide(a: &[u8], b: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// `a + b`.
+/// `s.to_bigint`: its decimal text, or `None` if it is not a whole number (same rule as `to_int`).
+pub fn parse(s: &str) -> Option<String> {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (neg, d) = split(s);
+    Some(join(neg, d))
+}
+
 pub fn add(a: &str, b: &str) -> String {
     let ((na, da), (nb, db)) = (split(a), split(b));
     if na == nb {

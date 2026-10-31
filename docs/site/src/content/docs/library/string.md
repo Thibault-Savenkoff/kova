@@ -158,6 +158,7 @@ the program decides what to do then:
 | `s.to_int -> Int?` | a whole number: `"42"`, `"-5"` (not `"+5"`, `" 5"` or `"1_000"`). |
 | `s.to_float -> Float?` | a number with a dot: `"2.5"`, `"1e3"`, `"-0.1"`. |
 | `s.to_bool -> Bool?` | exactly `"true"` or `"false"`. |
+| `s.to_bigint -> BigInt?` | a whole number of any size. |
 | `s.to_date -> Date?` | a date written `"2026-10-23"`, which must exist (`"2026-02-30"` is `none`). |
 | `s.to_datetime -> DateTime?` | a date and a time written `"2026-10-23 14:05:09"`. |
 
