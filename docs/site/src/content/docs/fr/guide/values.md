@@ -94,6 +94,28 @@ Un nom ne peut pas être redéclaré tant qu'il est encore visible, même dans u
 deux `total` différents dans la même fonction sont une source classique de confusion, alors Kova
 demande un autre nom.
 
+## Nommer un type long
+
+Comme les types sont écrits, un type long peut prendre un nom plus court avec `type`. Il reste le même
+type : un `Grid` et une `List<List<Int>>` sont une seule chose, et le nom est connu dans son fichier.
+
+```kova
+type Grid := List<List<Int>>
+
+fn cells(g: Grid) -> Int {
+    return g.fold(0) { sum: Int, row: List<Int> => sum + row.length }
+}
+
+fn main {
+    let g: Grid := [[1, 2], [3]]
+    print(cells(g))
+}
+```
+
+```text
+3
+```
+
 ## Les types de base
 
 | Type | Valeurs | S'écrit |

@@ -66,6 +66,7 @@ fn prelude() -> Vec<Interface> {
         symbol: None,
         copies: vec![],
         ui_runs: vec![],
+        aliases: HashMap::new(),
         public: false,
         private: vec![],
         module: None,
@@ -179,6 +180,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         symbol: None,
         copies: vec![],
         ui_runs: vec![],
+        aliases: HashMap::new(),
         public: false,
         private: vec![],
         own: if module.is_some() { own } else { HashSet::new() },
@@ -194,6 +196,9 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
 }
 
 struct Parser<'a> {
+    /// `type Grid := List<List<Int>>`: each use is read as the type itself.
+    // ponytail: known in its own file only; a `public` alias when a module needs to share one.
+    aliases: HashMap<String, TypeAst>,
     t: Vec<Token>,
     pos: usize,
     src: &'a str,
@@ -477,6 +482,10 @@ impl Parser<'_> {
             return Ok(TypeAst::Any(self.type_name()?));
         }
         if !self.is_sym("(") {
+            if let Some(ty) = self.aliases.get(&self.text(self.token().span)).filter(|_| self.kind() == Kind::Type).cloned() {
+                self.advance();
+                return Ok(ty);
+            }
             let name = self.type_name()?;
             return if self.is_sym("<") { self.type_arguments(name) } else { Ok(TypeAst::Name(name)) };
         }
@@ -591,7 +600,28 @@ impl Parser<'_> {
 
     // ---- File and functions ----
 
+    /// The file's `type` lines, read first: types may be used before they are declared.
+    fn read_aliases(&mut self) {
+        let (mut depth, reported) = (0, self.diags.len());
+        for i in 0..self.t.len().saturating_sub(2) {
+            match self.t[i].kind {
+                Kind::Sym("{") => depth += 1,
+                Kind::Sym("}") => depth -= 1,
+                Kind::Ident if depth == 0 && self.text(self.t[i].span) == "type" && self.t[i + 1].kind == Kind::Type && self.t[i + 2].kind == Kind::Sym(":=") => {
+                    self.pos = i + 3;
+                    if let Ok(ty) = self.type_() {
+                        self.aliases.insert(self.text(self.t[i + 1].span), ty);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.diags.truncate(reported);
+        self.pos = 0;
+    }
+
     fn file(&mut self) -> File {
+        self.read_aliases();
         let (mut header, mut functions, mut structs, mut tests, mut langs) = (None, vec![], vec![], vec![], vec![]);
         let (mut interfaces, mut imports, mut externs) = (vec![], vec![], vec![]);
         loop {
@@ -636,6 +666,12 @@ impl Parser<'_> {
                 Kind::Keyword("test") => self.test().map(|t| tests.push(t)),
                 // `lang` is not a reserved word: it only means something here.
                 Kind::Ident if self.text(self.token().span) == "lang" => self.lang().map(|l| langs.push(l)),
+                // Read by `read_aliases`, and read again for its errors.
+                Kind::Ident if self.text(self.token().span) == "type" && self.kind_at(1) == Kind::Type => {
+                    self.advance();
+                    self.advance();
+                    self.expect(":=").and_then(|_| self.type_()).map(|_| ())
+                }
                 // Neither is `extern`.
                 Kind::Ident if self.at_extern() => self.extern_().map(|e| {
                     structs.extend(e.structs.iter().map(Struct::kova_view));
@@ -2214,6 +2250,20 @@ impl Parser<'_> {
                 return Ok(self.expr(t.span.to(m.close), ExprKind::Match(Box::new(m))));
             }
             Kind::Type => return self.type_atom(),
+            // `.Red`: the case of the enum expected here, whose name is written elsewhere.
+            Kind::Sym(".") if self.kind_at(1) == Kind::Type => {
+                self.advance();
+                let name = self.plain_type_name()?;
+                let (mut args, mut end) = (vec![], name.span);
+                if self.is_sym("(") {
+                    let open = self.advance().span;
+                    args = self.arguments()?;
+                    end = self.advance().span;
+                    self.empty_parens(&args, open, end, &name.text);
+                }
+                let ty = Name { text: String::new(), span: t.span };
+                return Ok(self.expr(t.span.to(end), ExprKind::Variant { ty, types: vec![], name, args }));
+            }
             Kind::Sym("(") => {
                 self.advance();
                 let e = self.inner_expr()?;

@@ -186,6 +186,8 @@ fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Opti
     let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
+        // `color := .Red`, `f(a, .Red)`: a short case of an enum, not a method.
+        (_, Kind::Sym(".")) if !g && !value_before(Some(&a)) && !matches!(a.kind, Kind::Sym("(" | "[")) => true,
         (_, Kind::Sym("," | ")" | "]" | "?" | "." | ".." | "..=")) | (Kind::Sym("(" | "[" | "." | ".." | "..=" | "..."), _) => false,
         // `struct Dog : Animal`, but `x: Int` and `<T: Comparable>`.
         (_, Kind::Sym(":")) => heading && !in_generics,

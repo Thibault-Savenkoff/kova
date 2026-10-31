@@ -79,6 +79,41 @@ This is how Kova says "one of these, and here is what each one holds" in one typ
 need a class per case and a type test, or a struct with fields that only mean something for some
 values; the compiler then cannot tell which field is valid when.
 
+## Writing less when the type is known
+
+When the enum is already known from where the value goes, the case starts with a dot:
+
+```kova
+enum Light {
+    Red
+    Green
+}
+
+fn name(l: Light) -> String {
+    return match l {
+        Red => "stop"
+        Green => "go"
+    }
+}
+
+fn main {
+    let l: Light := .Green
+    print(name(l))
+    print(name(.Red))
+    print(l = .Green)
+}
+```
+
+```text
+go
+stop
+true
+```
+
+`.Green` works everywhere a `Light` is expected: a variable with its type, an argument, a `return`, a
+field, a list of `Light`, the other side of `=`. Where nothing says which enum it is, such as
+`print(.Red)`, Kova asks for the full name.
+
 ## Every case is handled
 
 The compiler knows every case of an enum, so it checks that a `match` handles them all:

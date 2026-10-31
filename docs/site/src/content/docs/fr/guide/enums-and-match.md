@@ -80,6 +80,41 @@ D'autres langages ont besoin d'une classe par cas et d'un test de type, ou d'une
 certains champs n'ont de sens que pour certaines valeurs ; le compilateur ne peut alors pas savoir
 quel champ est valide quand.
 
+## Écrire moins quand le type est connu
+
+Quand l'enum est déjà connue d'après l'endroit où va la valeur, le cas commence par un point :
+
+```kova
+enum Light {
+    Red
+    Green
+}
+
+fn name(l: Light) -> String {
+    return match l {
+        Red => "stop"
+        Green => "go"
+    }
+}
+
+fn main {
+    let l: Light := .Green
+    print(name(l))
+    print(name(.Red))
+    print(l = .Green)
+}
+```
+
+```text
+go
+stop
+true
+```
+
+`.Green` marche partout où une `Light` est attendue : une variable avec son type, un argument, un
+`return`, un champ, une liste de `Light`, l'autre côté de `=`. Là où rien ne dit de quelle enum il
+s'agit, comme `print(.Red)`, Kova demande le nom complet.
+
 ## Chaque cas est traité
 
 Le compilateur connaît chaque cas d'une enum, donc il vérifie qu'un `match` les traite tous :

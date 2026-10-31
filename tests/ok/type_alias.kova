@@ -1,0 +1,26 @@
+// `type`: a shorter name for a type, which stays the same type.
+type Grid := List<List<Int>>
+type Scores := Map<String, Grid?>
+
+fn total(g: Grid) -> Int {
+    var sum: Int := 0
+    for row in g {
+        sum += row.sum
+    }
+    return sum
+}
+
+type Row := List<Int>
+
+fn main {
+    let g: Grid := [[1, 2], [3]]
+    print(total(g))
+    let r: Row := [4]
+    let plain: List<List<Int>> := [r.clone]
+    print(total(plain))
+    let s: Scores := ["a" := g.clone]
+    print(s.length)
+}
+// expect: 6
+// expect: 4
+// expect: 1

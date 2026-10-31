@@ -1,0 +1,12 @@
+enum Color {
+    Red
+}
+
+fn main {
+    print(.Red)
+    let c: Color := .Blue
+    let n: Int := .Red
+}
+// error: `.Red`: which enum? Its type is not known here
+// error: `Color` has no variant `Blue`
+// error: `.Red` needs an enum here, and `Int` is expected

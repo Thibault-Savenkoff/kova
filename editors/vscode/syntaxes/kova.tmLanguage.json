@@ -96,7 +96,7 @@
           ]
         },
         {
-          "match": "\\b(struct|enum|interface)\\s+(\\p{Lu}[\\p{L}\\p{N}_]*)",
+          "match": "\\b(struct|enum|interface|type)\\s+(\\p{Lu}[\\p{L}\\p{N}_]*)",
           "captures": {
             "1": { "name": "storage.type.kova" },
             "2": { "name": "entity.name.type.kova" }

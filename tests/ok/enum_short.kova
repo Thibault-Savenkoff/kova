@@ -1,0 +1,63 @@
+// `.Red`: the enum is known from where the value goes.
+enum Color {
+    Red
+    Green
+}
+
+enum Shape {
+    Circle(r: Int)
+    Named(text: String)
+}
+
+struct Pen {
+    color: Color := .Green
+}
+
+fn paint(c: Color) -> Int {
+    return match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn best -> Color := .Green
+
+fn size(s: Shape) -> Int {
+    return match s {
+        Circle(r) => r
+        Named(t) => t.length
+    }
+}
+
+fn main {
+    let c: Color := .Red
+    print(paint(.Green))
+    print(c = .Red)
+    print(c != .Red)
+    print(paint(best))
+    let l: List<Color> := [.Red, .Green]
+    print(l.length)
+    print(size(.Circle(4)))
+    print(size(.Named("abc")))
+    let o: Color? := .Green
+    print(paint(o else .Red))
+    let p: Pen := Pen { color := .Red }
+    print(paint(p.color))
+    print(paint(Pen {}.color))
+    var v: Color := .Red
+    v := .Green
+    print(paint(v))
+    print(paint(if 1 < 2 { .Red } else { .Green }))
+}
+// expect: 2
+// expect: true
+// expect: false
+// expect: 2
+// expect: 2
+// expect: 4
+// expect: 3
+// expect: 2
+// expect: 1
+// expect: 2
+// expect: 2
+// expect: 1

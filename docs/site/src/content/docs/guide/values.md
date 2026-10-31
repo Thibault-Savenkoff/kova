@@ -89,6 +89,28 @@ hidden: `let rex := Dog { name := "Rex" }`, `let today := Date.today`.
 A name cannot be declared again while it is still visible, even in an inner block: two different
 `total`s in the same function are a classic source of confusion, so Kova asks for another name.
 
+## Naming a long type
+
+Since types are written, a long one can take a shorter name with `type`. It stays the same type: a
+`Grid` and a `List<List<Int>>` are one thing, and the name is known in its file.
+
+```kova
+type Grid := List<List<Int>>
+
+fn cells(g: Grid) -> Int {
+    return g.fold(0) { sum: Int, row: List<Int> => sum + row.length }
+}
+
+fn main {
+    let g: Grid := [[1, 2], [3]]
+    print(cells(g))
+}
+```
+
+```text
+3
+```
+
 ## The basic types
 
 | Type | Values | Written |

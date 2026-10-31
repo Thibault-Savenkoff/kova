@@ -3197,6 +3197,13 @@ impl Checker<'_> {
             }
             return;
         }
+        // `.Red` where a `Color` is expected.
+        if let ExprKind::Variant { ty, name, args, .. } = &e.kind
+            && ty.text.is_empty()
+        {
+            self.short_variant(e, name, args, expected);
+            return;
+        }
         // `l.map(double)`, `curve(bounce)`: a function by its name, where a block is expected.
         if let (ExprKind::Var(n), Type::Block(ps, r)) = (&e.kind, expected)
             && self.named_block(e, n, ps, Some(r))
@@ -3829,6 +3836,34 @@ impl Checker<'_> {
         self.loops = loops;
         self.scopes.pop();
         Type::Block(written, Box::new(r))
+    }
+
+    /// `.Red` where `expected` is known: `Color.Red` for a `Color` or a `Color?`.
+    fn short_variant(&mut self, e: &Expr, name: &Name, args: &[Expr], expected: &Type) {
+        let (d, wrapped) = match expected {
+            Type::Enum(d) => (d.clone(), false),
+            Type::Optional(inner) if matches!(**inner, Type::Enum(_)) => {
+                let Type::Enum(d) = &**inner else { unreachable!() };
+                (d.clone(), true)
+            }
+            t => {
+                if *t != Type::Error {
+                    self.diags.push(Diag::new(e.span, t!("short_variant_type", name = name.text, type = t.text())));
+                }
+                self.types[e.id] = self.unchecked(args);
+                return;
+            }
+        };
+        let Some(fields) = d.variant(&name.text).map(|(_, f)| f.to_vec()) else {
+            self.diags.push(Diag::new(name.span, t!("no_variant", type = d.name, name = name.text)).help(t!("variants_of", type = d.name, variants = d.names())));
+            self.types[e.id] = self.unchecked(args);
+            return;
+        };
+        self.mention(&method_name(&d.name, &name.text), name.span);
+        let params: Vec<(Mode, Type)> = fields.into_iter().map(|(_, t)| (Mode::Read, t)).collect();
+        self.arguments(name, args, &params, &[]);
+        self.types[e.id] = Type::Enum(d);
+        self.wraps[e.id] = wrapped;
     }
 
     /// `double` given where a block taking `ps` is expected: the block `{ x => double(x) }`, kept in
@@ -4691,6 +4726,10 @@ impl Checker<'_> {
             }
             ExprKind::Call { name, args } => self.call(e.id, name, args),
             ExprKind::Static { ty, types, name, args } => self.static_call(e.id, ty, types, name, args),
+            ExprKind::Variant { ty, name, args, .. } if ty.text.is_empty() => {
+                self.diags.push(Diag::new(e.span, t!("short_variant_unknown", name = name.text)).help(t!("short_variant_unknown_help", name = name.text)));
+                self.unchecked(args)
+            }
             ExprKind::Variant { ty, types, name, args } => self.variant(ty, types, name, args),
             ExprKind::None => {
                 self.diags.push(Diag::new(e.span, t!("none_needs_type")).help(t!("none_needs_type_help")));
