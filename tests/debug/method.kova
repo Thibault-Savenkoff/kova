@@ -1,6 +1,7 @@
-// Run by the `debugger` test of tests/kova.rs: a breakpoint on line 8, inside a method.
+// Run by the `debugger` test of tests/kova.rs: a breakpoint on line 9, inside a method.
 struct Dog {
     name: String
+    call: {Int -> String}
 
     fn shout(self, times: Int) -> String {
         let word: String := self.name.to_upper
@@ -10,6 +11,6 @@ struct Dog {
 }
 
 fn main {
-    let rex := Dog { name := "Rex" }
+    let rex := Dog { name := "Rex", call := { n: Int => "a" + "b" } }
     print(rex.shout(2))
 }

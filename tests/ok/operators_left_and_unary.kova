@@ -1,0 +1,51 @@
+struct Vector {
+    x: Float
+    y: Float
+
+    fn +(self, other: Vector) -> Vector := Vector { x := self.x + other.x, y := self.y + other.y }
+
+    fn -(self, other: Vector) -> Vector := Vector { x := self.x - other.x, y := self.y - other.y }
+
+    fn -(self) -> Vector := Vector { x := -self.x, y := -self.y }
+
+    fn *(self, k: Float) -> Vector := Vector { x := self.x * k, y := self.y * k }
+}
+
+extend Float {
+    fn *(self, v: Vector) -> Vector := v * self
+}
+
+interface Flip {
+    fn -(self) -> Self
+}
+
+struct Sign : Flip {
+    n: Int
+
+    fn -(self) -> Sign := Sign { n := 0 - self.n }
+}
+
+fn flipped<T: Flip>(x: T) -> T := -x
+
+fn main {
+    let v := Vector { x := 1.0, y := 2.0 }
+    print(-v)
+    print(2.0 * v)
+    print(2.0 * 3.0)
+    print(v - -v)
+    print(-(v + v))
+    print(flipped(Sign { n := 4 }))
+    let k: Float := 3.0
+    print(k * v * 2.0)
+    print(2 * v)
+    print(5 * 3)
+}
+// expect: Vector { x := -1.0, y := -2.0 }
+// expect: Vector { x := 2.0, y := 4.0 }
+// expect: 6.0
+// expect: Vector { x := 2.0, y := 4.0 }
+// expect: Vector { x := -2.0, y := -4.0 }
+// expect: Sign { n := -4 }
+// expect: Vector { x := 6.0, y := 12.0 }
+// expect: Vector { x := 2.0, y := 4.0 }
+// expect: 15

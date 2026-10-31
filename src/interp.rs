@@ -420,21 +420,14 @@ fn evaluate(
     files: &[String],
     heap: &mut Heap,
 ) -> Result<String, String> {
-    // ponytail: a function in a variable is left out, since its number is `p`'s and the console
-    // runs `q`; one held in a struct's field cannot be called from the console either.
-    let (mut named, mut kept, mut k) = (vec![], vec![], 0);
-    for w in watches(p, at) {
-        if !w.ty.contains('{') {
-            named.push((w.name.clone(), w.ty.clone()));
-            kept.extend_from_slice(&values[k..k + w.slots.len()]);
-        }
-        k += w.slots.len();
-    }
-    let (q, num) = d.evaluation(&named, expression)?;
+    // A function held in a variable is `p`'s number: the console's own functions come after `p`'s.
+    let named: Vec<_> = watches(p, at).iter().map(|w| (w.name.clone(), w.ty.clone(), w.slots.len())).collect();
+    let (mut q, num) = d.evaluation(&named, expression)?;
+    let num = q.after(p) + num;
     let mut printed = vec![];
     heap.looking = true;
     heap.broken.set(false);
-    let result = call(&q, num, &kept, &mut printed, files, heap);
+    let result = call(&q, num, values, &mut printed, files, heap);
     heap.looking = false;
     if heap.broken.get() {
         return Ok(t!("debug_given_away"));

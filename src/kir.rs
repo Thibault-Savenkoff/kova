@@ -202,6 +202,7 @@ enum Helper {
 
 /// For the debugger (`kova debug`): a variable visible at a statement, its slots, and the
 /// function (a `Helper::Look`) that gives its text.
+#[derive(Clone)]
 pub struct Watch {
     pub name: String,
     pub ty: String,
@@ -223,6 +224,21 @@ pub struct Program {
     pub icon: Option<crate::icon::Icon>,
 }
 
+impl Program {
+    /// Puts `p`'s functions before this program's, which keep working: a value made by `p` may
+    /// then call its functions by number. Gives how far this program's moved.
+    pub fn after(&mut self, p: &Program) -> usize {
+        let by = p.functions.len();
+        for inst in self.functions.iter_mut().flat_map(|f| &mut f.blocks).flat_map(|b| &mut b.insts) {
+            if let Inst::Call(_, g, _) | Inst::FuncRef(_, g) | Inst::Callback(_, g, ..) = inst {
+                *g += by;
+            }
+        }
+        self.functions.splice(0..0, p.functions.iter().cloned());
+        by
+    }
+}
+
 /// The `extern` functions, numbered (`Inst::Extern`).
 fn extern_order(info: &Info) -> Vec<&String> {
     let mut names: Vec<&String> = info.externs.keys().collect();
@@ -230,6 +246,7 @@ fn extern_order(info: &Info) -> Vec<&String> {
     names
 }
 
+#[derive(Clone)]
 pub struct Function {
     pub name: String,
     /// The parameters are the locals `0..nb_params`.
@@ -240,6 +257,7 @@ pub struct Function {
     pub blocks: Vec<KBlock>,
 }
 
+#[derive(Clone)]
 pub struct KBlock {
     pub insts: Vec<Inst>,
     pub end: End,
@@ -268,6 +286,7 @@ pub fn site_text(files: &[String], packed: i64) -> String {
 /// For an operation that cannot fail (a helper's loop counter).
 const NOWHERE: Loc = Loc { file: 0, line: 0, col: 0 };
 
+#[derive(Clone)]
 pub enum Inst {
     /// A constant; for a float slot, `v` holds the bits of the Float.
     Const(Local, i64),
@@ -625,6 +644,7 @@ pub fn string_op(name: &str) -> Option<StrOp> {
 }
 
 /// A piece of the message of a broken contract.
+#[derive(Clone)]
 pub enum Piece {
     Text(String),
     /// A text of `locale::RUNTIME` (`contract_values`): translated when the message is written,
@@ -722,6 +742,7 @@ pub enum Op {
     ShiftRight,
 }
 
+#[derive(Clone)]
 pub enum End {
     Jump(BlockId),
     Branch(Local, BlockId, BlockId),

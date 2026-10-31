@@ -242,11 +242,21 @@ impl Debugger {
     /// ((name, type) of each), and its number; or why it cannot be.
     // ponytail: the whole program is checked again at each evaluation (fine for programs of a
     // few thousand lines).
-    pub fn evaluation(&self, visible: &[(String, String)], expression: &str) -> Result<(kir::Program, usize), String> {
+    pub fn evaluation(&self, visible: &[(String, String, usize)], expression: &str) -> Result<(kir::Program, usize), String> {
         // `self` cannot name a parameter of a plain function: it becomes `kova_self`, in the
         // expression too (texts included: `"{self.name}"`).
         let rename = |n: &str| if n == "self" { "kova_self".to_string() } else { n.to_string() };
-        let params: Vec<String> = visible.iter().map(|(n, t)| format!("{}: {t}", rename(n))).collect();
+        // A function kept in a variable (1 slot) stays one: written directly, its type would be a
+        // block's (2 slots).
+        let mut aliases = String::new();
+        let mut typed = |(i, (n, t, slots)): (usize, &(String, String, usize))| {
+            if t.starts_with('{') && *slots == 1 {
+                aliases += &format!("type KovaDebug{i} := {t}\n");
+                return format!("{}: KovaDebug{i}", rename(n));
+            }
+            format!("{}: {t}", rename(n))
+        };
+        let params: Vec<String> = visible.iter().enumerate().map(&mut typed).collect();
         let params = if params.is_empty() { String::new() } else { format!("({})", params.join(", ")) };
         let mut code = String::new();
         let mut rest = expression.trim();
@@ -258,7 +268,7 @@ impl Debugger {
             rest = &rest[at + 4..];
         }
         code += rest;
-        let source = format!("{}\nfn {EVAL}{params} {{\n    print({code})\n}}\n", self.source);
+        let source = format!("{}\n{aliases}fn {EVAL}{params} {{\n    print({code})\n}}\n", self.source);
         let (tree, info, diags, _) = analyze(&self.path, &source);
         let info = match (info, diags.first()) {
             (Some(info), None) => info,

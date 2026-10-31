@@ -1324,7 +1324,10 @@ impl Parser<'_> {
             self.expect(",")?;
         }
         self.params(&mut params)?;
-        if operator && (receiver.is_none() || params.len() != 1) {
+        // `fn -(self) -> Vector`: what `-v` calls, a method of its own beside `fn -(self, other: …)`.
+        if operator && name.text == "-" && receiver.is_some() && params.is_empty() {
+            name.text = crate::types::NEGATE.to_string();
+        } else if operator && (receiver.is_none() || params.len() != 1) {
             self.diags.push(Diag::new(name.span, t!("operator_shape", op = name.text)));
         }
         // `fn put(value: Int) at(index: Int)`: a keyword message, named `put(…) at(…)`.

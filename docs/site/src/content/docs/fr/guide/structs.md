@@ -182,6 +182,41 @@ Vector { x := 8.0, y := 12.0 }
 Vector { x := 4.0, y := 6.0 }
 ```
 
+`-v` appelle `fn -(self)`, une méthode sans paramètre qui vit à côté de `fn -(self, other: T)`.
+
+Quand la valeur de gauche est un nombre, la méthode va sur le type du nombre avec
+[`extend`](/fr/guide/interfaces-and-generics/#ajouter-des-méthodes-à-nimporte-quel-type). Kova
+l'appelle quand le côté droit a le type qu'elle prend ; entre deux nombres, `*` reste le `*` habituel.
+
+```kova
+struct Vector {
+    x: Float
+    y: Float
+
+    fn -(self) -> Vector := Vector { x := -self.x, y := -self.y }
+    fn *(self, k: Float) -> Vector := Vector { x := self.x * k, y := self.y * k }
+}
+
+extend Float {
+    fn *(self, v: Vector) -> Vector := v * self
+}
+
+fn main {
+    let v := Vector { x := 1.0, y := 2.0 }
+    print(-v)
+    print(v * 2.0)
+    print(2.0 * v)
+    print(2.0 * 3.0)
+}
+```
+
+```text
+Vector { x := -1.0, y := -2.0 }
+Vector { x := 2.0, y := 4.0 }
+Vector { x := 2.0, y := 4.0 }
+6.0
+```
+
 Le paramètre n'a pas besoin d'être du même type : ci-dessus, `Vector * Float` agrandit un vecteur.
 Donc `v * 2.0` marche et `2.0 * v` non, puisque `Float` n'a pas cette méthode. Un opérateur est une
 méthode, et Kova n'a pas de surcharge : un type ne peut pas avoir à la fois `Vector * Float` et

@@ -895,12 +895,14 @@ fn debugger() {
     let path = std::fs::canonicalize("tests/debug/method.kova").unwrap().display().to_string();
     e.send("initialize", json!({"adapterID": "kova"}));
     e.ask("launch", json!({"program": path}));
-    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 8}]}));
+    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 9}]}));
     e.send("configurationDone", json!({}));
     assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
     assert_eq!(e.evaluate("self.name", None), "Rex");
     assert_eq!(e.evaluate("\"{self.name}: {word}\" + \"!\".repeat(times)", None), "Rex: REX!!");
     assert_eq!(e.evaluate("myself", None), "error: unknown variable `myself`");
+    assert_eq!(e.evaluate("loud(3)", None), "REXREXREX");
+    assert_eq!(e.evaluate("self.call(2)", None), "ab");
     e.send("continue", json!({"threadId": 1}));
     assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 0);
     assert_eq!(e.printed, "REXREX\n");

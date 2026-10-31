@@ -1103,7 +1103,7 @@ pub fn heading_text(f: &Function) -> String {
         let mut written: Vec<String> = f.receiver.iter().filter(|_| i == 0).map(|&m| format!("{}self", mode(m))).collect();
         let default = |p: &Param| p.default.as_ref().map_or(String::new(), |(_, text)| format!(" := {text}"));
         written.extend(params.iter().map(|p| format!("{}: {}{}{}", p.name.text, mode(p.mode), p.ty.text(), default(p))));
-        text += &format!(" {part}");
+        text += &format!(" {}", if part == NEGATE { "-" } else { &part });
         if i == 0 {
             text += &generics_text(f);
         }
@@ -1126,6 +1126,9 @@ pub fn generics_text(f: &Function) -> String {
     };
     format!("<{}>", f.generics.iter().map(one).collect::<Vec<_>>().join(", "))
 }
+
+/// The name of `fn -(self)`, what `-v` calls: `fn -(self, other: …)` is `-`.
+pub const NEGATE: &str = "-self";
 
 /// The name of a struct's method or static function among the functions: `Dog.sound`.
 pub fn method_name(ty: &str, name: &str) -> String {
@@ -1618,7 +1621,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.exposes(&func.name.text, t);
         }
     }
-    for s in f.structs.iter().filter(|s| public(&s.name.text)) {
+    // A method added to `Float` may take a type of this file: nothing in another file names `Float.*`.
+    for s in f.structs.iter().filter(|s| public(&s.name.text) && s.extended.is_none()) {
         for p in s.fields.iter().filter(|p| public(&method_name(&s.name.text, &p.name.text))) {
             c.exposes(&method_name(&s.name.text, &p.name.text), &p.ty);
         }
@@ -3514,11 +3518,6 @@ impl Checker<'_> {
     }
 
     /// Checks that `e` has one of the `allowed` types; returns its type.
-    fn one_of(&mut self, e: &Expr, allowed: &[Type], what: &str) -> Type {
-        let t = self.expr(e);
-        self.is_one_of(e, t, allowed, what)
-    }
-
     /// The same once `e`'s type `t` is known.
     fn is_one_of(&mut self, e: &Expr, t: Type, allowed: &[Type], what: &str) -> Type {
         if t == Type::Error || allowed.contains(&t) || (what == "`+`" && matches!(t, Type::List(_) | Type::Set(_) | Type::Map(..))) {
@@ -3555,14 +3554,26 @@ impl Checker<'_> {
 
     /// `a + b` where `a` has the method `+`: the call `a.+(b)`, of type `t` on the left. `id` is
     /// the `Expr` it stands for, given by the caller to `Info::filled` or `Info::assign_ops`.
-    fn operator_call(&mut self, a: &Expr, t: &Type, b: &Expr, op: &str, span: Span, (owner, sig): (String, Signature)) -> Expr {
+    fn operator_call(&mut self, a: &Expr, t: &Type, b: Option<&Expr>, op: &str, span: Span, (owner, sig): (String, Signature)) -> Expr {
         let name = Name { text: op.to_string(), span };
-        let call = self.fresh(span, ExprKind::Method { receiver: Box::new(a.clone()), name: name.clone(), args: vec![b.clone()] });
+        let args: Vec<Expr> = b.into_iter().cloned().collect();
+        let call = self.fresh(span, ExprKind::Method { receiver: Box::new(a.clone()), name: name.clone(), args: args.clone() });
         let sig = self.for_types(call.id, sig, t.args().to_vec());
         self.hidden(&method_name(&owner, op), span);
-        self.types[call.id] = self.method_call(a, &owner, &name, std::slice::from_ref(b), sig);
+        self.types[call.id] = self.method_call(a, &owner, &name, &args, sig);
         self.spans[call.id] = span;
         call
+    }
+
+    /// `2.0 * v` with `extend Float { fn *(self, v: Vector) -> Vector }`: the added method, when
+    /// `b` has the type it takes. `2.0 * 3.0` stays the built-in one.
+    fn added_operator(&mut self, t: &Type, op: &str, b: &Expr) -> Option<(String, Signature)> {
+        let sig = self.functions.get(&method_name(&t.owner(), op))?.clone();
+        let (diags, seen) = (self.diags.len(), self.seen.len());
+        let right = self.expr(b);
+        self.diags.truncate(diags);
+        self.seen.truncate(seen);
+        (right != *t && sig.params.first()?.1 == right).then(|| (t.owner(), sig))
     }
 
     /// `x`, `x.age`, `l[0]` as an expression: the left side of `v += w`.
@@ -4665,7 +4676,7 @@ impl Checker<'_> {
                     && let Some(found) = self.operator(&ty, o.text())
                 {
                     let place = self.place_expr(name, fields, *span);
-                    let call = self.operator_call(&place, &ty, value, o.text(), value.span, found);
+                    let call = self.operator_call(&place, &ty, Some(value), o.text(), value.span, found);
                     let r = self.types[call.id].clone();
                     if r != ty {
                         self.mismatch(value, r, &ty);
@@ -5329,7 +5340,14 @@ impl Checker<'_> {
                     self.types[x.id] = Type::Int;
                     return Type::Int;
                 }
-                self.one_of(x, &[Type::Int, Type::Float, Type::BigInt], "`-`")
+                let t = self.expr(x);
+                if let Some(found) = self.operator(&t, NEGATE) {
+                    let call = self.operator_call(x, &t, None, NEGATE, e.span, found);
+                    let r = self.types[call.id].clone();
+                    self.filled.insert(e.id, call);
+                    return r;
+                }
+                self.is_one_of(x, t, &[Type::Int, Type::Float, Type::BigInt], "`-`")
             }
             ExprKind::Unary(UnOp::Not, x) => {
                 self.expect(x, &Type::Bool);
@@ -5412,8 +5430,14 @@ impl Checker<'_> {
                     }
                     Rem | Plus | Minus | Times | Div => {
                         let t = self.expr(a);
-                        if let Some(found) = self.operator(&t, op.text()) {
-                            let call = self.operator_call(a, &t, b, op.text(), e.span, found);
+                        // `2 * v`: a number written directly is a Float where one is expected.
+                        let written = t == Type::Int && number_written(a).is_some() && !self.functions.contains_key(&method_name("Int", op.text()));
+                        if written && self.added_operator(&Type::Float, op.text(), b).is_some() {
+                            self.as_float(a);
+                        }
+                        let t = self.types[a.id].clone();
+                        if let Some(found) = self.operator(&t, op.text()).or_else(|| self.added_operator(&t, op.text(), b)) {
+                            let call = self.operator_call(a, &t, Some(b), op.text(), e.span, found);
                             let r = self.types[call.id].clone();
                             self.filled.insert(e.id, call);
                             return r;

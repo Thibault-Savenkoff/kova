@@ -748,6 +748,11 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     let owner = t.owner();
     let hidden = |name: &str| (file.private.iter()).any(|(n, s)| *n == types::method_name(&owner, name) && s.start > root);
     let mut items = vec![];
+    // `extend String { fn shout … }`.
+    if let Some(s) = file.structs.iter().find(|s| s.extended.is_some() && s.name.text == owner) {
+        let added = s.methods.iter().filter(|m| m.receiver.is_some() && m.name.text.starts_with(char::is_alphabetic));
+        items.extend(added.map(|m| item(&m.name.text, CompletionItemKind::METHOD, types::heading_text(m))));
+    }
     if let Type::Struct(d) = t {
         let fields = d.fields().iter().filter(|(n, _)| !hidden(n));
         items.extend(fields.map(|(n, ft)| item(n, CompletionItemKind::FIELD, format!("{n}: {}", ft.text()))));
@@ -1385,6 +1390,20 @@ mod tests {
         assert_eq!(names(&complete(src, after_if)), ["n", "a"]);
         // Functions are always offered.
         assert!(complete(src, here).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_of_added_methods() {
+        let labels = |src: &str| {
+            let at = src.find('|').unwrap();
+            let items = completion("/tmp/kova-added.kova", &src.replace('|', ""), at);
+            items.into_iter().map(|i| i.label).collect::<Vec<_>>()
+        };
+        let added = "extend String {\n    fn shout(self) -> String := self\n    fn *(self, n: Dog) -> Int := 1\n}\nextend List<Int> {\n    fn total(self) -> Int := 0\n}\nstruct Dog {\n    age: Int\n}\n";
+        let text = labels(&format!("{added}fn main {{\n    let s: String := \"a\"\n    s.|\n}}\n"));
+        assert!(text.contains(&"shout".to_string()) && !text.contains(&"*".to_string()), "{text:?}");
+        let list = labels(&format!("{added}fn main {{\n    let l: List<Int> := [1]\n    l.|\n}}\n"));
+        assert!(list.contains(&"total".to_string()), "{list:?}");
     }
 
     #[test]
