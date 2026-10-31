@@ -1614,9 +1614,10 @@ fn mac_menus(kit: &Kit, menus: &[crate::shared::UiMenu]) {
     (kit.send_two)(kit.send(kit.class("NSApplication"), "sharedApplication"), kit.sel("setMainMenu:"), bar);
 }
 
-/// `sound.play`: `NSSound` plays on a thread of its own; this one waits for the end. It may run in
-/// a program without a window, so it finds what it needs itself.
-pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
+/// `sound.play`: `NSSound` plays on a thread of its own, and this one waits for the end by the WAV's
+/// length: `isPlaying` only turns false when the run loop turns, and here nothing turns it. It may
+/// run in a program without a window, so it finds what it needs itself.
+pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
     use core::mem::transmute as t;
     let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return false };
     let f = |name: &str| symbol(objc, name).unwrap_or(0);
@@ -1635,8 +1636,12 @@ pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
         let made = plain(class(c"NSSound".as_ptr().cast()), sel(c"alloc".as_ptr().cast()));
         let player = with(made, sel(c"initWithData:".as_ptr().cast()), data);
         let played = !player.is_null() && asks(player, sel(c"play".as_ptr().cast()));
-        while played && asks(player, sel(c"isPlaying".as_ptr().cast())) {
-            sleep(0.01);
+        if played {
+            sleep(wav.samples.len() as f64 / (wav.rate * wav.channels * wav.bits / 8).max(1) as f64 + 0.1);
+            plain(player, sel(c"stop".as_ptr().cast()));
+        }
+        if !player.is_null() {
+            plain(player, sel(c"release".as_ptr().cast()));
         }
         pop(pool);
         played
