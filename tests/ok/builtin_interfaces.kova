@@ -32,8 +32,8 @@ enum Size : Comparable, Display {
     fn less(self, other: Self) -> Bool { return self = Size.Small && other = Size.Big }
     fn to_string(self) -> String {
         return match self {
-            Small => "small"
-            Big => "big"
+            .Small => "small"
+            .Big => "big"
         }
     }
 }

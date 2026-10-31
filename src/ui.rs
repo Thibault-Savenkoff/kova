@@ -376,11 +376,11 @@ fn pressed -> Key? {
 
 fn group(kind: String, items: List<View>, a: Align) -> View {
     let place: String := match a {
-        Left => "L"
-        Top => "T"
-        Center => "C"
-        Right => "R"
-        Bottom => "B"
+        .Left => "L"
+        .Top => "T"
+        .Center => "C"
+        .Right => "R"
+        .Bottom => "B"
     }
     var out: String := "{kind}{place}{items.length}:"
     var events: List<EVENT> := []

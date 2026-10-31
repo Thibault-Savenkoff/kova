@@ -66,7 +66,7 @@ La fonction l'appelle comme une fonction :
 
 ```kova
 fn repeat(n: Int, body: {Int}) {
-    from i := 1 to n {
+    for i in 1..=n {
         body(i)
     }
 }

@@ -59,7 +59,6 @@ fn prelude() -> Vec<Interface> {
         constants: HashSet::new(),
         no_literal: false,
         no_else: false,
-        from_start: false,
         in_interface: false,
         bodiless: false,
         in_extern: false,
@@ -173,7 +172,6 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         constants,
         no_literal: false,
         no_else: false,
-        from_start: false,
         in_interface: false,
         bodiless: false,
         in_extern: false,
@@ -211,8 +209,6 @@ struct Parser<'a> {
     no_else: bool,
     /// In a heading (`if`, `while`…): `Dog {` is not a struct literal, the `{` opens the body (PLAN 2.3).
     no_literal: bool,
-    /// In the start of `from i := … to …`: there `to` ends the start, it is not a part.
-    from_start: bool,
     /// The name of this file when it is imported (`geometry`), and the names it declares:
     /// inside it, `Point` is `geometry.Point`.
     module: Option<String>,
@@ -397,12 +393,8 @@ impl Parser<'_> {
         }
     }
 
-    /// A part of a keyword message: `to` is one too (`files.copy(a) to(b)`).
+    /// A part of a keyword message.
     fn part_name(&mut self) -> R<Name> {
-        if self.is_keyword("to") {
-            let span = self.advance().span;
-            return Ok(Name { text: "to".into(), span });
-        }
         self.value_name("what_function")
     }
 
@@ -591,9 +583,7 @@ impl Parser<'_> {
     /// An expression between delimiters (`( )`, `{ }`): struct literals are allowed again.
     fn inner_expr(&mut self) -> R<Expr> {
         let saved = std::mem::replace(&mut self.no_literal, false);
-        let from = std::mem::replace(&mut self.from_start, false);
         let e = self.expression();
-        self.from_start = from;
         self.no_literal = saved;
         e
     }
@@ -1324,11 +1314,10 @@ impl Parser<'_> {
     /// `at(` (or `then {` at a call) on the same line as the `)` ending at `end`: the next part
     /// of a keyword message.
     /// A reserved word there (`between(1) and(3)`) is one too, refused by `part_name`;
-    /// but not `else`, which may follow an expression, nor `to` in `from i := f(1) to (n)`.
+    /// but not `else`, which may follow an expression.
     fn next_part(&self, end: Span) -> bool {
         matches!(self.kind(), Kind::Ident | Kind::Keyword(_))
             && !matches!(self.kind(), Kind::Keyword("else"))
-            && !(self.from_start && self.is_keyword("to"))
             && (self.kind_at(1) == Kind::Sym("(") || self.kind_at(1) == Kind::Sym("{") && !self.no_literal)
             && !self.src[end.end..self.token().span.start].contains('\n')
     }
@@ -1709,23 +1698,11 @@ impl Parser<'_> {
                     }
                 }
             }
+            // Another language's loop, or Kova's before it was removed.
             Kind::Keyword("from") => {
-                self.advance();
-                let counter = self.value_name("what_variable")?;
-                self.expect(":=")?;
-                self.from_start = true;
-                let start = self.heading_expr();
-                self.from_start = false;
-                let start = start?;
-                if !self.is_keyword("to") {
-                    let msg = t!("expected_symbol", symbol = "to", found = self.describe());
-                    return self.error(self.token().span, msg);
-                }
-                self.advance();
-                let end = self.heading_expr()?;
-                let step = self.step()?.unwrap_or(1);
-                self.skip_newlines();
-                Ok(Stmt::Loop { counter, start, end, inclusive: true, step, body: self.block()? })
+                let span = self.token().span;
+                self.diags.push(Diag::new(span, t!("from_loop")).help(t!("from_loop_help")));
+                Err(())
             }
             _ => {
                 let e = self.expression()?;
@@ -1824,6 +1801,20 @@ impl Parser<'_> {
     }
 
     /// `Circle(r) => 3.14 * r * r` or `Red => { … }`.
+    /// The variant of a case: `.Red`, written as in a value; `ok`, `err` and `none` have no dot there either.
+    fn case_name(&mut self) -> R<Name> {
+        if let Kind::Keyword(word @ ("ok" | "err" | "none")) = self.kind() {
+            return Ok(Name { text: word.into(), span: self.advance().span });
+        }
+        if self.is_sym(".") {
+            self.advance();
+            return self.plain_type_name();
+        }
+        let name = self.plain_type_name()?;
+        self.diags.push(Diag::new(name.span, t!("case_dot", name = name.text)));
+        Ok(name)
+    }
+
     fn arm(&mut self) -> R<Arm> {
         let case = if self.kind() == Kind::Ident && self.text(self.token().span) == "_" {
             Case::Any(self.advance().span)
@@ -1842,10 +1833,7 @@ impl Parser<'_> {
         } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
             Case::Bind(self.pattern()?)
         } else {
-            let name = match self.kind() {
-                Kind::Keyword(word @ ("ok" | "err")) => Name { text: word.into(), span: self.advance().span },
-                _ => self.plain_type_name()?,
-            };
+            let name = self.case_name()?;
             let mut binds = vec![];
             if self.is_sym("(") {
                 let open = self.advance().span;
@@ -1866,10 +1854,7 @@ impl Parser<'_> {
         if matches!(case, Case::Variant { .. }) {
             while self.is_sym(",") {
                 self.advance();
-                let name = match self.kind() {
-                    Kind::Keyword(word @ ("ok" | "err" | "none")) => Name { text: word.into(), span: self.advance().span },
-                    _ => self.plain_type_name()?,
-                };
+                let name = self.case_name()?;
                 if self.is_sym("(") {
                     let open = self.advance().span;
                     while !self.is_sym(")") && self.kind() != Kind::Eof {
@@ -1894,7 +1879,14 @@ impl Parser<'_> {
         } else {
             // From the `=>` to what follows the statement (`,`, line end, `}`): the editor's view of the arm.
             // An unfinished statement (while typing) keeps the arm, so that its names are offered.
+            let at = self.pos;
             let s = self.stmt();
+            // `.A =>` with nothing after it: the next line is the next case, not its body.
+            if s.is_ok() && self.is_sym("=>") {
+                self.pos = at;
+                self.diags.push(Diag::new(arrow, t!("case_empty")).help(t!("case_empty_help")));
+                return Ok(Arm { case, also, body: Block { open: arrow, stmts: vec![], close: self.token().span } });
+            }
             if s.is_err() {
                 self.skip_statement();
             }

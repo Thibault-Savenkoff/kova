@@ -1,6 +1,6 @@
 ---
 title: Choix et boucles
-description: if, match sur une valeur, while, for et from … to.
+description: if, match sur une valeur, while et for.
 sidebar:
   order: 3
 ---
@@ -120,7 +120,7 @@ fn main {
         write(i)
     }
     print("")
-    from i := 1 to 3 {
+    for i in 1..=3 {
         write(i)
     }
     print("")
@@ -139,7 +139,7 @@ Alan
 ```
 
 - `0..3` s'arrête **avant** 3, ce qui convient aux positions dans une liste (`0..l.length`).
-- `0..=3` et `from i := 1 to 3` incluent leur fin, ce qui convient pour compter.
+- `0..=3` inclut sa fin, ce qui convient pour compter.
 - Un intervalle dont la fin est sous le début est vide : `3..1` n'exécute rien. Les bornes sont
   calculées une fois, avant le premier tour.
 - `write` affiche sans passer à la ligne ; `print` passe à la ligne.

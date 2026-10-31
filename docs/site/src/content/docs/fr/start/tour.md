@@ -72,8 +72,8 @@ enum Size {
 
 fn describe(s: Size) -> String {
     return match s {
-        Small => "small"
-        Large(k) => "large, {k} kg"
+        .Small => "small"
+        .Large(k) => "large, {k} kg"
     }
 }
 

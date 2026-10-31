@@ -7,20 +7,20 @@ enum Light {
 fn main {
     let l := Light.Red
     match l {
-        Red, Red => print(1)
-        Green => print(2)
+        .Red, .Red => print(1)
+        .Green => print(2)
     }
     match l {
-        Red, Blue => print(1)
+        .Red, .Blue => print(1)
         _ => print(2)
     }
     let n: Int? := 3
     match n {
-        none, Red => print(0)
+        none, .Red => print(0)
         x => print(x)
     }
 }
-// error: cases of `Light` not handled: `Orange`
+// error: cases of `Light` not handled: `.Orange`
 // error: the case `Red` is already handled (line 10)
 // error: `Light` has no variant `Blue`
 // error: an optional (`Int?`) is matched with `none => …` and a name for its value: `x => …`

@@ -6,11 +6,11 @@ fn show(path: String) {
     match files.read(path) {
         ok(text) => write("read {text.length} characters:\n{text}")
         err(e) => match e {
-            NotFound(p) => print("no file {p}")
-            IsFolder(p) => print("{p} is a folder")
-            Denied => print("denied")
-            NotText => print("not a text")
-            Other => print("other")
+            .NotFound(p) => print("no file {p}")
+            .IsFolder(p) => print("{p} is a folder")
+            .Denied => print("denied")
+            .NotText => print("not a text")
+            .Other => print("other")
         }
     }
 }

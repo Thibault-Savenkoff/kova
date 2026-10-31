@@ -20,7 +20,7 @@ interface Aging {
     fn birthday(var self)
     fn years(self) -> Int
     fn grow(var self, n: Int) {
-        from i := 1 to n {
+        for i in 1..=n {
             self.birthday
         }
     }
@@ -47,8 +47,8 @@ enum Bird : Animal {
     Owl(name: String),
     fn sound(self) -> String {
         return match self {
-            Crow => "caw"
-            Owl(n) => "hoot from {n}"
+            .Crow => "caw"
+            .Owl(n) => "hoot from {n}"
         }
     }
 }

@@ -49,7 +49,7 @@ pub fn format(src: &str) -> Option<String> {
         };
         // A line continuing the statement of the line above: one step further.
         let operator = prev.is_some_and(|(p, g)| matches!(p.kind, Kind::Sym(s) if !g && !matches!(s, "{" | "(" | "[" | "," | ")" | "]" | "}" | "?" | "!" | ":")));
-        let continues = operator || matches!(t.kind, Kind::Sym("." | "&&" | "||"));
+        let continues = operator || matches!(t.kind, Kind::Sym("&&" | "||")) || crate::lexer::continues_before(t.kind, tokens.get(k + 1).map(|n| n.kind)) && t.kind == Kind::Sym(".");
         // `public:` and `private:` stand out, like the `}`; the contracts under a function's
         // heading go one step further.
         let label = matches!(t.kind, Kind::Keyword("public" | "private"));
@@ -179,10 +179,8 @@ fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Opti
         Kind::Sym("-") => !value_before(before) || (a.span.end == b.span.start && before.is_some_and(|t| &source[t.span.start..t.span.end] == "step" && t.span.end < a.span.start)),
         _ => false,
     };
-    // `r.header("Content-Type")`, `files.move(a)`: after a dot a reserved word is a name; and
-    // `to(b)` after a `)` is a part of a keyword message (`files.copy(a) to(b)`).
-    let method = matches!(a.kind, Kind::Keyword(_)) && before.is_some_and(|t| t.kind == Kind::Sym("."))
-        || a.kind == Kind::Keyword("to") && b.kind == Kind::Sym("(") && before.is_some_and(|t| t.kind == Kind::Sym(")"));
+    // `r.header("Content-Type")`, `files.move(a)`: after a dot a reserved word is a name.
+    let method = matches!(a.kind, Kind::Keyword(_)) && before.is_some_and(|t| t.kind == Kind::Sym("."));
     let named = matches!(a.kind, Kind::Ident | Kind::Type) || g || method || matches!(a.kind, Kind::Sym(")" | "]"));
     match (a.kind, b.kind) {
         _ if sign || g && a.kind == Kind::Sym("<") || generic => false,
@@ -214,8 +212,8 @@ mod tests {
 
     #[test]
     fn reserved_words_as_names() {
-        let src = "fn main {\n    f(files.copy (a) to (b))\n    files.move (a) to(b)\n    from i := 1 to 3 {\n    }\n    f(move a)\n}\n";
-        let tidy = "fn main {\n    f(files.copy(a) to(b))\n    files.move(a) to(b)\n    from i := 1 to 3 {\n    }\n    f(move a)\n}\n";
+        let src = "fn main {\n    f(files.copy (a) to (b))\n    files.move (a) to(b)\n    for i in 1..=3 {\n    }\n    f(move a)\n}\n";
+        let tidy = "fn main {\n    f(files.copy(a) to(b))\n    files.move(a) to(b)\n    for i in 1..=3 {\n    }\n    f(move a)\n}\n";
         assert_eq!(format(src).as_deref(), Some(tidy));
     }
 

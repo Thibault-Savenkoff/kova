@@ -45,7 +45,7 @@ fn main {
     let d := Date.year(2026) month(10) day(23)
     print(d.weekday)
     match d.weekday {
-        Saturday, Sunday => print("weekend")
+        .Saturday, .Sunday => print("weekend")
         _ => print("work")
     }
 }

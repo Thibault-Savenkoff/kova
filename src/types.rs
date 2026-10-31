@@ -5444,8 +5444,12 @@ impl Checker<'_> {
             // `Circle(radius)`: the variant and its fields' names; the value of an optional: `value`.
             let written = |i: usize| match &d.variants()[i] {
                 (_, fs) if optional && i == 1 => fs[0].0.clone(),
-                (n, fs) if fs.is_empty() => n.clone(),
-                (n, fs) => format!("{n}({})", fs.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>().join(", ")),
+                (n, _) if optional => n.clone(),
+                (n, fs) if fs.is_empty() && !outcome => format!(".{n}"),
+                (n, fs) => {
+                    let dot = if outcome { "" } else { "." };
+                    format!("{dot}{n}({})", fs.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>().join(", "))
+                }
             };
             let todo = if any.is_some() { vec![] } else { (0..d.variants().len()).filter(|i| !seen.contains_key(i)).map(written).collect() };
             self.matches.push((m.subject.span.to(m.close), todo));
@@ -5458,7 +5462,8 @@ impl Checker<'_> {
                 .map(|i| match &d.variants()[i].0 {
                     _ if optional && i == 1 => t!("case_value"),
                     n if outcome => format!("`{n}(…)`"),
-                    n => format!("`{n}`"),
+                    n if optional => format!("`{n}`"),
+                    n => format!("`.{n}`"),
                 })
                 .collect();
             if !missing.is_empty() {

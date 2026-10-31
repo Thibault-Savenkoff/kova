@@ -7,8 +7,8 @@ enum Shape {
 
 fn area(s: Shape) -> Float {
     return match s {
-        Circle(r) => 3.0 * r * r,
-        Square(side) => side * side,
+        .Circle(r) => 3.0 * r * r,
+        .Square(side) => side * side,
     }
 }
 

@@ -36,12 +36,12 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Clicked(x, y) => {
+        .Clicked(x, y) => {
             app.x := x
             app.y := y
         }
-        Pressed(key) => app.key := key.clone
-        Tick => app.ticks := app.ticks + 1
+        .Pressed(key) => app.key := key.clone
+        .Tick => app.ticks := app.ticks + 1
     }
 }
 

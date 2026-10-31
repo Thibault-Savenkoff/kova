@@ -23,11 +23,11 @@ fn view(n: Int) -> ui.View {
 
 fn update(n: var Int, e: Event) {
     match e {
-        Closed => ui.close
-        Reduced => ui.minimize
-        Grown => ui.maximize
-        Filled => ui.full_screen
-        Moved => ui.drag
+        .Closed => ui.close
+        .Reduced => ui.minimize
+        .Grown => ui.maximize
+        .Filled => ui.full_screen
+        .Moved => ui.drag
     }
 }
 

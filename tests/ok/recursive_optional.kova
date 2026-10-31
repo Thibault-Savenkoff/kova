@@ -38,17 +38,17 @@ enum Expr : Equal {
 
 fn eval(e: Expr) -> Int {
     match e {
-        Num(v) => return v
-        Add(a, b) => return eval(a) + eval(b)
-        Times(a, b) => return eval(a) * eval(b)
-        Minus(x) => return -eval(x)
+        .Num(v) => return v
+        .Add(a, b) => return eval(a) + eval(b)
+        .Times(a, b) => return eval(a) * eval(b)
+        .Minus(x) => return -eval(x)
     }
 }
 
 fn give(e: move Expr) -> Int {
     // Owned (not a place): the fields leave their boxes, which are freed.
     match e.clone {
-        Add(a, b) => return eval(a) - eval(b)
+        .Add(a, b) => return eval(a) - eval(b)
         _ => return 0
     }
 }

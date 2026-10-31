@@ -1,6 +1,6 @@
 ---
 title: Choices and loops
-description: if, match on values, while, for and from … to.
+description: if, match on values, while and for.
 sidebar:
   order: 3
 ---
@@ -118,7 +118,7 @@ fn main {
         write(i)
     }
     print("")
-    from i := 1 to 3 {
+    for i in 1..=3 {
         write(i)
     }
     print("")
@@ -137,7 +137,7 @@ Alan
 ```
 
 - `0..3` stops **before** 3, which suits positions in a list (`0..l.length`).
-- `0..=3` and `from i := 1 to 3` include their end, which suits counting.
+- `0..=3` includes its end, which suits counting.
 - A range whose end is below its start is empty: `3..1` runs nothing. The ends are computed once,
   before the first turn.
 - `write` prints without going to the next line; `print` goes to the next line.

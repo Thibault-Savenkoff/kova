@@ -2,12 +2,12 @@
 // (Checked against Python's `repr` on 8,110 values.)
 fn main {
     var x: Float := 1.0
-    from i := 1 to 1075 {
+    for i in 1..=1075 {
         if i % 25 = 0 || i > 1070 || (i > 20 && i < 30) { print(x) }
         x := x / 2.0
     }
     x := 1.0
-    from i := 1 to 1025 {
+    for i in 1..=1025 {
         if i % 50 = 0 || i > 1020 || (i > 50 && i < 58) { print(x) }
         x := x * 2.0
     }

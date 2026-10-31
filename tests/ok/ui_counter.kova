@@ -23,9 +23,9 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Plus => app.clicks := app.clicks + 1
-        Minus => app.clicks := app.clicks - 1
-        Named(n) => app.name := n.clone
+        .Plus => app.clicks := app.clicks + 1
+        .Minus => app.clicks := app.clicks - 1
+        .Named(n) => app.name := n.clone
     }
 }
 

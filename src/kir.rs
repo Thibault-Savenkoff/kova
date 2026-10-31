@@ -6,7 +6,7 @@
 // A function also has blocks. A block = a list of instructions + an end
 // (jump, branch or return). There is no more `for`, `from` or `&&`:
 //
-//   from i := 1 to 3 { print(i) }
+//   for i in 1..=3 { print(i) }
 //
 //   b0: %0 := 1          %1 := 3          jump b1
 //   b1: %2 := %0 <= %1                    if %2 then b2 else b4
@@ -3066,7 +3066,7 @@ impl<'a> Translator<'a> {
                 self.go(End::Jump(next), next);
 
                 // `continue` lands here. For `..=`, exit BEFORE adding 1 when on
-                // the bound: `from i := 1 to 9223372036854775807` doesn't overflow.
+                // the bound: `for i in 1..=9223372036854775807` doesn't overflow.
                 if *inclusive {
                     let last = self.int_local();
                     self.emit(Inst::Binary(last, Op::Eq, i, bound, loc));

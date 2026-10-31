@@ -55,10 +55,7 @@ fn carré(x: Int) -> Int {
 //         ^^^ entity.name.type.kova
 //                     ^^^^^^ keyword.control.kova
 //                            ^^^^ constant.language.none.kova
-    from i := 1 to 10 { total += i }
-//  ^^^^ keyword.control.kova
-//              ^^ keyword.control.kova
-//                            ^^ keyword.operator.assignment.kova
+    for i in 1..=10 { total += i }
     for i in 0..10 { }
 //        ^^ keyword.control.kova
 //            ^^ keyword.operator.range.kova
@@ -137,8 +134,7 @@ fn sauver {
 //                  ^^ entity.name.function.call.kova
     files.move("a") to("b")
 //        ^^^^ - storage.modifier.kova
-    from i := 1 to 3 {
-//              ^^ keyword.control.kova
+    for i in 1..=3 {
     }
 }
 

@@ -16,9 +16,9 @@ enum Light {
 
     fn next(self) -> Light {
         return match self {
-            Red => Light.Green
-            Orange => Light.Red
-            Green => Light.Orange
+            .Red => Light.Green
+            .Orange => Light.Red
+            .Green => Light.Orange
         }
     }
 }
@@ -35,7 +35,8 @@ Light.Green
 Light.Orange
 ```
 
-A case is written `Light.Red`; inside a `match` on a `Light`, just `Red`. An enum may have methods
+A case is written `Light.Red`; where the type is already known, as in a `match` on a `Light`, just
+`.Red`. An enum may have methods
 and static functions, like a struct.
 
 ## Cases that carry values
@@ -52,9 +53,9 @@ enum Shape {
 
 fn area(s: Shape) -> Float {
     return match s {
-        Circle(r) => 3.14159 * r * r
-        Rect(w, h) => w * h
-        Dot => 0.0
+        .Circle(r) => 3.14159 * r * r
+        .Rect(w, h) => w * h
+        .Dot => 0.0
     }
 }
 
@@ -91,8 +92,8 @@ enum Light {
 
 fn name(l: Light) -> String {
     return match l {
-        Red => "stop"
-        Green => "go"
+        .Red => "stop"
+        .Green => "go"
     }
 }
 
@@ -127,8 +128,8 @@ enum Shape {
 
 fn area(s: Shape) -> Float {
     return match s {
-        Circle(r) => 3.0 * r * r
-        Rect(w, h) => w * h
+        .Circle(r) => 3.0 * r * r
+        .Rect(w, h) => w * h
     }
 }
 
@@ -138,7 +139,7 @@ fn main {
 ```
 
 ```txt
-error: cases of `Shape` not handled: `Dot`
+error: cases of `Shape` not handled: `.Dot`
  --> main.kova:8:18
   |
 8 |     return match s {
@@ -156,7 +157,7 @@ since it also hides the cases added later. Several cases with no fields can shar
 fn main {
     let today := Date.year(2026) month(10) day(24)
     match today.weekday {
-        Saturday, Sunday => print("weekend")
+        .Saturday, .Sunday => print("weekend")
         _ => print("work")
     }
 }
@@ -181,8 +182,8 @@ fn main {
     let commands: List<Command> := [Command.Say("hello"), Command.Quit, Command.Say("never")]
     for c in commands {
         match c {
-            Say(t) => print(t)
-            Quit => {
+            .Say(t) => print(t)
+            .Quit => {
                 print("bye")
                 break
             }
@@ -209,9 +210,9 @@ enum Expr {
 
 fn eval(e: Expr) -> Int {
     return match e {
-        Num(v) => v
-        Add(a, b) => eval(a) + eval(b)
-        Mul(a, b) => eval(a) * eval(b)
+        .Num(v) => v
+        .Add(a, b) => eval(a) + eval(b)
+        .Mul(a, b) => eval(a) * eval(b)
     }
 }
 
@@ -240,8 +241,8 @@ enum Counter {
 
 fn tick(c: var Counter) {
     match var c {
-        On(n) => n := n + 1
-        Off => {}
+        .On(n) => n := n + 1
+        .Off => {}
     }
 }
 

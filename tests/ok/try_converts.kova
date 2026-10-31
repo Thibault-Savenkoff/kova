@@ -28,8 +28,8 @@ fn main {
     match size("nowhere.txt") {
         ok(n) => print(n)
         err(e) => match e {
-            Io(error) => print("could not read: {error}")
-            Empty, Bad => print("other")
+            .Io(error) => print("could not read: {error}")
+            .Empty, .Bad => print("other")
         }
     }
 }

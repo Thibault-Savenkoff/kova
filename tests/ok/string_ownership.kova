@@ -27,7 +27,7 @@ fn first_long(limit: Int) -> String {
 
 // A temporary in a loop bound, left through a `return` or not.
 fn find(n: Int) -> Int {
-    from i := 1 to "abcd".length {
+    for i in 1..="abcd".length {
         if i = n {
             return i
         }
@@ -80,7 +80,7 @@ fn main {
     print(k)
 
     // `break`, `continue` and `return` free what their blocks own.
-    from i := 1 to 5 {
+    for i in 1..=5 {
         let inside: String := "loop"
         if i = 2 {
             continue

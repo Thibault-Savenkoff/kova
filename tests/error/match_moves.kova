@@ -6,20 +6,20 @@ fn keep(t: move String) {
 fn main {
     var m := Message.Say("hi")
     match m {
-        Say(t) => keep(move t)
-        Quit => {}
+        .Say(t) => keep(move t)
+        .Quit => {}
     }
     match m {
-        Say(t) => m := Message.Quit
-        Quit => {}
+        .Say(t) => m := Message.Quit
+        .Quit => {}
     }
     let owned: String := match Message.Say("x") {
-        Say(t) => t
-        Quit => "none"
+        .Say(t) => t
+        .Quit => "none"
     }
     let borrowed: String := match m {
-        Say(t) => t
-        Quit => "none"
+        .Say(t) => t
+        .Quit => "none"
     }
 }
 // error: `t` is borrowed

@@ -6,7 +6,7 @@ fn borne -> Int {
 }
 
 fn main {
-    from i := 1 to borne { print(i) }
+    for i in 1..=borne { print(i) }
     for i in 0..borne { print(i) }
 }
 

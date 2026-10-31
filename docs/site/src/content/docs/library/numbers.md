@@ -128,7 +128,7 @@ into one.
 ```kova
 fn main {
     var f: BigInt := 1
-    from i := 1 to 30 {
+    for i in 1..=30 {
         f := f * i.to_big
     }
     print(f)

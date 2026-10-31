@@ -1,8 +1,8 @@
 // Dates, the rest (PLAN Part 4): `plus_days`, `days_until`, `weekday`, `date`… checked against Python.
 fn kind(d: Date) -> String {
     match d.weekday {
-        Saturday => return "week-end"
-        Sunday => return "week-end"
+        .Saturday => return "week-end"
+        .Sunday => return "week-end"
         _ => return "travail"
     }
 }

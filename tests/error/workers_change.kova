@@ -36,8 +36,8 @@ fn main {
         grow(var a)
         b.bump
         match var shape {
-            Circle(radius) => radius := 2
-            Dot => {}
+            .Circle(radius) => radius := 2
+            .Dot => {}
         }
         [1, 2].each { x: Int =>
             c.n := x

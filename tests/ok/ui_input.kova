@@ -25,12 +25,12 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Renamed(name) => app.name := name.clone
-        Aged(text) => match text.to_int {
+        .Renamed(name) => app.name := name.clone
+        .Aged(text) => match text.to_int {
             none => {}
             n => app.age := n
         }
-        Clear => app.name := ""
+        .Clear => app.name := ""
     }
 }
 

@@ -15,17 +15,17 @@ enum Message {
 
 fn area(s: Shape) -> Float {
     return match s {
-        Circle(r) => 3.0 * r * r,
-        Square(side) => side * side,
-        Dot => 0.0,
+        .Circle(r) => 3.0 * r * r,
+        .Square(side) => side * side,
+        .Dot => 0.0,
     }
 }
 
 fn next(l: Light) -> Light {
     match l {
-        Red => return Light.Green
-        Green => return Light.Orange
-        Orange => return Light.Red
+        .Red => return Light.Green
+        .Green => return Light.Orange
+        .Orange => return Light.Red
     }
 }
 
@@ -44,9 +44,9 @@ fn main {
     print(msgs)
     for m in msgs {
         match m {
-            Say(t) => print("say {t}")
-            Move(x, y) => print(x + y)
-            Quit => {
+            .Say(t) => print("say {t}")
+            .Move(x, y) => print(x + y)
+            .Quit => {
                 print("quit")
                 break
             }
@@ -55,7 +55,7 @@ fn main {
     let twin: List<Message> := msgs.clone
     print(twin)
     let text: String := match Message.Say("owned") {
-        Say(t) => t,
+        .Say(t) => t,
         _ => "other",
     }
     print(text)
@@ -63,14 +63,14 @@ fn main {
     while i < 3 {
         let m: Message := if i = 1 { Message.Say("loop {i}") } else { Message.Move(i, i) }
         match m {
-            Say(t) => print(t)
+            .Say(t) => print(t)
             _ => print("not say")
         }
         i += 1
     }
     var st := Light.Red
     match st {
-        Red => st := Light.Green
+        .Red => st := Light.Green
         _ => {}
     }
     print(st)

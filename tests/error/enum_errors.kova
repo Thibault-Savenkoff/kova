@@ -20,21 +20,21 @@ fn main {
     }
     let s := Shape.Square(2.0)
     match s {
-        Circle(r) => print(r)
-        Circle(r) => print(r)
-        Square(x, y) => print(x)
-        Hexagon => print(0)
+        .Circle(r) => print(r)
+        .Circle(r) => print(r)
+        .Square(x, y) => print(x)
+        .Hexagon => print(0)
     }
     match s {
-        Circle(r) => r := 2.0
+        .Circle(r) => r := 2.0
     }
     match s {
         _ => print(1)
-        Square(x) => print(x)
+        .Square(x) => print(x)
     }
     match s {
-        Circle => print(1)
-        Square => print(2)
+        .Circle => print(1)
+        .Square => print(2)
         _ => print(3)
     }
 }
@@ -50,7 +50,7 @@ fn main {
 // error: the case `Circle` is already handled (line 23)
 // error: `Square` has 1 field(s) (`side`), 2 given
 // error: `Shape` has no variant `Hexagon`
-// error: cases of `Shape` not handled: `Square`
+// error: cases of `Shape` not handled: `.Square`
 // error: `r` is a field of the value matched: it cannot change
 // error: this case is never reached: `_` (line 32) already handles every other case
 // error: `_` handles nothing: every variant of `Shape` already has its case

@@ -57,8 +57,8 @@ fn view(step: Int) -> ui.View {
 
 fn update(step: var Int, e: Event) {
     match e {
-        Start => step := 1
-        Tick => {
+        .Start => step := 1
+        .Tick => {
             if step > 0 && step < steps {
                 step := step + 1
             }
@@ -339,7 +339,7 @@ fn view(n: Int) -> ui.View {
 
 fn update(n: var Int, e: Event) {
     match e {
-        Grow => ui.animate(ui.screen) time(1200) curve(bounce)
+        .Grow => ui.animate(ui.screen) time(1200) curve(bounce)
     }
 }
 
@@ -433,8 +433,8 @@ fn view(step: Int) -> ui.View {
 
 fn update(step: var Int, e: Event) {
     match e {
-        Grow => step := 1
-        Tick => {
+        .Grow => step := 1
+        .Tick => {
             if step > 0 && step <= steps {
                 let t: Float := step.to_float / steps.to_float
                 let s: ui.Area := ui.screen
@@ -522,11 +522,11 @@ struct App {
 
 fn update(app: var App, e: Event) {
     match e {
-        Start => {
+        .Start => {
             app.started := now
             app.running := true
         }
-        Tick => {
+        .Tick => {
             if app.running {
                 let t: Float := ((now - app.started) / 0.8).min(1.0)
                 ui.place(100, 100) size(between(320, 800, smooth(t)), 400)
@@ -581,8 +581,8 @@ fn view(step: Int) -> ui.View {
 
 fn update(step: var Int, e: Event) {
     match e {
-        Start => step := 1
-        Tick => {
+        .Start => step := 1
+        .Tick => {
             if step > 0 && step < steps {
                 step := step + 1
             }
@@ -645,11 +645,11 @@ fn view(ball: Ball) -> ui.View {
 
 fn update(ball: var Ball, e: Event) {
     match e {
-        Drop => {
+        .Drop => {
             ball.y := 0.0
             ball.speed := 0.0
         }
-        Tick => {
+        .Tick => {
             ball.speed := ball.speed + gravity
             ball.y := ball.y + ball.speed
             if ball.y > floor_at {

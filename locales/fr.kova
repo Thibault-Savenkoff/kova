@@ -136,6 +136,11 @@ lang fr {
     short_variant_type := "`.{name}` demande une enum ici, et `{type}` est attendu"
     short_variant_unknown := "`.{name}` : quelle enum ? Son type n'est pas connu ici"
     short_variant_unknown_help := "écrivez le nom de l'enum : `Color.{name}`"
+    from_loop := "une boucle qui compte s'écrit avec `for`"
+    from_loop_help := "`for i in 1..=3 \{ … \}` compte 1, 2, 3"
+    case_dot := "un cas d'enum commence par un point : `.{name} =>`"
+    case_empty := "ce cas n'a pas de corps"
+    case_empty_help := "écrivez `\{\}` après `=>` pour un cas qui ne fait rien"
     function_alone := "`{name}` est une fonction : appelez-la avec `{name}(…)`, ou donnez-la là où un bloc est attendu"
     habit_equal := "Kova compare avec un seul `=` : écrivez `a = b`"
     habit_assign := "Kova donne une valeur avec `:=`, et garde `=` pour comparer"
@@ -418,7 +423,7 @@ lang fr {
 
     // ---- Enums et `match` (J4) ----
     grouped_fields := "des cas groupés avec `,` ne peuvent pas encore prendre de champs"
-    grouped_fields_help := "écris un cas par variante pour utiliser ses champs, ou laisse les champs de côté : `Circle, Square =>`"
+    grouped_fields_help := "écris un cas par variante pour utiliser ses champs, ou laisse les champs de côté : `.Circle, .Square =>`"
     empty_parens_variant := "une variante sans champs s'écrit sans `()` : `{name}`"
     variant_exists := "la variante `{name}` existe déjà (ligne {line})"
     not_enum := "`{type}` n'est pas un enum : il n'a pas de variante `{name}`"

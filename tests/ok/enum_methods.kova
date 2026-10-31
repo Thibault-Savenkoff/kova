@@ -7,9 +7,9 @@ enum Item {
 
     fn describe(self) -> String {
         return match self {
-            Priced(l, a) => "{l} costs {a}"
-            Counted(n) => "{n} of them"
-            Pair((k, s)) => "{k} and {s}"
+            .Priced(l, a) => "{l} costs {a}"
+            .Counted(n) => "{n} of them"
+            .Pair((k, s)) => "{k} and {s}"
         }
     }
 
@@ -26,7 +26,7 @@ struct Shop {
 fn first_label(items: List<Item>) -> String {
     for it in items {
         match it {
-            Priced(l, _) => return l.clone
+            .Priced(l, _) => return l.clone
             _ => {}
         }
     }
@@ -41,8 +41,8 @@ fn make(i: Int) -> Item {
 // Leaves from the middle of a `match` on a value it owns.
 fn label_or_quit(i: Int) -> String {
     match make(i) {
-        Priced(l, _) => return l
-        Counted(n) => {
+        .Priced(l, _) => return l
+        .Counted(n) => {
             if n > 5 { return "many" }
         }
         _ => {}
@@ -58,7 +58,7 @@ fn main {
     }
     print(first_label(items))
     match items[1] {
-        Counted(n) => print(n * 10)
+        .Counted(n) => print(n * 10)
         _ => print("?")
     }
     let shop := Shop { name := "Corner", best := Item.Priced("cake", 4.25) }
@@ -71,12 +71,12 @@ fn main {
     while true {
         let it: Item := make(k)
         match it {
-            Priced(l, a) => {
+            .Priced(l, a) => {
                 if a > 1.0 { break }
                 print(l)
             }
-            Counted(n) => print(n)
-            Pair(_) => continue
+            .Counted(n) => print(n)
+            .Pair(_) => continue
         }
         k += 1
     }

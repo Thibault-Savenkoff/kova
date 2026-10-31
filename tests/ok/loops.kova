@@ -6,15 +6,15 @@ fn main {
     print(0)
     for i in 0..=3 { write(i) }
     print(0)
-    from i := 1 to 3 { write(i) }
+    for i in 1..=3 { write(i) }
     print(0)
 
     // Empty range: no iteration.
-    from i := 5 to 1 { print(i) }
+    for i in 5..=1 { print(i) }
     for i in 3..3 { print(i) }
 
     // `continue` still moves on to the next counter value.
-    from i := 1 to 6 {
+    for i in 1..=6 {
         if i % 2 = 0 { continue }
         write(i)
     }
@@ -29,17 +29,17 @@ fn main {
     print(total)
 
     // Nested loops + same counter name in two sibling loops.
-    from i := 1 to 3 {
-        from j := 1 to i { write(j) }
+    for i in 1..=3 {
+        for j in 1..=i { write(j) }
         write(0)
     }
     print(0)
-    from i := 7 to 8 { write(i) }
+    for i in 7..=8 { write(i) }
     print(0)
 
     // A loop going up to the largest Int doesn't overflow.
     var tours: Int := 0
-    from i := 9223372036854775806 to 9223372036854775807 { tours += 1 }
+    for i in 9223372036854775806..=9223372036854775807 { tours += 1 }
     print(tours)
 }
 

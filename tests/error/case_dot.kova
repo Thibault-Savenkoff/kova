@@ -1,0 +1,15 @@
+enum Color {
+    Red
+    Blue
+}
+
+fn main {
+    let c: Color := .Red
+    match c {
+        Red => print(1)
+        .Blue =>
+        .Red => print(2)
+    }
+}
+// error: a case of an enum starts with a dot: `.Red =>`
+// error: this case has no body

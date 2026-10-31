@@ -22,8 +22,8 @@ enum Event {
 
 fn update(app: var App, e: Event) {
     match e {
-        Typed(text) => app.name := text.clone
-        Go => app.name := ""
+        .Typed(text) => app.name := text.clone
+        .Go => app.name := ""
     }
 }
 

@@ -32,7 +32,7 @@ fn main {
     let z: Int := n?
     let l := Light.Red
     match x {
-        Red => print(1)
+        .Red => print(1)
         v => print(v)
     }
     match l {

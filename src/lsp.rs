@@ -432,6 +432,7 @@ fn is_word(c: char) -> bool {
 /// `rex.na|`: the fields and methods of `rex`'s type. `None` when the cursor is not after a `.`.
 fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
     let mut items = (import_files(path, src, cursor))
+        .or_else(|| starts_case(src, cursor).then(|| match_cases(path, src, cursor)).flatten())
         .or_else(|| next_parts(path, src, cursor))
         .or_else(|| members(path, src, cursor))
         .or_else(|| literal_fields(path, src, cursor))
@@ -669,12 +670,21 @@ fn import_files(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIt
     Some(items)
 }
 
+/// A `.` that no value comes before, where a case goes.
+fn starts_case(src: &str, cursor: usize) -> bool {
+    let word = src[..cursor].trim_end_matches(is_word);
+    word.strip_suffix('.').is_some_and(|b| b.trim_end_matches([' ', '\t']).ends_with(['\n', '{', ',']))
+}
+
 /// In `match shape {`, where a case goes: the cases not handled yet.
 fn match_cases(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
-    let (before, k) = opened(src, cursor)?;
+    // Without the name being typed (and its dot, which stays in the text), the `match` reads.
+    let word = src[..cursor].trim_end_matches(is_word).len();
+    let dotted = src[..word].ends_with('.');
+    let start = word - dotted as usize;
+    // The dot would join its line to the one above: a name of the same length does not.
+    let (before, k) = opened(&format!("{}X{}", &src[..start], &src[word..]), cursor + !dotted as usize)?;
     let brace = before[k].span.start;
-    // Without the name being typed, the `match` reads.
-    let start = src[..cursor].trim_end_matches(is_word).len();
     let end = src.len() - src[cursor..].trim_start_matches(is_word).len();
     let (_, info, _) = info(path, &format!("{}{}", &src[..start], &src[end..]))?;
     // The `match` whose `{` this is: the first `{` after its subject.
@@ -683,8 +693,9 @@ fn match_cases(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIte
     Some(
         cases
             .iter()
+            .map(|c| if dotted { c.trim_start_matches('.') } else { c })
             .map(|c| CompletionItem {
-                label: c.clone(),
+                label: c.to_string(),
                 kind: Some(CompletionItemKind::ENUM_MEMBER),
                 insert_text: Some(format!("{c} => ")),
                 ..Default::default()
@@ -1429,13 +1440,13 @@ mod tests {
     #[test]
     fn completion_while_typing() {
         // `}` not typed yet, statement unfinished: `total` is offered anyway.
-        let src = "fn main {\n  var total: Int := 0\n  from i := 1 to 3 {\n    total := to";
+        let src = "fn main {\n  var total: Int := 0\n  for i in 1..=3 {\n    total := to";
         assert_eq!(names(&complete(src, src.len())), ["total", "i"]);
     }
 
     #[test]
     fn match_completion() {
-        let src = "enum S { C(r: Float), D }\nfn main {\n  let s := S.D\n  match s {\n    C(radius) => \n    D => {}\n  }\n}";
+        let src = "enum S { C(r: Float), D }\nfn main {\n  let s := S.D\n  match s {\n    .C(radius) => \n    .D => {}\n  }\n}";
         assert_eq!(names(&complete(src, src.find("=> ").unwrap() + 3)), ["s", "radius"]);
     }
 
@@ -1616,14 +1627,19 @@ mod tests {
         assert_eq!(item.command.map(|c| (c.command, c.arguments)), Some(("type".into(), Some(vec![serde_json::json!({ "text": " " })]))));
     }
 
-    const SHAPES: &str = "enum S { C(radius: Float), D, E }\nfn main {\n    let s := S.D\n    match s {\n        D => {}\n    }\n}\n";
+    const SHAPES: &str = "enum S { C(radius: Float), D, E }\nfn main {\n    let s := S.D\n    match s {\n        .D => {}\n    }\n}\n";
 
     #[test]
     fn completion_of_match_cases() {
         let src = SHAPES.replace("D => {}\n", "D => {}\n        C");
         let items = match_cases("/none/main.kova", &src, src.find("        C").unwrap() + 9).unwrap();
         let shown: Vec<(&str, &str)> = items.iter().map(|i| (i.label.as_str(), i.insert_text.as_deref().unwrap())).collect();
-        assert_eq!(shown, [("C(radius)", "C(radius) => "), ("E", "E => ")]);
+        assert_eq!(shown, [(".C(radius)", ".C(radius) => "), (".E", ".E => ")]);
+        // After the dot, which stays.
+        let src = SHAPES.replace("D => {}\n", "D => {}\n        .\n");
+        let at = src.find("        .\n").unwrap() + 9;
+        assert!(starts_case(&src, at));
+        assert_eq!(labels(Some(completion("/none/main.kova", &src, at))), ["C(radius)", "E"]);
         // In the body of a case: not a case.
         let src = SHAPES.replace("D => {}", "D => {\n        \n        }");
         assert!(match_cases("/none/main.kova", &src, src.find("{\n        \n").unwrap() + 10).is_none());
@@ -1635,7 +1651,7 @@ mod tests {
         let actions = add_cases(&uri, SHAPES, Range::new(Position::new(3, 10), Position::new(3, 10)));
         let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
         let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
-        assert_eq!(edit.new_text, "        C(radius) => {}\n        E => {}\n");
+        assert_eq!(edit.new_text, "        .C(radius) => {}\n        .E => {}\n");
         assert_eq!(edit.range.start, Position::new(5, 0));
         // What it writes reads, on an enum and on an optional.
         let fixed = |src: &str, edit: &TextEdit| {
@@ -1679,7 +1695,7 @@ mod tests {
         assert_eq!(edits(DOGS, "age: Int", "years"), Ok(vec![(2, 2), (6, 34), (9, 18)]));
         assert_eq!(edits(DOGS, "Dog {\n", "Hound"), Ok(vec![(0, 7), (6, 13)]));
         // A variant: in its enum, where it is made, and in the `match` cases.
-        assert_eq!(edits(SHAPES, "D, E", "Dot"), Ok(vec![(0, 27), (2, 15), (4, 8)]));
+        assert_eq!(edits(SHAPES, "D, E", "Dot"), Ok(vec![(0, 27), (2, 15), (4, 9)]));
         assert!(edits(DOGS, "rex :=", "Max").is_err());
         assert!(edits(DOGS, "rex :=", "while").is_err());
         let uses_self = DOGS.replace("return \"woof\"", "return self.name");

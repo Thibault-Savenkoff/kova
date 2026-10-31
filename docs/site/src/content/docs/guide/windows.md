@@ -38,8 +38,8 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Plus => app.clicks := app.clicks + 1
-        Minus => app.clicks := app.clicks - 1
+        .Plus => app.clicks := app.clicks + 1
+        .Minus => app.clicks := app.clicks - 1
     }
 }
 
@@ -109,7 +109,7 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Renamed(name) => app.name := name.clone
+        .Renamed(name) => app.name := name.clone
     }
 }
 
@@ -162,7 +162,7 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Renamed(name) => app.name := name.clone
+        .Renamed(name) => app.name := name.clone
     }
 }
 
@@ -214,11 +214,11 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Pressed(x, y) => {
+        .Pressed(x, y) => {
             app.x := x
             app.y := y
         }
-        Tick => app.ticks := app.ticks + 1
+        .Tick => app.ticks := app.ticks + 1
     }
 }
 
@@ -270,7 +270,7 @@ happened, `m.right` that it is the right button. A move with a button held down 
 `m.moved`, so dragging needs a line in your state:
 
 ```kova
-Mouse(x, y, pressed, released) => {
+.Mouse(x, y, pressed, released) => {
     if pressed {
         app.dragging := true
     }
@@ -314,8 +314,8 @@ fn view(app: App) -> ui.View {
 
 fn update(app: var App, e: Event) {
     match e {
-        Tick => app.x := app.x + app.speed
-        Key(name) => match name {
+        .Tick => app.x := app.x + app.speed
+        .Key(name) => match name {
             "Left" => app.speed := -2
             "Right" => app.speed := 2
             _ => {}
@@ -376,12 +376,12 @@ fn view(n: Int) -> ui.View {
 
 fn update(n: var Int, e: Event) {
     match e {
-        Pressed(x, y, pressed) => {
+        .Pressed(x, y, pressed) => {
             if pressed {
                 ui.drag
             }
         }
-        Closed => ui.close
+        .Closed => ui.close
     }
 }
 

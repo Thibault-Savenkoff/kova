@@ -29,7 +29,7 @@ fn books {
     match Book.from_json("\{\"title\": \"x\"\}") {
         ok(c) => print(c.title)
         err(e) => match e {
-            Missing(field) => print("missing: {field}")
+            .Missing(field) => print("missing: {field}")
             _ => print("error: {e}")
         }
     }

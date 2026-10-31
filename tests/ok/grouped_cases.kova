@@ -1,4 +1,4 @@
-// Grouped cases (PLAN Part 4): `Saturday, Sunday =>` takes either variant.
+// Grouped cases (PLAN Part 4): `.Saturday, .Sunday =>` takes either variant.
 
 import files
 
@@ -10,7 +10,7 @@ enum Shape {
 
 fn kind(d: Date) -> String {
     match d.weekday {
-        Saturday, Sunday => return "week-end"
+        .Saturday, .Sunday => return "week-end"
         _ => return "travail"
     }
 }
@@ -24,8 +24,8 @@ fn main {
     let shapes: List<Shape> := [Shape.Circle(1.0), Shape.Dot, Shape.Square(2.0)]
     for s in shapes {
         let flat: Bool := match s {
-            Circle, Square => false
-            Dot => true
+            .Circle, .Square => false
+            .Dot => true
         }
         print(flat)
     }

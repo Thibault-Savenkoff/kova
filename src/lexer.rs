@@ -38,7 +38,7 @@ pub struct Token {
 }
 
 pub const KEYWORDS: &[&str] = &[
-    "fn", "let", "var", "move", "return", "if", "else", "while", "for", "in", "from", "to", "match",
+    "fn", "let", "var", "move", "return", "if", "else", "while", "for", "in", "from", "match",
     "struct", "enum", "interface", "import", "public", "private", "require", "ensure", "check",
     "result", "self", "true", "false", "none", "ok", "err", "and", "or", "copy", "any", "break",
     "continue", "header", "test",
@@ -55,9 +55,13 @@ fn continues_after(k: Kind) -> bool {
     matches!(k, Kind::Sym(s) if !matches!(s, ")" | "]" | "}" | "?" | "!"))
 }
 
-/// A line starting with one of these tokens continues the previous one.
-fn continues_before(k: Kind) -> bool {
-    matches!(k, Kind::Sym("." | "&&" | "||" | ")" | "]" | "}"))
+/// A line starting with these tokens continues the previous one: `.trim`, `&& ok`, `)`;
+/// but `.Red` is a case of an enum, which starts its own line.
+pub fn continues_before(k: Kind, next: Option<Kind>) -> bool {
+    match k {
+        Kind::Sym(".") => next != Some(Kind::Type),
+        _ => matches!(k, Kind::Sym("&&" | "||" | ")" | "]" | "}")),
+    }
 }
 
 pub fn lex(source: &str) -> (Vec<Token>, Vec<Diag>) {
@@ -445,14 +449,15 @@ fn add_newlines(raw: Vec<(Token, bool)>) -> Vec<Token> {
     // Open brackets: inside `(` and `[`, line breaks don't count.
     let mut open: Vec<&str> = vec![];
 
-    for (t, new_line) in raw {
+    let next: Vec<Option<Kind>> = raw.iter().skip(1).map(|(t, _)| Some(t.kind)).chain([None]).collect();
+    for ((t, new_line), next) in raw.into_iter().zip(next) {
         let in_braces = matches!(open.last(), None | Some(&"{"));
         if let Some(prev) = out.last()
             && new_line
             && in_braces
             && prev.kind != Kind::Newline
             && !continues_after(prev.kind)
-            && !continues_before(t.kind)
+            && !continues_before(t.kind, next)
         {
             out.push(Token { kind: Kind::Newline, span: Span::new(prev.span.end, prev.span.end) });
         }

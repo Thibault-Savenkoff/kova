@@ -58,7 +58,7 @@ interface Animal {
 
 fn chorus<A: Animal>(a: A, times: Int) -> String {
     var text: String := ""
-    from i := 1 to times {
+    for i in 1..=times {
         text += a.sound
     }
     return text

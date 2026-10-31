@@ -16,7 +16,7 @@ fn main {
         write(i)
     }
     print("")
-    from i := 10 to 0 step -5 {
+    for i in 10..=0 step -5 {
         write(i)
         write(",")
     }

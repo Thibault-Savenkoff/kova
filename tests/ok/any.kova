@@ -29,8 +29,8 @@ enum Form : Shape {
     Circle(radius: Float),
     fn area(self) -> Float {
         return match self {
-            Square(side) => side * side,
-            Circle(radius) => 3.0 * radius * radius,
+            .Square(side) => side * side,
+            .Circle(radius) => 3.0 * radius * radius,
         }
     }
 }

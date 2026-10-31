@@ -16,8 +16,8 @@ fn view(n: Int) -> ui.View {
 fn update(n: var Int, e: Event) {
     let s: ui.Area := ui.screen
     match e {
-        Grown => ui.animate(s) time(16 * steps)
-        Curved => ui.animate(ui.Area { x := 0, y := 0, width := 100, height := 100 }) curve { t: Float => t }
+        .Grown => ui.animate(s) time(16 * steps)
+        .Curved => ui.animate(ui.Area { x := 0, y := 0, width := 100, height := 100 }) curve { t: Float => t }
     }
     n := n + 1
 }

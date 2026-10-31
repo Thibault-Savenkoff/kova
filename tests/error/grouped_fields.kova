@@ -6,11 +6,11 @@ enum Shape {
 fn main {
     let s := Shape.Circle(1.0)
     match s {
-        Circle(r), Square => print(1)
+        .Circle(r), .Square => print(1)
         _ => print(2)
     }
     match s {
-        Circle, Square(x) => print(3)
+        .Circle, .Square(x) => print(3)
     }
 }
 // error: cases grouped with `,` cannot take fields yet

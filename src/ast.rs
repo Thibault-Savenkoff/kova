@@ -472,7 +472,7 @@ pub enum Stmt {
     Continue(Span),
     If { cond: Expr, then: Block, otherwise: Option<Block> },
     While { cond: Expr, body: Block },
-    /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` / `from i := a to b` (`inclusive` = true).
+    /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` (`inclusive` = true).
     /// `step`: what is added at each turn, 1 unless the loop says.
     Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, step: i64, body: Block },
     /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).

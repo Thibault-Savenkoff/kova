@@ -11,21 +11,21 @@ fn make -> Shape {
 fn main {
     var s := Shape.Circle(1.0)
     match var s {
-        Circle(r) => print(s)
-        Dot => s := Shape.Circle(2.0)
+        .Circle(r) => print(s)
+        .Dot => s := Shape.Circle(2.0)
     }
     let fixed := Shape.Dot
     match var fixed {
-        Circle(r) => r := 1.0
-        Dot => print("dot")
+        .Circle(r) => r := 1.0
+        .Dot => print("dot")
     }
     match var make {
-        Circle(r) => r := 1.0
-        Dot => print("dot")
+        .Circle(r) => r := 1.0
+        .Dot => print("dot")
     }
     match s {
-        Circle(r) => r := 3.0
-        Dot => print("dot")
+        .Circle(r) => r := 3.0
+        .Dot => print("dot")
     }
 }
 // error: `s` is lent to the case of line 14 of its `match var`: there it is used through the names of the case only

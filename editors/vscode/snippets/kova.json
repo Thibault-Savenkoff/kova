@@ -64,14 +64,9 @@
     "body": ["for ${1:element} in ${2:liste} {", "\t$0", "}"],
     "description": "Boucle sur une liste ou un intervalle"
   },
-  "from": {
-    "prefix": "from",
-    "body": ["from ${1:i} := ${2:1} to ${3:10} {", "\t$0", "}"],
-    "description": "Boucle de début à fin (fin incluse)"
-  },
   "match": {
     "prefix": "match",
-    "body": ["match ${1:valeur} {", "\t${2:Cas} => ${3:resultat},", "\t$0", "}"],
+    "body": ["match ${1:valeur} {", "\t.${2:Cas} => ${3:resultat},", "\t$0", "}"],
     "description": "Choix selon le cas"
   },
   "require": {

@@ -1,0 +1,6 @@
+fn main {
+    from i := 1 to 3 {
+        print(i)
+    }
+}
+// error: a counting loop is written with `for`

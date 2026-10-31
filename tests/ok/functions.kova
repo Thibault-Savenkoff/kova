@@ -17,7 +17,7 @@ fn main
     {
         n += 1
     }
-    from i := 1 to 2
+    for i in 1..=2
     {
         write(i)
     }

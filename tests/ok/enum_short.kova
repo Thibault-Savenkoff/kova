@@ -15,8 +15,8 @@ struct Pen {
 
 fn paint(c: Color) -> Int {
     return match c {
-        Red => 1
-        Green => 2
+        .Red => 1
+        .Green => 2
     }
 }
 
@@ -24,8 +24,8 @@ fn best -> Color := .Green
 
 fn size(s: Shape) -> Int {
     return match s {
-        Circle(r) => r
-        Named(t) => t.length
+        .Circle(r) => r
+        .Named(t) => t.length
     }
 }
 
