@@ -108,5 +108,10 @@
     "prefix": "return",
     "body": ["return ${0}"],
     "description": "Renvoyer une valeur"
+  },
+  "threads.select": {
+    "prefix": "select",
+    "body": ["threads.select {", "\t${1:value} from ${2:channel} => ${3:print(value)}", "\tafter(${4:1.0}) => ${5:print(\"nothing yet\")}", "\tclosed => ${6:break}", "}"],
+    "description": "Wait for the first of several channels"
   }
 }
