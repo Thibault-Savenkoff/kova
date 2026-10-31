@@ -1,0 +1,262 @@
+// `import xml`: reading and writing XML. A document is a tree of `Node`s.
+
+public:
+
+struct Error {
+public:
+    line: Int
+    message: String
+
+    fn to_string(self) -> String {
+        return "line {self.line}: {self.message}"
+    }
+}
+
+struct Node {
+public:
+    name: String
+    attributes: Map<String, String> := []
+    children: List<Node> := []
+    // The text directly inside, all its pieces joined.
+    text: String := ""
+
+    // The children of that name.
+    fn all(self, name: String) -> List<Node> {
+        return self.children.filter { n: Node => n.name = name }
+    }
+
+    fn first(self, name: String) -> Node? {
+        for n in self.children {
+            if n.name = name {
+                return n.clone
+            }
+        }
+        return none
+    }
+
+    fn to_xml(self) -> String {
+        var written: String := "<" + self.name
+        for name in self.attributes.keys.sorted {
+            written += " {name}=\"{escaped(self.attributes[name] else "")}\""
+        }
+        if self.children.is_empty && self.text.is_empty {
+            return written + "/>"
+        }
+        written += ">" + escaped(self.text)
+        for n in self.children {
+            written += n.to_xml
+        }
+        return written + "</{self.name}>"
+    }
+}
+
+fn parse(text: String) -> Node or Error {
+    var r: Reader := Reader { chars := text.chars, at := 0, line := 1 }
+    r.skip_prolog?
+    if !r.sees("<") {
+        return err(r.fail("an element expected"))
+    }
+    let root: Node := r.element?
+    r.skip_prolog?
+    if r.more {
+        return err(r.fail("text after the end of the document"))
+    }
+    return ok(root)
+}
+
+private:
+
+fn escaped(text: String) -> String {
+    return text.replace("&") with("&amp;").replace("<") with("&lt;").replace(">") with("&gt;").replace("\"") with("&quot;")
+}
+
+fn name_char(c: Char) -> Bool {
+    return c.is_letter || c.is_digit || c = '_' || c = '-' || c = ':' || c = '.'
+}
+
+struct Reader {
+    chars: List<Char>
+    at: Int
+    line: Int
+
+    fn fail(self, message: String) -> Error {
+        return Error { line := self.line, message := message.clone }
+    }
+
+    fn more(self) -> Bool {
+        return self.at < self.chars.length
+    }
+
+    fn sees(self, text: String) -> Bool {
+        for i, c in text.chars {
+            if self.at + i >= self.chars.length || self.chars[self.at + i] != c {
+                return false
+            }
+        }
+        return true
+    }
+
+    fn step(var self) -> Char {
+        let c: Char := self.chars[self.at]
+        self.at += 1
+        if c = '\n' {
+            self.line += 1
+        }
+        return c
+    }
+
+    fn skip_spaces(var self) {
+        while self.more && self.chars[self.at].is_space {
+            self.step
+        }
+    }
+
+    // Up to `end`, which it passes: what was skipped.
+    fn until(var self, end: String) -> String or Error {
+        var text: String := ""
+        while !self.sees(end) {
+            if !self.more {
+                return err(self.fail("`{end}` expected"))
+            }
+            text += self.step.to_string
+        }
+        self.at += end.length
+        return ok(text)
+    }
+
+    // Spaces, comments, `<?…?>` and `<!DOCTYPE …>`, around the root element.
+    fn skip_prolog(var self) -> Nothing or Error {
+        self.skip_spaces
+        while self.sees("<?") || self.sees("<!") {
+            if self.sees("<!--") {
+                self.until("-->")?
+            } else if self.sees("<?") {
+                self.until("?>")?
+            } else {
+                self.until(">")?
+            }
+            self.skip_spaces
+        }
+        return ok
+    }
+
+    fn name(var self) -> String or Error {
+        var text: String := ""
+        while self.more && name_char(self.chars[self.at]) {
+            text += self.step.to_string
+        }
+        if text.is_empty {
+            return err(self.fail("a name expected"))
+        }
+        return ok(text)
+    }
+
+    fn element(var self) -> Node or Error {
+        self.at += 1
+        var node: Node := Node { name := self.name? }
+        while true {
+            self.skip_spaces
+            if self.sees("/>") {
+                self.at += 2
+                return ok(node)
+            }
+            if self.sees(">") {
+                self.at += 1
+                break
+            }
+            let key: String := self.name?
+            self.skip_spaces
+            if !self.sees("=") {
+                return err(self.fail("`=` expected after `{key}`"))
+            }
+            self.at += 1
+            self.skip_spaces
+            let quote: String := if self.sees("\"") { "\"" } else { "'" }
+            if !self.sees(quote) {
+                return err(self.fail("a value in quotes expected after `{key}`"))
+            }
+            self.at += 1
+            let value: String := self.until(quote)?
+            node.attributes[key] := self.decoded(value)?
+        }
+        while true {
+            if self.sees("</") {
+                self.at += 2
+                let closing: String := self.name?
+                if closing != node.name {
+                    return err(self.fail("`</{node.name}>` expected, found `</{closing}>`"))
+                }
+                self.skip_spaces
+                if !self.sees(">") {
+                    return err(self.fail("`>` expected"))
+                }
+                self.at += 1
+                node.text := node.text.trim
+                return ok(node)
+            }
+            if !self.more {
+                return err(self.fail("`</{node.name}>` expected"))
+            }
+            if self.sees("<!--") {
+                self.until("-->")?
+            } else if self.sees("<?") {
+                self.until("?>")?
+            } else if self.sees("<![CDATA[") {
+                self.at += 9
+                node.text += self.until("]]>")?
+            } else if self.sees("<") {
+                node.children.add(self.element?)
+            } else {
+                var piece: String := ""
+                while self.more && !self.sees("<") {
+                    piece += self.step.to_string
+                }
+                node.text += self.decoded(piece)?
+            }
+        }
+        return ok(node)
+    }
+
+    // `&lt;`, `&#233;`, `&#xE9;`.
+    fn decoded(self, text: String) -> String or Error {
+        let parts: List<String> := text.split("&")
+        var out: String := parts[0].clone
+        for part in parts[1..parts.length] {
+            let cut: Int? := part.find(";")
+            if cut = none {
+                return err(self.fail("`;` expected after `&`"))
+            }
+            let name: String := part[0..cut]
+            out += self.entity(name)?
+            out += part[cut + 1..part.length]
+        }
+        return ok(out)
+    }
+
+    fn entity(self, name: String) -> String or Error {
+        if name.starts_with("#") {
+            let hex: Bool := name.starts_with("#x")
+            let digits: String := name[if hex { 2 } else { 1 }..name.length]
+            var code: Int := 0
+            for c in digits.to_lower.chars {
+                let value: Int := if c.is_digit { c.to_int - '0'.to_int } else { c.to_int - 'a'.to_int + 10 }
+                if value < 0 || value >= if hex { 16 } else { 10 } {
+                    return err(self.fail("`&{name};` is not a character"))
+                }
+                code := code * if hex { 16 } else { 10 } + value
+            }
+            return match code.to_char {
+                none => err(self.fail("`&{name};` is not a character"))
+                c => ok(c.to_string)
+            }
+        }
+        return match name {
+            "lt" => ok("<")
+            "gt" => ok(">")
+            "amp" => ok("&")
+            "quot" => ok("\"")
+            "apos" => ok("'")
+            _ => err(self.fail("`&{name};` is not known"))
+        }
+    }
+}

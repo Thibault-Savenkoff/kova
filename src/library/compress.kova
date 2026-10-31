@@ -1,0 +1,59 @@
+// `import compress`: the gzip format, around `data.deflate` and `data.inflate`.
+
+public:
+
+fn gzip(data: List<Int>) -> List<Int> {
+    var out: List<Int> := [31, 139, 8, 0, 0, 0, 0, 0, 0, 255]
+    out += data.deflate
+    out += little(data.crc32, 4)
+    out += little(data.length, 4)
+    return out
+}
+
+// What `gzip` packed; `none` if it is not gzip data or it was damaged.
+fn gunzip(data: List<Int>) -> List<Int>? {
+    if data.length < 18 || data[0] != 31 || data[1] != 139 || data[2] != 8 {
+        return none
+    }
+    let flags: Int := data[3]
+    var at: Int := 10
+    if flags & 4 != 0 {
+        at += 2 + data[at] + data[at + 1] * 256
+    }
+    for flag in [8, 16] {
+        if flags & flag != 0 {
+            while at < data.length && data[at] != 0 {
+                at += 1
+            }
+            at += 1
+        }
+    }
+    if flags & 2 != 0 {
+        at += 2
+    }
+    if at + 8 > data.length {
+        return none
+    }
+    let unpacked: List<Int> := data[at..data.length - 8].inflate?
+    if unpacked.crc32 != read_little(data, data.length - 8, 4) || unpacked.length % 4294967296 != read_little(data, data.length - 4, 4) {
+        return none
+    }
+    return unpacked
+}
+
+// `n` as `size` bytes, the lowest first: how gzip and zip write numbers.
+fn little(n: Int, size: Int) -> List<Int> {
+    var out: List<Int> := []
+    for k in 0..size {
+        out.add((n >> (8 * k)) & 255)
+    }
+    return out
+}
+
+fn read_little(data: List<Int>, at: Int, size: Int) -> Int {
+    var n: Int := 0
+    for k in 0..size {
+        n := n | (data[at + k] << (8 * k))
+    }
+    return n
+}

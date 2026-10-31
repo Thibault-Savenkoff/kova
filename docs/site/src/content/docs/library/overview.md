@@ -34,6 +34,9 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import paths` | [paths](/library/paths/) | cutting and joining file paths |
 | `import url` | [url](/library/url/) | encoding texts for web addresses |
 | `import arguments` | [arguments](/library/arguments/) | reading the command line |
+| `import toml` | [toml](/library/toml/) | reading configuration files |
+| `import xml` | [xml](/library/xml/) | reading and writing XML |
+| `import compress`, `import zip` | [compress and zip](/library/compress/) | gzip and zip archives |
 | `import ui` | [ui](/library/ui/) | native windows |
 
 ## Every value has

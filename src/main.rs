@@ -8,6 +8,7 @@ mod bigint;
 mod codegen;
 mod crypto;
 mod csv;
+mod deflate;
 mod debug;
 mod diag;
 mod format;

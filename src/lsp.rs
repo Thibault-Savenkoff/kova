@@ -943,6 +943,7 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         plain("to_csv separator(…)", "(c: Char) -> String".into()),
     ];
     if elem == "Int" {
+        items.extend([plain("deflate", "-> List<Int>".into()), plain("inflate", "-> List<Int>?".into()), plain("crc32", "-> Int".into())]);
         items.extend([plain("to_text", "-> String?".into()), plain("to_hex", "-> String".into()), plain("to_base64", "-> String".into()), plain("to_base64url", "-> String".into()), plain("sha256", "-> String".into())]);
     }
     items
@@ -1597,7 +1598,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "to_text", "to_hex", "to_base64", "to_base64url", "sha256", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "deflate", "inflate", "crc32", "to_text", "to_hex", "to_base64", "to_base64url", "sha256", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");
@@ -1663,12 +1664,12 @@ mod tests {
     #[test]
     fn completion_of_imports() {
         let src = "import geometry\nimport ";
-        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "shapes"]);
+        assert_eq!(labels(import_files(MODULES, src, src.len())), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "shapes"]);
         assert!(import_files(MODULES, "fn main {", 9).is_none());
-        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments"]);
+        assert_eq!(labels(import_files("/nowhere/at/all/main.kova", "import ", 7)), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip"]);
         // A folder, then its files.
         let folders = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ok/folders/main.kova");
-        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "shapes"]);
+        assert_eq!(labels(import_files(folders, "import ", 7)), ["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "shapes"]);
         assert_eq!(labels(import_files(folders, "import shapes.", 14)), ["circle", "point", "flat"]);
         assert_eq!(labels(import_files(folders, "import shapes.circle\nimport shapes.flat.", 40)), ["square"]);
         // Tab on `import` writes `import` and types the space that opens the list.

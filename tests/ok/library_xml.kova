@@ -1,0 +1,48 @@
+// expect: catalog
+// expect: 2
+// expect: Dune, 1965
+// expect: A & B <c> é é
+// expect: <book id="2"><title>A &amp; B &lt;c&gt;</title></book>
+// expect: line 1: `</b>` expected, found `</c>`
+// expect: line 3: `&nope;` is not known
+
+import xml
+
+fn show(text: String) {
+    match xml.parse(text) {
+        ok(n) => print(n.name)
+        err(e) => print(e.to_string)
+    }
+}
+
+fn main {
+    let text: String := """
+    <?xml version="1.0"?>
+    <!-- a comment -->
+    <catalog>
+        <book id="1" year='1965'><title>Dune</title></book>
+        <book id="2">
+            <title>A &amp; B <![CDATA[<c>]]> &#233; &#xE9;</title>
+        </book>
+    </catalog>
+    """
+    match xml.parse(text) {
+        err(e) => print(e.to_string)
+        ok(root) => {
+            print(root.name)
+            let books: List<xml.Node> := root.all("book")
+            print(books.length)
+            let title: xml.Node? := books[0].first("title")
+            print("{title?.text}, {books[0].attributes["year"] else "?"}")
+            print(books[1].first("title")?.text)
+            let copy_of: xml.Node := xml.Node {
+                name := "book"
+                attributes := ["id" := "2"]
+                children := [xml.Node { name := "title", text := "A & B <c>" }]
+            }
+            print(copy_of.to_xml)
+        }
+    }
+    show("<a><b></c></a>")
+    show("<a>\n\n&nope;</a>")
+}

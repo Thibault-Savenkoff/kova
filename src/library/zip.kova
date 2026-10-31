@@ -1,0 +1,100 @@
+// `import zip`: zip archives, in memory. `files.read_bytes` and `files.write_bytes` go to the disk.
+import compress
+
+public:
+
+struct Entry {
+public:
+    // Its path inside the archive, with `/`.
+    name: String
+    data: List<Int>
+}
+
+fn pack(entries: List<Entry>) -> List<Int> {
+    var out: List<Int> := []
+    var index: List<Int> := []
+    for e in entries {
+        let packed: List<Int> := e.data.deflate
+        let name: List<Int> := e.name.to_bytes
+        let same: List<Int> := record(e, packed.length, name.length)
+        let at: Int := out.length
+        out += [80, 75, 3, 4]
+        out += same
+        out += compress.little(0, 2)
+        out += name
+        out += packed
+        index += [80, 75, 1, 2, 20, 0]
+        index += same
+        index += [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        index += compress.little(at, 4)
+        index += name
+    }
+    let start: Int := out.length
+    let size: Int := index.length
+    out += index
+    out += [80, 75, 5, 6, 0, 0, 0, 0]
+    out += compress.little(entries.length, 2)
+    out += compress.little(entries.length, 2)
+    out += compress.little(size, 4)
+    out += compress.little(start, 4)
+    out += compress.little(0, 2)
+    return out
+}
+
+// The entries of an archive; `none` if it is not one or it was damaged.
+fn unpack(data: List<Int>) -> List<Entry>? {
+    let end: Int := end_record(data)?
+    let count: Int := compress.read_little(data, end + 10, 2)
+    var at: Int := compress.read_little(data, end + 16, 4)
+    var entries: List<Entry> := []
+    for k in 0..count {
+        if at + 46 > data.length || compress.read_little(data, at, 4) != 33639248 {
+            return none
+        }
+        let method: Int := compress.read_little(data, at + 10, 2)
+        let crc: Int := compress.read_little(data, at + 16, 4)
+        let packed: Int := compress.read_little(data, at + 20, 4)
+        let name_size: Int := compress.read_little(data, at + 28, 2)
+        let extra: Int := compress.read_little(data, at + 30, 2) + compress.read_little(data, at + 32, 2)
+        let local: Int := compress.read_little(data, at + 42, 4)
+        let name: String := data[at + 46..at + 46 + name_size].to_text?
+        if local + 30 > data.length {
+            return none
+        }
+        let start: Int := local + 30 + compress.read_little(data, local + 26, 2) + compress.read_little(data, local + 28, 2)
+        if start + packed > data.length {
+            return none
+        }
+        let body: List<Int> := data[start..start + packed]
+        let unpacked: List<Int>? := if method = 0 { body } else if method = 8 { body.inflate } else { none }
+        if unpacked = none || unpacked.crc32 != crc {
+            return none
+        }
+        entries.add(Entry { name := name, data := unpacked })
+        at += 46 + name_size + extra
+    }
+    return entries
+}
+
+private:
+
+// What a local header and an index entry both hold.
+fn record(e: Entry, packed: Int, name: Int) -> List<Int> {
+    var out: List<Int> := [20, 0, 0, 8, 8, 0, 0, 0, 0, 0]
+    out += compress.little(e.data.crc32, 4)
+    out += compress.little(packed, 4)
+    out += compress.little(e.data.length, 4)
+    out += compress.little(name, 2)
+    return out
+}
+
+fn end_record(data: List<Int>) -> Int? {
+    var at: Int := data.length - 22
+    while at >= 0 && at >= data.length - 65557 {
+        if compress.read_little(data, at, 4) = 101010256 {
+            return at
+        }
+        at -= 1
+    }
+    return none
+}

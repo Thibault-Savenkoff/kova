@@ -398,6 +398,8 @@ pub enum StrOp {
     /// `c.is_letter`, `c.to_upper`…: `shared::char_test`.
     CharTest,
     Cores,
+    /// `data.deflate`, `data.inflate`, `data.crc32`: the second argument says which (`shared::PACKINGS`).
+    Pack,
     Spawn,
     /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
     NotBytes,
@@ -6235,7 +6237,7 @@ impl<'a> Translator<'a> {
                 let (compute_b, after) = (self.new_block(), self.new_block());
                 let end = if *op == BinOp::And { End::Branch(va, compute_b, after) } else { End::Branch(va, after, compute_b) };
                 self.go(end, compute_b);
-                self.narrow(&if *op == BinOp::And { narrowed(a, true) } else { vec![] });
+                self.narrow(&narrowed(a, *op == BinOp::And));
                 let vb = self.expr1(b);
                 self.names.pop();
                 self.emit(Inst::Copy(dst, vb));
@@ -6637,6 +6639,25 @@ impl<'a> Translator<'a> {
                         self.emit(Inst::Convert(x, Conversion::FromBits, bits, NOWHERE));
                         self.go(End::Jump(after), after);
                         vec![present, x]
+                    }
+                    "deflate" | "inflate" | "crc32" => {
+                        self.only_bytes(list, receiver.span);
+                        let kind = self.constant(crate::shared::PACKINGS.iter().position(|p| *p == name.text).unwrap() as i64);
+                        let (out, zero, present) = (self.int_local(), self.constant(0), self.int_local());
+                        self.emit(Inst::Str(out, StrOp::Pack, vec![list, kind]));
+                        match name.text.as_str() {
+                            "crc32" => vec![out],
+                            "deflate" => {
+                                self.temps.push((out, self.ty(e)));
+                                vec![out]
+                            }
+                            _ => {
+                                self.emit(Inst::Binary(present, Op::Ne, out, zero, NOWHERE));
+                                let v = vec![present, out];
+                                self.track(&v, &self.ty(e));
+                                v
+                            }
+                        }
                     }
                     "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" => {
                         self.only_bytes(list, receiver.span);

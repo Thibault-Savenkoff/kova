@@ -124,6 +124,7 @@ ne tient pas.
 | `data.to_base64 -> String` | les octets en base64. |
 | `data.to_base64url -> String` | la même chose, avec l'alphabet des adresses et sans `=`. |
 | `data.sha256 -> String` | l'empreinte SHA-256, 64 chiffres hexadécimaux. |
+| `data.deflate -> List<Int>`, `data.inflate -> List<Int>?`, `data.crc32 -> Int` | compresser et vérifier des octets : voir [compress et zip](/fr/library/compress/). |
 | `List<Int>.from_hex(code: String) -> List<Int>?` | les octets retrouvés, `none` si `code` n'est pas de l'hexadécimal. |
 | `List<Int>.from_base64(code: String) -> List<Int>?` | les octets retrouvés depuis le base64. |
 | `List<Int>.from_base64url(code: String) -> List<Int>?` | la même chose pour `to_base64url`. |

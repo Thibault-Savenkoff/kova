@@ -15,6 +15,8 @@ mod bigint;
 mod crypto;
 #[path = "../src/csv.rs"]
 mod csv;
+#[path = "../src/deflate.rs"]
+mod deflate;
 #[path = "../src/http.rs"]
 mod http;
 #[path = "../src/json.rs"]
@@ -1714,6 +1716,16 @@ pub extern "C" fn kova_now() -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_char_test(c: i64, test: i64) -> i64 {
     shared::char_test(c, test)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pack(l: i64, kind: i64) -> i64 {
+    let bytes = bytes_of(l);
+    match kind {
+        0 => byte_list(deflate::deflate(&bytes)),
+        1 => deflate::inflate(&bytes, shared::INFLATED).map_or(0, byte_list),
+        _ => deflate::crc32(&bytes) as i64,
+    }
 }
 
 #[unsafe(no_mangle)]

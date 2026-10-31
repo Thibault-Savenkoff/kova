@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -460,6 +460,10 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "paths" => include_str!("library/paths.kova"),
         "url" => include_str!("library/url.kova"),
         "arguments" => include_str!("library/arguments.kova"),
+        "toml" => include_str!("library/toml.kova"),
+        "xml" => include_str!("library/xml.kova"),
+        "compress" => include_str!("library/compress.kova"),
+        "zip" => include_str!("library/zip.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })
@@ -808,7 +812,7 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)", "to_text", "to_hex", "to_base64", "to_base64url", "sha256"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)", "to_text", "to_hex", "to_base64", "to_base64url", "sha256", "deflate", "inflate", "crc32"];
 pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
@@ -4041,7 +4045,10 @@ impl Checker<'_> {
                 let text = if name.text == "to_text" { Type::Optional(Box::new(Type::String)) } else { Type::String };
                 (vec![], text)
             }
-            "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" => {
+            "deflate" if *elem == Type::Int => (vec![], Type::List(Box::new(Type::Int))),
+            "inflate" if *elem == Type::Int => (vec![], Type::Optional(Box::new(Type::List(Box::new(Type::Int))))),
+            "crc32" if *elem == Type::Int => (vec![], Type::Int),
+            "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" | "deflate" | "inflate" | "crc32" => {
                 self.error(name.span, t!("bytes_need_ints", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
                 return Some(Type::Error);
             }
@@ -4058,7 +4065,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "is_empty" | "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" | "contains" | "find" | "get" | "take" | "skip" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
+        if !matches!(name.text.as_str(), "length" | "is_empty" | "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" | "deflate" | "inflate" | "crc32" | "contains" | "find" | "get" | "take" | "skip" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -5580,7 +5587,7 @@ impl Checker<'_> {
                     Or | And => {
                         self.expect(a, &Type::Bool);
                         // `x != none && x > 3`: `x` is its value on the right.
-                        self.narrow(&if *op == And { narrowed(a, true) } else { vec![] });
+                        self.narrow(&narrowed(a, *op == And));
                         self.expect(b, &Type::Bool);
                         self.scopes.pop();
                         Type::Bool

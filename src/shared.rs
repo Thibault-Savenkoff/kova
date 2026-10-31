@@ -9,6 +9,10 @@ use alloc::format;
 /// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
 /// any other character stays. Rust's own `to_uppercase` knows all of Unicode, but its tables
 /// are in `std`, which the runtime does not have.
+pub const PACKINGS: [&str; 3] = ["deflate", "inflate", "crc32"];
+/// The most `data.inflate` gives.
+pub const INFLATED: usize = 1 << 32;
+
 /// `c.is_letter` and the others: the number of each is what `char_test` receives.
 pub const CHAR_TESTS: [&str; 7] = ["is_letter", "is_digit", "is_space", "is_upper", "is_lower", "to_upper", "to_lower"];
 

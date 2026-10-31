@@ -124,6 +124,7 @@ does not fit.
 | `data.to_base64 -> String` | the bytes in base64. |
 | `data.to_base64url -> String` | the same, with the alphabet used in addresses and without `=`. |
 | `data.sha256 -> String` | the SHA-256 fingerprint, 64 hexadecimal digits. |
+| `data.deflate -> List<Int>`, `data.inflate -> List<Int>?`, `data.crc32 -> Int` | packing and checking bytes: see [compress and zip](/library/compress/). |
 | `List<Int>.from_hex(code: String) -> List<Int>?` | the bytes back, `none` if `code` is not hexadecimal. |
 | `List<Int>.from_base64(code: String) -> List<Int>?` | the bytes back from base64. |
 | `List<Int>.from_base64url(code: String) -> List<Int>?` | the same for `to_base64url`. |

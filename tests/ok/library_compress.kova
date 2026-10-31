@@ -1,0 +1,45 @@
+// expect: true
+// expect: true
+// expect: true
+// expect: 62
+// expect: true
+// expect: hello
+// expect: true
+// expect: none
+// expect: 2
+// expect: docs/a.txt 5000
+// expect: b.txt é
+// expect: none
+
+import compress
+import zip
+
+fn main {
+    let text: String := "the quick brown fox ".repeat(500)
+    let data: List<Int> := text.to_bytes
+    let packed: List<Int> := data.deflate
+    print(packed.length < data.length / 10)
+    print(packed.inflate = data)
+    print(data.crc32 > 0)
+    print("123456789".to_bytes.crc32 % 100)
+    let gz: List<Int> := compress.gzip(data)
+    print(compress.gunzip(gz) = data)
+    let ready: List<Int>? := List<Int>.from_hex("1f8b08000000000002ffcb48cdc9c9070086a6103605000000")
+    print((compress.gunzip(ready else []) else []).to_text else "?")
+    var damaged: List<Int> := gz.clone
+    damaged[20] := (damaged[20] + 1) % 256
+    print(compress.gunzip(damaged) != data)
+    print(compress.gunzip([1, 2, 3]))
+    let e1: zip.Entry := zip.Entry { name := "docs/a.txt", data := data[0..5000] }
+    let e2: zip.Entry := zip.Entry { name := "b.txt", data := "é".to_bytes }
+    let archive: List<Int> := zip.pack([e1, e2])
+    match zip.unpack(archive) {
+        none => print("not read")
+        entries => {
+            print(entries.length)
+            print("{entries[0].name} {entries[0].data.length}")
+            print("{entries[1].name} {entries[1].data.to_text else "?"}")
+        }
+    }
+    print(zip.unpack([1, 2, 3]))
+}

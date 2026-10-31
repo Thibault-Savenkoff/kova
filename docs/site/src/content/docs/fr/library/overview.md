@@ -35,6 +35,9 @@ presque la même chose.
 | `import paths` | [paths](/fr/library/paths/) | découper et assembler des chemins de fichiers |
 | `import url` | [url](/fr/library/url/) | encoder des textes pour les adresses web |
 | `import arguments` | [arguments](/fr/library/arguments/) | lire la ligne de commande |
+| `import toml` | [toml](/fr/library/toml/) | lire des fichiers de configuration |
+| `import xml` | [xml](/fr/library/xml/) | lire et écrire du XML |
+| `import compress`, `import zip` | [compress et zip](/fr/library/compress/) | gzip et archives zip |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 
 ## Chaque valeur a

@@ -900,7 +900,7 @@ impl Owner<'_> {
                 // `b` is computed only sometimes: what it moves is "maybe moved" afterwards.
                 self.borrow(a);
                 let start = self.state.clone();
-                self.narrow(&if *op == BinOp::And { narrowed(a, true) } else { vec![] });
+                self.narrow(&narrowed(a, *op == BinOp::And));
                 self.borrow(b);
                 self.scopes.pop();
                 self.state = join(start, self.state.take());

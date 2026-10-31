@@ -1,0 +1,72 @@
+// expect: Config { title := "TOML demo", port := 8080, ratio := 1.5, debug := true, tags := ["a", "b"], owner := Owner { name := "Ada", born := 1815-12-10 }, servers := [Server { host := "alpha", ports := [1, 2] }, Server { host := "beta", ports := [] }] }
+// expect: line 2: `=` expected
+// expect: line 3: `a` is defined twice
+// expect: line 1: `x` is not a value
+
+import toml
+
+struct Owner {
+public:
+    name: String
+    born: Date
+}
+
+struct Server {
+public:
+    host: String
+    ports: List<Int>
+}
+
+struct Config {
+public:
+    title: String
+    port: Int
+    ratio: Float
+    debug: Bool
+    tags: List<String>
+    owner: Owner
+    servers: List<Server>
+}
+
+fn show(text: String) {
+    match toml.to_json(text) {
+        ok(json) => print(json)
+        err(e) => print(e.to_string)
+    }
+}
+
+fn main {
+    let text: String := """
+    # A comment
+    title = "TOML demo"
+    port = 8_080 # another
+    ratio = 1.5
+    debug = true
+    tags = [
+        "a", # first
+        'b',
+    ]
+
+    [owner]
+    name = "Ada"
+    born = 1815-12-10
+
+    [[servers]]
+    host = "alpha"
+    ports = [1, 2]
+
+    [[servers]]
+    host = "beta"
+    ports = []
+    """
+    match toml.to_json(text) {
+        err(e) => print(e.to_string)
+        ok(json) => match Config.from_json(json) {
+            ok(c) => print(c)
+            err(e) => print(e)
+        }
+    }
+    show("a = 1\nb 2")
+    show("a = 1\nb = 2\na = 3")
+    show("v = x")
+}

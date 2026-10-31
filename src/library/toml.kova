@@ -1,0 +1,477 @@
+// `import toml`: reading TOML, the format of configuration files. `toml.to_json` turns it into
+// JSON, so `Config.from_json` then gives a struct of the program, checked field by field.
+
+public:
+
+struct Error {
+public:
+    line: Int
+    message: String
+
+    fn to_string(self) -> String {
+        return "line {self.line}: {self.message}"
+    }
+}
+
+fn to_json(text: String) -> String or Error {
+    var p: Reader := Reader { chars := text.chars, at := 0, line := 1, nodes := [], current := 0 }
+    p.nodes.add(table)
+    p.read_all?
+    return ok(p.json(0))
+}
+
+private:
+
+// Every table and list is a place in `Reader.nodes`, and refers to its contents by number.
+struct Node {
+    // Table, List (of `[[x]]` or a value), or Plain: `text` is already JSON.
+    kind: Int
+    closed: Bool
+    keys: List<String>
+    kids: List<Int>
+    text: String
+}
+
+fn table -> Node {
+    return Node { kind := 0, closed := false, keys := [], kids := [], text := "" }
+}
+
+fn list -> Node {
+    return Node { kind := 1, closed := true, keys := [], kids := [], text := "" }
+}
+
+fn plain(json: String) -> Node {
+    return Node { kind := 2, closed := true, keys := [], kids := [], text := json.clone }
+}
+
+fn quoted(text: String) -> String {
+    let written: String := [text.clone].to_json
+    return written[1..written.length - 1]
+}
+
+fn bare(c: Char) -> Bool {
+    return c.is_letter || c.is_digit || c = '_' || c = '-'
+}
+
+fn hex_value(text: String) -> Int? {
+    var value: Int := 0
+    for c in text.to_lower.chars {
+        if c.is_digit {
+            value := value * 16 + c.to_int - '0'.to_int
+        } else if 'a' <= c && c <= 'f' {
+            value := value * 16 + c.to_int - 'a'.to_int + 10
+        } else {
+            return none
+        }
+    }
+    return value
+}
+
+struct Reader {
+    chars: List<Char>
+    at: Int
+    line: Int
+    nodes: List<Node>
+    current: Int
+
+    fn fail(self, message: String) -> Error {
+        return Error { line := self.line, message := message.clone }
+    }
+
+    fn more(self) -> Bool {
+        return self.at < self.chars.length
+    }
+
+    fn sees(self, c: Char) -> Bool {
+        return self.more && self.chars[self.at] = c
+    }
+
+    fn sees_text(self, text: String) -> Bool {
+        for i, c in text.chars {
+            if self.at + i >= self.chars.length || self.chars[self.at + i] != c {
+                return false
+            }
+        }
+        return true
+    }
+
+    fn skip_spaces(var self) {
+        while self.sees(' ') || self.sees('\t') {
+            self.at += 1
+        }
+    }
+
+    fn skip_comment(var self) {
+        self.skip_spaces
+        if self.sees('#') {
+            while self.more && !self.sees('\n') {
+                self.at += 1
+            }
+        }
+    }
+
+    // Spaces, comments and line breaks: inside a list and between lines.
+    fn skip_lines(var self) {
+        self.skip_comment
+        while self.sees('\n') || self.sees('\r') {
+            if self.sees('\n') {
+                self.line += 1
+            }
+            self.at += 1
+            self.skip_comment
+        }
+    }
+
+    fn end_of_line(var self) -> Nothing or Error {
+        self.skip_comment
+        if self.sees('\r') {
+            self.at += 1
+        }
+        if self.more && !self.sees('\n') {
+            return err(self.fail("unexpected text at the end of the line"))
+        }
+        return ok
+    }
+
+    fn read_all(var self) -> Nothing or Error {
+        self.skip_lines
+        while self.more {
+            if self.sees_text("[[") {
+                self.at += 2
+                self.array_header?
+            } else if self.sees('[') {
+                self.at += 1
+                self.table_header?
+            } else {
+                self.pair?
+            }
+            self.end_of_line?
+            self.skip_lines
+        }
+        return ok
+    }
+
+    fn table_header(var self) -> Nothing or Error {
+        let path: List<String> := self.key?
+        if !self.sees(']') {
+            return err(self.fail("`]` expected"))
+        }
+        self.at += 1
+        var node: Int := 0
+        for key in path[0..path.length - 1] {
+            node := self.descend(node, key)?
+        }
+        let last: String := path[path.length - 1].clone
+        let found: Int? := self.child(node, last)
+        match found {
+            none => self.current := self.add(node, last, table)
+            k => {
+                if self.nodes[k].kind != 0 || self.nodes[k].closed {
+                    return err(self.fail("`{last}` is defined twice"))
+                }
+                self.current := k
+            }
+        }
+        self.nodes[self.current].closed := true
+        return ok
+    }
+
+    fn array_header(var self) -> Nothing or Error {
+        let path: List<String> := self.key?
+        if !self.sees_text("]]") {
+            return err(self.fail("`]]` expected"))
+        }
+        self.at += 2
+        var node: Int := 0
+        for key in path[0..path.length - 1] {
+            node := self.descend(node, key)?
+        }
+        let last: String := path[path.length - 1].clone
+        let found: Int? := self.child(node, last)
+        let many: Int := match found {
+            none => self.add(node, last, list)
+            k => k
+        }
+        if self.nodes[many].kind != 1 {
+            return err(self.fail("`{last}` is not a list of tables"))
+        }
+        let number: Int := self.nodes.length
+        self.nodes.add(table)
+        self.nodes[many].kids.add(number)
+        self.current := number
+        return ok
+    }
+
+    fn child(self, node: Int, key: String) -> Int? {
+        for i, name in self.nodes[node].keys {
+            if name = key {
+                return self.nodes[node].kids[i]
+            }
+        }
+        return none
+    }
+
+    fn add(var self, node: Int, key: String, value: Node) -> Int {
+        let number: Int := self.nodes.length
+        self.nodes.add(value.clone)
+        self.nodes[node].keys.add(key.clone)
+        self.nodes[node].kids.add(number)
+        return number
+    }
+
+    // A table on the way of a dotted key or a header: the last element of a list of tables.
+    fn descend(var self, node: Int, key: String) -> Int or Error {
+        let found: Int? := self.child(node, key)
+        let k: Int := match found {
+            none => self.add(node, key, table)
+            k => k
+        }
+        let last: Int := if self.nodes[k].kind = 1 && !self.nodes[k].kids.is_empty {
+            let kids: Int := self.nodes[k].kids.length
+            self.nodes[k].kids[kids - 1]
+        } else {
+            k
+        }
+        if self.nodes[last].kind != 0 {
+            return err(self.fail("`{key}` is not a table"))
+        }
+        return ok(last)
+    }
+
+    // `a.b."c"`
+    fn key(var self) -> List<String> or Error {
+        var path: List<String> := []
+        while true {
+            self.skip_spaces
+            if self.sees('"') || self.sees('\'') {
+                path.add(self.string?)
+            } else {
+                let start: Int := self.at
+                while self.more && bare(self.chars[self.at]) {
+                    self.at += 1
+                }
+                if start = self.at {
+                    return err(self.fail("a name expected"))
+                }
+                path.add(self.piece(start, self.at))
+            }
+            self.skip_spaces
+            if !self.sees('.') {
+                return ok(path)
+            }
+            self.at += 1
+        }
+        return ok(path)
+    }
+
+    fn piece(self, start: Int, end: Int) -> String {
+        return self.chars[start..end].map { c: Char => c.to_string }.join("")
+    }
+
+    fn pair(var self) -> Nothing or Error {
+        self.pair_in(self.current)?
+        return ok
+    }
+
+    // `a.b = value`, in the table `node`.
+    fn pair_in(var self, node: Int) -> Nothing or Error {
+        let path: List<String> := self.key?
+        if !self.sees('=') {
+            return err(self.fail("`=` expected"))
+        }
+        self.at += 1
+        self.skip_spaces
+        var place: Int := node
+        for key in path[0..path.length - 1] {
+            place := self.descend(place, key)?
+        }
+        let last: String := path[path.length - 1].clone
+        if self.child(place, last) != none {
+            return err(self.fail("`{last}` is defined twice"))
+        }
+        let number: Int := self.nodes.length
+        self.nodes[place].keys.add(last.clone)
+        self.nodes[place].kids.add(number)
+        self.nodes.add(plain(""))
+        self.value(number)?
+        return ok
+    }
+
+    // Reads a value into the node `number`, already there.
+    fn value(var self, number: Int) -> Nothing or Error {
+        if self.sees('"') || self.sees('\'') {
+            let text: String := self.string?
+            self.nodes[number].text := quoted(text)
+        } else if self.sees('[') {
+            self.at += 1
+            self.nodes[number].kind := 1
+            self.skip_lines
+            while !self.sees(']') {
+                let item: Int := self.nodes.length
+                self.nodes.add(plain(""))
+                self.nodes[number].kids.add(item)
+                self.value(item)?
+                self.skip_lines
+                if self.sees(',') {
+                    self.at += 1
+                    self.skip_lines
+                } else if !self.sees(']') {
+                    return err(self.fail("`,` or `]` expected"))
+                }
+            }
+            self.at += 1
+        } else if self.sees('{') {
+            self.at += 1
+            self.nodes[number].kind := 0
+            self.nodes[number].closed := true
+            self.skip_spaces
+            while !self.sees('}') {
+                self.pair_in(number)?
+                self.skip_spaces
+                if self.sees(',') {
+                    self.at += 1
+                    self.skip_spaces
+                } else if !self.sees('}') {
+                    return err(self.fail("`,` or `\}` expected"))
+                }
+            }
+            self.at += 1
+        } else {
+            self.nodes[number].text := self.scalar?
+        }
+        return ok
+    }
+
+    fn scalar(var self) -> String or Error {
+        let start: Int := self.at
+        while self.more && (bare(self.chars[self.at]) || matches_number_part(self.chars[self.at])) {
+            self.at += 1
+        }
+        // A date and its time may be separated by a space.
+        if self.sees(' ') && self.at + 1 < self.chars.length && self.chars[self.at + 1].is_digit && self.at - start = 10 {
+            self.at += 1
+            while self.more && (bare(self.chars[self.at]) || matches_number_part(self.chars[self.at])) {
+                self.at += 1
+            }
+        }
+        let word: String := self.piece(start, self.at)
+        if word = "true" || word = "false" {
+            return ok(word)
+        }
+        if word.is_empty {
+            return err(self.fail("a value expected"))
+        }
+        let plain_word: String := word.replace("_") with("").replace("+") with("")
+        if word.starts_with("0x") {
+            match hex_value(plain_word[2..plain_word.length]) {
+                none => return err(self.fail("`{word}` is not a number"))
+                n => return ok("{n}")
+            }
+        }
+        if plain_word.to_int != none {
+            return ok(plain_word)
+        }
+        if plain_word.to_float != none && !word.contains("inf") && !word.contains("nan") {
+            return ok(plain_word)
+        }
+        // A date or a time stays a text: `Date` and `DateTime` fields read it.
+        if word.chars[0].is_digit && (word.contains("-") || word.contains(":")) {
+            return ok(quoted(word.replace(" ") with("T")))
+        }
+        return err(self.fail("`{word}` is not a value"))
+    }
+
+    fn string(var self) -> String or Error {
+        let basic: Bool := self.sees('"')
+        let many: String := if basic { "\"\"\"" } else { "'''" }
+        let long: Bool := self.sees_text(many)
+        self.at += if long { 3 } else { 1 }
+        if long && self.sees('\r') {
+            self.at += 1
+        }
+        if long && self.sees('\n') {
+            self.at += 1
+            self.line += 1
+        }
+        var text: String := ""
+        while true {
+            if !self.more {
+                return err(self.fail("a text is not closed"))
+            }
+            if long && self.sees_text(many) {
+                self.at += 3
+                return ok(text)
+            }
+            let c: Char := self.chars[self.at]
+            if !long && c = if basic { '"' } else { '\'' } {
+                self.at += 1
+                return ok(text)
+            }
+            if c = '\n' {
+                if !long {
+                    return err(self.fail("a text is not closed"))
+                }
+                self.line += 1
+            }
+            self.at += 1
+            if basic && c = '\\' {
+                text += self.escape?
+            } else {
+                text += c.to_string
+            }
+        }
+        return ok(text)
+    }
+
+    fn escape(var self) -> String or Error {
+        if !self.more {
+            return err(self.fail("a text is not closed"))
+        }
+        let c: Char := self.chars[self.at]
+        self.at += 1
+        return match c {
+            'n' => ok("\n")
+            't' => ok("\t")
+            'r' => ok("\r")
+            '"' => ok("\"")
+            '\\' => ok("\\")
+            'u', 'U' => {
+                let size: Int := if c = 'u' { 4 } else { 8 }
+                if self.at + size > self.chars.length {
+                    return err(self.fail("a text is not closed"))
+                }
+                let code: Int? := hex_value(self.piece(self.at, self.at + size))
+                self.at += size
+                if code = none {
+                    return err(self.fail("a wrong `\\u`"))
+                }
+                match code.to_char {
+                    none => err(self.fail("a wrong `\\u`"))
+                    letter => ok(letter.to_string)
+                }
+            }
+            _ => err(self.fail("a wrong escape after `\\`"))
+        }
+    }
+
+    fn json(self, number: Int) -> String {
+        let node: Node := self.nodes[number].clone
+        if node.kind = 2 {
+            return node.text.clone
+        }
+        var parts: List<String> := []
+        for i, kid in node.kids {
+            if node.kind = 0 {
+                parts.add(quoted(node.keys[i]) + ":" + self.json(kid))
+            } else {
+                parts.add(self.json(kid))
+            }
+        }
+        let inside: String := parts.join(",")
+        return if node.kind = 0 { "\{{inside}\}" } else { "[{inside}]" }
+    }
+}
+
+fn matches_number_part(c: Char) -> Bool {
+    return c = '+' || c = '.' || c = ':'
+}
