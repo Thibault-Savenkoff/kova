@@ -70,6 +70,31 @@ its arguments would go to the wrong places.
 
 `Int32` exists only in `extern` declarations: the program sees an `Int`.
 
+## Bytes in C's memory
+
+A `Pointer` keeps Kova's hands off what it points to, except for two methods. C often gives a
+buffer and its size separately; `p.read_bytes(size)` copies those bytes into a `List<Int>`, and
+`p.write_bytes(data)` copies a `List<Int>` to the address `p`. Nothing checks the size: it is yours
+to get right, as in C.
+
+```kova
+extern c from "c" {
+    fn calloc(count: Int, size: Int) -> Pointer
+    fn free(p: Pointer)
+}
+
+fn main {
+    let p: Pointer := c.calloc(4, 1)
+    p.write_bytes([1, 2, 3])
+    print(p.read_bytes(4))
+    c.free(p)
+}
+```
+
+```text
+[1, 2, 3, 0]
+```
+
 ## C writing into a variable: `var`
 
 Some functions give their result through a pointer, as `sqlite3_open` does with the database it

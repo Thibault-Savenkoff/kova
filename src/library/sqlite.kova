@@ -1,0 +1,235 @@
+// `import sqlite`: a database in one file, through the SQLite the system already has.
+
+public:
+
+enum Error: Equal {
+    Failed(message: String)
+    // A rule of the table refused the change: `UNIQUE`, `NOT NULL`, a foreign key.
+    Constraint(message: String)
+    // Another connection holds the file.
+    Busy(message: String)
+}
+
+// A value of a column, or one given to a `?` of a statement.
+enum Value: Equal {
+    Null
+    Int(value: Int)
+    Float(value: Float)
+    Text(value: String)
+    Bytes(value: List<Int>)
+}
+
+// A line of a result. Each method gives `none` for a column that is absent, `NULL`, or of another type.
+struct Row {
+private:
+    names: List<String>
+    values: List<Value>
+
+public:
+    fn get(self, name: String) -> Value? {
+        let at: Int? := self.names.find(name)
+        if at = none {
+            return none
+        }
+        return self.values[at].clone
+    }
+
+    fn text(self, name: String) -> String? {
+        return match self.get(name) else Value.Null {
+            .Text(v) => v.clone
+            _ => none
+        }
+    }
+
+    fn int(self, name: String) -> Int? {
+        return match self.get(name) else Value.Null {
+            .Int(v) => v
+            _ => none
+        }
+    }
+
+    // An `Int` column reads as a `Float` too: SQLite may store `2.0` as `2`.
+    fn float(self, name: String) -> Float? {
+        return match self.get(name) else Value.Null {
+            .Float(v) => v
+            .Int(v) => v.to_float
+            _ => none
+        }
+    }
+
+    fn bytes(self, name: String) -> List<Int>? {
+        return match self.get(name) else Value.Null {
+            .Bytes(v) => v.clone
+            _ => none
+        }
+    }
+}
+
+struct Database {
+private:
+    handle: Pointer
+
+public:
+    // Runs one statement that gives no lines: `INSERT`, `UPDATE`, `CREATE TABLE`…
+    fn run(self, statement: String) with(values: List<Value> := []) -> Nothing or Error {
+        self.lines(statement, values)?
+        return ok
+    }
+
+    // Runs one statement and gives all its lines.
+    fn query(self, statement: String) with(values: List<Value> := []) -> List<Row> or Error {
+        return self.lines(statement, values)
+    }
+
+    // Runs several statements separated by `;`, none with values.
+    fn script(self, statements: String) -> Nothing or Error {
+        return self.checked(lib.exec(self.handle, statements, none, none, none))
+    }
+
+    // The number SQLite gave to the last line inserted.
+    fn last_id(self) -> Int {
+        return lib.last_id(self.handle)
+    }
+
+    // How many lines the last `INSERT`, `UPDATE` or `DELETE` touched.
+    fn changes(self) -> Int {
+        return lib.changes(self.handle)
+    }
+
+    fn close(self) {
+        lib.close(self.handle)
+    }
+
+private:
+    fn checked(self, code: Int) -> Nothing or Error {
+        if code = 0 || code = 100 || code = 101 {
+            return ok
+        }
+        let message: String := lib.message(self.handle)
+        return err(if code = 19 { Error.Constraint(message) } else if code = 5 || code = 6 { Error.Busy(message) } else { Error.Failed(message) })
+    }
+
+    // ponytail: `tail` is not read, so what follows a first statement is ignored (`script` is for that).
+    fn lines(self, statement: String, values: List<Value>) -> List<Row> or Error {
+        var made: Pointer? := none
+        self.checked(lib.prepare(self.handle, statement, -1, var made, none))?
+        if made = none {
+            return ok([])
+        }
+        let done: List<Row> or Error := self.stepped(made, values)
+        lib.finalize(made)
+        return done
+    }
+
+    fn stepped(self, statement: Pointer, values: List<Value>) -> List<Row> or Error {
+        for i, value in values {
+            self.checked(bound(statement, i + 1, value))?
+        }
+        var names: List<String> := []
+        for i in 0..lib.column_count(statement) {
+            names.add(lib.column_name(statement, i))
+        }
+        var rows: List<Row> := []
+        while true {
+            let code: Int := lib.step(statement)
+            if code != 100 {
+                self.checked(code)?
+                return ok(rows)
+            }
+            var cells: List<Value> := []
+            for i in 0..names.length {
+                cells.add(cell(statement, i))
+            }
+            rows.add(Row { names := names.clone, values := cells })
+        }
+        return ok(rows)
+    }
+}
+
+// Opens a database file, made if missing. `":memory:"` is one that lives until `close`.
+fn open(path: String) -> Database or Error {
+    var made: Pointer? := none
+    let code: Int := lib.open(path, var made)
+    if made = none {
+        return err(Error.Failed("out of memory"))
+    }
+    if code != 0 {
+        let message: String := lib.message(made)
+        lib.close(made)
+        return err(Error.Failed(message))
+    }
+    return ok(Database { handle := made })
+}
+
+private:
+
+// SQLite's `SQLITE_TRANSIENT`: it takes its own copy of what it is given.
+let copies: Int := -1
+
+extern lib from "sqlite3" windows "winsqlite3" {
+    fn open(path: String, db: var Pointer?) -> Int32 from "sqlite3_open"
+    fn close(db: Pointer) -> Int32 from "sqlite3_close"
+    fn message(db: Pointer) -> String from "sqlite3_errmsg"
+    fn exec(db: Pointer, statements: String, call: Pointer?, data: Pointer?, error: Pointer?) -> Int32 from "sqlite3_exec"
+    fn prepare(db: Pointer, statement: String, size: Int32, made: var Pointer?, tail: Pointer?) -> Int32 from "sqlite3_prepare_v2"
+    fn finalize(statement: Pointer) -> Int32 from "sqlite3_finalize"
+    fn step(statement: Pointer) -> Int32 from "sqlite3_step"
+    fn last_id(db: Pointer) -> Int from "sqlite3_last_insert_rowid"
+    fn changes(db: Pointer) -> Int32 from "sqlite3_changes"
+    fn bind_null(statement: Pointer, at: Int32) -> Int32 from "sqlite3_bind_null"
+    fn bind_int(statement: Pointer, at: Int32, value: Int) -> Int32 from "sqlite3_bind_int64"
+    fn bind_float(statement: Pointer, at: Int32, value: Float) -> Int32 from "sqlite3_bind_double"
+    fn bind_text(statement: Pointer, at: Int32, value: Pointer, size: Int32, keep: Int) -> Int32 from "sqlite3_bind_text"
+    fn bind_bytes(statement: Pointer, at: Int32, value: Pointer, size: Int32, keep: Int) -> Int32 from "sqlite3_bind_blob"
+    fn bind_nothing(statement: Pointer, at: Int32, size: Int32) -> Int32 from "sqlite3_bind_zeroblob"
+    fn column_count(statement: Pointer) -> Int32 from "sqlite3_column_count"
+    fn column_name(statement: Pointer, at: Int32) -> String from "sqlite3_column_name"
+    fn column_type(statement: Pointer, at: Int32) -> Int32 from "sqlite3_column_type"
+    fn column_int(statement: Pointer, at: Int32) -> Int from "sqlite3_column_int64"
+    fn column_float(statement: Pointer, at: Int32) -> Float from "sqlite3_column_double"
+    fn column_text(statement: Pointer, at: Int32) -> Pointer? from "sqlite3_column_text"
+    fn column_bytes(statement: Pointer, at: Int32) -> Pointer? from "sqlite3_column_blob"
+    fn column_size(statement: Pointer, at: Int32) -> Int32 from "sqlite3_column_bytes"
+    fn malloc(size: Int32) -> Pointer from "sqlite3_malloc"
+    fn free(p: Pointer) from "sqlite3_free"
+}
+
+fn bound(statement: Pointer, at: Int, value: Value) -> Int {
+    return match value {
+        .Null => lib.bind_null(statement, at)
+        .Int(v) => lib.bind_int(statement, at, v)
+        .Float(v) => lib.bind_float(statement, at, v)
+        .Text(v) => bound_bytes(statement, at, v.to_bytes, true)
+        .Bytes(v) => bound_bytes(statement, at, v, false)
+    }
+}
+
+fn bound_bytes(statement: Pointer, at: Int, data: List<Int>, text: Bool) -> Int {
+    if data.is_empty && !text {
+        return lib.bind_nothing(statement, at, 0)
+    }
+    // Text in C keeps a place for its end, so an empty one has an address too.
+    let memory: Pointer := lib.malloc(data.length + 1)
+    memory.write_bytes(data)
+    let code: Int := if text { lib.bind_text(statement, at, memory, data.length, copies) } else { lib.bind_bytes(statement, at, memory, data.length, copies) }
+    lib.free(memory)
+    return code
+}
+
+fn cell(statement: Pointer, at: Int) -> Value {
+    let kind: Int := lib.column_type(statement, at)
+    if kind = 1 {
+        return Value.Int(lib.column_int(statement, at))
+    }
+    if kind = 2 {
+        return Value.Float(lib.column_float(statement, at))
+    }
+    if kind = 5 {
+        return Value.Null
+    }
+    // The address first: SQLite may convert the value, and the size is the converted one.
+    let address: Pointer? := if kind = 3 { lib.column_text(statement, at) } else { lib.column_bytes(statement, at) }
+    let size: Int := lib.column_size(statement, at)
+    let data: List<Int> := if address = none { [] } else { address.read_bytes(size) }
+    return if kind = 3 { Value.Text(data.to_text else "") } else { Value.Bytes(data) }
+}

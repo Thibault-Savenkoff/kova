@@ -40,6 +40,7 @@ presque la même chose.
 | `import compress`, `import zip` | [compress et zip](/fr/library/compress/) | gzip et archives zip |
 | `import net` | [net](/fr/library/net/) | TCP et UDP |
 | `import websocket` | [websocket](/fr/library/websocket/) | des connexions qui restent ouvertes avec les pages web |
+| `import sqlite` | [sqlite](/fr/library/sqlite/) | une base de données dans un fichier |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 
 ## Chaque valeur a

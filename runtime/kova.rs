@@ -1990,6 +1990,18 @@ pub extern "C" fn kova_from_c_wide_text(p: i64) -> i64 {
 /// A leaf of a C struct at `address` (PLAN Part 4 "`extern`, step 4"): a 4-byte `int` (`kind`
 /// 1, made 64 bits) or 8 bytes; 0 at NULL.
 #[unsafe(no_mangle)]
+pub extern "C" fn kova_pointer_read(address: i64, size: i64) -> i64 {
+    byte_list(unsafe { core::slice::from_raw_parts(address as *const u8, size.max(0) as usize) }.to_vec())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_pointer_write(address: i64, l: i64) -> i64 {
+    let bytes = bytes_of(l);
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len()) };
+    0
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kova_c_read(address: i64, offset: i64, kind: i64) -> i64 {
     if address == 0 {
         return 0;

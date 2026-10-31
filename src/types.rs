@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -466,6 +466,7 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "zip" => include_str!("library/zip.kova"),
         "net" => include_str!("library/net.kova"),
         "websocket" => include_str!("library/websocket.kova"),
+        "sqlite" => include_str!("library/sqlite.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })
@@ -853,6 +854,9 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         (Type::Char, "is_letter" | "is_digit" | "is_space" | "is_upper" | "is_lower") => (vec![], Type::Bool),
         (Type::Char, "to_upper" | "to_lower") => (vec![], Type::Char),
         (Type::Date | Type::DateTime, "weekday") => (vec![], weekday()),
+        // C's memory, for what `extern` declares: a `char*` result, a buffer to fill.
+        (Type::Pointer, "read_bytes") => (vec![int()], Type::List(Box::new(int()))),
+        (Type::Pointer, "write_bytes") => (vec![Type::List(Box::new(int()))], Type::Unit),
         _ => return None,
     })
 }
@@ -5037,6 +5041,7 @@ impl Checker<'_> {
                         }
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each" | "each workers(…)"),
                         Type::Held(..) => true,
+                        Type::Pointer => name.text == "write_bytes",
                         Type::Map(..) => matches!(name.text.as_str(), "remove" | "each"),
                         Type::Set(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),

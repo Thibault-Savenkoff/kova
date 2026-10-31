@@ -39,6 +39,7 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import compress`, `import zip` | [compress and zip](/library/compress/) | gzip and zip archives |
 | `import net` | [net](/library/net/) | TCP and UDP |
 | `import websocket` | [websocket](/library/websocket/) | connections that stay open with web pages |
+| `import sqlite` | [sqlite](/library/sqlite/) | a database in one file |
 | `import ui` | [ui](/library/ui/) | native windows |
 
 ## Every value has

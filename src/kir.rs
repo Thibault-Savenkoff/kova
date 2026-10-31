@@ -595,6 +595,10 @@ pub enum StrOp {
     CFree,
     /// The String a C function gave (copied; NULL gives 0).
     FromCText,
+    /// `p.read_bytes(n)`: a List of the `n` bytes at the address `p`.
+    PointerRead,
+    /// `p.write_bytes(data)`: the bytes of `data` copied to the address `p`.
+    PointerWrite,
     /// `CText` for a `WideString` (PLAN Part 4 "`extern`, step 4"): UTF-16, freed by `CWideFree`.
     CWideText,
     CWideFree,
@@ -4635,6 +4639,18 @@ impl<'a> Translator<'a> {
     /// `n.abs`, `a.min(b)`, `n.pow(k)`, `x.sqrt`, `x.round`… on the number `v` (Part 4, "Standard
     /// library v2"): the same instructions in run and build, so the same digits.
     fn number_method(&mut self, e: &Expr, v: Local, name: &str, args: &[Expr]) -> Slots {
+        if name == "read_bytes" || name == "write_bytes" {
+            let given = self.expr(&args[0]);
+            let out = self.int_local();
+            if name == "write_bytes" {
+                self.only_bytes(given[0], args[0].span);
+                self.emit(Inst::Str(out, StrOp::PointerWrite, vec![v, given[0]]));
+                return vec![];
+            }
+            self.emit(Inst::Str(out, StrOp::PointerRead, vec![v, given[0]]));
+            self.temps.push((out, self.ty(e)));
+            return vec![out];
+        }
         if self.ty(e) == Type::Bool || self.ty(e) == Type::Char {
             let test = crate::shared::CHAR_TESTS.iter().position(|t| *t == name).expect("checked by the type checker");
             let (test, out) = (self.constant(test as i64), self.int_local());
