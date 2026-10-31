@@ -62,7 +62,7 @@ fn answer(listener: net.Listener) -> Nothing or net.Error {
 }
 
 fn main {
-    let port: Int := random(30000..60000)
+    let port: Int := random(20000..32000)
     let listener: net.Listener := net.listen(port)?
     let server: threads.Task<Nothing or net.Error> := threads.spawn { answer(listener) }
 
@@ -96,7 +96,7 @@ pour joindre celui qui a écrit.
 import net
 
 fn main {
-    let port: Int := random(30000..60000)
+    let port: Int := random(20000..32000)
     let inbox: net.Socket := net.udp(port) within(2.0)?
     let sender: net.Socket := net.udp(0)?
     sender.send_to("127.0.0.1", port, "ping".to_bytes)?

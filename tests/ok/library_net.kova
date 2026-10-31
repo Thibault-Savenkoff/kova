@@ -24,7 +24,7 @@ fn echo(listener: net.Listener) -> String or net.Error {
 }
 
 fn main {
-    let port: Int := random(30000..60000)
+    let port: Int := random(20000..32000)
     let listener: net.Listener := net.listen(port)?
     let task: threads.Task<String or net.Error> := threads.spawn { echo(listener) }
     var link: net.Link := net.connect("127.0.0.1", port)?

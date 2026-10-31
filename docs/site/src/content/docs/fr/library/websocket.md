@@ -50,7 +50,7 @@ fn echo(listener: net.Listener) -> Nothing or websocket.Error {
 }
 
 fn main {
-    let port: Int := random(30000..60000)
+    let port: Int := random(20000..32000)
     let listener: net.Listener := net.listen(port)?
     let server: threads.Task<Nothing or websocket.Error> := threads.spawn { echo(listener) }
 

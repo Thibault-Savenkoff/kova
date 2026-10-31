@@ -2659,6 +2659,12 @@ impl<'a> Translator<'a> {
 
     /// `e` is given (`let`, `:=`, `return`…): the value now belongs to the receiver.
     /// A moved variable (marked by `ownership.rs`) is emptied, so that its block frees nothing.
+    /// An argument a built-in keeps though it was only lent (`r.body(text)`): its own copy.
+    fn kept(&mut self, e: &Expr) -> Slots {
+        let v = self.expr(e);
+        self.clone_value(&v, &self.ty(e))
+    }
+
     fn owned(&mut self, e: &Expr) -> Slots {
         if !self.info.moves[e.id] {
             let v = self.value(e);
@@ -5938,7 +5944,7 @@ impl<'a> Translator<'a> {
                 let text = "text/plain; charset=utf-8";
                 let v = match name.text.as_str() {
                     "text" => {
-                        let body = self.owned(&args[0]);
+                        let body = self.kept(&args[0]);
                         self.answer_made(status, Some(text), body[0], empty)
                     }
                     "json" => {
@@ -5947,7 +5953,7 @@ impl<'a> Translator<'a> {
                         self.answer_made(status, Some("application/json"), body, empty)
                     }
                     "bytes" => {
-                        let (data, body) = (self.owned(&args[0]), self.text(""));
+                        let (data, body) = (self.kept(&args[0]), self.text(""));
                         self.only_bytes(data[0], args[0].span);
                         let mut a = self.answer_made(status, Some("application/octet-stream"), body, empty);
                         self.free_value(&[a[4]], &Type::List(Box::new(Type::Int)));
@@ -5972,7 +5978,7 @@ impl<'a> Translator<'a> {
             }
             // `Request.put(url)`: no header, no body, `DEFAULT_SECONDS`, redirections followed.
             ExprKind::Static { ty, name, args, .. } if ty.text == "web.Request" => {
-                let url = self.owned(&args[0]);
+                let url = self.kept(&args[0]);
                 let (method, headers) = (self.text(&name.text.to_uppercase()), self.int_local());
                 self.emit(Inst::ListNew(headers, 2));
                 let (body, seconds, follow) = (self.text(""), self.float_constant(DEFAULT_SECONDS), self.constant(1));
@@ -6394,7 +6400,7 @@ impl<'a> Translator<'a> {
                 let ty = crate::types::answer();
                 let a = self.expr(receiver);
                 let v = self.clone_value(&a, &ty);
-                let (given, value) = (self.expr1(&args[0]), self.owned(&args[1]));
+                let (given, value) = (self.expr1(&args[0]), self.kept(&args[1]));
                 let key = self.int_local();
                 self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
                 self.track(&[key], &Type::String);
@@ -6411,19 +6417,19 @@ impl<'a> Translator<'a> {
                 let v = self.clone_value(&r, &ty);
                 match name.text.as_str() {
                     "header(…) is(…)" => {
-                        let (key, value) = (self.expr(&args[0]), self.owned(&args[1]));
+                        let (key, value) = (self.expr(&args[0]), self.kept(&args[1]));
                         let place = self.entry(v[2], &key, &Type::String, &Type::String);
                         let old = self.read(&place);
                         self.free_value(&old, &Type::String);
                         self.write(&place, &value);
                     }
                     "body" => {
-                        let body = self.owned(&args[0]);
+                        let body = self.kept(&args[0]);
                         self.emit(Inst::Free(v[3]));
                         self.emit(Inst::Copy(v[3], body[0]));
                     }
                     "bytes" => {
-                        let data = self.owned(&args[0]);
+                        let data = self.kept(&args[0]);
                         self.only_bytes(data[0], args[0].span);
                         self.free_value(&[v[6]], &Type::List(Box::new(Type::Int)));
                         self.emit(Inst::Copy(v[6], data[0]));

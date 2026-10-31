@@ -14,8 +14,9 @@ fn echo(port: Int) {
     }
 }
 
+// A variable given to `bytes`, `body` and `header` stays usable: the loop gives them each time.
 fn main {
-    let port: Int := random(30000..60000)
+    let port: Int := random(20000..32000)
     let data: List<Int> := [0, 255, 128, 10]
     threads.spawn { echo(port) }
     let address: String := "http://127.0.0.1:{port}/"

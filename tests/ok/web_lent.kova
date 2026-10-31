@@ -1,0 +1,20 @@
+// expect: http://x/body
+// expect: http://x/body
+// expect: http://x/body
+// expect: http://x/bodyvalue
+
+import web
+
+fn main {
+    let a: String := "http://x/"
+    let b: String := "body"
+    let c: String := "value"
+    var i: Int := 0
+    while i < 3 {
+        i += 1
+        let r: web.Request := web.Request.post(a).body(b).header("x") is(c)
+        let d: web.Answer := web.Answer.text(b).header("y") is(c)
+        print(r.url + d.body)
+    }
+    print(a + b + c)
+}
