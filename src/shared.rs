@@ -965,6 +965,13 @@ pub struct UiCanvas {
     pub key: Option<usize>,
 }
 
+impl UiCanvas {
+    /// `ui.gpu`: painted through OpenGL, not by the system's 2D drawing.
+    pub fn gpu(&self) -> bool {
+        self.ops.first() == Some(&UiOp::Gpu)
+    }
+}
+
 /// One thing drawn. An outline of 0 fills the shape. Colors are `0xRRGGBB`.
 #[derive(Clone, PartialEq, Debug)]
 pub enum UiOp {
@@ -975,6 +982,14 @@ pub enum UiOp {
     Text { x: i32, y: i32, size: i32, color: u32, text: String },
     /// An image file; a size of 0: the file's own.
     Image { x: i32, y: i32, w: i32, h: i32, path: String },
+    /// `ui.gpu`: always first.
+    Gpu,
+    GlClear(u32),
+    GlShader(String, String),
+    GlUniform(String, Vec<f32>),
+    /// The numbers of each attribute, then all the vertices.
+    GlTriangles(Vec<i32>, Vec<f32>),
+    GlTexture(i32, i32, Vec<u8>),
 }
 
 /// What `ui.draw` gathered, one line per thing drawn (src/ui.rs).
@@ -995,6 +1010,13 @@ fn ui_ops(text: &str) -> Vec<UiOp> {
     };
     while let Some(kind) = chars.next() {
         chars.next();
+        // ponytail: vertices travel as text at each frame, a shared buffer if big meshes need it.
+        fn line(chars: &mut core::str::Chars) -> String {
+            chars.by_ref().take_while(|c| *c != '\n').collect()
+        }
+        fn floats(text: &str) -> Vec<f32> {
+            text.split_ascii_whitespace().map(|v| v.parse().unwrap_or(0.0)).collect()
+        }
         let mut n = |count: usize| {
             let mut out = [0; 5];
             out[..count].iter_mut().for_each(|o| *o = signed(&mut chars));
@@ -1002,6 +1024,31 @@ fn ui_ops(text: &str) -> Vec<UiOp> {
         };
         ops.push(match kind {
             'C' => UiOp::Clear(n(1)[0] as u32),
+            'g' => UiOp::Gpu,
+            'c' => UiOp::GlClear(n(1)[0] as u32),
+            's' => {
+                let [vertex, fragment] = [n(1)[0], n(1)[0]];
+                let vertex = chars.by_ref().take(vertex as usize).collect();
+                let fragment = chars.by_ref().take(fragment as usize).collect();
+                chars.next();
+                UiOp::GlShader(vertex, fragment)
+            }
+            'u' => {
+                let length = n(1)[0];
+                let name = chars.by_ref().take(length as usize).collect();
+                UiOp::GlUniform(name, floats(&line(&mut chars)))
+            }
+            'v' => {
+                let count = n(1)[0];
+                let sizes = (0..count).map(|_| n(1)[0]).collect();
+                UiOp::GlTriangles(sizes, floats(&line(&mut chars)))
+            }
+            'x' => {
+                let [width, height] = [n(1)[0], n(1)[0]];
+                let hex = line(&mut chars);
+                let digit = |b: u8| (b as char).to_digit(16).unwrap_or(0) as u8;
+                UiOp::GlTexture(width, height, hex.as_bytes().chunks_exact(2).map(|p| digit(p[0]) * 16 + digit(p[1])).collect())
+            }
             'R' => {
                 let [x, y, w, h, color] = n(5);
                 UiOp::Rect { x, y, w, h, color: color as u32, outline: n(1)[0] }
@@ -1249,7 +1296,7 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
-        UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}", c.width, c.height, c.mouse, c.key),
+        UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}{}", c.width, c.height, c.mouse, c.key, c.gpu()),
         // Nor its clocks: each system compares those itself, widgets stay when one starts.
         UiNode::Every(_, _, inner) => ui_shape(inner),
     }
@@ -1464,6 +1511,12 @@ pub fn ui_describe(text: &str) -> String {
                         UiOp::Line { x, y, x2, y2, color, thickness } => format!(" line({x} {y} {x2} {y2} #{color:06x} {thickness})"),
                         UiOp::Text { x, y, size, color, text } => format!(" text({x} {y} {size} #{color:06x} {text:?})"),
                         UiOp::Image { x, y, w, h, path } => format!(" image({x} {y} {w} {h} {path:?})"),
+                        UiOp::Gpu => " gpu".into(),
+                        UiOp::GlClear(c) => format!(" clear(#{c:06x})"),
+                        UiOp::GlShader(..) => " shader".into(),
+                        UiOp::GlUniform(name, values) => format!(" uniform({name:?} {values:?})"),
+                        UiOp::GlTriangles(sizes, data) => format!(" triangles({} of {sizes:?})", data.len()),
+                        UiOp::GlTexture(w, h, _) => format!(" texture({w}x{h})"),
                     });
                 }
             }
@@ -1513,6 +1566,21 @@ mod tests {
         assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
         assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
         assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
+    }
+
+    #[test]
+    fn ui_gpu_read_back() {
+        let body = "3 2\ng\nc 5\ns 3 1:a\nbc\nu 1:t 1.5 -2\nv 2 3 1 0.5 1e3 0 0\nx 1 1 ff0080\nc 6\n";
+        let UiNode::Canvas(c) = ui_tree(&format!("D{}:{body}", body.chars().count())) else { panic!() };
+        assert!(c.gpu());
+        assert_eq!(c.ops[1..], [
+            UiOp::GlClear(5),
+            UiOp::GlShader("a\nb".into(), "c".into()),
+            UiOp::GlUniform("t".into(), alloc::vec![1.5, -2.0]),
+            UiOp::GlTriangles(alloc::vec![3, 1], alloc::vec![0.5, 1000.0, 0.0, 0.0]),
+            UiOp::GlTexture(1, 1, alloc::vec![255, 0, 128]),
+            UiOp::GlClear(6),
+        ]);
     }
 
     #[test]

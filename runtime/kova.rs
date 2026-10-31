@@ -2107,6 +2107,181 @@ pub extern "C" fn kova_ui_room(which: i64) -> i64 {
     })
 }
 
+/// What each `ui.gpu` keeps from frame to frame, by what its system calls it.
+struct GlSurface {
+    key: usize,
+    array: u32,
+    buffer: u32,
+    programs: Vec<(String, String, u32)>,
+}
+
+static GL_SURFACES: Global<Vec<GlSurface>> = Global::new(Vec::new());
+
+/// Stops the program: no OpenGL, or a shader that does not compile (text `GPU_MISSING + 1`).
+pub fn gl_stop(i: usize, detail: &[u8]) -> ! {
+    let mut m = Vec::new();
+    m.extend_from_slice(text(ERROR_PREFIX));
+    m.extend_from_slice(text(i));
+    m.extend_from_slice(detail);
+    m.push(b'\n');
+    error(&m);
+    exit(101)
+}
+
+const GPU_MISSING: usize = 43;
+
+/// Draws a frame of a `ui.gpu` in the OpenGL context each system has made current; `load` finds
+/// OpenGL's functions. The same on the three systems: only the context differs.
+pub fn gl_paint(key: usize, ops: &[shared::UiOp], width: i32, height: i32, load: &dyn Fn(&str) -> usize) {
+    use shared::UiOp as Op;
+    macro_rules! gl {
+        ($name:literal, $($kind:tt)*) => {{
+            let f = load($name);
+            if f == 0 {
+                gl_stop(GPU_MISSING, b"");
+            }
+            let f: extern "system" fn $($kind)* = unsafe { core::mem::transmute(f) };
+            f
+        }};
+    }
+    let viewport = gl!("glViewport", (i32, i32, i32, i32));
+    let enable = gl!("glEnable", (u32));
+    let depth_func = gl!("glDepthFunc", (u32));
+    let blend_func = gl!("glBlendFunc", (u32, u32));
+    let clear_color = gl!("glClearColor", (f32, f32, f32, f32));
+    let clear = gl!("glClear", (u32));
+    let create_shader = gl!("glCreateShader", (u32) -> u32);
+    let shader_source = gl!("glShaderSource", (u32, i32, *const *const u8, *const i32));
+    let compile_shader = gl!("glCompileShader", (u32));
+    let shader_iv = gl!("glGetShaderiv", (u32, u32, *mut i32));
+    let shader_log = gl!("glGetShaderInfoLog", (u32, i32, *mut i32, *mut u8));
+    let delete_shader = gl!("glDeleteShader", (u32));
+    let create_program = gl!("glCreateProgram", () -> u32);
+    let attach = gl!("glAttachShader", (u32, u32));
+    let link = gl!("glLinkProgram", (u32));
+    let program_iv = gl!("glGetProgramiv", (u32, u32, *mut i32));
+    let program_log = gl!("glGetProgramInfoLog", (u32, i32, *mut i32, *mut u8));
+    let use_program = gl!("glUseProgram", (u32));
+    let location = gl!("glGetUniformLocation", (u32, *const u8) -> i32);
+    let uniforms = [gl!("glUniform1fv", (i32, i32, *const f32)), gl!("glUniform2fv", (i32, i32, *const f32)), gl!("glUniform3fv", (i32, i32, *const f32)), gl!("glUniform4fv", (i32, i32, *const f32))];
+    let uniform_matrix = gl!("glUniformMatrix4fv", (i32, i32, u8, *const f32));
+    let gen_arrays = gl!("glGenVertexArrays", (i32, *mut u32));
+    let bind_array = gl!("glBindVertexArray", (u32));
+    let gen_buffers = gl!("glGenBuffers", (i32, *mut u32));
+    let bind_buffer = gl!("glBindBuffer", (u32, u32));
+    let buffer_data = gl!("glBufferData", (u32, isize, *const f32, u32));
+    let enable_attribute = gl!("glEnableVertexAttribArray", (u32));
+    let attribute = gl!("glVertexAttribPointer", (u32, i32, u32, u8, i32, usize));
+    let draw_arrays = gl!("glDrawArrays", (u32, i32, i32));
+    let gen_textures = gl!("glGenTextures", (i32, *mut u32));
+    let bind_texture = gl!("glBindTexture", (u32, u32));
+    let texture_image = gl!("glTexImage2D", (u32, i32, i32, i32, i32, i32, u32, u32, *const u8));
+    let texture_setting = gl!("glTexParameteri", (u32, u32, i32));
+    let delete_textures = gl!("glDeleteTextures", (i32, *const u32));
+    let surfaces = GL_SURFACES.get();
+    if !surfaces.iter().any(|s| s.key == key) {
+        let (mut array, mut buffer) = (0, 0);
+        gen_arrays(1, &mut array);
+        gen_buffers(1, &mut buffer);
+        surfaces.push(GlSurface { key, array, buffer, programs: Vec::new() });
+    }
+    let surface = surfaces.iter_mut().find(|s| s.key == key).unwrap();
+    bind_array(surface.array);
+    bind_buffer(0x8892, surface.buffer); // GL_ARRAY_BUFFER
+    viewport(0, 0, width, height);
+    enable(0x0B71); // GL_DEPTH_TEST
+    depth_func(0x0203); // GL_LEQUAL: what is drawn later at the same depth shows
+    enable(0x0BE2); // GL_BLEND
+    blend_func(0x0302, 0x0303); // SRC_ALPHA, ONE_MINUS_SRC_ALPHA
+    let wipe = |color: u32| {
+        let part = |shift: u32| ((color >> shift) & 255) as f32 / 255.0;
+        clear_color(part(16), part(8), part(0), 1.0);
+        clear(0x4100); // GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT
+    };
+    wipe(0);
+    let compile = |kind: u32, source: &str| {
+        let shader = create_shader(kind);
+        let (start, length) = (source.as_ptr(), source.len() as i32);
+        shader_source(shader, 1, &start, &length);
+        compile_shader(shader);
+        let (mut done, mut said) = (0, 0);
+        shader_iv(shader, 0x8B81, &mut done); // GL_COMPILE_STATUS
+        if done == 0 {
+            let mut log = alloc::vec![0u8; 4096];
+            shader_log(shader, 4096, &mut said, log.as_mut_ptr());
+            gl_stop(GPU_MISSING + 1, &log[..said.max(0) as usize]);
+        }
+        shader
+    };
+    let (mut program, mut textures) = (0, Vec::new());
+    for op in ops {
+        match op {
+            Op::GlClear(color) => wipe(*color),
+            Op::GlShader(vertex, fragment) => {
+                program = match surface.programs.iter().find(|(v, f, _)| v == vertex && f == fragment) {
+                    Some(found) => found.2,
+                    None => {
+                        let (made, shaders) = (create_program(), [compile(0x8B31, vertex), compile(0x8B30, fragment)]);
+                        shaders.iter().for_each(|s| attach(made, *s));
+                        link(made);
+                        shaders.iter().for_each(|s| delete_shader(*s));
+                        let (mut done, mut said) = (0, 0);
+                        program_iv(made, 0x8B82, &mut done); // GL_LINK_STATUS
+                        if done == 0 {
+                            let mut log = alloc::vec![0u8; 4096];
+                            program_log(made, 4096, &mut said, log.as_mut_ptr());
+                            gl_stop(GPU_MISSING + 1, &log[..said.max(0) as usize]);
+                        }
+                        surface.programs.push((vertex.clone(), fragment.clone(), made));
+                        made
+                    }
+                };
+                use_program(program);
+            }
+            Op::GlUniform(name, values) => {
+                let at = location(program, alloc::format!("{name}\0").as_ptr());
+                match values.len() {
+                    16 => uniform_matrix(at, 1, 0, values.as_ptr()),
+                    n @ 1..=4 => uniforms[n - 1](at, 1, values.as_ptr()),
+                    _ => {}
+                }
+            }
+            Op::GlTriangles(sizes, data) => {
+                let width_of_one: i32 = sizes.iter().sum();
+                if width_of_one == 0 {
+                    continue;
+                }
+                buffer_data(0x8892, (data.len() * 4) as isize, data.as_ptr(), 0x88E0); // GL_STREAM_DRAW
+                let mut at = 0;
+                for (k, size) in sizes.iter().enumerate() {
+                    enable_attribute(k as u32);
+                    attribute(k as u32, *size, 0x1406, 0, width_of_one * 4, at * 4); // GL_FLOAT
+                    at += *size as usize;
+                }
+                draw_arrays(0x0004, 0, data.len() as i32 / width_of_one); // GL_TRIANGLES
+            }
+            Op::GlTexture(width, height, pixels) => {
+                let mut texture = 0;
+                gen_textures(1, &mut texture);
+                bind_texture(0x0DE1, texture); // GL_TEXTURE_2D
+                texture_setting(0x0DE1, 0x2800, 0x2601); // MAG_FILTER: LINEAR
+                texture_setting(0x0DE1, 0x2801, 0x2601); // MIN_FILTER: LINEAR
+                texture_image(0x0DE1, 0, 0x8058, *width, *height, 0, 0x1908, 0x1401, pixels.as_ptr()); // RGBA8, RGBA, UNSIGNED_BYTE
+                textures.push(texture);
+            }
+            _ => {}
+        }
+    }
+    delete_textures(textures.len() as i32, textures.as_ptr());
+    // The middle pixel, for checking a system from a program alone (no one looks at a test machine).
+    if sys::var("KOVA_UI_PROBE").is_some() {
+        let read = gl!("glReadPixels", (i32, i32, i32, i32, u32, u32, *mut u8));
+        let mut pixel = [0u8; 4];
+        read(width / 2, height / 2, 1, 1, 0x1908, 0x1401, pixel.as_mut_ptr());
+        sys::write(2, alloc::format!("gpu {width}x{height} {} {} {}\n", pixel[0], pixel[1], pixel[2]).as_bytes());
+    }
+}
+
 /// A window says how big canvas `k` really is; true if that is news.
 pub fn ui_room(k: usize, width: i32, height: i32) -> bool {
     UI_ROOMS.with(|(rooms, _)| {

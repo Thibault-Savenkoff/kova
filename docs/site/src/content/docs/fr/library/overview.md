@@ -42,6 +42,7 @@ presque la même chose.
 | `import websocket` | [websocket](/fr/library/websocket/) | des connexions qui restent ouvertes avec les pages web |
 | `import sqlite` | [sqlite](/fr/library/sqlite/) | une base de données dans un fichier |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
+| `import sound` | [sound](/fr/library/sound/) | jouer des sons |
 
 ## Chaque valeur a
 

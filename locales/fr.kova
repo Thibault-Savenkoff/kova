@@ -64,6 +64,8 @@ lang fr {
     fault_negative_size := "`secure.token` prend un nombre d'octets, 0 ou plus"
     fault_bad_key := "ce n'est pas une clé faite par `secure.key` (32 octets en base64)"
     fault_password_settings := "`secure.password_hash` prend `memory` de 8 à 1024 (Mo) et `passes` de 1 à 16"
+    gpu_missing := "cet ordinateur n'a pas OpenGL 3.3, dont `ui.gpu` a besoin"
+    gpu_shader := "un shader ne compile pas : "
     log_unknown_level := "KOVA_LOG={name} n'est pas un niveau : debug, info, warning ou error"
     fault_int32 := "ce nombre ne tient pas dans le `int` du C (`Int32` : de -2147483648 à 2147483647)"
     fault_text_zero := "un texte donné au C contient un octet 0, où le C le couperait"

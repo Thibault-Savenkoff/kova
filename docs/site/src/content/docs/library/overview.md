@@ -41,6 +41,7 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import websocket` | [websocket](/library/websocket/) | connections that stay open with web pages |
 | `import sqlite` | [sqlite](/library/sqlite/) | a database in one file |
 | `import ui` | [ui](/library/ui/) | native windows |
+| `import sound` | [sound](/library/sound/) | playing sounds |
 
 ## Every value has
 

@@ -1522,6 +1522,7 @@ extern "C" fn gtk_paint(area: P, cairo: P, width: i32, height: i32, _data: P) {
         font(cairo, c"sans-serif".as_ptr() as *const u8, 0, 0);
         for op in ops {
             match op {
+                Gpu | GlClear(_) | GlShader(..) | GlUniform(..) | GlTriangles(..) | GlTexture(..) => {}
                 Clear(c) => {
                     color(*c);
                     paint(cairo);
@@ -1579,18 +1580,72 @@ extern "C" fn gtk_paint(area: P, cairo: P, width: i32, height: i32, _data: P) {
     }
 }
 
+/// Paints a `ui.gpu`. GTK has made its context current; libepoxy, which GTK itself uses, holds
+/// the functions of that context as variables `epoxy_glClear`…
+extern "C" fn gtk_gpu_paint(area: P, _context: P, _data: P) -> i32 {
+    let Some((_, canvas)) = GTK_CANVASES.get().iter().find(|(a, _)| *a == area) else { return 1 };
+    let Some(epoxy) = library("libepoxy.so.0") else { crate::gl_stop(crate::GPU_MISSING, b"") };
+    unsafe {
+        use core::mem::transmute as t;
+        let size: [extern "C" fn(P) -> i32; 3] = [t(gtk_symbol("gtk_widget_get_width")), t(gtk_symbol("gtk_widget_get_height")), t(gtk_symbol("gtk_widget_get_scale_factor"))];
+        let (width, height, scale) = (size[0](area), size[1](area), size[2](area));
+        if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, width, height) {
+            GTK_HEARD.get().hear(crate::shared::UI_RESIZED, String::new());
+        }
+        crate::gl_paint(area as usize, &canvas.ops, width * scale, height * scale, &|name| symbol(epoxy, &format!("epoxy_{name}")).map_or(0, |at| *(at as *const usize)));
+    }
+    1
+}
+
+/// GTK could not make a context: this computer has no OpenGL to speak of.
+extern "C" fn gtk_gpu_ready(area: P, _data: P) {
+    let error: extern "C" fn(P) -> P = unsafe { core::mem::transmute(gtk_symbol("gtk_gl_area_get_error")) };
+    if !error(area).is_null() {
+        crate::gl_stop(crate::GPU_MISSING, b"");
+    }
+}
+
+/// A `ui.gpu`'s area.
+fn gtk_gpu(g: &Gtk, c: &crate::shared::UiCanvas) -> P {
+    unsafe {
+        use core::mem::transmute as t;
+        let f = gtk_symbol;
+        let new: extern "C" fn() -> P = t(f("gtk_gl_area_new"));
+        let area = new();
+        let version: extern "C" fn(P, i32, i32) = t(f("gtk_gl_area_set_required_version"));
+        version(area, 3, 3);
+        let depth: extern "C" fn(P, i32) = t(f("gtk_gl_area_set_has_depth_buffer"));
+        depth(area, 1);
+        // GTK 4.12 and later may otherwise choose OpenGL ES, which refuses `#version 330 core`.
+        if let Some(apis) = symbol(*GTK_LIBRARY.get(), "gtk_gl_area_set_allowed_apis") {
+            let apis: extern "C" fn(P, u32) = t(apis);
+            apis(area, 1); // GDK_GL_API_GL
+        }
+        let least: extern "C" fn(P, i32, i32) = t(f("gtk_widget_set_size_request"));
+        least(area, if c.width == 0 { -1 } else { c.width }, if c.height == 0 { -1 } else { c.height });
+        (g.connect)(area, c"render".as_ptr() as *const u8, gtk_gpu_paint as usize, null_mut(), null_mut(), 0);
+        (g.connect)(area, c"realize".as_ptr() as *const u8, gtk_gpu_ready as usize, null_mut(), null_mut(), 1); // G_CONNECT_AFTER
+        area
+    }
+}
+
 /// A canvas and what hears it.
 fn gtk_canvas(g: &Gtk, c: &crate::shared::UiCanvas) -> P {
     unsafe {
         use core::mem::transmute as t;
         let f = gtk_symbol;
-        let new: extern "C" fn() -> P = t(f("gtk_drawing_area_new"));
-        let area = new();
-        let content: [extern "C" fn(P, i32); 2] = [t(f("gtk_drawing_area_set_content_width")), t(f("gtk_drawing_area_set_content_height"))];
-        content[0](area, c.width);
-        content[1](area, c.height);
-        let draw: extern "C" fn(P, usize, P, P) = t(f("gtk_drawing_area_set_draw_func"));
-        draw(area, gtk_paint as usize, null_mut(), null_mut());
+        let area = if c.gpu() {
+            gtk_gpu(g, c)
+        } else {
+            let new: extern "C" fn() -> P = t(f("gtk_drawing_area_new"));
+            let area = new();
+            let content: [extern "C" fn(P, i32); 2] = [t(f("gtk_drawing_area_set_content_width")), t(f("gtk_drawing_area_set_content_height"))];
+            content[0](area, c.width);
+            content[1](area, c.height);
+            let draw: extern "C" fn(P, usize, P, P) = t(f("gtk_drawing_area_set_draw_func"));
+            draw(area, gtk_paint as usize, null_mut(), null_mut());
+            area
+        };
         GTK_CANVASES.get().push((area, c.clone()));
         let expand: [extern "C" fn(P, i32); 2] = [t(f("gtk_widget_set_hexpand")), t(f("gtk_widget_set_vexpand"))];
         expand[0](area, (c.width == 0) as i32);

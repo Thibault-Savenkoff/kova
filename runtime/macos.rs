@@ -1279,6 +1279,40 @@ extern "C" fn mac_key(me: Id, _message: Id, event: Id) {
     }
 }
 
+/// Paints a `ui.gpu`: an OpenGL context drawn into the canvas's own view. Apple marks OpenGL as
+/// old, but it works on every Mac, and is the one graphics interface all three systems share.
+fn mac_gpu(kit: &Kit, view: Id, canvas: &crate::shared::UiCanvas, bounds: Rect) {
+    static CONTEXTS: crate::Global<Vec<(Id, Id)>> = crate::Global::new(Vec::new());
+    let Some(gl) = library("/System/Library/Frameworks/OpenGL.framework/OpenGL") else { crate::gl_stop(crate::GPU_MISSING, b"") };
+    unsafe {
+        use core::mem::transmute as t;
+        let context = match CONTEXTS.get().iter().find(|c| c.0 == view) {
+            Some(found) => found.1,
+            None => {
+                // Double buffer, 24-bit depth, the 3.2 core profile (which gives 4.1).
+                let wanted: [u32; 6] = [5, 12, 24, 99, 0x3200, 0];
+                let from: extern "C" fn(Id, Id, *const u32) -> Id = t(kit.send as usize);
+                let format = from(kit.send(kit.class("NSOpenGLPixelFormat"), "alloc"), kit.sel("initWithAttributes:"), wanted.as_ptr());
+                let make: extern "C" fn(Id, Id, Id, Id) -> Id = t(kit.send as usize);
+                let made = if format.is_null() { format } else { make(kit.send(kit.class("NSOpenGLContext"), "alloc"), kit.sel("initWithFormat:shareContext:"), format, core::ptr::null_mut()) };
+                if made.is_null() {
+                    crate::gl_stop(crate::GPU_MISSING, b"");
+                }
+                (kit.send_id)(view, kit.sel("setWantsBestResolutionOpenGLSurface:"), 1);
+                (kit.send_two)(made, kit.sel("setView:"), view);
+                CONTEXTS.get().push((view, made));
+                made
+            }
+        };
+        kit.send(context, "makeCurrentContext");
+        kit.send(context, "update");
+        let scale: extern "C" fn(Id, Id) -> f64 = t(kit.send as usize);
+        let scale = scale(kit.send(view, "window"), kit.sel("backingScaleFactor"));
+        crate::gl_paint(view as usize, &canvas.ops, (bounds.width * scale) as i32, (bounds.height * scale) as i32, &|name| symbol(gl, name).unwrap_or(0));
+        kit.send(context, "flushBuffer");
+    }
+}
+
 /// Paints a canvas, from what `ui.canvas` drew. Thickness stays inside a shape, as on every system.
 extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     use crate::shared::UiOp as Op;
@@ -1286,6 +1320,10 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
     let Some((_, canvas)) = MAC_CANVASES.get().iter().find(|e| e.0 == me) else { return };
     let bounds = mac_rect(kit, me, "bounds");
     mac_measure(kit);
+    if canvas.gpu() {
+        mac_gpu(kit, me, canvas, bounds);
+        return;
+    }
     let Some(graphics) = library("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics") else { return };
     let Some(appkit) = library("/System/Library/Frameworks/AppKit.framework/AppKit") else { return };
     let f = |name: &str| symbol(graphics, name).unwrap_or(0);
@@ -1317,6 +1355,7 @@ extern "C" fn mac_draw(me: Id, _message: Id, _dirty: Rect) {
         fill_rect(context, whole);
         for op in &canvas.ops {
             match op {
+                Op::Gpu | Op::GlClear(_) | Op::GlShader(..) | Op::GlUniform(..) | Op::GlTriangles(..) | Op::GlTexture(..) => {}
                 Op::Clear(c) => {
                     fill(*c);
                     fill_rect(context, whole);

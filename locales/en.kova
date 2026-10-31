@@ -64,6 +64,8 @@ lang en {
     fault_negative_size := "`secure.token` takes a number of bytes, 0 or more"
     fault_bad_key := "this is not a key made by `secure.key` (32 bytes in base64)"
     fault_password_settings := "`secure.password_hash` takes `memory` from 8 to 1024 (MB) and `passes` from 1 to 16"
+    gpu_missing := "this computer has no OpenGL 3.3, which `ui.gpu` needs"
+    gpu_shader := "a shader does not compile: "
     log_unknown_level := "KOVA_LOG={name} is no level: debug, info, warning or error"
     fault_int32 := "this number does not fit in C's `int` (`Int32`: from -2147483648 to 2147483647)"
     fault_text_zero := "a text given to C holds a 0 byte, where C would cut it"

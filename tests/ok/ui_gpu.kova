@@ -1,0 +1,45 @@
+// A `ui.gpu` is a canvas: it hears the mouse, and script mode shows what it would draw.
+// stdin: 0=press 3 4 1
+// stdin:
+// expect: [Gpu] canvas 40x30 gpu clear(#dc2626) shader uniform("shade" [0.5]) triangles(6 of [2]) texture(1x1) triangles(15 of [3, 2])
+// expect: [Gpu] canvas 40x30 gpu clear(#dc2626) shader uniform("shade" [3.0]) triangles(6 of [2]) texture(1x1) triangles(15 of [3, 2])
+import ui
+
+let vertex_code: String := """
+#version 330 core
+layout(location = 0) in vec2 place;
+void main() { gl_Position = vec4(place, 0.0, 1.0); }
+"""
+
+let fragment_code: String := """
+#version 330 core
+uniform float shade;
+out vec4 color;
+void main() { color = vec4(0.0, shade, 0.0, 1.0); }
+"""
+
+enum Event {
+    Press(x: Int)
+}
+
+fn view(shade: Float) -> ui.View {
+    let area: ui.View := ui.gpu(40, 30) { g: ui.Gpu =>
+        g.clear(ui.red)
+        g.shader(vertex_code, fragment_code)
+        g.uniform("shade", [shade])
+        g.triangles([-1.0, -1.0, 1.0, -1.0, 0.0, 1.0])
+        g.texture(1, 1, [255, 0, 0, 255])
+        g.triangles([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]) parts([3, 2])
+    }
+    return area.on_mouse { m: ui.Mouse => Event.Press(m.x) }
+}
+
+fn update(shade: var Float, e: Event) {
+    match e {
+        .Press(x) => shade := x.to_float
+    }
+}
+
+fn main {
+    ui.run("Gpu", 0.5, view, update)
+}

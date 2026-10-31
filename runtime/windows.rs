@@ -1298,6 +1298,52 @@ fn win_key(key: usize) -> Option<String> {
     Some(named.into())
 }
 
+/// Paints a `ui.gpu`, with an OpenGL context of its own window. WGL's plain context is enough:
+/// every driver gives it the most recent version it has.
+fn win_gpu(h: Handle, dc: Handle, canvas: &crate::shared::UiCanvas) {
+    static CONTEXTS: Global<Vec<(Handle, Handle)>> = Global::new(Vec::new());
+    let Some(gl) = library("opengl32.dll") else { crate::gl_stop(crate::GPU_MISSING, b"") };
+    let wgl = |name: &str| symbol(gl, name).unwrap_or(0);
+    let gdi = |name: &str| library("gdi32.dll").and_then(|g| symbol(g, name)).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let context = match CONTEXTS.get().iter().find(|c| c.0 == h) {
+            Some(found) => found.1,
+            None => {
+                let choose: extern "system" fn(Handle, *const u8) -> i32 = t(gdi("ChoosePixelFormat"));
+                let set: extern "system" fn(Handle, i32, *const u8) -> i32 = t(gdi("SetPixelFormat"));
+                let create: extern "system" fn(Handle) -> Handle = t(wgl("wglCreateContext"));
+                // `PIXELFORMATDESCRIPTOR`: size, version 1, on a window + OpenGL + double buffer, 32-bit
+                // colors, 24-bit depth.
+                let mut format = [0u8; 40];
+                format[0] = 40;
+                format[2] = 1;
+                format[4] = 0x25;
+                format[9] = 32;
+                format[23] = 24;
+                let chosen = choose(dc, format.as_ptr());
+                let made = if chosen == 0 || set(dc, chosen, format.as_ptr()) == 0 { 0 as Handle } else { create(dc) };
+                if made == 0 as Handle {
+                    crate::gl_stop(crate::GPU_MISSING, b"");
+                }
+                CONTEXTS.get().push((h, made));
+                made
+            }
+        };
+        let current: extern "system" fn(Handle, Handle) -> i32 = t(wgl("wglMakeCurrent"));
+        let address: extern "system" fn(*const u8) -> usize = t(wgl("wglGetProcAddress"));
+        let swap: extern "system" fn(Handle) -> i32 = t(gdi("SwapBuffers"));
+        current(dc, context);
+        // Past OpenGL 1.1, only the context knows; before, only the DLL (some drivers give 1, 2 or 3).
+        let load = |name: &str| match address(alloc::format!("{name}\0").as_ptr()) {
+            0..=3 | usize::MAX => symbol(gl, name).unwrap_or(0),
+            found => found,
+        };
+        crate::gl_paint(h as usize, &canvas.ops, canvas.width, canvas.height, &load);
+        swap(dc);
+    }
+}
+
 /// The window of a `ui.canvas`.
 extern "system" fn win_canvas(h: Handle, message: u32, w: usize, l: isize) -> isize {
     let user = |name: &str| library("user32.dll").and_then(|u| symbol(u, name)).unwrap_or(0);
@@ -1340,6 +1386,11 @@ extern "system" fn win_canvas(h: Handle, message: u32, w: usize, l: isize) -> is
                 // `PAINTSTRUCT`, 72 bytes.
                 let mut paint = [0u64; 9];
                 let dc = begin(h, paint.as_mut_ptr());
+                if canvas.gpu() {
+                    win_gpu(h, dc, canvas);
+                    end(h, paint.as_ptr());
+                    return 0;
+                }
                 let memory = same_dc(dc);
                 let bitmap = bitmap_for(dc, canvas.width, canvas.height);
                 let before = select(memory, bitmap);
@@ -1458,6 +1509,7 @@ fn win_draw(dc: Handle, canvas: &crate::shared::UiCanvas) {
                 open(&mut g);
             }
             match op {
+                Gpu | GlClear(_) | GlShader(..) | GlUniform(..) | GlTriangles(..) | GlTexture(..) => {}
                 Clear(c) => filled(g, *c, fill_rect, [0, 0, canvas.width, canvas.height]),
                 Rect { x, y, w, h, color, outline: 0 } => filled(g, *color, fill_rect, [*x, *y, *w, *h]),
                 Rect { x, y, w, h, color, outline } => lined(g, *color, *outline, draw_rect, [x + outline / 2, y + outline / 2, w - outline, h - outline]),

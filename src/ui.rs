@@ -212,6 +212,47 @@ public:
     }
 }
 
+// What a `ui.gpu` block is given: each call adds to the frame, drawn by the graphics card.
+struct Gpu {
+public:
+    width: Int
+    height: Int
+
+    fn clear(self, c: Color) {
+        ui.draw("c {number(c)}\n")
+    }
+
+    // The two programs of the card, in GLSL `#version 330 core`, for what follows.
+    fn shader(self, vertex: String, fragment: String) {
+        ui.draw("s {vertex.length} {fragment.length}:{vertex}{fragment}\n")
+    }
+
+    // A value for the shaders: 1 to 4 numbers, or 16 for a `mat4`, column by column.
+    fn uniform(self, name: String, values: List<Float>)
+        require [1, 2, 3, 4, 16].contains(values.length) else "a uniform has 1, 2, 3, 4 or 16 numbers"
+    {
+        let written: List<String> := values.map { v: Float => "{v}" }
+        ui.draw("u {name.length}:{name} {written.join(" ")}\n")
+    }
+
+    // Triangles, three vertices each. A vertex is `parts` numbers: 2 by default; `parts([3, 3])`
+    // gives attributes 0 and 1 three each.
+    fn triangles(self, vertices: List<Float>) parts(sizes: List<Int> := [2])
+        require (sizes.all { n: Int => n >= 1 && n <= 4 }) else "an attribute has 1 to 4 numbers"
+    {
+        let written: List<String> := vertices.map { v: Float => "{v}" }
+        let parts: List<String> := sizes.map { n: Int => "{n}" }
+        ui.draw("v {sizes.length} {parts.join(" ")} {written.join(" ")}\n")
+    }
+
+    // An image for what follows: `width * height * 4` bytes, red, green, blue, alpha.
+    fn texture(self, width: Int, height: Int, pixels: List<Int>)
+        require pixels.length = width * height * 4 else "a texture has 4 bytes per pixel"
+    {
+        ui.draw("x {width} {height} {pixels.to_hex}\n")
+    }
+}
+
 struct Color {
 private:
     r: Int
@@ -348,6 +389,15 @@ fn canvas(width: Int, height: Int, paint: {Draw}) -> View
 {
     paint(Draw { width := if width = 0 { ui.room(0) } else { width }, height := if height = 0 { ui.room(1) } else { height } })
     let body: String := "{width} {height}\n{ui.drawn}"
+    return View { text := "D{body.length}:{body}", events := [], typed := [], canvas := true }
+}
+
+// A drawing area painted by the graphics card; its events are a canvas's.
+fn gpu(width: Int, height: Int, paint: {Gpu}) -> View
+    require width >= 0 && height >= 0 else "a canvas's size cannot be negative"
+{
+    paint(Gpu { width := if width = 0 { ui.room(0) } else { width }, height := if height = 0 { ui.room(1) } else { height } })
+    let body: String := "{width} {height}\ng\n{ui.drawn}"
     return View { text := "D{body.length}:{body}", events := [], typed := [], canvas := true }
 }
 

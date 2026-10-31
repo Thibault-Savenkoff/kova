@@ -182,6 +182,102 @@ The field always shows the state. If `update` does not take a change (an age fie
 letter, say), the field goes back to what the state holds, so the screen never shows a value the
 program does not have.
 
+## Widgets that hold a value
+
+A checkbox, a slider, a drop-down list, a list or a table each show one value, and that value lives
+in your state, like the text of a field. The widget receives it, and a block turns what the user did
+into an event:
+
+```kova
+import ui
+
+enum Event {
+    Dark(on: Bool)
+    Volume(v: Int)
+    Size(i: Int)
+}
+
+struct App {
+    dark: Bool
+    volume: Int
+    size: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.checkbox("Dark", app.dark) { on: Bool => Event.Dark(on) },
+        ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v) },
+        ui.choice(["Small", "Medium", "Large"], app.size) { i: Int => Event.Size(i) },
+        ui.text("Volume {app.volume}"),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Dark(on) => app.dark := on
+        .Volume(v) => app.volume := v
+        .Size(i) => app.size := i
+    }
+}
+
+fn main {
+    ui.run("Settings", App { dark := false, volume := 3, size := 0 }, view, update)
+}
+```
+
+Moving the slider changes nothing by itself on the Kova side: the event reaches `update`, the state
+changes, and `view` draws the slider at its new place. So a program can refuse a value, or tie two
+widgets together, simply by what `update` does.
+
+`ui.choice`, `ui.list`, `ui.table` and `ui.tabs` work with a position counted from 0, not with the
+text of the line: two lines may read the same, and a position stays right when the texts are
+translated. `ui.list` and `ui.table` take `-1` for "nothing selected".
+
+`ui.tabs` is only the row of tabs. Which page shows under it is yours to write, and that is one `if`
+in `view`:
+
+```kova
+let page: ui.View := if app.tab = 0 { settings(app) } else { about(app) }
+return ui.column([ui.tabs(["Settings", "About"], app.tab) { i: Int => Event.Tab(i) }, page])
+```
+
+## Menus
+
+A menu line is a button somewhere else: it sends an event to `update`. `menus` goes on the whole
+view, the outermost one:
+
+```kova
+return ui.column([content]).menus([
+    ui.menu("File", [ui.item("Open", Event.Open), ui.separator, ui.item("Quit", Event.Quit)]),
+])
+```
+
+On a Mac, the bar sits at the top of the screen, and always holds the application's menu (with Quit)
+and an Edit menu, so that copy and paste work in text fields.
+
+## Dialogs
+
+`ui.open_file`, `ui.save_file` and `ui.open_folder` show the system's own window and give back the
+path, or `none` when the user cancels. `ui.message` and `ui.confirm` ask something. All of them wait
+for the answer, so `update` reads like a sentence:
+
+```kova
+fn update(app: var App, e: Event) {
+    match e {
+        .Open => match ui.open_file("Open a note") {
+            none => {}
+            path => app.path := path.clone
+        }
+        .Quit => if ui.confirm("Quit", "Leave without saving?") {
+            ui.close
+        }
+    }
+}
+```
+
+In `KOVA_UI_SCRIPT` mode, no window opens: each dialog prints what it would ask, then reads its
+answer from the next input line.
+
 ## Drawing
 
 Native widgets cover forms. For a game, a chart or a look of your own, `ui.canvas` is an area you
@@ -341,6 +437,96 @@ are counted with the text fields, in the order the view is written; for a canvas
 the keyboard if `.on_mouse` is written first. `1` is the left button, `2` the right. Clocks are
 counted with the buttons.
 
+## Drawing with the graphics card
+
+`ui.canvas` asks the system to draw shapes one at a time, which is simple and enough for most windows.
+For thousands of shapes, for 3D, or for effects computed on every pixel, `ui.gpu` hands the work to
+the graphics card. It takes more to learn, because you write two small programs for the card itself.
+They are called *shaders*, and they are written in GLSL, the language of OpenGL, not in Kova:
+
+- the **vertex shader** runs once per corner of a triangle, and says where that corner lands. The
+  window goes from -1 to 1 in both directions, whatever its size in pixels, with 1 at the top.
+- the **fragment shader** runs once per pixel of the triangle, and says its color. What the vertex
+  shader writes in an `out` variable reaches it blended between the three corners: that is how a
+  triangle goes smoothly from red to green to blue below.
+
+```kova
+import ui
+
+let vertex_code: String := """
+#version 330 core
+layout(location = 0) in vec2 place;
+layout(location = 1) in vec3 shade;
+uniform float turn;
+out vec3 kept;
+void main() {
+    float c = cos(turn), s = sin(turn);
+    gl_Position = vec4(c * place.x - s * place.y, s * place.x + c * place.y, 0.0, 1.0);
+    kept = shade;
+}
+"""
+
+let fragment_code: String := """
+#version 330 core
+in vec3 kept;
+out vec4 color;
+void main() { color = vec4(kept, 1.0); }
+"""
+
+enum Event {
+    Tick
+}
+
+fn view(turn: Float) -> ui.View {
+    let area: ui.View := ui.gpu(400, 400) { g: ui.Gpu =>
+        g.clear(ui.black)
+        g.shader(vertex_code, fragment_code)
+        g.uniform("turn", [turn])
+        g.triangles([
+            0.0, 0.8, 1.0, 0.0, 0.0,
+            -0.7, -0.5, 0.0, 1.0, 0.0,
+            0.7, -0.5, 0.0, 0.0, 1.0,
+        ]) parts([2, 3])
+    }
+    return area.every(16, Event.Tick)
+}
+
+fn update(turn: var Float, e: Event) {
+    turn += 0.02
+}
+
+fn main {
+    ui.run("Triangle", 0.0, view, update)
+}
+```
+
+The list given to `g.triangles` is flat: `parts([2, 3])` says each vertex is 2 numbers, then 3, which
+the shaders read as attribute 0 (`place`) and attribute 1 (`shade`). Three vertices make one triangle.
+Without `parts`, a vertex is 2 numbers.
+
+`g.uniform` hands the shaders a value that stays the same for the whole draw, here the angle. It
+takes 1 to 4 numbers (`float`, `vec2`, `vec3`, `vec4`), or 16 for a `mat4`, column by column. A 3D
+program computes its matrix in Kova, and multiplies each vertex by it in the vertex shader.
+
+The rest works like a canvas. `view` paints the whole frame again, so an animation is a clock that
+changes the state. `.on_mouse`, `.on_key` and `ui.fill` work the same way. Each frame starts black,
+with the depth reset, and something nearer hides something farther: for 3D, give each vertex a third
+number. Colors with an alpha below 1 blend with what is behind them.
+
+`g.texture(width, height, pixels)` gives the shaders an image, as 4 bytes per pixel (red, green, blue,
+alpha), first line first. They read it through a `uniform sampler2D`, which needs no `g.uniform`.
+
+A shader is compiled when the window first draws it. If it has a mistake, the program stops with
+what the graphics driver said:
+
+```console
+error: a shader does not compile: 0:4(23): error: `oops' undeclared
+```
+
+`ui.gpu` needs OpenGL 3.3, which nearly every computer since 2010 has, and shaders start with
+`#version 330 core`. Apple has stopped improving OpenGL, but every Mac still runs it. Vertices travel
+as text at each frame, which holds well into the tens of thousands, and not millions.
+
 ## A window with your own frame
 
 `frame(false)` on `ui.run` removes what the system draws around the window: title bar, buttons,
@@ -444,6 +630,5 @@ so drive a window program through every case, on any machine, even without a scr
 
 ## What comes next
 
-`import ui` has texts, images, buttons, text fields, rows, columns and a drawing area today. More widgets are planned.
-For a widget it does not have yet, a program can call the system's own library through
+For a widget `import ui` does not have yet, a program can call the system's own library through
 [`extern`](/guide/calling-c/).

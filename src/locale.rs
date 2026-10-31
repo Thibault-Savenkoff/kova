@@ -84,6 +84,8 @@ pub const RUNTIME: &[&str] = &[
     "fault_deadlock",
     "fault_channel_limit",
     "fault_threads_interpreted",
+    "gpu_missing",
+    "gpu_shader",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.
@@ -296,6 +298,7 @@ mod tests {
         assert_eq!(RUNTIME[7..9], ["leak_allocated", "leak_live"], "the runtime reads them at 7 and 8");
         assert_eq!(RUNTIME[28], "log_unknown_level", "the runtime reads it at 28");
         assert_eq!(RUNTIME[34..36], ["extern_no_library", "extern_no_function"], "the runtime reads them at 34 and 35");
+        assert_eq!(RUNTIME[43..45], ["gpu_missing", "gpu_shader"], "the runtime reads them at 43 and 44");
         let (_, values, _) = crate::types::SETTINGS.iter().find(|(k, ..)| *k == "lang").unwrap();
         let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _)| *c).collect();
         assert_eq!(values[1..], codes[..], "`header {{ lang }}` offers `auto` then every language");

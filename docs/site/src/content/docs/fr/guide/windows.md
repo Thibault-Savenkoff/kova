@@ -187,6 +187,102 @@ Le champ montre toujours l'état. Si `update` ne prend pas un changement (un cha
 une lettre, par exemple), le champ revient à ce que contient l'état, donc l'écran ne montre jamais
 une valeur que le programme n'a pas.
 
+## Les widgets qui gardent une valeur
+
+Une case à cocher, un curseur, une liste déroulante, une liste ou un tableau montrent chacun une
+valeur, et cette valeur vit dans ton état, comme le texte d'un champ. Le widget la reçoit, et un bloc
+transforme ce qu'a fait l'utilisateur en événement :
+
+```kova
+import ui
+
+enum Event {
+    Dark(on: Bool)
+    Volume(v: Int)
+    Size(i: Int)
+}
+
+struct App {
+    dark: Bool
+    volume: Int
+    size: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.checkbox("Sombre", app.dark) { on: Bool => Event.Dark(on) },
+        ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v) },
+        ui.choice(["Petit", "Moyen", "Grand"], app.size) { i: Int => Event.Size(i) },
+        ui.text("Volume {app.volume}"),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Dark(on) => app.dark := on
+        .Volume(v) => app.volume := v
+        .Size(i) => app.size := i
+    }
+}
+
+fn main {
+    ui.run("Réglages", App { dark := false, volume := 3, size := 0 }, view, update)
+}
+```
+
+Bouger le curseur ne change rien tout seul côté Kova : l'événement arrive à `update`, l'état change,
+et `view` dessine le curseur à sa nouvelle place. Un programme peut donc refuser une valeur, ou lier
+deux widgets, simplement par ce que fait `update`.
+
+`ui.choice`, `ui.list`, `ui.table` et `ui.tabs` travaillent avec une position comptée à partir de 0,
+pas avec le texte de la ligne : deux lignes peuvent se lire pareil, et une position reste juste quand
+les textes sont traduits. `ui.list` et `ui.table` prennent `-1` pour « rien de sélectionné ».
+
+`ui.tabs` n'est que la rangée d'onglets. La page montrée dessous, c'est à toi de l'écrire, et cela
+tient en un `if` dans `view` :
+
+```kova
+let page: ui.View := if app.tab = 0 { settings(app) } else { about(app) }
+return ui.column([ui.tabs(["Réglages", "À propos"], app.tab) { i: Int => Event.Tab(i) }, page])
+```
+
+## Les menus
+
+Une ligne de menu est un bouton placé ailleurs : elle envoie un événement à `update`. `menus` se met
+sur la vue entière, la plus extérieure :
+
+```kova
+return ui.column([content]).menus([
+    ui.menu("Fichier", [ui.item("Ouvrir", Event.Open), ui.separator, ui.item("Quitter", Event.Quit)]),
+])
+```
+
+Sur Mac, la barre est en haut de l'écran, et contient toujours le menu de l'application (avec
+Quitter) et un menu Édition, pour que copier et coller marchent dans les champs de texte.
+
+## Les fenêtres de dialogue
+
+`ui.open_file`, `ui.save_file` et `ui.open_folder` montrent la fenêtre du système et rendent le
+chemin, ou `none` si l'utilisateur annule. `ui.message` et `ui.confirm` posent une question. Toutes
+attendent la réponse, alors `update` se lit comme une phrase :
+
+```kova
+fn update(app: var App, e: Event) {
+    match e {
+        .Open => match ui.open_file("Ouvrir une note") {
+            none => {}
+            path => app.path := path.clone
+        }
+        .Quit => if ui.confirm("Quitter", "Partir sans enregistrer ?") {
+            ui.close
+        }
+    }
+}
+```
+
+En mode `KOVA_UI_SCRIPT`, aucune fenêtre ne s'ouvre : chaque dialogue affiche ce qu'il demanderait,
+puis lit sa réponse sur la ligne suivante de l'entrée.
+
 ## Dessiner
 
 Les éléments natifs conviennent aux formulaires. Pour un jeu, un graphique ou une apparence bien à
@@ -349,6 +445,101 @@ En [mode test](#tester-une-fenêtre), un canvas affiche ce qu'il dessine, et `k=
 la souris avant le clavier si `.on_mouse` est écrit en premier. `1` est le bouton gauche, `2` le
 droit. Les horloges se comptent avec les boutons.
 
+## Dessiner avec la carte graphique
+
+`ui.canvas` demande au système de dessiner les formes une par une : c'est simple et ça suffit à la
+plupart des fenêtres. Pour des milliers de formes, pour la 3D ou pour des effets calculés sur chaque
+pixel, `ui.gpu` confie le travail à la carte graphique. Il y a plus à apprendre, car tu écris deux
+petits programmes pour la carte elle-même. On les appelle des *shaders*, et ils s'écrivent en GLSL,
+le langage d'OpenGL, pas en Kova :
+
+- le **vertex shader** tourne une fois par coin de triangle, et dit où ce coin arrive. La fenêtre va
+  de -1 à 1 dans les deux sens, quelle que soit sa taille en pixels, avec 1 en haut.
+- le **fragment shader** tourne une fois par pixel du triangle, et dit sa couleur. Ce que le vertex
+  shader écrit dans une variable `out` lui arrive mélangé entre les trois coins : c'est ainsi que le
+  triangle ci-dessous passe en douceur du rouge au vert puis au bleu.
+
+```kova
+import ui
+
+let vertex_code: String := """
+#version 330 core
+layout(location = 0) in vec2 place;
+layout(location = 1) in vec3 shade;
+uniform float turn;
+out vec3 kept;
+void main() {
+    float c = cos(turn), s = sin(turn);
+    gl_Position = vec4(c * place.x - s * place.y, s * place.x + c * place.y, 0.0, 1.0);
+    kept = shade;
+}
+"""
+
+let fragment_code: String := """
+#version 330 core
+in vec3 kept;
+out vec4 color;
+void main() { color = vec4(kept, 1.0); }
+"""
+
+enum Event {
+    Tick
+}
+
+fn view(turn: Float) -> ui.View {
+    let area: ui.View := ui.gpu(400, 400) { g: ui.Gpu =>
+        g.clear(ui.black)
+        g.shader(vertex_code, fragment_code)
+        g.uniform("turn", [turn])
+        g.triangles([
+            0.0, 0.8, 1.0, 0.0, 0.0,
+            -0.7, -0.5, 0.0, 1.0, 0.0,
+            0.7, -0.5, 0.0, 0.0, 1.0,
+        ]) parts([2, 3])
+    }
+    return area.every(16, Event.Tick)
+}
+
+fn update(turn: var Float, e: Event) {
+    turn += 0.02
+}
+
+fn main {
+    ui.run("Triangle", 0.0, view, update)
+}
+```
+
+La liste donnée à `g.triangles` est à plat : `parts([2, 3])` dit que chaque sommet fait 2 nombres,
+puis 3, que les shaders lisent comme l'attribut 0 (`place`) et l'attribut 1 (`shade`). Trois sommets
+font un triangle. Sans `parts`, un sommet fait 2 nombres.
+
+`g.uniform` donne aux shaders une valeur qui reste la même pendant tout le dessin, ici l'angle. Il
+prend de 1 à 4 nombres (`float`, `vec2`, `vec3`, `vec4`), ou 16 pour une `mat4`, colonne par colonne.
+Un programme en 3D calcule sa matrice en Kova, et multiplie chaque sommet par elle dans le vertex
+shader.
+
+Le reste marche comme un canvas. `view` repeint toute l'image, alors une animation est une horloge
+qui change l'état. `.on_mouse`, `.on_key` et `ui.fill` marchent pareil. Chaque image commence noire,
+avec la profondeur remise à zéro, et ce qui est plus près cache ce qui est plus loin : pour la 3D,
+donne un troisième nombre à chaque sommet. Une couleur dont l'alpha est sous 1 se mélange à ce qui
+est derrière elle.
+
+`g.texture(width, height, pixels)` donne une image aux shaders, à raison de 4 octets par pixel (rouge,
+vert, bleu, alpha), la première ligne d'abord. Ils la lisent par un `uniform sampler2D`, qui n'a pas
+besoin de `g.uniform`.
+
+Un shader est compilé quand la fenêtre le dessine pour la première fois. S'il contient une erreur, le
+programme s'arrête avec ce qu'a dit le pilote graphique :
+
+```console
+erreur : un shader ne compile pas : 0:4(23): error: `oops' undeclared
+```
+
+`ui.gpu` demande OpenGL 3.3, que presque tous les ordinateurs ont depuis 2010, et les shaders
+commencent par `#version 330 core`. Apple n'améliore plus OpenGL, mais tous les Mac le font encore
+tourner. Les sommets voyagent en texte à chaque image : cela tient bien jusqu'à quelques dizaines de
+milliers, pas jusqu'à des millions.
+
 ## Une fenêtre avec ton propre cadre
 
 `frame(false)` sur `ui.run` retire ce que le système dessine autour de la fenêtre : barre de titre,
@@ -456,6 +647,5 @@ même sans écran.
 
 ## La suite
 
-`import ui` a aujourd'hui du texte, des images, des boutons, des champs de texte, des lignes et des colonnes.
-D'autres éléments sont prévus. Pour un élément qu'il n'a pas encore, un programme peut appeler la
+Pour un élément que `import ui` n'a pas encore, un programme peut appeler la
 bibliothèque du système elle-même avec [`extern`](/fr/guide/calling-c/).

@@ -26,6 +26,13 @@ lists what `ui` has.
 | `ui.input(value: String) { s: String => E } -> ui.View` | a text field holding `value`; at each change the user makes, the block's event, made from the text the field now holds, goes to `update` ([Text fields](/guide/windows/#text-fields)). |
 | `ui.image(path: String) -> ui.View` | an image file: PNG or JPEG on every system. A path that does not exist stops the program, naming it. `.size(w)` gives its width in pixels, the height following. |
 | `ui.canvas(width: Int, height: Int) { d: ui.Draw => … } -> ui.View` | a drawing area ([Drawing](/guide/windows/#drawing)). `ui.fill` in place of a size takes all the room there is. |
+| `ui.checkbox(label, on: Bool) { b: Bool => E } -> ui.View` | a box to tick; the block's event goes to `update` at each change ([Widgets that hold a value](/guide/windows/#widgets-that-hold-a-value)). |
+| `ui.slider(value, least, most) { v: Int => E } -> ui.View` | a slider between two whole numbers. |
+| `ui.choice(items: List<String>, selected: Int) { i: Int => E } -> ui.View` | a drop-down list; `selected` counts from 0. |
+| `ui.list(items: List<String>, selected: Int) { i: Int => E } -> ui.View` | a list that shows its lines and scrolls; `-1` selects none. |
+| `ui.table(headers, lines: List<List<String>>, selected: Int) { i: Int => E } -> ui.View` | a table with its column titles; the block gets the line clicked, `-1` selects none. |
+| `ui.tabs(names: List<String>, selected: Int) { i: Int => E } -> ui.View` | a row of tabs. It only says which one is chosen: the program shows that page under it. |
+| `ui.gpu(width: Int, height: Int) { g: ui.Gpu => … } -> ui.View` | an area painted by the graphics card ([Drawing with the graphics card](/guide/windows/#drawing-with-the-graphics-card)). Its size and events are a canvas's. |
 | `ui.column(items: List<ui.View>) -> ui.View` | the views one under the other. |
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
 | `ui.column(…) align(left\|center\|right)` | the column takes the whole width it is given and places its views there. |
@@ -37,8 +44,23 @@ lists what `ui` has.
 | `view.on_mouse { m: ui.Mouse => E } -> ui.View` | on a canvas: the block's event at each press, release and move of the mouse. |
 | `view.on_key { k: ui.Key => E } -> ui.View` | on a canvas: the block's event at each key pressed. |
 | `view.every(ms: Int, event: E) -> ui.View` | sends `event` every `ms` milliseconds, on any view. |
+| `view.menus(all: List<ui.Menu>) -> ui.View` | the window's menu bar; on the whole view, the outermost one. |
+| `ui.menu(title, items: List<ui.Item>) -> ui.Menu` | one menu of the bar. |
+| `ui.item(label, event: E) -> ui.Item`, `ui.separator` | a line of a menu, which sends `event`; a line that separates. |
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | any color, each part from 0 to 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | ready-made colors. |
+
+## Dialogs
+
+Each one waits for the user, and belongs in `update`.
+
+| Written | Does |
+| --- | --- |
+| `ui.open_file(title) -> String?` | the system's window to choose a file; `none` if the user cancels. |
+| `ui.save_file(title) name(n) -> String?` | the system's window to choose where to save; `name` is the name it suggests, and may be left out. |
+| `ui.open_folder(title) -> String?` | the same for a folder. |
+| `ui.message(title, text)` | says something; the user answers OK. |
+| `ui.confirm(title, text) -> Bool` | asks; `true` if the user answers yes. |
 
 ## Drawing on a canvas
 
@@ -49,6 +71,7 @@ lists what `ui` has.
 | `d.circle(x, y) radius(r) color(c) outline(n)` | a circle from its center. |
 | `d.line(x, y) to(x2, y2) color(c) thickness(n)` | a line, 1 pixel thick by default. |
 | `d.text(s, x, y) size(n) color(c)` | a text from its top left corner, 16 pixels high by default. |
+| `d.image(path, x, y) size(w, h)` | a PNG or JPEG file from its top left corner, at its own size without `size`. |
 | `d.width`, `d.height` | the canvas's size. |
 
 All numbers are `Int`, in pixels. `color` is black by default. `outline(n)` draws only the edge;
@@ -60,6 +83,17 @@ without it, the shape is filled.
 | `m.pressed`, `m.released`, `m.moved` | what just happened. |
 | `m.right` | it is the right button. |
 | `k.name` | what the key writes, or `Left`, `Right`, `Up`, `Down`, `Space`, `Enter`, `Escape`, `Tab`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `F1` to `F12`. |
+
+## Drawing with the graphics card
+
+| Written | Does |
+| --- | --- |
+| `g.clear(c: ui.Color)` | paints the whole area, and resets the depth. |
+| `g.shader(vertex: String, fragment: String)` | the two GLSL programs (`#version 330 core`) for what follows. |
+| `g.uniform(name: String, values: List<Float>)` | a value for the shaders: 1 to 4 numbers, or 16 for a `mat4`, column by column. |
+| `g.triangles(vertices: List<Float>) parts(sizes: List<Int>)` | draws three vertices at a time; `sizes` gives each attribute's numbers, `[2]` if left out. |
+| `g.texture(width, height, pixels: List<Int>)` | an image for what follows, 4 bytes per pixel: red, green, blue, alpha. |
+| `g.width`, `g.height` | the area's size. |
 
 ## Placing and style
 
