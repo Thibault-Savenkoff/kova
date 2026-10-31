@@ -208,6 +208,8 @@ lang fr {
     mode_return_nothing_help := "écris `else skip`"
     interface_mode := "`mode` sur les méthodes d'interface (`{name}`) viendra plus tard"
     for_range_help := "exemples : `for i in 0..10` (sans 10), `for i in 0..=10` (avec 10), `for x in liste`"
+    found_needs_optional := "`{name} :=` a besoin ici d'une valeur optionnelle (`T?`), et `{type}` est donné"
+    found_needs_optional_help := "une optionnelle peut ne rien contenir, et c'est ce que `if` teste : pour une valeur toujours là, écrivez `let {name}` sur la ligne d'au-dessus"
     if_needs_else := "un `if` qui donne une valeur a besoin d'un `else`"
     if_needs_else_help := "ajoute `else \{ ... \}` : la valeur doit exister dans tous les cas"
     not_chainable := "`{op}` ne peut pas s'enchaîner"

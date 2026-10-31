@@ -186,6 +186,8 @@ pub struct Match {
     pub arms: Vec<Arm>,
     /// The `}`: where missing cases are reported.
     pub close: Span,
+    /// Written `if x := e` or `while x := e`.
+    pub found: bool,
 }
 
 /// `Circle(r) => 3.14 * r * r`: a single statement after `=>` becomes a block.

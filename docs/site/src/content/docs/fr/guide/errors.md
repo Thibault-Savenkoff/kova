@@ -47,7 +47,7 @@ erreur: `+` s'applique à `Int`, `Float`, `String` ou `BigInt`, pas à `Int?`
   |           ^
 ```
 
-Trois façons de le vérifier :
+Quatre façons de le vérifier :
 
 ```kova
 fn main {
@@ -56,12 +56,16 @@ fn main {
     if a != none {
         print(a + 1)
     }
-    // 2. `match` nomme la valeur quand il y en a une.
+    // 2. `if n := …` nomme la valeur, pour ce qui n'est pas encore dans une variable.
+    if n := "8".to_int {
+        print(n + 1)
+    }
+    // 3. `match` nomme aussi la valeur, et dit quoi faire sans elle.
     match "x".to_int {
         none => print("not a number")
         n => print(n * 2)
     }
-    // 3. Après être sorti quand elle manque, `a` est un `Int` jusqu'à la fin.
+    // 4. Après être sorti quand elle manque, `a` est un `Int` jusqu'à la fin.
     if a = none {
         return
     }
@@ -71,9 +75,14 @@ fn main {
 
 ```text
 5
+9
 not a number
 40
 ```
+
+`if n := e` prend un `else` comme tout `if`, et `while line := read_line { … }` continue tant qu'il y a
+une valeur. Cela ne marche que sur `T?` : `n` est un nouveau nom, et `:=` ne peut pas changer une
+variable ici.
 
 C'est ce qu'on appelle le **rétrécissement** : après la vérification, le compilateur sait que la
 valeur est là, et le type devient `Int`. Rien n'est déballé à la main, et rien ne peut être oublié.

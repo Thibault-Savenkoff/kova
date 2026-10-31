@@ -5921,6 +5921,10 @@ impl Checker<'_> {
     /// `match x { … }`; `value`: each arm gives a value (of the `expected` type if known).
     fn match_(&mut self, m: &Match, expected: Option<&Type>, value: bool) -> Type {
         let t = self.expr(&m.subject);
+        if let (true, Some(Arm { case: Case::Bind(Pattern::Name(n)), .. })) = (m.found && !matches!(t, Type::Optional(_) | Type::Error), m.arms.first()) {
+            self.diags.push(Diag::new(n.span, t!("found_needs_optional", name = n.text, type = t.text())).help(t!("found_needs_optional_help", name = n.text)));
+            return Type::Error;
+        }
         if m.mode == Mode::Var {
             self.changes(&m.subject, t!("match_var_temporary"));
         }

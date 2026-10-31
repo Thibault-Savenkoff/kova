@@ -1,0 +1,8 @@
+// error: `y` already exists (line 4)
+fn main {
+    let x: Int? := 3
+    let y: Int := 4
+    if y := x {
+        print(y)
+    }
+}

@@ -273,9 +273,8 @@ attendent la réponse, alors `update` se lit comme une phrase :
 ```kova
 fn update(app: var App, e: Event) {
     match e {
-        .Open => match ui.open_file("Ouvrir une note") {
-            none => {}
-            path => app.path := path.clone
+        .Open => if path := ui.open_file("Ouvrir une note") {
+            app.path := path.clone
         }
         .Quit => if ui.confirm("Quitter", "Partir sans enregistrer ?") {
             ui.close

@@ -1759,10 +1759,18 @@ impl Parser<'_> {
                 Err(())
             }
             Kind::Keyword("while") => {
-                self.advance();
+                let start = self.advance().span;
+                let found = self.found_name();
                 let cond = self.heading_expr()?;
                 self.skip_newlines();
-                Ok(Stmt::While { cond, body: self.block()? })
+                let body = self.block()?;
+                let Some(name) = found else { return Ok(Stmt::While { cond, body }) };
+                // `while x := e { … }`: `while true { match e { none => break, x => … } }`.
+                let stop = Block { open: body.close, stmts: vec![Stmt::Break(body.close)], close: body.close };
+                let close = body.close;
+                let step = Stmt::Match(Self::found_match(name, cond, body, stop));
+                let forever = self.expr(start, ExprKind::Bool(true));
+                Ok(Stmt::While { cond: forever, body: Block { open: start, stmts: vec![step], close } })
             }
             Kind::Keyword("for") => {
                 self.advance();
@@ -1856,8 +1864,30 @@ impl Parser<'_> {
         }
     }
 
+    /// The `x :=` of `if x := e {`, which goes on with the value of an optional when it has one.
+    fn found_name(&mut self) -> Option<Name> {
+        if self.kind() != Kind::Ident || self.kind_at(1) != Kind::Sym(":=") {
+            return None;
+        }
+        let t = self.advance();
+        self.advance();
+        Some(Name { text: self.text(t.span).to_string(), span: t.span })
+    }
+
+    /// `if x := e { then } else { otherwise }` is `match e { x => then, none => otherwise }`.
+    fn found_match(name: Name, subject: Expr, then: Block, otherwise: Block) -> Match {
+        let none = Name { text: "none".to_string(), span: name.span };
+        let close = then.close;
+        let arms = vec![
+            Arm { case: Case::Bind(Pattern::Name(name)), also: vec![], body: then },
+            Arm { case: Case::Variant { name: none, binds: vec![] }, also: vec![], body: otherwise },
+        ];
+        Match { mode: Mode::Read, subject, arms, close, found: true }
+    }
+
     fn if_stmt(&mut self) -> R<Stmt> {
         self.advance(); // if
+        let found = self.found_name();
         let cond = self.heading_expr()?;
         self.skip_newlines();
         let then = self.block()?;
@@ -1866,7 +1896,13 @@ impl Parser<'_> {
         self.skip_newlines();
         if !self.is_keyword("else") {
             self.pos = before;
-            return Ok(Stmt::If { cond, then, otherwise: None });
+            return Ok(match found {
+                Some(name) => {
+                    let nothing = Block { open: then.close, stmts: vec![], close: then.close };
+                    Stmt::Match(Self::found_match(name, cond, then, nothing))
+                }
+                None => Stmt::If { cond, then, otherwise: None },
+            });
         }
         self.advance();
         self.skip_newlines();
@@ -1878,12 +1914,16 @@ impl Parser<'_> {
         } else {
             self.block()?
         };
-        Ok(Stmt::If { cond, then, otherwise: Some(otherwise) })
+        Ok(match found {
+            Some(name) => Stmt::Match(Self::found_match(name, cond, then, otherwise)),
+            None => Stmt::If { cond, then, otherwise: Some(otherwise) },
+        })
     }
 
     /// `if` in an expression: `else` is required (there must be a value in every case).
     fn if_expr(&mut self) -> R<Expr> {
         let start = self.advance().span; // if
+        let found = self.found_name();
         let cond = self.heading_expr()?;
         self.skip_newlines();
         let then = self.block()?;
@@ -1904,6 +1944,9 @@ impl Parser<'_> {
             self.block()?
         };
         let span = start.to(otherwise.close);
+        if let Some(name) = found {
+            return Ok(self.expr(span, ExprKind::Match(Box::new(Self::found_match(name, cond, then, otherwise)))));
+        }
         Ok(self.expr(span, ExprKind::If { cond: Box::new(cond), then, otherwise }))
     }
 
@@ -1937,7 +1980,7 @@ impl Parser<'_> {
             }
         };
         self.no_literal = saved;
-        Ok(Match { mode, subject, arms, close: close? })
+        Ok(Match { mode, subject, arms, close: close?, found: false })
     }
 
     fn select_starts(&self) -> bool {
@@ -2005,7 +2048,7 @@ impl Parser<'_> {
             arms.push(Arm { case: Case::Values(vec![number]), also: vec![], body });
         }
         arms.push(Arm { case: Case::Any(close), also: vec![], body: closed });
-        Ok(Stmt::Match(Match { mode: Mode::Read, subject, arms, close }))
+        Ok(Stmt::Match(Match { mode: Mode::Read, subject, arms, close, found: false }))
     }
 
     /// `=> …`, a block or one statement.

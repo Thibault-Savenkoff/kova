@@ -1,0 +1,6 @@
+// error: `x :=` here needs an optional (`T?`), and `Int` is given
+fn main {
+    if x := 3 {
+        print(x)
+    }
+}

@@ -47,7 +47,7 @@ error: `+` applies to `Int`, `Float`, `String` or `BigInt`, not to `Int?`
   |           ^
 ```
 
-Three ways to check it:
+Four ways to check it:
 
 ```kova
 fn main {
@@ -56,12 +56,16 @@ fn main {
     if a != none {
         print(a + 1)
     }
-    // 2. `match` names the value when there is one.
+    // 2. `if n := …` names the value, for what is not in a variable yet.
+    if n := "8".to_int {
+        print(n + 1)
+    }
+    // 3. `match` names the value too, and says what to do without one.
     match "x".to_int {
         none => print("not a number")
         n => print(n * 2)
     }
-    // 3. After leaving when it is missing, `a` is an `Int` until the end.
+    // 4. After leaving when it is missing, `a` is an `Int` until the end.
     if a = none {
         return
     }
@@ -71,9 +75,13 @@ fn main {
 
 ```text
 5
+9
 not a number
 40
 ```
+
+`if n := e` takes an `else` like any `if`, and `while line := read_line { … }` goes on as long as there
+is a value. It only works on `T?`: `n` is a new name, and `:=` here cannot change a variable.
 
 This is called **narrowing**: after the check, the compiler knows the value is there, and the
 type becomes `Int`. Nothing is unwrapped by hand, and nothing can be forgotten.

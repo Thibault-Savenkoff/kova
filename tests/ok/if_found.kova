@@ -1,0 +1,41 @@
+// `if x := e` goes on with the value of an optional, when it has one.
+// stdin: one
+// stdin: two
+// expect: Ada
+// expect: none then
+// expect: 3
+// expect: 0
+// expect: read one
+// expect: read two
+// expect: Bob
+fn found(l: List<String>, n: Int) -> String? {
+    if n < l.length {
+        return l[n].clone
+    }
+    return none
+}
+
+fn main {
+    let names: List<String> := ["Ada"]
+    if name := found(names, 0) {
+        print(name)
+    }
+    if name := found(names, 5) {
+        print(name)
+    } else if other := found(names, 7) {
+        print(other)
+    } else {
+        print("none then")
+    }
+    let size: Int := if name := found(names, 0) { name.length } else { 0 }
+    print(size)
+    let empty: Int := if name := found(names, 9) { name.length } else { 0 }
+    print(empty)
+    while line := read_line {
+        print("read {line}")
+    }
+    let kept: String? := "Bob"
+    if name := kept {
+        print(name)
+    }
+}
