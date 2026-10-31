@@ -9,4 +9,3 @@ fn main {
 // error: `[ ]` applies to a List, not to `Int`
 // error: different types: `Int` expected, `Bool` given
 // error: a slice is a copy: it cannot be changed
-// error: `..` is only used in `for` and in a slice: `l[1..3]`

@@ -180,6 +180,35 @@ fn main {
 1: Alan
 ```
 
+### Les intervalles comme valeurs, les tuples séparés
+
+Hors d'un `for`, un intervalle est une `List<Int>` de ses nombres, donc toutes les méthodes de liste
+marchent dessus. Dans un `for`, aucune liste n'est créée : `for i in 1..1000000000` ne coûte rien,
+alors que `(1..1000000000).length` écrirait vraiment ces nombres en mémoire.
+
+Des parenthèses autour du nom séparent un tuple à chaque tour, avec `_` pour une partie dont tu n'as
+pas besoin. Elles marchent aussi dans les formes à deux noms : `for i, (name, _) in people`.
+
+```kova
+fn main {
+    let squares: List<Int> := (1..=4).map { x: Int => x * x }
+    print(squares)
+
+    let people: List<(String, Int)> := [("Ada", 36), ("Alan", 41)]
+    for (name, age) in people {
+        print("{name}: {age}")
+    }
+}
+```
+
+```text
+[1, 4, 9, 16]
+Ada: 36
+Alan: 41
+```
+
+Ces parties sont des copies. Pour changer les éléments, écris `for x in var l` et utilise `x.0`.
+
 ## `break` et `continue`
 
 `break` quitte la boucle tout de suite, `continue` passe au tour suivant :

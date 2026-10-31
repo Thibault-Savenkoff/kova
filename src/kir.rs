@@ -5890,6 +5890,24 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::Not(not, less));
                 vec![not]
             }
+            // `(1..=3).map { … }`: the numbers, as a List.
+            // ponytail: made whole, so `1..1000000000` outside a `for` takes 8 GB; a range value
+            // that counts as it goes if programs need it.
+            ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), a, b) => {
+                let (from, to) = (self.expr1(a), self.expr1(b));
+                let (extra, n, l) = (self.constant((*op == BinOp::RangeInclusive) as i64), self.int_local(), self.int_local());
+                self.emit(Inst::Binary(n, Op::Minus, to, from, NOWHERE));
+                self.emit(Inst::Binary(n, Op::Plus, n, extra, NOWHERE));
+                self.emit(Inst::ListNew(l, 1));
+                self.times(n, |t, i| {
+                    let x = t.int_local();
+                    t.emit(Inst::Binary(x, Op::Plus, from, i, NOWHERE));
+                    t.push(l, &[x]);
+                });
+                let v = vec![l];
+                self.track(&v, &self.ty(e));
+                v
+            }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), a, b) => {
                 // Short circuit: `b` is computed only if `a` is not enough.
                 let dst = self.int_local();

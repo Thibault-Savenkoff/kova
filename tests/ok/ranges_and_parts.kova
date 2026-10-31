@@ -1,0 +1,51 @@
+// expect: [1, 4, 9]
+// expect: [1, 2, 3]
+// expect: 0
+// expect: 10
+// expect: []
+// expect: Ada 36
+// expect: Tom 12
+// expect: 0 Ada
+// expect: 1 Tom
+// expect: a 3
+// expect: 1x2
+// expect: Ada 72
+// expect: Ada 48
+// expect: Tom 48
+// expect: Tom 24
+// expect: 1
+// expect: 2
+// expect: 3
+
+fn main {
+    print((1..=3).map { x: Int => x * x })
+    let l: List<Int> := 1..4
+    print(l)
+    print((5..2).length)
+    print((1..=4).sum)
+    print((2..2))
+    let people: List<(String, Int)> := [("Ada", 36), ("Tom", 12)]
+    for (name, age) in people {
+        print("{name} {age}")
+    }
+    for i, (name, _) in people {
+        print("{i} {name}")
+    }
+    let m: Map<String, (Int, Int)> := ["a" := (1, 2)]
+    for k, (x, y) in m {
+        print("{k} {x + y}")
+    }
+    let nested: List<(Int, (String, Int))> := [(1, ("x", 2))]
+    for (a, (b, c)) in nested {
+        print("{a}{b}{c}")
+    }
+    for (a, b) in people {
+        for (c, d) in people {
+            print("{a} {d + b}")
+        }
+    }
+    let f: {Int -> Int} := { x: Int => x + 1 }
+    for x in (0..3).map(f) {
+        print(x)
+    }
+}

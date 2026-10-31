@@ -1723,11 +1723,21 @@ impl Parser<'_> {
                     self.diags.push(Diag::new(self.token().span, t!("for_mark_place", word = word)).help(t!("for_mark_place_help", word = word)));
                     return Err(());
                 }
-                let counter = self.value_name("what_variable")?;
+                // `for (name, age) in people`: a hidden name, taken apart first thing in the body.
+                let mut parts = vec![];
+                let mut name_or_parts = |p: &mut Self| -> R<Name> {
+                    if !p.is_sym("(") {
+                        return p.value_name("what_variable");
+                    }
+                    let span = p.token().span;
+                    parts.push((p.pattern()?, format!("… each {}", span.start), span));
+                    Ok(Name { text: parts.last().unwrap().1.clone(), span })
+                };
+                let counter = name_or_parts(self)?;
                 // `for name, age in ages`: a Map's key and value.
                 let value = if self.is_sym(",") {
                     self.advance();
-                    Some(self.value_name("what_variable")?)
+                    Some(name_or_parts(self)?)
                 } else {
                     None
                 };
@@ -1748,7 +1758,16 @@ impl Parser<'_> {
                 let e = self.heading_expr()?;
                 let step = self.step()?;
                 self.skip_newlines();
-                let body = self.block()?;
+                let mut body = self.block()?;
+                if let (Some((_, _, span)), Mode::Var) = (parts.first(), mode) {
+                    self.diags.push(Diag::new(*span, t!("for_parts_var")));
+                }
+                for (k, (pattern, name, span)) in parts.into_iter().enumerate() {
+                    let var = self.expr(span, ExprKind::Var(name));
+                    let clone = Name { text: "clone".into(), span };
+                    let value = self.expr(span, ExprKind::Method { receiver: Box::new(var), name: clone, args: vec![] });
+                    body.stmts.insert(k, Stmt::Declare { mutable: false, pattern, ty: Some(TypeAst::Inferred), value });
+                }
                 match e.kind {
                     ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) => {
                         if let Some(v) = &value {

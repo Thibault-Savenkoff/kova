@@ -4640,6 +4640,11 @@ impl Checker<'_> {
                 self.diags.push(Diag::new(span, t!("type_required", name = name)).help(help));
                 self.bind(pattern, &found, if *mutable { VarKind::Var } else { VarKind::Let });
             }
+            // `for (a, b) in l`: the element's type is known, as for `for x in l`.
+            Stmt::Declare { mutable, pattern, ty: Some(TypeAst::Inferred), value } => {
+                let ty = self.expr(value);
+                self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
+            }
             Stmt::Declare { mutable, pattern, ty: Some(t), value } => {
                 let ty = self.written_type(t);
                 self.expect(value, &ty);
@@ -5399,11 +5404,11 @@ impl Checker<'_> {
                         self.like(a, ta, b);
                         Type::Bool
                     }
+                    // `(1..=3).map { … }`: the numbers, as a List.
                     Range | RangeInclusive => {
-                        self.expr(a);
-                        self.expr(b);
-                        self.error(e.span, t!("range_only_in_for", op = op.text()));
-                        Type::Error
+                        self.expect(a, &Type::Int);
+                        self.expect(b, &Type::Int);
+                        Type::List(Box::new(Type::Int))
                     }
                     Rem | Plus | Minus | Times | Div => {
                         let t = self.expr(a);

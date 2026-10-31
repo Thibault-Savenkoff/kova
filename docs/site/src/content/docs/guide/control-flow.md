@@ -178,6 +178,35 @@ fn main {
 1: Alan
 ```
 
+### Ranges as values, tuples taken apart
+
+Outside a `for`, a range is a `List<Int>` of its numbers, so every list method works on it. In a
+`for`, no list is made: `for i in 1..1000000000` costs nothing, while `(1..1000000000).length` would
+really write those numbers in memory.
+
+Parentheses around the name take a tuple apart at each turn, with `_` for a part you don't need.
+They work in the two-name forms too: `for i, (name, _) in people`.
+
+```kova
+fn main {
+    let squares: List<Int> := (1..=4).map { x: Int => x * x }
+    print(squares)
+
+    let people: List<(String, Int)> := [("Ada", 36), ("Alan", 41)]
+    for (name, age) in people {
+        print("{name}: {age}")
+    }
+}
+```
+
+```text
+[1, 4, 9, 16]
+Ada: 36
+Alan: 41
+```
+
+These parts are copies. To change the elements, write `for x in var l` and use `x.0`.
+
 ## `break` and `continue`
 
 `break` leaves the loop at once, `continue` goes to its next turn:
