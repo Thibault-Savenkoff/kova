@@ -1138,6 +1138,8 @@ pub struct Wav<'a> {
     pub channels: u32,
     pub rate: u32,
     pub bits: u32,
+    /// 32-bit floats, not whole numbers.
+    pub float: bool,
     pub samples: &'a [u8],
 }
 
@@ -1153,11 +1155,14 @@ pub fn wav(data: &[u8]) -> Option<Wav<'_>> {
         match &data[at..at + 4] {
             b"fmt " if body.len() >= 16 => {
                 let small = |k: usize| u16::from_le_bytes([body[k], body[k + 1]]) as u32;
-                format = Some((small(0), small(2), u32::from_le_bytes(body[4..8].try_into().ok()?), small(14)));
+                // WAVE_FORMAT_EXTENSIBLE, which most 24-bit files use, has the real kind further on.
+                let kind = if small(0) == 0xFFFE && body.len() >= 26 { small(24) } else { small(0) };
+                format = Some((kind, small(2), u32::from_le_bytes(body[4..8].try_into().ok()?), small(14)));
             }
             b"data" => {
                 let (kind, channels, rate, bits) = format?;
-                return (kind == 1 && matches!(bits, 8 | 16 | 24 | 32) && channels > 0).then_some(Wav { channels, rate, bits, samples: body });
+                let known = (kind == 1 && matches!(bits, 8 | 16 | 24 | 32)) || (kind == 3 && bits == 32);
+                return (known && channels > 0).then_some(Wav { channels, rate, bits, float: kind == 3, samples: body });
             }
             _ => {}
         }
@@ -1566,6 +1571,26 @@ mod tests {
         assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
         assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
         assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
+    }
+
+    #[test]
+    fn wav_kinds() {
+        let file = |format: &[u8]| {
+            let mut out = alloc::vec::Vec::from(*b"RIFF\0\0\0\0WAVEfmt ");
+            out.extend((format.len() as u32).to_le_bytes());
+            out.extend(format);
+            out.extend(b"data\x02\0\0\0ab");
+            out
+        };
+        let format = |kind: u16, bits: u16, tail: &[u8]| [&kind.to_le_bytes(), &[2, 0][..], &44100u32.to_le_bytes(), &[0; 6], &bits.to_le_bytes(), tail].concat();
+        let plain = file(&format(1, 16, &[]));
+        let read = wav(&plain).unwrap();
+        assert_eq!((read.channels, read.rate, read.bits, read.float, read.samples), (2, 44100, 16, false, &b"ab"[..]));
+        assert!(wav(&file(&format(3, 32, &[]))).unwrap().float);
+        let extended = format(0xFFFE, 24, &[&[0; 8][..], &[1, 0]].concat());
+        assert_eq!(wav(&file(&extended)).unwrap().bits, 24);
+        assert!(wav(&file(&format(85, 16, &[]))).is_none(), "MP3 in a WAV");
+        assert!(wav(b"RIFFxxxxAVI ").is_none());
     }
 
     #[test]

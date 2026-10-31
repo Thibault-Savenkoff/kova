@@ -941,6 +941,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
         let made = MADE.get();
         made.clear();
         MAC_CANVASES.get().clear();
+        mac_gpu_forget(kit);
         MAC_TABLES.get().clear();
         // 16 points around it; none in a window that has given up its frame.
         let edge = if *MAC_BARE.get() { 0.0 } else { 16.0 };
@@ -1279,10 +1280,21 @@ extern "C" fn mac_key(me: Id, _message: Id, event: Id) {
     }
 }
 
+/// Each `ui.gpu`'s view and its OpenGL context.
+static CONTEXTS: crate::Global<Vec<(Id, Id)>> = crate::Global::new(Vec::new());
+
+/// The widgets are made again: their contexts go with them.
+fn mac_gpu_forget(kit: &Kit) {
+    crate::gl_forget();
+    for (_, context) in CONTEXTS.get().drain(..) {
+        kit.send(context, "clearDrawable");
+        (kit.send)(context, kit.sel("release"));
+    }
+}
+
 /// Paints a `ui.gpu`: an OpenGL context drawn into the canvas's own view. Apple marks OpenGL as
 /// old, but it works on every Mac, and is the one graphics interface all three systems share.
 fn mac_gpu(kit: &Kit, view: Id, canvas: &crate::shared::UiCanvas, bounds: Rect) {
-    static CONTEXTS: crate::Global<Vec<(Id, Id)>> = crate::Global::new(Vec::new());
     let Some(gl) = library("/System/Library/Frameworks/OpenGL.framework/OpenGL") else { crate::gl_stop(crate::GPU_MISSING, b"") };
     unsafe {
         use core::mem::transmute as t;

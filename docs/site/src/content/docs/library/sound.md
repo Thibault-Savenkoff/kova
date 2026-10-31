@@ -15,7 +15,7 @@ import sound
 | `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | plays a WAV held in memory. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | makes a WAV of one channel from its samples, each from `-1.0` to `1.0`; `rate` is how many per second, 44100 if left out. |
 
-`sound.Error` is `NotFound(path)`, `NotSound` (not an uncompressed WAV) or `NoDevice` (no sound card,
+`sound.Error` is `NotFound(path)`, `NotSound` (not an uncompressed WAV: whole numbers of 8, 16, 24 or 32 bits, or 32-bit floats) or `NoDevice` (no sound card,
 or no sound server on Linux). Only uncompressed WAV plays for now; MP3 and Ogg do not.
 
 Kova uses what the system has: PulseAudio or PipeWire on Linux, `PlaySound` on Windows, `NSSound` on

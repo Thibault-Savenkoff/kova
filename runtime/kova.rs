@@ -2117,6 +2117,12 @@ struct GlSurface {
 
 static GL_SURFACES: Global<Vec<GlSurface>> = Global::new(Vec::new());
 
+/// The widgets were made again: their contexts are gone, with all that was kept in them. A new
+/// widget may even get the address of an old one.
+pub fn gl_forget() {
+    GL_SURFACES.get().clear();
+}
+
 /// Stops the program: no OpenGL, or a shader that does not compile (text `GPU_MISSING + 1`).
 pub fn gl_stop(i: usize, detail: &[u8]) -> ! {
     let mut m = Vec::new();

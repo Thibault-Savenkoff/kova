@@ -1274,6 +1274,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
             let made = MADE.get();
             made.clear();
             GTK_CANVASES.get().clear();
+            crate::gl_forget();
             let root = gtk_make(&g, view, made, 1, 1);
             // 16 pixels around it; none in a window that has given up its frame.
             if !*GTK_BARE.get() {
@@ -1870,11 +1871,12 @@ pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
     use core::mem::transmute as t;
     let Some(pulse) = library("libpulse-simple.so.0") else { return false };
     let f = |name: &str| symbol(pulse, name).unwrap_or(0);
-    // `pa_sample_format_t`: U8, S16LE, S24LE, S32LE.
+    // `pa_sample_format_t`: U8, S16LE, S24LE, FLOAT32LE, S32LE.
     let format: u32 = match wav.bits {
         8 => 0,
         16 => 3,
         24 => 9,
+        _ if wav.float => 5,
         _ => 7,
     };
     let mut spec = [0u8; 12];

@@ -1094,6 +1094,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
             }
             COLORED.get().clear();
             WIN_CANVASES.get().clear();
+            win_gpu_forget();
             *SHAPE.get() = shape;
         }
         let dc = (win.get_dc)(w);
@@ -1298,10 +1299,31 @@ fn win_key(key: usize) -> Option<String> {
     Some(named.into())
 }
 
+/// Each `ui.gpu`'s window and its OpenGL context.
+static CONTEXTS: Global<Vec<(Handle, Handle)>> = Global::new(Vec::new());
+
+/// The widgets are made again: their contexts go with them.
+fn win_gpu_forget() {
+    crate::gl_forget();
+    let Some(gl) = library("opengl32.dll") else { return };
+    let wgl = |name: &str| symbol(gl, name).unwrap_or(0);
+    if CONTEXTS.get().is_empty() {
+        return;
+    }
+    unsafe {
+        use core::mem::transmute as t;
+        let current: extern "system" fn(Handle, Handle) -> i32 = t(wgl("wglMakeCurrent"));
+        let delete: extern "system" fn(Handle) -> i32 = t(wgl("wglDeleteContext"));
+        current(0 as Handle, 0 as Handle);
+        CONTEXTS.get().drain(..).for_each(|c| {
+            delete(c.1);
+        });
+    }
+}
+
 /// Paints a `ui.gpu`, with an OpenGL context of its own window. WGL's plain context is enough:
 /// every driver gives it the most recent version it has.
 fn win_gpu(h: Handle, dc: Handle, canvas: &crate::shared::UiCanvas) {
-    static CONTEXTS: Global<Vec<(Handle, Handle)>> = Global::new(Vec::new());
     let Some(gl) = library("opengl32.dll") else { crate::gl_stop(crate::GPU_MISSING, b"") };
     let wgl = |name: &str| symbol(gl, name).unwrap_or(0);
     let gdi = |name: &str| library("gdi32.dll").and_then(|g| symbol(g, name)).unwrap_or(0);
@@ -1722,11 +1744,12 @@ fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
     }
 }
 
-/// `sound.play`: SND_MEMORY, which waits for the end.
+/// `sound.play`: without SND_ASYNC, it waits for the end.
 pub fn sound(whole: &[u8], _wav: &crate::shared::Wav) -> bool {
     let Some(play) = library("winmm.dll").and_then(|l| symbol(l, "PlaySoundW")) else { return false };
     let play: extern "system" fn(*const u8, usize, u32) -> i32 = unsafe { core::mem::transmute(play) };
-    play(whole.as_ptr(), 0, 4) != 0
+    // SND_MEMORY | SND_NODEFAULT: never the system's bell in its place.
+    play(whole.as_ptr(), 0, 6) != 0
 }
 
 /// `ui.dialog`: the system's own, which wait for the answer.

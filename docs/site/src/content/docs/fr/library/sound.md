@@ -15,7 +15,7 @@ import sound
 | `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | joue un WAV gardé en mémoire. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | fabrique un WAV d'un canal à partir de ses échantillons, chacun de `-1.0` à `1.0` ; `rate` dit combien par seconde, 44100 s'il est omis. |
 
-`sound.Error` vaut `NotFound(path)`, `NotSound` (pas un WAV non compressé) ou `NoDevice` (pas de carte
+`sound.Error` vaut `NotFound(path)`, `NotSound` (pas un WAV non compressé : nombres entiers de 8, 16, 24 ou 32 bits, ou flottants de 32 bits) ou `NoDevice` (pas de carte
 son, ou pas de serveur de son sous Linux). Seul le WAV non compressé se joue pour l'instant, pas le
 MP3 ni l'Ogg.
 
