@@ -51,6 +51,15 @@ enum Command {
 }
 
 fn main() {
+    // The checker goes as deep as the program's expressions, and Windows gives its first thread
+    // only 1 MB (a chain of 22 `+` on a type's method overflowed it).
+    let compiler = std::thread::Builder::new().stack_size(1 << 28).spawn(kova).expect("no thread for the compiler");
+    if compiler.join().is_err() {
+        exit(101);
+    }
+}
+
+fn kova() {
     let started = std::time::Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
