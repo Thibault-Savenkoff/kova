@@ -1,0 +1,43 @@
+// A List holds small values in one byte each until a larger one comes: nothing shows.
+fn main {
+    var l: List<Int> := [1, 2, 255]
+    print(l)
+    l.add(0)
+    l[1] := 256
+    print(l)
+    l[1] := -1
+    print(l)
+    l.remove(0)
+    print(l)
+    var data: List<Int> := "ab".to_bytes
+    data.add(99)
+    print(data.to_text)
+    let twin: List<Int> := data.clone
+    data[0] := 1000
+    print(data)
+    print(twin)
+    print(twin.to_hex)
+    let zeros: List<Float> := [0.0, 0.0]
+    print(zeros)
+    var words: List<String> := []
+    words.add("a")
+    print(words.length)
+    var seen: Set<Int> := Set[1, 2]
+    seen.add(300)
+    seen.remove(1)
+    print(seen)
+    let ages: Map<Int, Int> := [1 := 2]
+    print(ages)
+}
+// expect: [1, 2, 255]
+// expect: [1, 256, 255, 0]
+// expect: [1, -1, 255, 0]
+// expect: [-1, 255, 0]
+// expect: "abc"
+// expect: [1000, 98, 99]
+// expect: [97, 98, 99]
+// expect: 616263
+// expect: [0.0, 0.0]
+// expect: 1
+// expect: Set[2, 300]
+// expect: [1 := 2]

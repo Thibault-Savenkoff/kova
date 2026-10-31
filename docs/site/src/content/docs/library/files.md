@@ -51,6 +51,8 @@ To read a file line by line, `files.read(path)?.split("\n")`; for a table, see
 
 A file is a row of bytes. Kova gives them to you as a plain `List<Int>` of numbers from 0 to 255,
 so everything lists do works on them: `data[0]`, `data[4..8]`, `data.length`, `+`, `=`, `for`.
+A List takes one byte per value as long as its values are between 0 and 255, so a 100 MB file takes
+100 MB in memory.
 
 | Function | Does |
 | --- | --- |

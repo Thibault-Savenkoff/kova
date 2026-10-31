@@ -534,6 +534,11 @@ pub extern "C" fn kova_str_replace(a: i64, old: i64, new: i64) -> i64 {
     new_text(text_of(a).replace(text_of(old), text_of(new)).as_bytes())
 }
 
+/// A new List of these bytes.
+fn byte_list(b: Vec<u8>) -> i64 {
+    new_list(List { length: b.len(), width: 1, slots: Vec::new(), index: 0, small: Some(b) })
+}
+
 /// A new List of Strings.
 fn texts<'a>(parts: impl Iterator<Item = &'a str>) -> i64 {
     numbers(parts.map(|p| new_text(p.as_bytes())))
@@ -541,7 +546,7 @@ fn texts<'a>(parts: impl Iterator<Item = &'a str>) -> i64 {
 
 fn numbers(items: impl Iterator<Item = i64>) -> i64 {
     let slots: Vec<i64> = items.collect();
-    new_list(List { length: slots.len(), width: 1, slots, index: 0 })
+    new_list(List { length: slots.len(), width: 1, slots, index: 0, small: None })
 }
 
 /// `separator` is never empty (src/kir.rs checks it before).
@@ -640,7 +645,7 @@ pub extern "C" fn kova_csv_read(text: i64, spec: i64) -> i64 {
                 csv::Slot::Int(n) => n,
                 csv::Slot::Text(t) => new_text(t.as_bytes()),
             }).collect();
-            new_list(List { length: slots.len() / width.max(1), width, slots, index: 0 })
+            new_list(List { length: slots.len() / width.max(1), width, slots, index: 0, small: None })
         }
         Err(p) => p.code(),
     }
@@ -651,9 +656,10 @@ pub extern "C" fn kova_csv_read(text: i64, spec: i64) -> i64 {
 pub extern "C" fn kova_csv_write(l: i64, spec: i64, sep: i64) -> i64 {
     let sep = char::from_u32(sep as u32).unwrap_or(',');
     let l = list(l);
-    let slots = &l.slots[..l.width * l.length];
+    let size = l.width * l.length;
+    let slots = &l.words()[..size];
     let text = if text_of(spec) == "*" {
-        let rows: Vec<Vec<String>> = slots.iter().map(|&r| list(r).slots.iter().map(|&c| String::from(text_of(c))).collect()).collect();
+        let rows: Vec<Vec<String>> = slots.iter().map(|&r| list(r).words().iter().map(|&c| String::from(text_of(c))).collect()).collect();
         csv::write_rows(&rows, sep)
     } else {
         csv::write_records(text_of(spec), slots, &|s| String::from(text_of(s)), sep)
@@ -690,7 +696,7 @@ pub extern "C" fn kova_str_groups(a: i64, p: i64) -> i64 {
 /// `words.join(", ")`: the Strings of the List with `sep` between them.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_str_join(l: i64, sep: i64) -> i64 {
-    let words: Vec<&[u8]> = list(l).slots.iter().map(|&w| bytes(w)).collect();
+    let words: Vec<&[u8]> = list(l).words().iter().map(|&w| bytes(w)).collect();
     new_text(&words.join(bytes(sep)))
 }
 
@@ -742,6 +748,19 @@ struct List {
     width: usize,
     slots: Vec<i64>,
     index: i64,
+    /// While every value of a List of one slot per element fits 0..=255 (bytes above all): the
+    /// values, one byte each, instead of `slots`.
+    small: Option<Vec<u8>>,
+}
+
+impl List {
+    /// The slots, as eight-byte values for good.
+    fn words(&mut self) -> &mut Vec<i64> {
+        if let Some(b) = self.small.take() {
+            self.slots = b.iter().map(|&b| b as i64).collect();
+        }
+        &mut self.slots
+    }
 }
 
 fn new_list(l: List) -> i64 {
@@ -756,7 +775,8 @@ fn list<'a>(l: i64) -> &'a mut List {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_new(width: i64) -> i64 {
-    new_list(List { length: 0, width: width as usize, slots: Vec::new(), index: 0 })
+    let width = width as usize;
+    new_list(List { length: 0, width, slots: Vec::new(), index: 0, small: (width == 1).then(Vec::new) })
 }
 
 #[unsafe(no_mangle)]
@@ -774,20 +794,33 @@ pub extern "C" fn kova_list_check(l: i64, i: i64, line: i64, col: i64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_load(l: i64, i: i64, k: i64) -> i64 {
     let l = list(l);
-    l.slots[i as usize * l.width + k as usize]
+    match &l.small {
+        Some(b) => b[i as usize] as i64,
+        None => l.slots[i as usize * l.width + k as usize],
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_store(l: i64, i: i64, k: i64, v: i64) {
     let l = list(l);
-    l.slots[i as usize * l.width + k as usize] = v;
+    if (0..256).contains(&v)
+        && let Some(b) = &mut l.small
+    {
+        b[i as usize] = v as u8;
+        return;
+    }
+    let width = l.width;
+    l.words()[i as usize * width + k as usize] = v;
 }
 
 /// One more element at the end (slots set to 0); returns its index.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_grow(l: i64) -> i64 {
     let l = list(l);
-    l.slots.resize(l.slots.len() + l.width, 0);
+    match &mut l.small {
+        Some(b) => b.push(0),
+        None => l.slots.resize(l.slots.len() + l.width, 0),
+    }
     l.length += 1;
     l.length as i64 - 1
 }
@@ -796,10 +829,17 @@ pub extern "C" fn kova_list_grow(l: i64) -> i64 {
 pub extern "C" fn kova_list_remove(l: i64, i: i64) {
     let l = list(l);
     if l.index != 0 {
-        shared::unindex(&mut list(l.index).slots, i);
+        shared::unindex(list(l.index).words(), i);
     }
     let w = l.width;
-    l.slots.drain(i as usize * w..(i as usize + 1) * w);
+    match &mut l.small {
+        Some(b) => {
+            b.remove(i as usize);
+        }
+        None => {
+            l.slots.drain(i as usize * w..(i as usize + 1) * w);
+        }
+    }
     l.length -= 1;
 }
 
@@ -861,7 +901,7 @@ pub extern "C" fn kova_read_bytes(p: i64) -> i64 {
         None => -5,
         Some(p) if is_dir(p) => -3,
         Some(p) => match sys::read_file(p) {
-            Ok(b) => numbers(b.iter().map(|&b| b as i64)),
+            Ok(b) => byte_list(b),
             Err(f) => -f,
         },
     }
@@ -886,8 +926,11 @@ pub extern "C" fn kova_append_file(p: i64, t: i64) -> i64 {
 }
 
 /// The numbers of a List that `kova_not_bytes` has checked.
-fn bytes_of(l: i64) -> Vec<u8> {
-    floats_of(l).iter().map(|&x| x as u8).collect()
+fn bytes_of(l: i64) -> alloc::borrow::Cow<'static, [u8]> {
+    match &list(l).small {
+        Some(b) => b.into(),
+        None => floats_of(l).iter().map(|&x| x as u8).collect(),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -901,7 +944,7 @@ pub extern "C" fn kova_write_bytes(p: i64, l: i64, append: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_not_bytes(l: i64) -> i64 {
-    floats_of(l).iter().any(|x| !(0..256).contains(x)) as i64
+    (list(l).small.is_none() && floats_of(l).iter().any(|x| !(0..256).contains(x))) as i64
 }
 
 #[unsafe(no_mangle)]
@@ -911,7 +954,7 @@ pub extern "C" fn kova_bytes_text(l: i64, form: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_text_bytes(t: i64, form: i64) -> i64 {
-    shared::text_bytes(form, text_of(t)).map_or(0, |b| numbers(b.iter().map(|&b| b as i64)))
+    shared::text_bytes(form, text_of(t)).map_or(0, byte_list)
 }
 
 #[unsafe(no_mangle)]
@@ -1079,7 +1122,7 @@ pub extern "C" fn kova_env(n: i64) -> i64 {
 /// (`shared::find_program`); what it writes is made UTF-8 if it is not.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_run(p: i64, words: i64) -> i64 {
-    let words: Vec<&str> = if words == 0 { Vec::new() } else { list(words).slots.iter().map(|&w| text_of(w)).collect() };
+    let words: Vec<&str> = if words == 0 { Vec::new() } else { list(words).words().iter().map(|&w| text_of(w)).collect() };
     let Some(name) = path(p).filter(|_| words.iter().all(|w| !w.contains('\0'))) else { return -3 };
     let is_file = |p: &str| sys::info(p, true).is_ok_and(|i| !i.folder);
     let program = match shared::find_program(name, sys::var("PATH").as_deref(), cfg!(windows), &is_file) {
@@ -1089,7 +1132,7 @@ pub extern "C" fn kova_run(p: i64, words: i64) -> i64 {
     match sys::run(&program, &words) {
         Ok((output, errors, code)) => {
             let slots = alloc::vec![new_text(String::from_utf8_lossy(&output).as_bytes()), new_text(String::from_utf8_lossy(&errors).as_bytes()), code];
-            new_list(List { length: 1, width: 3, slots, index: 0 })
+            new_list(List { length: 1, width: 3, slots, index: 0, small: None })
         }
         Err(f) => -f,
     }
@@ -1158,7 +1201,7 @@ pub extern "C" fn kova_json_parse(s: i64) -> i64 {
         Err(line) => -line,
         Ok(nodes) => {
             let slots = json::slots(nodes, |t| new_text(t.as_bytes()));
-            new_list(List { length: slots.len() / 4, width: 4, slots, index: 0 })
+            new_list(List { length: slots.len() / 4, width: 4, slots, index: 0, small: None })
         }
     }
 }
@@ -1215,9 +1258,9 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
     let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-    let headers = new_list(List { length, width: 2, slots, index: 0 });
+    let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
     let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, link as i64];
-    new_list(List { length: 1, width: 7, slots, index: 0 })
+    new_list(List { length: 1, width: 7, slots, index: 0, small: None })
 }
 
 /// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
@@ -1263,7 +1306,7 @@ pub extern "C" fn kova_next(next: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_reply(link: i64, status: i64, headers: i64, body: i64, file: i64) -> i64 {
-    let headers: Vec<(&str, &str)> = list(headers).slots.chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect();
+    let headers: Vec<(&str, &str)> = list(headers).words().chunks(2).map(|p| (text_of(p[0]), text_of(p[1]))).collect();
     let (link, asked) = *unsafe { alloc::boxed::Box::from_raw(link as *mut Asked) };
     let sent = http::reply(&mut sys::Net, link, status, &headers, text_of(body), text_of(file), |p| sys::read_file(p).ok());
     if let Some((from, method, url)) = asked {
@@ -1300,7 +1343,7 @@ pub extern "C" fn kova_file_to_serve(path: i64) -> i64 {
 /// src/interp.rs.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, headers: i64, seconds: i64) -> i64 {
-    let headers = if headers == 0 { &[][..] } else { &list(headers).slots[..] };
+    let headers = if headers == 0 { &[][..] } else { &list(headers).words()[..] };
     let r = http::Request {
         method: text_of(method),
         url: text_of(url),
@@ -1314,9 +1357,9 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
         Ok(a) => {
             let length = a.headers.len();
             let slots = a.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-            let headers = new_list(List { length, width: 2, slots, index: 0 });
+            let headers = new_list(List { length, width: 2, slots, index: 0, small: None });
             let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers];
-            new_list(List { length: 1, width: 4, slots, index: 0 })
+            new_list(List { length: 1, width: 4, slots, index: 0, small: None })
         }
     }
 }
@@ -1390,7 +1433,8 @@ pub extern "C" fn kova_random(from: i64, to: i64) -> i64 {
 
 fn floats_of(l: i64) -> &'static [i64] {
     let l = list(l);
-    &l.slots[..l.length]
+    let length = l.length;
+    &l.words()[..length]
 }
 
 #[unsafe(no_mangle)]

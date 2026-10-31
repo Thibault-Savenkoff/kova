@@ -51,7 +51,8 @@ Pour lire un fichier ligne par ligne, `files.read(path)?.split("\n")` ; pour un 
 
 Un fichier est une suite d'octets. Kova te les donne dans une simple `List<Int>` de nombres de 0 à
 255, donc tout ce que font les listes marche dessus : `data[0]`, `data[4..8]`, `data.length`, `+`,
-`=`, `for`.
+`=`, `for`. Une List prend un octet par valeur tant que ses valeurs restent entre 0 et 255 : un
+fichier de 100 Mo prend donc 100 Mo en mémoire.
 
 | Fonction | Fait |
 | --- | --- |

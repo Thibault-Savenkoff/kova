@@ -12,7 +12,7 @@ enum Object {
     Str(String),
     /// `length` elements, their slots one after the other (`width` slots each). A Map or a Set
     /// also has an `index` (a List, made by `kir.rs` `find`; 0 = none), like in runtime/kova.rs.
-    List { width: usize, length: usize, slots: Vec<i64>, index: i64 },
+    List { width: usize, length: usize, slots: Vec<i64>, index: i64, small: Option<Vec<u8>> },
 }
 
 /// The Strings and Lists of the running program; their slot holds their number here (0 = none).
@@ -89,9 +89,37 @@ impl Heap {
             return (1, &mut self.nothing.0, &mut self.nothing.1);
         }
         match &mut self.objects[h as usize] {
-            Some(Object::List { width, length, slots, .. }) => (*width, length, slots),
+            Some(Object::List { width, length, slots, small, .. }) => {
+                if let Some(b) = small.take() {
+                    *length = b.len();
+                    *slots = b.iter().map(|&b| b as i64).collect();
+                }
+                (*width, length, slots)
+            }
             _ => panic!("List used after being freed"),
         }
+    }
+    /// The bytes of the List `h`, while it is held that way (`runtime/kova.rs` `List::small`).
+    fn small(&mut self, h: i64) -> Option<&mut Vec<u8>> {
+        match self.objects.get_mut(h as usize) {
+            Some(Some(Object::List { small, .. })) => small.as_mut(),
+            _ => None,
+        }
+    }
+    fn length(&mut self, h: i64) -> usize {
+        match self.small(h) {
+            Some(b) => b.len(),
+            None => *self.list(h).1,
+        }
+    }
+    fn bytes(&mut self, h: i64) -> Vec<u8> {
+        match self.small(h) {
+            Some(b) => b.clone(),
+            None => self.list(h).2.iter().map(|&x| x as u8).collect(),
+        }
+    }
+    fn byte_list(&mut self, b: Vec<u8>) -> i64 {
+        self.add(Object::List { width: 1, length: 0, slots: vec![], index: 0, small: Some(b) })
     }
     fn index(&mut self, h: i64) -> &mut i64 {
         match &mut self.objects[h as usize] {
@@ -156,13 +184,13 @@ fn csv_read(heap: &mut Heap, text: i64, spec: i64) -> i64 {
     let (text, spec) = (heap.get(text).to_string(), heap.get(spec).to_string());
     let strings = |heap: &mut Heap, parts: Vec<String>| {
         let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
-        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
     };
     if spec == "*" {
         return match crate::csv::rows(&text) {
             Ok((rows, _)) => {
                 let rows: Vec<i64> = rows.into_iter().map(|(_, r)| strings(heap, r)).collect();
-                heap.add(Object::List { width: 1, length: rows.len(), slots: rows, index: 0 })
+                heap.add(Object::List { width: 1, length: rows.len(), slots: rows, index: 0, small: None })
             }
             Err(p) => p.code(),
         };
@@ -174,7 +202,7 @@ fn csv_read(heap: &mut Heap, text: i64, spec: i64) -> i64 {
                 crate::csv::Slot::Int(n) => n,
                 crate::csv::Slot::Text(t) => heap.make(t),
             }).collect();
-            heap.add(Object::List { width, length: slots.len() / width.max(1), slots, index: 0 })
+            heap.add(Object::List { width, length: slots.len() / width.max(1), slots, index: 0, small: None })
         }
         Err(p) => p.code(),
     }
@@ -633,16 +661,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         StrOp::ToInt => crate::kir::parse_int(s(0)).unwrap_or(0),
                         StrOp::ReadBytes if std::path::Path::new(s(0)).is_dir() => -3,
                         StrOp::ReadBytes => match std::fs::read(s(0)) {
-                            Ok(b) => {
-                                let slots: Vec<i64> = b.iter().map(|&b| b as i64).collect();
-                                heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
-                            }
+                            Ok(b) => heap.byte_list(b),
                             Err(e) => -failure(&e),
                         },
                         StrOp::WriteBytes if std::path::Path::new(s(0)).is_dir() => -3,
                         StrOp::WriteBytes => {
                             let path = s(0).to_string();
-                            let bytes: Vec<u8> = heap.list(locals[a[1]]).2.iter().map(|&x| x as u8).collect();
+                            let bytes = heap.bytes(locals[a[1]]);
                             let mut file = std::fs::OpenOptions::new();
                             file.create(true);
                             if locals[a[2]] != 0 { file.append(true) } else { file.write(true).truncate(true) };
@@ -651,16 +676,13 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 Err(e) => -failure(&e),
                             }
                         }
-                        StrOp::NotBytes => heap.list(locals[a[0]]).2.iter().any(|x| !(0..256).contains(x)) as i64,
+                        StrOp::NotBytes => (heap.small(locals[a[0]]).is_none() && heap.list(locals[a[0]]).2.iter().any(|x| !(0..256).contains(x))) as i64,
                         StrOp::BytesText => {
-                            let bytes: Vec<u8> = heap.list(locals[a[0]]).2.iter().map(|&x| x as u8).collect();
+                            let bytes = heap.bytes(locals[a[0]]);
                             crate::shared::bytes_text(locals[a[1]], &bytes).map_or(0, |t| heap.make(t))
                         }
                         StrOp::TextBytes => match crate::shared::text_bytes(locals[a[1]], s(0)) {
-                            Some(b) => {
-                                let slots: Vec<i64> = b.iter().map(|&b| b as i64).collect();
-                                heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
-                            }
+                            Some(b) => heap.byte_list(b),
                             None => 0,
                         },
                         StrOp::WriteFile | StrOp::AppendFile if std::path::Path::new(s(0)).is_dir() => -3,
@@ -685,7 +707,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         StrOp::Modified => match std::fs::metadata(s(0)).and_then(|m| m.modified()) {
                             Ok(t) => {
                                 let utc = t.duration_since(std::time::UNIX_EPOCH).map_or_else(|e| -(e.duration().as_secs() as i64), |d| d.as_secs() as i64);
-                                heap.add(Object::List { width: 1, length: 1, slots: vec![local_at(utc)], index: 0 })
+                                heap.add(Object::List { width: 1, length: 1, slots: vec![local_at(utc)], index: 0, small: None })
                             }
                             Err(e) => -failure(&e),
                         },
@@ -698,7 +720,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             match crate::shared::matching(s(0), &list, &kind) {
                                 Ok(found) => {
                                     let slots: Vec<i64> = found.into_iter().map(|n| heap.make(n)).collect();
-                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                                 }
                                 Err(f) => -f,
                             }
@@ -712,7 +734,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             match run_program(&name, &words) {
                                 Ok((output, errors, code)) => {
                                     let slots = vec![heap.make(output), heap.make(errors), code];
-                                    heap.add(Object::List { width: 3, length: 1, slots, index: 0 })
+                                    heap.add(Object::List { width: 3, length: 1, slots, index: 0, small: None })
                                 }
                                 Err(f) => -f,
                             }
@@ -731,7 +753,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                     Ok(mut names) => {
                                         names.sort();
                                         let slots: Vec<i64> = names.into_iter().map(|n| heap.make(n)).collect();
-                                        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                        heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                                     }
                                 }
                             }
@@ -740,7 +762,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             Err(line) => -line,
                             Ok(nodes) => {
                                 let slots = crate::json::slots(nodes, |t| heap.make(t));
-                                heap.add(Object::List { width: 4, length: slots.len() / 4, slots, index: 0 })
+                                heap.add(Object::List { width: 4, length: slots.len() / 4, slots, index: 0, small: None })
                             }
                         },
                         StrOp::Listen => {
@@ -778,9 +800,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 headers.push(heap.make(v));
                             }
                             let length = headers.len() / 2;
-                            let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0 });
+                            let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0, small: None });
                             let slots = vec![heap.make(q.method), heap.make(q.url), headers, heap.make(q.body), 0, 0, conn];
-                            heap.add(Object::List { width: 7, length: 1, slots, index: 0 })
+                            heap.add(Object::List { width: 7, length: 1, slots, index: 0, small: None })
                         }
                         StrOp::Reply => {
                             let slots = heap.list(locals[a[2]]).2.clone();
@@ -839,9 +861,9 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                         headers.push(heap.make(v));
                                     }
                                     let length = headers.len() / 2;
-                                    let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0 });
+                                    let headers = heap.add(Object::List { width: 2, length, slots: headers, index: 0, small: None });
                                     let slots = vec![answer.status, heap.make(answer.url), heap.make(answer.body), headers];
-                                    heap.add(Object::List { width: 4, length: 1, slots, index: 0 })
+                                    heap.add(Object::List { width: 4, length: 1, slots, index: 0, small: None })
                                 }
                             }
                         }
@@ -926,11 +948,11 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 _ => s(0).split_ascii_whitespace().map(String::from).collect(),
                             };
                             let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                         }
                         StrOp::Args => {
                             let slots: Vec<i64> = heap.args.clone().into_iter().map(|a| heap.make(a)).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                         }
                         StrOp::ToUpper | StrOp::ToLower => {
                             let t: String = s(0).chars().map(|c| crate::kir::case_of(c, matches!(op, StrOp::ToUpper))).collect();
@@ -959,7 +981,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             match found {
                                 Some(parts) => {
                                     let slots: Vec<i64> = parts.into_iter().map(|p| heap.make(p)).collect();
-                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                                    heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                                 }
                                 None => 0,
                             }
@@ -1133,7 +1155,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         StrOp::ToFloat => crate::kir::parse_float(s(0)).unwrap_or(0.0).to_bits() as i64,
                         StrOp::Chars => {
                             let slots: Vec<i64> = s(0).chars().map(|c| c as i64).collect();
-                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                            heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0, small: None })
                         }
                     }
                 }
@@ -1142,30 +1164,45 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                     locals[*l] = 0;
                 }
                 Inst::ListNew(d, width) => {
-                    locals[*d] = heap.add(Object::List { width: *width, length: 0, slots: vec![], index: 0 });
+                    locals[*d] = heap.add(Object::List { width: *width, length: 0, slots: vec![], index: 0, small: (*width == 1).then(Vec::new) });
                 }
                 // 0 = a List emptied by a move: its helper (`Drop`) still asks its length.
-                Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { *heap.list(locals[*l]).1 as i64 },
+                Inst::ListLength(d, l) => locals[*d] = if locals[*l] == 0 { 0 } else { heap.length(locals[*l]) as i64 },
                 Inst::FaultIf(c, f, loc) if locals[*c] != 0 => return Err(fault(*f, loc)),
                 Inst::FaultIf(..) => {}
                 // `kova run` runs such a program as native code (main.rs `native_run`).
                 Inst::Extern(_, _, _, loc) => return Err(fault(Fault::ExternInterpreted, loc)),
                 Inst::ListCheck(l, i, loc) => {
-                    let length = *heap.list(locals[*l]).1 as i64;
+                    let length = heap.length(locals[*l]) as i64;
                     if !(0..length).contains(&locals[*i]) {
                         return Err(fault(Fault::Index, loc));
                     }
                 }
                 Inst::ListLoad(d, l, i, k) => {
+                    if let Some(b) = heap.small(locals[*l]) {
+                        locals[*d] = b[locals[*i] as usize] as i64;
+                        continue;
+                    }
                     let (width, _, slots) = heap.list(locals[*l]);
                     locals[*d] = slots[locals[*i] as usize * width + k];
                 }
                 Inst::ListStore(l, i, k, v) => {
                     let value = locals[*v];
+                    if (0..256).contains(&value)
+                        && let Some(b) = heap.small(locals[*l])
+                    {
+                        b[locals[*i] as usize] = value as u8;
+                        continue;
+                    }
                     let (width, _, slots) = heap.list(locals[*l]);
                     slots[locals[*i] as usize * width + k] = value;
                 }
                 Inst::ListGrow(d, l) => {
+                    if let Some(b) = heap.small(locals[*l]) {
+                        b.push(0);
+                        locals[*d] = b.len() as i64 - 1;
+                        continue;
+                    }
                     let (width, length, slots) = heap.list(locals[*l]);
                     slots.resize(slots.len() + width, 0);
                     *length += 1;
@@ -1177,6 +1214,10 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         crate::shared::unindex(heap.list(index).2, locals[*i]);
                     }
                     let i = locals[*i] as usize;
+                    if let Some(b) = heap.small(locals[*l]) {
+                        b.remove(i);
+                        continue;
+                    }
                     let (width, length, slots) = heap.list(locals[*l]);
                     slots.drain(i * width..(i + 1) * width);
                     *length -= 1;

@@ -488,8 +488,6 @@ pub fn secure_random(fill: &mut dyn FnMut(&mut [u8; 8]), from: i64, to: i64) -> 
     (from as u64).wrapping_add(x % n) as i64
 }
 
-// ponytail: a byte is one whole `Int` of a List, so a 100 MB file takes 800 MB; a compact List of
-// bytes behind the same type when real programs need it.
 /// How bytes are written as a text: a number passed to `bytes_text` and `text_bytes`.
 pub const BYTE_FORMS: [&str; 5] = ["text", "hex", "base64", "base64url", "sha256"];
 
