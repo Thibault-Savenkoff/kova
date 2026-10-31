@@ -1,0 +1,7 @@
+// error: unknown function `files.make_dir`
+import files
+
+fn main {
+    let made: Nothing or files.IoError := files.make_dir("a")
+    print(made)
+}

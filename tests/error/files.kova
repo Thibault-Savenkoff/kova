@@ -3,7 +3,7 @@ import files
 fn main {
     files.write("a.txt", "x")
     let n: Int := files.exists("a.txt")
-    files.make_dir(3)?
+    files.make_folder(3)?
 }
 // error: this result is not looked at: a failure would go unseen
 // error: different types: `Int` expected, `Bool` given

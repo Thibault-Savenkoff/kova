@@ -2,7 +2,6 @@ fn main {
     let a: Set<Float> := Set[]
     let b: Set<Int, Int> := Set[]
     let s: Set<Int> := Set[1, 2]
-    print(s = s)
     s.push(3)
     s.add(3)
     let c: Set<Int> := Set.make
@@ -10,7 +9,6 @@ fn main {
 }
 // error: `Float` cannot be in a Set: a Set finds its values with `=`
 // error: `Set` takes one type, not 2: `Set<String>`
-// error: `=` does not compare Sets yet
 // error: `Set<Int>` has no method `push`
 // error: did you mean `add`?
 // error: `s` is declared with let

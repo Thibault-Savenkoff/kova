@@ -192,4 +192,36 @@ false
 [1, 2, 3, 4, 5]
 ```
 
-The elements must be comparable themselves, like the keys of a map. Maps and sets have no `=` yet.
+The elements must be comparable themselves. Maps and sets work the same way, with what suits them:
+`=` ignores the order, `+` on two sets keeps one of each value, and `+` on two maps keeps the value
+of the right one when both have a key.
+
+```kova
+fn main {
+    print(Set[1, 2] = Set[2, 1])
+    print(Set[1, 2] + Set[2, 3])
+    print(["a" := 1] + ["a" := 2, "b" := 3])
+}
+```
+
+```text
+true
+Set[1, 2, 3]
+["a" := 2, "b" := 3]
+```
+
+The blocks of a list, `each`, `filter`, `map`, `any`, `all` and `fold`, work on sets and maps too.
+A map's block takes the key and the value:
+
+```kova
+fn main {
+    let ages: Map<String, Int> := ["Ada" := 36, "Alan" := 41]
+    print(ages.filter { name: String, age: Int => age > 40 })
+    print(ages.map { name: String, age: Int => "{name}: {age}" })
+}
+```
+
+```text
+["Alan" := 41]
+["Ada: 36", "Alan: 41"]
+```

@@ -767,6 +767,7 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             let (k, v) = (k.text(), v.text());
             let details = [("length", "-> Int".to_string()), ("contains", format!("(key: {k}) -> Bool")), ("remove", format!("(key: {k}) -> {v}?")), ("keys", format!("-> List<{k}>")), ("values", format!("-> List<{v}>"))];
             items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
+            items.extend(keyed_blocks(&format!("{k}, {v}"), &format!("k: {k}, v: {v}"), &t.text()));
             if k == "String" {
                 items.push(item("to_json", CompletionItemKind::METHOD, "-> String".into()));
             }
@@ -775,6 +776,7 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
             let e = e.text();
             let details = [("length", "-> Int".to_string()), ("add", format!("(value: {e})")), ("contains", format!("(value: {e}) -> Bool")), ("remove", format!("(value: {e}) -> Bool"))];
             items.extend(details.into_iter().map(|(m, d)| item(m, CompletionItemKind::METHOD, d)));
+            items.extend(keyed_blocks(&e, &format!("x: {e}"), &t.text()));
         }
         _ => {}
     }
@@ -831,6 +833,23 @@ fn members_of(file: &File, t: &Type, root: usize) -> Vec<CompletionItem> {
     items
 }
 
+/// The block methods of a Set or a Map, whose block takes `each` as `named`.
+fn keyed_blocks(each: &str, named: &str, own: &str) -> Vec<CompletionItem> {
+    [("each", format!("{{{each}}}")), ("filter", format!("{{{each} -> Bool}} -> {own}")), ("map", format!("{{{each} -> U}} -> List<U>")), ("any", format!("{{{each} -> Bool}} -> Bool")), ("all", format!("{{{each} -> Bool}} -> Bool"))]
+        .into_iter()
+        .map(|(name, detail)| (name, detail, format!("{name} {{ {named} => $0 }}")))
+        .chain([("fold", format!("(start: A) {{A, {each} -> A}} -> A"), format!("fold(${{1:0}}) {{ acc: ${{2:Int}}, {named} => $0 }}"))])
+        .map(|(name, detail, snippet)| CompletionItem {
+            insert_text: Some(snippet),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            label: name.into(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(detail),
+            ..Default::default()
+        })
+        .collect()
+}
+
 /// The methods of a `List<T>` (`elem` = `T`): those taking a block write it, the cursor in its body.
 fn list_methods(elem: &str) -> Vec<CompletionItem> {
     let block = |name: &str, detail: String, start: &str| CompletionItem {
@@ -868,6 +887,7 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         fold,
         plain("sorted", format!("-> List<{elem}>  ·  sorted {{ a: {elem}, b: {elem} => a < b }}")),
         plain("contains", format!("(x: {elem}) -> Bool")),
+        plain("find", format!("(x: {elem}) -> Int?")),
         plain("first", format!("-> {elem}?")),
         plain("last", format!("-> {elem}?")),
         plain("is_empty", "-> Bool".into()),
@@ -1517,7 +1537,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "find", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

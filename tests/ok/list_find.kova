@@ -1,0 +1,21 @@
+fn main {
+    let l: List<String> := ["a", "b", "a"]
+    print(l.find("a"))
+    print(l.find("b"))
+    print(l.find("c"))
+    print("héllo".reversed)
+    print("".reversed)
+    print("true".to_bool)
+    print("false".to_bool)
+    print("yes".to_bool)
+    print("True".to_bool)
+}
+// expect: 0
+// expect: 1
+// expect: none
+// expect: olléh
+// expect:
+// expect: true
+// expect: false
+// expect: none
+// expect: none

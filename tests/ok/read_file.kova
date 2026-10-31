@@ -7,7 +7,7 @@ fn show(path: String) {
         ok(text) => write("read {text.length} characters:\n{text}")
         err(e) => match e {
             NotFound(p) => print("no file {p}")
-            IsDirectory(p) => print("{p} is a folder")
+            IsFolder(p) => print("{p} is a folder")
             Denied => print("denied")
             NotText => print("not a text")
             Other => print("other")

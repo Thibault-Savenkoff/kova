@@ -504,7 +504,7 @@ fn module_help(name: &str) -> Option<String> {
         return Some(t!("module_import", module = name));
     }
     const RENAMED: &[(&str, &str)] =
-        &[("read_file", "files.read"), ("write_file", "files.write"), ("append_file", "files.append"), ("list_dir", "files.list"), ("remove_file", "files.remove")];
+        &[("read_file", "files.read"), ("make_dir", "files.make_folder"), ("write_file", "files.write"), ("append_file", "files.append"), ("list_dir", "files.list"), ("remove_file", "files.remove")];
 
     let base = name.split(' ').next()?.trim_end_matches("(…)");
     let last = |full: &&str| full.split_once('.').is_some_and(|(_, n)| n == base);
@@ -522,7 +522,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("files.append", "fn files.append(path: String, text: String) -> Nothing or files.IoError"),
         ("files.exists", "fn files.exists(path: String) -> Bool"),
         ("files.list", "fn files.list(path: String) -> List<String> or files.IoError"),
-        ("files.make_dir", "fn files.make_dir(path: String) -> Nothing or files.IoError"),
+        ("files.make_folder", "fn files.make_folder(path: String) -> Nothing or files.IoError"),
         ("files.remove", "fn files.remove(path: String) -> Nothing or files.IoError"),
         ("files.copy(…) to(…)", "fn files.copy(path: String) to(destination: String) -> Nothing or files.IoError"),
         ("files.move(…) to(…)", "fn files.move(path: String) to(destination: String) -> Nothing or files.IoError"),
@@ -576,7 +576,7 @@ pub const LIBRARY: &[(&str, &str)] =
 /// `kova_read_file` (runtime/kova.rs) and of the interpreter: number = variant + 1.
 pub fn io_error() -> Type {
     let path = || vec![("path".to_string(), Type::String)];
-    let names = ["NotFound", "Denied", "IsDirectory", "NotText", "Other"];
+    let names = ["NotFound", "Denied", "IsFolder", "NotText", "Other"];
     Type::Enum(EnumDef::with_variants("files.IoError".into(), names.iter().map(|n| (n.to_string(), path())).collect()))
 }
 
@@ -721,6 +721,7 @@ pub const METHODS: &[(Type, &str, Type, bool)] = &[
     (Type::String, "clone", Type::String, false),
     (Type::String, "to_int", Type::Int, true),
     (Type::String, "to_float", Type::Float, true),
+    (Type::String, "to_bool", Type::Bool, true),
     (Type::String, "to_date", Type::Date, true),
     (Type::String, "to_datetime", Type::DateTime, true),
     (Type::Int, "to_big", Type::BigInt, false),
@@ -776,11 +777,11 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
-pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone"];
-pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
+pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
+pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
-    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
+    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "wrapped", "matches", "find_all", "replace_all(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "find_all", "replace_all(…) with(…)", "groups"];
 
@@ -831,7 +832,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "split" => (vec![s()], list(s())),
         "words" => (vec![], list(s())),
         "chars" => (vec![], list(Type::Char)),
-        "to_upper" | "to_lower" => (vec![], s()),
+        "to_upper" | "to_lower" | "reversed" => (vec![], s()),
         "find" => (vec![s()], Type::Optional(Box::new(Type::Int))),
         "repeat" => (vec![Type::Int], s()),
         "wrapped" => (vec![Type::Int], s()),
@@ -1366,7 +1367,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         ("files.append", 2, io(Type::Unit)),
         ("files.exists", 1, Type::Bool),
         ("files.list", 1, io(Type::List(Box::new(string())))),
-        ("files.make_dir", 1, io(Type::Unit)),
+        ("files.make_folder", 1, io(Type::Unit)),
         ("files.remove", 1, io(Type::Unit)),
         ("files.copy(…) to(…)", 2, io(Type::Unit)),
         ("files.move(…) to(…)", 2, io(Type::Unit)),
@@ -2137,6 +2138,7 @@ impl Checker<'_> {
             "False" => Some("false"),
             "this" => Some("self"),
             "loop" => Some("while true"),
+            "files.make_dir" => Some("files.make_folder"),
             _ => None,
         };
         let vars = self.scopes.iter().flat_map(|s| s.keys());
@@ -2278,8 +2280,8 @@ impl Checker<'_> {
     fn equatable(&self, t: &Type) -> bool {
         match t {
             Type::Tuple(ts) => ts.iter().all(|t| self.equatable(t)),
-            Type::Optional(t) | Type::List(t) => self.equatable(t),
-            Type::Result(a, b) => self.equatable(a) && self.equatable(b),
+            Type::Optional(t) | Type::List(t) | Type::Set(t) => self.equatable(t),
+            Type::Result(a, b) | Type::Map(a, b) => self.equatable(a) && self.equatable(b),
             // `light = Light.Red`: an enum of copied values is compared like an `Int` (J4).
             Type::Enum(_) => is_copy(t) || self.has(t, "Equal"),
             t => self.has(t, "Equal"),
@@ -2290,8 +2292,8 @@ impl Checker<'_> {
     fn missing_equal(&self, t: &Type) -> Option<Type> {
         match t {
             Type::Tuple(ts) => ts.iter().find_map(|t| self.missing_equal(t)),
-            Type::Optional(t) | Type::List(t) => self.missing_equal(t),
-            Type::Result(a, b) => self.missing_equal(a).or_else(|| self.missing_equal(b)),
+            Type::Optional(t) | Type::List(t) | Type::Set(t) => self.missing_equal(t),
+            Type::Result(a, b) | Type::Map(a, b) => self.missing_equal(a).or_else(|| self.missing_equal(b)),
             t if self.equatable(t) => None,
             // `Answer<Dog>`: `Dog`.
             Type::Struct(_) | Type::Enum(_) if self.follows(&t.owner(), "Equal") => t.args().iter().find_map(|a| self.missing_equal(a)),
@@ -3415,7 +3417,7 @@ impl Checker<'_> {
     /// Checks that `e` has one of the `allowed` types; returns its type.
     fn one_of(&mut self, e: &Expr, allowed: &[Type], what: &str) -> Type {
         let t = self.expr(e);
-        if t == Type::Error || allowed.contains(&t) || (what == "`+`" && matches!(t, Type::List(_))) {
+        if t == Type::Error || allowed.contains(&t) || (what == "`+`" && matches!(t, Type::List(_) | Type::Set(_) | Type::Map(..))) {
             return t;
         }
         // `` `Int`, `Float` or `BigInt` ``
@@ -3633,7 +3635,7 @@ impl Checker<'_> {
                 }
                 return Some(Type::List(Box::new(elem.clone())));
             }
-            "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" | "each workers(…)" | "map workers(…)" => return Some(self.block_method(elem, name, args)),
+            "each" | "filter" | "map" | "any" | "all" | "fold" | "sorted" | "each workers(…)" | "map workers(…)" => return Some(self.block_method(elem, name, args, false)),
             "length" => (vec![], Type::Int),
             "is_empty" => (vec![], Type::Bool),
             "contains" => {
@@ -3641,6 +3643,12 @@ impl Checker<'_> {
                     self.error(name.span, t!("contains_needs_equal", type = t.text()));
                 }
                 (vec![(Mode::Read, elem.clone())], Type::Bool)
+            }
+            "find" => {
+                if let Some(t) = self.missing_equal(elem) {
+                    self.error(name.span, t!("contains_needs_equal", type = t.text()));
+                }
+                (vec![(Mode::Read, elem.clone())], Type::Optional(Box::new(Type::Int)))
             }
             "first" | "last" => (vec![], Type::Optional(Box::new(elem.clone()))),
             "reversed" => (vec![], Type::List(Box::new(elem.clone()))),
@@ -3706,7 +3714,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
+        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "find" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -3719,7 +3727,8 @@ impl Checker<'_> {
 
     /// `l.each { x: Int => … }`, `l.filter`, `l.map`, `l.any`, `l.all`, `l.fold(start) { acc: A, x: T => … }`;
     /// `l.map workers(8) { … }` and `l.each workers(8) { … }` (PLAN Part 4 "Several things at once").
-    fn block_method(&mut self, elem: &Type, name: &Name, args: &[Expr]) -> Type {
+    /// `pairs`: `elem` is a Map's (key, value), and the block takes them apart: `{ k: K, v: V => … }`.
+    fn block_method(&mut self, elem: &Type, name: &Name, args: &[Expr], pairs: bool) -> Type {
         let workers = name.text.strip_suffix(" workers(…)").is_some();
         let base = name.text.strip_suffix(" workers(…)").unwrap_or(&name.text);
         let fold = base == "fold";
@@ -3746,13 +3755,17 @@ impl Checker<'_> {
                 self.mismatch(&args[0], n, &Type::Int);
             }
         }
+        let each = match elem {
+            Type::Tuple(ts) if pairs => ts.clone(),
+            t => vec![t.clone()],
+        };
         let (params_wanted, result) = match base {
-            "each" => (vec![elem.clone()], Some(Type::Unit)),
-            "filter" | "any" | "all" => (vec![elem.clone()], Some(Type::Bool)),
-            "map" => (vec![elem.clone()], None),
+            "each" => (each, Some(Type::Unit)),
+            "filter" | "any" | "all" => (each, Some(Type::Bool)),
+            "map" => (each, None),
             // `{ a: T, b: T => … }`: `true` when `a` comes before `b`.
             "sorted" => (vec![elem.clone(), elem.clone()], Some(Type::Bool)),
-            _ => (vec![acc.clone(), elem.clone()], Some(acc.clone())),
+            _ => ([vec![acc.clone()], each].concat(), Some(acc.clone())),
         };
         let t = match &block.kind {
             ExprKind::Block { params, body } => {
@@ -3940,6 +3953,10 @@ impl Checker<'_> {
     /// `None` for `.clone`, common to every type.
     fn map_method(&mut self, receiver: &Expr, t: &Type, k: &Type, v: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
+            "each" | "filter" | "map" | "any" | "all" | "fold" => {
+                let r = self.block_method(&Type::Tuple(vec![k.clone(), v.clone()]), name, args, true);
+                return Some(if name.text == "filter" { t.clone() } else { r });
+            }
             "length" => (vec![], Type::Int),
             "is_empty" => (vec![], Type::Bool),
             "contains" => (vec![(Mode::Read, k.clone())], Type::Bool),
@@ -3978,6 +3995,10 @@ impl Checker<'_> {
     /// (`true` if it was there). `None` for `.clone`, common to every type.
     fn set_method(&mut self, receiver: &Expr, t: &Type, elem: &Type, name: &Name, args: &[Expr]) -> Option<Type> {
         let (params, result) = match name.text.as_str() {
+            "each" | "filter" | "map" | "any" | "all" | "fold" => {
+                let r = self.block_method(elem, name, args, false);
+                return Some(if name.text == "filter" { t.clone() } else { r });
+            }
             "length" => (vec![], Type::Int),
             "is_empty" => (vec![], Type::Bool),
             "add" => (vec![(Mode::Move, elem.clone())], Type::Unit),
@@ -4382,7 +4403,7 @@ impl Checker<'_> {
                     self.expect(value, &ty);
                     return;
                 }
-                let concat = *op == Some(BinOp::Plus) && matches!(ty, Type::String | Type::List(_));
+                let concat = *op == Some(BinOp::Plus) && matches!(ty, Type::String | Type::List(_) | Type::Set(_) | Type::Map(..));
                 if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::BigInt | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
                     self.error(target.span(), t!("not_numeric", target = text));
@@ -4522,8 +4543,8 @@ impl Checker<'_> {
                             self.functions.contains_key(&key) || self.completed(called, &key).is_some()
                         }
                         Type::List(_) => matches!(name.text.as_str(), "add" | "remove" | "each" | "each workers(…)"),
-                        Type::Map(..) => name.text == "remove",
-                        Type::Set(_) => matches!(name.text.as_str(), "add" | "remove"),
+                        Type::Map(..) => matches!(name.text.as_str(), "remove" | "each"),
+                        Type::Set(_) => matches!(name.text.as_str(), "add" | "remove" | "each"),
                         Type::Param(p) => p.bounds.iter().any(|b| self.functions.contains_key(&method_name(b, &name.text))),
                         // An unknown method is already reported.
                         Type::Any(_) => true,
@@ -5028,8 +5049,6 @@ impl Checker<'_> {
                         match self.missing_equal(&ta) {
                             None => {}
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
-                            Some(Type::Map(..)) => self.error(e.span, t!("map_compare", op = op.text())),
-                            Some(Type::Set(_)) => self.error(e.span, t!("set_compare", op = op.text())),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
                             Some(culprit @ Type::Any(_)) => self.diags.push(
                                 Diag::new(e.span, t!("compare_needs_equal", op = op.text(), type = ta.text())).help(t!("any_compare_help", type = culprit.text())),

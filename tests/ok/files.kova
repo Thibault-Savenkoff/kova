@@ -17,8 +17,8 @@ fn folder -> String
 
 fn main {
     let dir: String := folder
-    print(files.make_dir("{dir}/inside"))
-    print(files.make_dir(dir))
+    print(files.make_folder("{dir}/inside"))
+    print(files.make_folder(dir))
     let note: String := "{dir}/note.txt"
     print(save(note, "first line\n"))
     match files.read(note) {
@@ -38,7 +38,7 @@ fn main {
     print(files.remove("tests/data"))
     print(files.write("tests/data/missing/x.txt", "x"))
     print(files.list("tests/data/nothing here"))
-    print(files.make_dir("tests/data/poem.txt"))
+    print(files.make_folder("tests/data/poem.txt"))
 }
 // expect: ok
 // expect: ok
@@ -52,7 +52,7 @@ fn main {
 // expect: ok
 // expect: false
 // expect: err(NotFound("tests/data/missing.txt"))
-// expect: err(IsDirectory("tests/data"))
+// expect: err(IsFolder("tests/data"))
 // expect: err(NotFound("tests/data/missing/x.txt"))
 // expect: err(NotFound("tests/data/nothing here"))
 // expect: err(Other("tests/data/poem.txt"))

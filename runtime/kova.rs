@@ -495,6 +495,20 @@ pub extern "C" fn kova_str_trim(a: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn kova_str_reversed(a: i64) -> i64 {
+    new_text(text_of(a).chars().rev().collect::<String>().as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_to_bool(a: i64) -> i64 {
+    match bytes(a) {
+        b"true" => 1,
+        b"false" => 0,
+        _ => 2,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kova_str_contains(a: i64, b: i64) -> i64 {
     text_of(a).contains(text_of(b)) as i64
 }
@@ -794,7 +808,7 @@ pub extern "C" fn kova_list_set_index(l: i64, index: i64) {
 }
 
 // ---- Files and input: a String or 0 (or a new value) when it works, else minus the failure,
-// numbered like `IoError` (src/types.rs `io_error`): 1 NotFound, 2 Denied, 3 IsDirectory,
+// numbered like `IoError` (src/types.rs `io_error`): 1 NotFound, 2 Denied, 3 IsFolder,
 // 4 NotText, 5 Other. Like src/interp.rs; `sys` gives each failure its number. ----
 
 /// The path, or None if it holds a 0 byte (no file has such a name).

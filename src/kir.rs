@@ -359,7 +359,7 @@ pub enum StrOp {
     Less,
     /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
     ReadFile,
-    /// `write_file(path, text)`, `append_file(path, text)`, `make_dir(path)`, `remove_file(path)`:
+    /// `write_file(path, text)`, `append_file(path, text)`, `make_folder(path)`, `remove_file(path)`:
     /// 0, or minus the number of the failure; `list_dir(path)`: a new `List<String>` or minus it.
     WriteFile,
     AppendFile,
@@ -389,6 +389,10 @@ pub enum StrOp {
     Run,
     /// `s.to_upper`, `s.to_lower`: a new String (`case_of`).
     ToUpper,
+    /// `s.reversed`: by character.
+    Reversed,
+    /// `s.to_bool`: 1 for "true", 0 for "false", 2 for anything else.
+    ToBool,
     ToLower,
     /// `s.find(part)`: the number of the character where `part` starts, -1 if nowhere.
     Find,
@@ -584,6 +588,7 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "words" => StrOp::Words,
         "lines" => StrOp::Lines,
         "chars" => StrOp::Chars,
+        "reversed" => StrOp::Reversed,
         "to_upper" => StrOp::ToUpper,
         "to_lower" => StrOp::ToLower,
         "repeat" => StrOp::Repeat,
@@ -1111,7 +1116,12 @@ impl<'a> Translator<'a> {
         if let Helper::Equal(ty) = h {
             let (a, b) = (self.new_slots(ty), self.new_slots(ty));
             self.current = self.new_block();
-            let same = if let Type::List(elem) = ty { self.equal_lists(a[0], b[0], elem) } else { self.equal_variants(&a, &b, ty) };
+            let same = match ty {
+                Type::List(elem) => self.equal_lists(a[0], b[0], elem),
+                Type::Set(elem) => self.equal_keyed(a[0], b[0], elem, None),
+                Type::Map(k, v) => self.equal_keyed(a[0], b[0], k, Some(v)),
+                _ => self.equal_variants(&a, &b, ty),
+            };
             self.finish(End::Return(vec![same]));
             return self.function(format!("equal {}", ty.text()), a.len() * 2, vec![Scalar::Int]);
         }
@@ -2033,7 +2043,7 @@ impl<'a> Translator<'a> {
                 }
                 same
             }
-            Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::List(_) => {
+            Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::List(_) | Type::Set(_) | Type::Map(..) => {
                 let f = self.helper(Helper::Equal(ty.clone()));
                 let d = self.int_local();
                 self.emit(Inst::Call(vec![d], f, [a, b].concat()));
@@ -2110,12 +2120,61 @@ impl<'a> Translator<'a> {
         same
     }
 
-    /// Adds a copy of each element of `from` to `list`.
-    fn add_all(&mut self, list: Local, from: Local, elem: &Type) {
-        self.each_element(from, elem, |t, _, v| {
-            let copy = t.clone_value(&v, elem);
-            t.push(list, &copy);
+    /// Inside the `Equal` helper of a Set or a Map: as many elements, and each of `a` is in `b`
+    /// (a Map's with an equal value), in any order.
+    fn equal_keyed(&mut self, a: Local, b: Local, k: &Type, v: Option<&Type>) -> Local {
+        let (n, m, same) = (self.int_local(), self.int_local(), self.int_local());
+        self.emit(Inst::ListLength(n, a));
+        self.emit(Inst::ListLength(m, b));
+        self.emit(Inst::Binary(same, Op::Eq, n, m, NOWHERE));
+        let (compare, after) = (self.new_block(), self.new_block());
+        self.go(End::Branch(same, compare, after), compare);
+        let elem = v.map_or_else(|| k.clone(), |v| pair(k, v));
+        let (keys, zero) = (scalars(k).len(), self.constant(0));
+        self.times(n, |t, i| {
+            let x = t.load(a, i, &elem);
+            let j = t.find(b, &x[..keys], k);
+            let found = t.int_local();
+            t.emit(Inst::Binary(found, Op::Ge, j, zero, NOWHERE));
+            t.emit(Inst::Binary(same, Op::Times, same, found, NOWHERE));
+            if let Some(v) = v {
+                let (there, next) = (t.new_block(), t.new_block());
+                t.go(End::Branch(found, there, next), there);
+                let y = t.load(b, j, &elem);
+                let eq = t.equal(&x[keys..], &y[keys..], v, Span::new(0, 0));
+                t.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
+                t.go(End::Jump(next), next);
+            }
         });
+        self.go(End::Jump(after), after);
+        same
+    }
+
+    /// `a += b`, `ty` being the type of both: a copy of each element of `from` goes into `list`.
+    /// A Set keeps one of each; in a Map, the value of `from` wins.
+    fn add_all(&mut self, list: Local, from: Local, ty: &Type) {
+        match ty {
+            Type::Set(elem) => self.each_element(from, elem, |t, _, v| {
+                let copy = t.clone_value(&v, elem);
+                t.set_add(list, &copy, elem);
+            }),
+            Type::Map(k, value) => {
+                let elem = pair(k, value);
+                self.each_element(from, &elem, |t, _, x| {
+                    let n = scalars(k).len();
+                    let copy = t.clone_value(&x[n..], value);
+                    let place = t.entry(list, &x[..n], k, value);
+                    let old = t.read(&place);
+                    t.free_value(&old, value);
+                    t.write(&place, &copy);
+                });
+            }
+            Type::List(elem) => self.each_element(from, elem, |t, _, v| {
+                let copy = t.clone_value(&v, elem);
+                t.push(list, &copy);
+            }),
+            _ => unreachable!("a collection checked by the type checker"),
+        }
     }
 
     /// Inside the `Equal` helper: same variant, then the same fields for that variant.
@@ -2912,8 +2971,8 @@ impl<'a> Translator<'a> {
                     let v = self.expr1(value);
                     let (place, ty) = self.target_places(target).remove(0);
                     let old = self.read(&place)[0];
-                    let r = if let Type::List(elem) = &ty {
-                        self.add_all(old, v, elem);
+                    let r = if matches!(ty, Type::List(_) | Type::Set(_) | Type::Map(..)) {
+                        self.add_all(old, v, &ty);
                         old
                     } else if ty == Type::String {
                         let r = self.int_local();
@@ -4179,7 +4238,15 @@ impl<'a> Translator<'a> {
         // `l.each(f)`: a block parameter, called at each turn.
         let given = (!matches!(block.kind, ExprKind::Block { .. })).then(|| self.expr(block));
         let ty = self.ty(e);
-        let one = |v: Slots| vec![(v, elem.clone())];
+        // A Map's block takes the key and the value apart.
+        let pairs = matches!(&e.kind, ExprKind::Method { receiver, .. } if matches!(self.ty(receiver), Type::Map(..)));
+        let one = |v: Slots| match elem {
+            Type::Tuple(ts) if pairs => {
+                let n = scalars(&ts[0]).len();
+                vec![(v[..n].to_vec(), ts[0].clone()), (v[n..].to_vec(), ts[1].clone())]
+            }
+            t => vec![(v, t.clone())],
+        };
         match name {
             "each" => {
                 self.each_element(list, elem, |t, _, v| {
@@ -4188,12 +4255,16 @@ impl<'a> Translator<'a> {
                 vec![]
             }
             "filter" | "map" => {
-                let Type::List(out_elem) = &ty else { unreachable!("a List checked by the type checker") };
+                // `filter` keeps the collection's type: a Set stays a Set, whose index is made when needed.
+                let out_elem = match &ty {
+                    Type::List(x) | Type::Set(x) => (**x).clone(),
+                    _ => elem.clone(),
+                };
                 let out = self.int_local();
-                self.emit(Inst::ListNew(out, scalars(out_elem).len()));
+                self.emit(Inst::ListNew(out, scalars(&out_elem).len()));
                 self.each_element(list, elem, |t, _, v| {
                     if name == "map" {
-                        let x = t.run(block, &given, one(v), Some(out_elem));
+                        let x = t.run(block, &given, one(v), Some(&out_elem));
                         return t.push(out, &x);
                     }
                     let keep = t.run(block, &given, one(v.clone()), Some(&Type::Bool))[0];
@@ -4226,7 +4297,7 @@ impl<'a> Translator<'a> {
                 let acc = self.new_slots(&ty);
                 self.copy(&acc, &start);
                 self.each_element(list, elem, |t, _, v| {
-                    let next = t.run(block, &given, vec![(acc.clone(), ty.clone()), (v, elem.clone())], Some(&ty));
+                    let next = t.run(block, &given, [vec![(acc.clone(), ty.clone())], one(v)].concat(), Some(&ty));
                     t.free_value(&acc, &ty);
                     t.copy(&acc, &next);
                 });
@@ -5016,7 +5087,7 @@ impl<'a> Translator<'a> {
                     "files.write" => Some(StrOp::WriteFile),
                     "files.append" => Some(StrOp::AppendFile),
                     "files.list" => Some(StrOp::ListDir),
-                    "files.make_dir" => Some(StrOp::MakeDir),
+                    "files.make_folder" => Some(StrOp::MakeDir),
                     "files.remove" => Some(StrOp::RemoveFile),
                     "files.copy(…) to(…)" => Some(StrOp::CopyFile),
                     "files.move(…) to(…)" => Some(StrOp::MoveFile),
@@ -5588,12 +5659,11 @@ impl<'a> Translator<'a> {
                 self.temps.push((dst, Type::BigInt));
                 vec![dst]
             }
-            ExprKind::Binary(BinOp::Plus, a, b) if matches!(self.ty(a), Type::List(_)) => {
+            ExprKind::Binary(BinOp::Plus, a, b) if matches!(self.ty(a), Type::List(_) | Type::Set(_) | Type::Map(..)) => {
                 let ty = self.ty(a);
-                let Type::List(elem) = &ty else { unreachable!() };
                 let (va, vb) = (self.expr1(a), self.expr1(b));
                 let dst = self.clone_value(&[va], &ty)[0];
-                self.add_all(dst, vb, elem);
+                self.add_all(dst, vb, &ty);
                 self.temps.push((dst, ty.clone()));
                 vec![dst]
             }
@@ -5779,6 +5849,7 @@ impl<'a> Translator<'a> {
                 let Type::Map(k, v) = self.ty(receiver) else { unreachable!() };
                 let map = self.expr1(receiver);
                 match name.text.as_str() {
+                    "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, map, &pair(&k, &v), &name.text, args),
                     "is_empty" => self.is_empty(map),
                     "length" => {
                         let n = self.int_local();
@@ -5817,6 +5888,7 @@ impl<'a> Translator<'a> {
                 let Type::Set(elem) = self.ty(receiver) else { unreachable!() };
                 let set = self.expr1(receiver);
                 match name.text.as_str() {
+                    "each" | "filter" | "map" | "any" | "all" | "fold" => self.block_method(e, set, &elem, &name.text, args),
                     "is_empty" => self.is_empty(set),
                     "length" => {
                         let n = self.int_local();
@@ -5877,6 +5949,23 @@ impl<'a> Translator<'a> {
                             t.go(End::Jump(next), next);
                         });
                         vec![found]
+                    }
+                    "find" => {
+                        let x = self.expr(&args[0]);
+                        let (present, at) = (self.int_local(), self.int_local());
+                        self.emit(Inst::Const(present, 0));
+                        self.emit(Inst::Const(at, 0));
+                        self.each_element(list, &elem, |t, i, v| {
+                            let (same, fresh) = (t.equal(&v, &x, &elem, e.span), t.int_local());
+                            t.emit(Inst::Not(fresh, present));
+                            t.emit(Inst::Binary(fresh, Op::Times, fresh, same, NOWHERE));
+                            let (yes, next) = (t.new_block(), t.new_block());
+                            t.go(End::Branch(fresh, yes, next), yes);
+                            t.emit(Inst::Const(present, 1));
+                            t.emit(Inst::Copy(at, i));
+                            t.go(End::Jump(next), next);
+                        });
+                        vec![present, at]
                     }
                     "sum" => {
                         let (total, zero, loc) = (self.new_slots(&elem)[0], self.constant(0), self.loc(name.span));
@@ -6007,6 +6096,13 @@ impl<'a> Translator<'a> {
                     self.emit(Inst::Str(at, op, vec![v]));
                     self.emit(Inst::Binary(present, Op::Ne, at, wrong, NOWHERE));
                     return vec![present, at];
+                }
+                if self.ty(receiver) == Type::String && name.text == "to_bool" {
+                    let (answer, two, present, value) = (self.int_local(), self.constant(2), self.int_local(), self.int_local());
+                    self.emit(Inst::Str(answer, StrOp::ToBool, vec![v]));
+                    self.emit(Inst::Binary(present, Op::Ne, answer, two, NOWHERE));
+                    self.emit(Inst::Binary(value, Op::Times, answer, present, NOWHERE));
+                    return vec![present, value];
                 }
                 if self.ty(receiver) == Type::String && name.text == "to_float" {
                     let (present, bits) = (self.int_local(), self.int_local());

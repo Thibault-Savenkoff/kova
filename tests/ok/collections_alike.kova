@@ -1,0 +1,76 @@
+// What a List knows, a Set and a Map know too.
+fn big(x: Int) -> Bool := x > 1
+
+struct Bag : Equal {
+    items: Map<String, Int>
+}
+
+fn main {
+    let s: Set<Int> := Set[1, 2, 3]
+    s.each { x: Int => write(x) }
+    print("")
+    print(s.filter(big))
+    print(s.filter(big).contains(3))
+    print(s.filter(big).contains(1))
+    print(s.map { x: Int => x * 2 })
+    print(s.any(big))
+    print(s.all(big))
+    print(s.fold(0) { sum: Int, x: Int => sum + x })
+    print(s = Set[3, 2, 1])
+    print(s = Set[3, 2])
+    print(s != Set[1, 2, 4])
+    print(Set["a"] + Set["a", "b"])
+    var more: Set<String> := Set["x"]
+    more += Set["x", "y"]
+    print(more.length)
+
+    let m: Map<String, Int> := ["a" := 1, "b" := 2]
+    m.each { k: String, v: Int => print("{k} {v}") }
+    let kept: Map<String, Int> := m.filter { k: String, v: Int => v > 1 }
+    print(kept)
+    print(kept["b"])
+    print(kept["a"])
+    print(m.map { k: String, v: Int => "{k}{v}" })
+    print(m.any { k: String, v: Int => k = "a" })
+    print(m.all { k: String, v: Int => v > 1 })
+    print(m.fold(0) { sum: Int, k: String, v: Int => sum + v })
+    print(m = ["b" := 2, "a" := 1])
+    print(m = ["b" := 2, "a" := 2])
+    print(m = ["b" := 2])
+    print(m + ["b" := 5, "c" := 6])
+    var names: Map<String, String> := ["x" := "old"]
+    names += ["x" := "new", "y" := "other"]
+    print(names)
+    let nested: Map<String, List<Int>> := ["l" := [1]]
+    print(nested = ["l" := [1]])
+    print(Bag { items := ["a" := 1] } = Bag { items := ["a" := 1] })
+}
+// expect: 123
+// expect: Set[2, 3]
+// expect: true
+// expect: false
+// expect: [2, 4, 6]
+// expect: true
+// expect: false
+// expect: 6
+// expect: true
+// expect: false
+// expect: true
+// expect: Set["a", "b"]
+// expect: 2
+// expect: a 1
+// expect: b 2
+// expect: ["b" := 2]
+// expect: 2
+// expect: none
+// expect: ["a1", "b2"]
+// expect: true
+// expect: false
+// expect: 3
+// expect: true
+// expect: false
+// expect: false
+// expect: ["a" := 1, "b" := 5, "c" := 6]
+// expect: ["x" := "new", "y" := "other"]
+// expect: true
+// expect: true

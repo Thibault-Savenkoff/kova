@@ -861,6 +861,15 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let t = s(0).trim_matches(|c: char| c.is_ascii_whitespace()).to_string();
                             heap.make(t)
                         }
+                        StrOp::Reversed => {
+                            let t: String = s(0).chars().rev().collect();
+                            heap.make(t)
+                        }
+                        StrOp::ToBool => match s(0) {
+                            "true" => 1,
+                            "false" => 0,
+                            _ => 2,
+                        },
                         StrOp::Contains => s(0).contains(s(1)) as i64,
                         StrOp::StartsWith => s(0).starts_with(s(1)) as i64,
                         StrOp::EndsWith => s(0).ends_with(s(1)) as i64,

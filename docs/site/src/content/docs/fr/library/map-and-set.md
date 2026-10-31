@@ -27,6 +27,15 @@ Leurs clés peuvent être de n'importe quel type qui se compare avec `=` : nombr
 | `m.keys -> List<K>` | des copies des clés, dans l'ordre. |
 | `m.values -> List<V>` | des copies des valeurs, dans le même ordre. |
 | `for k, v in m { … }` | parcourt les entrées dans l'ordre. |
+| `m.each { k: K, v: V => … }` | exécute le bloc sur chaque entrée, dans l'ordre. |
+| `m.filter { k: K, v: V => … } -> Map<K, V>` | une nouvelle Map des entrées pour lesquelles le bloc dit `true`. |
+| `m.map { k: K, v: V => … } -> List<U>` | une List de ce que le bloc donne pour chaque entrée. |
+| `m.any { k: K, v: V => … } -> Bool` | si le bloc dit `true` pour au moins une entrée. |
+| `m.all { k: K, v: V => … } -> Bool` | si le bloc dit `true` pour toutes les entrées. |
+| `m.fold(start) { total: U, k: K, v: V => … } -> U` | parcourt les entrées en portant un résultat. |
+| `a = b`, `a != b` | les mêmes clés avec des valeurs égales, dans n'importe quel ordre. |
+| `a + b -> Map<K, V>` | une nouvelle Map des deux ; quand les deux ont une clé, la valeur de `b` gagne. |
+| `a += b` | ajoute les entrées de `b` à `a`, de la même façon. |
 | `m.clone -> Map<K, V>` | une copie. |
 
 ```kova
@@ -87,6 +96,15 @@ Une `Map<String, T>` se lit aussi depuis des objets JSON et s'y écrit :
 | `s.contains(v: T) -> Bool` | si `v` y est. |
 | `s.remove(v: T) -> Bool` | retire `v` ; `true` s'il y était. |
 | `for v in s { … }` | parcourt les valeurs, dans l'ordre où elles ont été ajoutées. |
+| `s.each { x: T => … }` | exécute le bloc sur chaque valeur, dans l'ordre. |
+| `s.filter { x: T => … } -> Set<T>` | un nouveau Set des valeurs pour lesquelles le bloc dit `true`. |
+| `s.map { x: T => … } -> List<U>` | une List de ce que le bloc donne pour chaque valeur. |
+| `s.any { x: T => … } -> Bool` | si le bloc dit `true` pour au moins une valeur. |
+| `s.all { x: T => … } -> Bool` | si le bloc dit `true` pour toutes les valeurs. |
+| `s.fold(start) { total: U, x: T => … } -> U` | parcourt les valeurs en portant un résultat. |
+| `a = b`, `a != b` | les mêmes valeurs, dans n'importe quel ordre. |
+| `a + b -> Set<T>` | un nouveau Set des valeurs des deux. |
+| `a += b` | ajoute les valeurs de `b` à `a`. |
 | `s.clone -> Set<T>` | une copie. |
 
 ```kova

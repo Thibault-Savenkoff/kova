@@ -101,6 +101,7 @@ quel.
 | `s.trim -> String` | `s` sans espaces, tabulations ni sauts de ligne aux deux bouts. |
 | `s.is_empty -> Bool` | si `s` n'a aucun caractère. |
 | `s.lines -> List<String>` | les lignes de `s`, sans leurs sauts de ligne (`\n` ou `\r\n`). |
+| `s.reversed -> String` | les caractères de `s`, le dernier en premier. |
 | `s.to_upper -> String` | `s` en majuscules, lettres accentuées comprises (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` en minuscules. |
 | `s.replace(old: String, new: String) -> String` | `s` avec chaque `old` remplacé par `new`. `old` ne peut pas être `""`. |
@@ -158,6 +159,7 @@ pour que le programme décide quoi faire alors :
 | --- | --- |
 | `s.to_int -> Int?` | un nombre entier : `"42"`, `"-5"` (pas `"+5"`, `" 5"` ni `"1_000"`). |
 | `s.to_float -> Float?` | un nombre avec un point : `"2.5"`, `"1e3"`, `"-0.1"`. |
+| `s.to_bool -> Bool?` | exactement `"true"` ou `"false"`. |
 | `s.to_date -> Date?` | une date écrite `"2026-10-23"`, qui doit exister (`"2026-02-30"` donne `none`). |
 | `s.to_datetime -> DateTime?` | une date et une heure écrites `"2026-10-23 14:05:09"`. |
 

@@ -19,7 +19,6 @@ fn main {
     counts["a"] += 1
     var points: Map<Int, Point> := [1 := Point { x := 1 }]
     points[1].x := 2
-    print(counts = counts)
     for k in counts {
     }
     let l: Set<Int> := Set[1]
@@ -40,7 +39,6 @@ fn main {
 // error: `Map` takes two types, not 1
 // error: `counts["a"]` may be missing
 // error: a value inside a Map is changed as a whole
-// error: `=` does not compare Maps yet
 // error: a Map is walked over with two names
 // error: or a List (each place and element), not over `Set<Int>`
 // error: `Map` has no function `Map.empty`

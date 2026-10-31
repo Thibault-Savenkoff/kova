@@ -57,7 +57,7 @@ To read a file line by line, `files.read(path)?.split("\n")`; for a table, see
 | `files.modified(path) -> DateTime or IoError` | when it was last changed, in local time. |
 | `files.list(folder) -> List<String> or IoError` | the names in a folder, sorted. |
 | `files.matching(pattern) -> List<String> or IoError` | the paths that fit a pattern, sorted (below). |
-| `files.make_dir(path) -> Nothing or IoError` | makes a folder, and the folders above it if needed. |
+| `files.make_folder(path) -> Nothing or IoError` | makes a folder, and the folders above it if needed. |
 | `files.remove(path) -> Nothing or IoError` | deletes a file. |
 | `files.copy(path) to(destination) -> Nothing or IoError` | copies a file, replacing `destination` if it exists. |
 | `files.move(path) to(destination) -> Nothing or IoError` | moves or renames a file, replacing `destination` if it exists. |
@@ -95,7 +95,7 @@ Each case holds the path concerned:
 | --- | --- |
 | `NotFound(path)` | there is no such file or folder |
 | `Denied(path)` | the system does not allow it |
-| `IsDirectory(path)` | a folder where a file was expected |
+| `IsFolder(path)` | a folder where a file was expected |
 | `NotText(path)` | the file is not UTF-8 text (`files.read`) |
 | `Other(path)` | anything else (a full disk…) |
 

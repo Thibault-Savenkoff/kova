@@ -2,8 +2,12 @@ struct Equal { x: Int }
 
 interface Display {}
 
+struct Plain {
+    x: Int
+}
+
 struct Bag : Equal {
-    items: Map<Int, Int>
+    items: Map<Int, Plain>
 }
 
 struct Dog : Comparable {
@@ -32,7 +36,7 @@ fn main {
 }
 // error: `Equal` is a built-in type: choose another name
 // error: `Display` is a built-in type: choose another name
-// error: `Bag` follows `Equal`, but its field `items` (`Map<Int, Int>`) cannot be compared with `=`
+// error: `Bag` follows `Equal`, but its field `items` (`Map<Int, Plain>`) cannot be compared with `=`
 // error: write `fn equals(self, other: Self) -> Bool` in `Bag` to say how two of them are equal
 // error: `Dog` follows `Comparable` but has no method `less`
 // error: add `fn less(self, other: Self) -> Bool { … }`

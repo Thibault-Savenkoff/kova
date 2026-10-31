@@ -26,7 +26,7 @@ fn found(pattern: String, dir: String) -> Nothing or files.IoError {
 
 fn main {
     let dir: String := folder
-    show(files.make_dir("{dir}/src/deep"), dir)
+    show(files.make_folder("{dir}/src/deep"), dir)
     show(files.write("{dir}/a.txt", "hello"), dir)
     show(files.copy("{dir}/a.txt") to("{dir}/b.txt"), dir)
     print(files.read("{dir}/b.txt"))
@@ -75,13 +75,13 @@ fn main {
 // expect: ok("hello")
 // expect: NotFound("D/missing.txt")
 // expect: NotFound("D/nowhere/c.txt")
-// expect: IsDirectory("D/src")
-// expect: IsDirectory("D/src")
+// expect: IsFolder("D/src")
+// expect: IsFolder("D/src")
 // expect: ok
 // expect: false
 // expect: NotFound("D/b.txt")
 // expect: ok(5)
-// expect: IsDirectory("D")
+// expect: IsFolder("D")
 // expect: true
 // expect: false
 // expect: false

@@ -99,6 +99,7 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 | `s.trim -> String` | `s` without spaces, tabs and line breaks at both ends. |
 | `s.is_empty -> Bool` | whether `s` has no character. |
 | `s.lines -> List<String>` | the lines of `s`, without their line breaks (`\n` or `\r\n`). |
+| `s.reversed -> String` | the characters of `s`, last one first. |
 | `s.to_upper -> String` | `s` in capitals, accented letters too (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` in small letters. |
 | `s.replace(old: String, new: String) -> String` | `s` with every `old` replaced by `new`. `old` cannot be `""`. |
@@ -156,6 +157,7 @@ the program decides what to do then:
 | --- | --- |
 | `s.to_int -> Int?` | a whole number: `"42"`, `"-5"` (not `"+5"`, `" 5"` or `"1_000"`). |
 | `s.to_float -> Float?` | a number with a dot: `"2.5"`, `"1e3"`, `"-0.1"`. |
+| `s.to_bool -> Bool?` | exactly `"true"` or `"false"`. |
 | `s.to_date -> Date?` | a date written `"2026-10-23"`, which must exist (`"2026-02-30"` is `none`). |
 | `s.to_datetime -> DateTime?` | a date and a time written `"2026-10-23 14:05:09"`. |
 

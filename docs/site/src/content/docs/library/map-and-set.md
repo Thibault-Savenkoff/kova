@@ -25,6 +25,15 @@ tuples of them, and types that follow [`Equal`](/guide/interfaces-and-generics/#
 | `m.keys -> List<K>` | copies of the keys, in order. |
 | `m.values -> List<V>` | copies of the values, in the same order. |
 | `for k, v in m { … }` | walks through the entries in order. |
+| `m.each { k: K, v: V => … }` | runs the block on each entry, in order. |
+| `m.filter { k: K, v: V => … } -> Map<K, V>` | a new Map of the entries for which the block says `true`. |
+| `m.map { k: K, v: V => … } -> List<U>` | a List of what the block gives for each entry. |
+| `m.any { k: K, v: V => … } -> Bool` | whether the block says `true` for at least one entry. |
+| `m.all { k: K, v: V => … } -> Bool` | whether the block says `true` for every entry. |
+| `m.fold(start) { total: U, k: K, v: V => … } -> U` | goes through the entries, carrying a result. |
+| `a = b`, `a != b` | same keys with equal values, in any order. |
+| `a + b -> Map<K, V>` | a new Map of both; when both have a key, the value of `b` wins. |
+| `a += b` | adds the entries of `b` to `a`, the same way. |
 | `m.clone -> Map<K, V>` | a copy. |
 
 ```kova
@@ -85,6 +94,15 @@ A `Map<String, T>` is also read from and written to JSON objects:
 | `s.contains(v: T) -> Bool` | whether `v` is there. |
 | `s.remove(v: T) -> Bool` | takes `v` out; `true` if it was there. |
 | `for v in s { … }` | walks through the values, in the order they were added. |
+| `s.each { x: T => … }` | runs the block on each value, in order. |
+| `s.filter { x: T => … } -> Set<T>` | a new Set of the values for which the block says `true`. |
+| `s.map { x: T => … } -> List<U>` | a List of what the block gives for each value. |
+| `s.any { x: T => … } -> Bool` | whether the block says `true` for at least one value. |
+| `s.all { x: T => … } -> Bool` | whether the block says `true` for every value. |
+| `s.fold(start) { total: U, x: T => … } -> U` | goes through the values, carrying a result. |
+| `a = b`, `a != b` | the same values, in any order. |
+| `a + b -> Set<T>` | a new Set of the values of both. |
+| `a += b` | adds the values of `b` to `a`. |
 | `s.clone -> Set<T>` | a copy. |
 
 ```kova
