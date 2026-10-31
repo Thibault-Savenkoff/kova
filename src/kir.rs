@@ -265,7 +265,7 @@ pub struct KBlock {
 }
 
 /// Position in a source file (`file` = its number, 0 = the program's), for runtime error messages.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Loc {
     pub file: usize,
     pub line: usize,
@@ -809,6 +809,8 @@ pub enum Fault {
     ExternInterpreted,
     ThreadsInterpreted,
     ChannelLimit,
+    Closed,
+    Deadlock,
 }
 
 impl Fault {
@@ -838,6 +840,8 @@ impl Fault {
             Fault::ExternInterpreted => "fault_extern_interpreted",
             Fault::ThreadsInterpreted => "fault_threads_interpreted",
             Fault::ChannelLimit => "fault_channel_limit",
+            Fault::Closed => "fault_closed",
+            Fault::Deadlock => "fault_deadlock",
             Fault::BadKey => "fault_bad_key",
             Fault::PasswordSettings => "fault_password_settings",
         }

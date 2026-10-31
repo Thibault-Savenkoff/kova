@@ -925,6 +925,39 @@ fn debugger() {
     assert!(e.printed.contains("division by zero"), "{}", e.printed);
     e.send("disconnect", json!({}));
     assert!(adapter.wait().unwrap().success());
+
+    // Threads: a breakpoint in a thread stops there; a step stays in that thread.
+    let mut adapter = kova(LANG).arg("debug").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut e = Editor { input: adapter.stdin.take().unwrap(), output: BufReader::new(adapter.stdout.take().unwrap()), seq: 0, printed: String::new() };
+    let path = std::fs::canonicalize("tests/debug/threads.kova").unwrap().display().to_string();
+    e.send("initialize", json!({"adapterID": "kova"}));
+    e.ask("launch", json!({"program": path}));
+    e.ask("setBreakpoints", json!({"source": {"path": path}, "breakpoints": [{"line": 4}]}));
+    e.send("configurationDone", json!({}));
+    assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "breakpoint");
+    assert_eq!(e.stack()[0], ("double".to_string(), 4));
+    assert_eq!(e.go("next"), "step");
+    assert_eq!(e.stack()[0], ("double".to_string(), 5));
+    assert_eq!(e.go("continue"), "breakpoint");
+    assert_eq!(e.variables(2), ["n = 1"]);
+    e.send("continue", json!({"threadId": 1}));
+    assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 0);
+    assert_eq!(e.printed, "42\n");
+    e.send("disconnect", json!({}));
+    assert!(adapter.wait().unwrap().success());
+
+    // Every thread waiting: the same error as a built program.
+    let mut adapter = kova(LANG).arg("debug").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut e = Editor { input: adapter.stdin.take().unwrap(), output: BufReader::new(adapter.stdout.take().unwrap()), seq: 0, printed: String::new() };
+    e.send("initialize", json!({"adapterID": "kova"}));
+    e.ask("launch", json!({"program": "tests/ok/threads_deadlock.kova"}));
+    e.send("configurationDone", json!({}));
+    assert_eq!(e.until(|m| m["event"] == "stopped")["body"]["reason"], "exception");
+    e.send("continue", json!({"threadId": 1}));
+    assert_eq!(e.until(|m| m["event"] == "exited")["body"]["exitCode"], 101);
+    assert!(e.printed.contains("every thread is waiting"), "{}", e.printed);
+    e.send("disconnect", json!({}));
+    assert!(adapter.wait().unwrap().success());
 }
 
 /// A line that is not UTF-8 stops `read_line` loudly (not a silent `none`), in run and in build.

@@ -1,8 +1,11 @@
 // Interpreter (`kova run`): executes the KIR directly, instruction by instruction.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufWriter, Write};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
-use crate::debug::{Ask, Debugger};
+use crate::debug::{Ask, Debugger, Stack};
 
 use crate::kir::*;
 use crate::locale::{self, t};
@@ -48,6 +51,153 @@ struct Heap {
     ui_drawing: String,
     /// `ui.act`: what the window must do.
     ui_acts: Vec<i64>,
+    /// `kova debug`: its threads.
+    threads: Threads,
+}
+
+// ---- `kova debug` follows threads (PLAN Part 4 "Threads under the debugger") ----
+
+/// runtime/kova.rs `Pipe`: a queue of boxes.
+struct Pipe {
+    items: VecDeque<i64>,
+    limit: i64,
+    closed: bool,
+    refs: i64,
+    free: usize,
+}
+
+/// Each Kova thread is a thread of `kova debug`, but one runs at a time, until it waits or hands
+/// over: all share the `Heap`, and a stop shows one place in the program.
+#[derive(Default)]
+struct Threads {
+    /// A pipe's handle is its place here + 1.
+    pipes: Vec<Pipe>,
+    me: usize,
+    /// `None`: ended. What the debugger follows for the threads that do not run.
+    stacks: Vec<Option<Stack>>,
+    /// How many times in a row a thread found it had to wait: when each did, nothing moves.
+    idle: usize,
+    /// One of those has a time limit.
+    timed: bool,
+    waited_at: Loc,
+    /// How the program stopped, for the first thread.
+    stop: Option<Stop>,
+}
+
+impl Threads {
+    fn pipe(&mut self, h: i64) -> &mut Pipe {
+        &mut self.pipes[h as usize - 1]
+    }
+}
+
+/// Whose turn it is.
+static TURN: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+fn site(packed: i64, col: i64) -> Loc {
+    Loc { file: (packed >> 32) as usize, line: (packed & 0xffff_ffff) as usize, col: col as usize }
+}
+
+fn hand_over(to: usize) {
+    *TURN.0.lock().unwrap() = to;
+    TURN.1.notify_all();
+}
+
+fn wait_for_turn(me: usize) {
+    let mut turn = TURN.0.lock().unwrap();
+    while *turn != me {
+        turn = TURN.1.wait(turn).unwrap();
+    }
+}
+
+/// The running thread gives its turn to the next one; back here at its next turn.
+fn next_turn(heap: &mut Heap) -> Result<(), Stop> {
+    let t = &mut heap.threads;
+    let (me, n) = (t.me, t.stacks.len());
+    let Some(next) = (1..n).map(|k| (me + k) % n).find(|&k| t.stacks[k].is_some()) else { return Ok(()) };
+    switch(heap, next);
+    hand_over(next);
+    wait_for_turn(me);
+    match heap.threads.stop.take() {
+        Some(stop) if me == 0 => Err(stop),
+        // Stopped by another: the program ends without this thread.
+        Some(_) => loop {
+            std::thread::park();
+        },
+        None => Ok(()),
+    }
+}
+
+/// The debugger now follows thread `next`.
+fn switch(heap: &mut Heap, next: usize) {
+    let t = &mut heap.threads;
+    if let Some(d) = &mut heap.debugger {
+        t.stacks[t.me].iter_mut().for_each(|s| d.swap(s));
+        t.stacks[next].iter_mut().for_each(|s| d.swap(s));
+    }
+    t.me = next;
+}
+
+/// The running thread cannot go on before another has done something.
+fn wait(timed: bool, at: Loc, out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Result<(), Stop> {
+    let _ = out.flush();
+    let t = &mut heap.threads;
+    t.timed |= timed;
+    t.waited_at = at;
+    t.idle += 1;
+    if t.idle > t.stacks.iter().flatten().count() {
+        if !t.timed || heap.looking {
+            return Err(Stop::Error(fault_text(Fault::Deadlock, files, at)));
+        }
+        (t.idle, t.timed) = (0, false);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    next_turn(heap)
+}
+
+/// The end of `main`: a program ends when all its threads have.
+fn every_thread_ended(out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Result<(), Stop> {
+    while heap.threads.stacks.iter().flatten().count() > 1 {
+        wait(false, heap.threads.waited_at, out, files, heap)?;
+    }
+    Ok(())
+}
+
+/// What a new thread uses of what `kova debug` runs: it stays until the program ends, and only the
+/// thread whose turn it is touches it.
+struct Lent {
+    program: *const Program,
+    out: *mut (dyn Write + 'static),
+    files: *const [String],
+    heap: *mut Heap,
+}
+unsafe impl Send for Lent {}
+
+fn start_thread(p: &Program, function: usize, args: [i64; 2], out: &mut dyn Write, files: &[String], heap: &mut Heap) {
+    let out: *mut (dyn Write + '_) = out;
+    let lent = Lent { program: p, out: unsafe { std::mem::transmute(out) }, files, heap };
+    heap.threads.stacks.push(Some(Stack::default()));
+    heap.threads.idle = 0;
+    let me = heap.threads.stacks.len() - 1;
+    let body = move || {
+        let lent = lent;
+        wait_for_turn(me);
+        let (p, out, files, heap) = unsafe { (&*lent.program, &mut *lent.out, &*lent.files, &mut *lent.heap) };
+        let result = call(p, function, &args, out, files, heap);
+        let t = &mut heap.threads;
+        t.stacks[me] = None;
+        t.idle = 0;
+        if let Err(stop) = result {
+            t.stop = Some(stop);
+            hand_over(0);
+            return;
+        }
+        let n = t.stacks.len();
+        let next = (1..n).map(|k| (me + k) % n).find(|&k| t.stacks[k].is_some()).expect("the first thread waits for the others");
+        switch(heap, next);
+        hand_over(next);
+    };
+    // Like the interpreter's own stack (src/main.rs), smaller: there may be many.
+    std::thread::Builder::new().stack_size(1 << 27).spawn(body).expect("a thread for the debugger");
 }
 
 impl Heap {
@@ -357,7 +507,9 @@ pub fn debug(p: &Program, files: &[String], args: &[String], debugger: Debugger)
     let files = &crate::debug::files(files)[..];
     let mut out = crate::debug::Console::default();
     let mut heap = Heap { args: args.to_vec(), debugger: Some(Box::new(debugger)), ..Heap::default() };
+    heap.threads.stacks.push(Some(Stack::default()));
     let result = call(p, p.main.expect("checked by debug.rs"), &[], &mut out, files, &mut heap);
+    let result = result.and_then(|r| every_thread_ended(&mut out, files, &mut heap).map(|_| r));
     out.flush().unwrap();
     let code = match result {
         Ok(_) => 0,
@@ -830,8 +982,91 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             None => 0,
                             Some(t) => heap.make(t),
                         },
-                        StrOp::PipeNew | StrOp::PipeRetain | StrOp::PipeRelease | StrOp::PipePut | StrOp::PipeTake | StrOp::PipeClose | StrOp::PipeSelect | StrOp::Spawn => {
-                            unreachable!("stopped by `Inst::Threads`")
+                        StrOp::PipeNew => {
+                            let (limit, free) = (locals[a[0]], locals[a[1]] as usize);
+                            heap.threads.pipes.push(Pipe { items: VecDeque::new(), limit, closed: false, refs: 1, free });
+                            heap.threads.pipes.len() as i64
+                        }
+                        StrOp::PipeRetain => {
+                            if locals[a[0]] != 0 {
+                                heap.threads.pipe(locals[a[0]]).refs += 1;
+                            }
+                            locals[a[0]]
+                        }
+                        StrOp::PipeRelease => {
+                            let h = locals[a[0]];
+                            if h != 0 {
+                                let pipe = heap.threads.pipe(h);
+                                pipe.refs -= 1;
+                                if pipe.refs == 0 {
+                                    let free = pipe.free;
+                                    for b in std::mem::take(&mut pipe.items) {
+                                        call(p, free, &[b], out, files, heap)?;
+                                    }
+                                }
+                            }
+                            0
+                        }
+                        StrOp::PipePut => {
+                            let (h, b, at) = (locals[a[0]], locals[a[1]], site(locals[a[2]], locals[a[3]]));
+                            loop {
+                                let pipe = heap.threads.pipe(h);
+                                if pipe.closed {
+                                    return Err(Stop::Error(fault_text(Fault::Closed, files, at)));
+                                }
+                                if pipe.limit == 0 || (pipe.items.len() as i64) < pipe.limit {
+                                    break;
+                                }
+                                wait(false, at, out, files, heap)?;
+                            }
+                            heap.threads.pipe(h).items.push_back(b);
+                            heap.threads.idle = 0;
+                            // A thread that loops on `s.read` leaves the others a turn.
+                            next_turn(heap)?;
+                            0
+                        }
+                        StrOp::PipeTake => {
+                            let (h, at) = (locals[a[0]], site(locals[a[1]], locals[a[2]]));
+                            loop {
+                                let pipe = heap.threads.pipe(h);
+                                if let Some(b) = pipe.items.pop_front() {
+                                    heap.threads.idle = 0;
+                                    break b;
+                                }
+                                if pipe.closed {
+                                    break 0;
+                                }
+                                wait(false, at, out, files, heap)?;
+                            }
+                        }
+                        StrOp::PipeClose => {
+                            heap.threads.pipe(locals[a[0]]).closed = true;
+                            heap.threads.idle = 0;
+                            0
+                        }
+                        StrOp::PipeSelect => {
+                            let (l, at) = (locals[a[0]], site(locals[a[2]], locals[a[3]]));
+                            let time = f64::from_bits(locals[a[1]] as u64);
+                            let end = (time >= 0.0).then(|| Instant::now() + Duration::from_secs_f64(time.min(1e9)));
+                            let pipes = heap.list(l).2.clone();
+                            loop {
+                                if let Some((k, b)) = pipes.iter().enumerate().find_map(|(k, &h)| Some((k, heap.threads.pipe(h).items.pop_front()?))) {
+                                    heap.list(l).2[0] = b;
+                                    heap.threads.idle = 0;
+                                    break k as i64;
+                                }
+                                if pipes.iter().all(|&h| heap.threads.pipe(h).closed) {
+                                    break pipes.len() as i64 + 1;
+                                }
+                                if end.is_some_and(|end| Instant::now() >= end) {
+                                    break pipes.len() as i64;
+                                }
+                                wait(end.is_some(), at, out, files, heap)?;
+                            }
+                        }
+                        StrOp::Spawn => {
+                            start_thread(p, locals[a[0]] as usize, [locals[a[1]], locals[a[2]]], out, files, heap);
+                            0
                         }
                         StrOp::Workers => unreachable!("built only: `kova run` answers one question at a time"),
                         StrOp::Parallel | StrOp::Next => unreachable!("built only: `kova run` does one element at a time"),
@@ -1175,7 +1410,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                 Inst::FaultIf(..) => {}
                 // `kova run` runs such a program as native code (main.rs `native_run`).
                 Inst::Extern(_, _, _, loc) => return Err(fault(Fault::ExternInterpreted, loc)),
-                Inst::Threads(loc) => return Err(fault(Fault::ThreadsInterpreted, loc)),
+                Inst::Threads(loc) if heap.looking => return Err(fault(Fault::ThreadsInterpreted, loc)),
+                Inst::Threads(_) => {}
                 Inst::ListCheck(l, i, loc) => {
                     let length = heap.length(locals[*l]) as i64;
                     if !(0..length).contains(&locals[*i]) {

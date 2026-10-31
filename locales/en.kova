@@ -164,7 +164,7 @@ lang en {
     fault_closed := "send on a closed channel"
     fault_deadlock := "every thread is waiting, and nothing can wake them"
     fault_channel_limit := "a channel holds at least 1 value"
-    fault_threads_interpreted := "the debugger does not follow threads yet: use `kova run`"
+    fault_threads_interpreted := "the debugger's console cannot start threads"
     threads_made_help := "`threads.Channel<T>.new`, `threads.Channel<T>.limited(10)` or `threads.Shared<T>.new(value)`"
     change_needs_var := "`change` lends the value: write `x: var {type} =>`"
     select_case := "a case of `threads.select` is `name from channel`, `after(seconds)` or `closed`"

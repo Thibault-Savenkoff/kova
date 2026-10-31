@@ -41,8 +41,9 @@ pub enum Ask {
 const EVAL: &str = "kova_debug_console";
 
 /// Where to stop next, besides the breakpoints.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 enum Step {
+    #[default]
     Run,
     Pause,
     /// "Step over": the next statement of this function or of a caller (at most this many frames).
@@ -67,6 +68,21 @@ pub struct Debugger {
     /// The program run (its path and text), for `evaluation`.
     path: String,
     source: String,
+}
+
+/// What the debugger follows for each thread: only the running one's is in `Debugger`.
+#[derive(Default)]
+pub struct Stack {
+    frames: Vec<Frame>,
+    step: Step,
+}
+
+impl Debugger {
+    /// Another thread runs: a step stays in the thread it was asked in.
+    pub fn swap(&mut self, stack: &mut Stack) {
+        std::mem::swap(&mut self.frames, &mut stack.frames);
+        std::mem::swap(&mut self.step, &mut stack.step);
+    }
 }
 
 pub fn serve() -> i32 {

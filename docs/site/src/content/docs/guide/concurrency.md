@@ -276,8 +276,9 @@ network is not counted: it will wake up by itself.
 ## What to know
 
 - A program using `workers` or `threads` runs as native code in `kova run` and `kova test` too.
-  `kova debug` takes one element, or one question, at a time with `workers`; the results are the
-  same.
+  `kova debug` follows threads, one running at a time, so a breakpoint in a thread stops the whole
+  program there and a step stays in that thread. It takes one element, or one question, at a time
+  with `workers`; the results are the same.
 - `workers(1)` works one at a time; `workers(0)` stops the program, since nothing would run.
 - `random` draws differently in each thread, so a `random` inside the block gives other numbers
   than one at a time.

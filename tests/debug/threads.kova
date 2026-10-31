@@ -1,0 +1,27 @@
+import threads
+
+fn double(n: Int) -> Int {
+    let twice: Int := n * 2
+    return twice
+}
+
+fn main {
+    let c := threads.Channel<Int>.limited(1)
+    let results := threads.Channel<Int>.new
+    let (input, output): (threads.Channel<Int>, threads.Channel<Int>) := (c.clone, results.clone)
+    let worker: threads.Task<Nothing> := threads.spawn {
+        for x in input {
+            output.send(double(x))
+        }
+        output.close
+    }
+    c.send(20)
+    c.send(1)
+    c.close
+    worker.wait
+    var sum: Int := 0
+    for r in results {
+        sum += r
+    }
+    print(sum)
+}

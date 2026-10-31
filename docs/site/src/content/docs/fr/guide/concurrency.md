@@ -278,8 +278,9 @@ réseau n'est pas compté : il se réveillera tout seul.
 ## À savoir
 
 - Un programme qui utilise `workers` ou `threads` tourne en code natif dans `kova run` et `kova test`
-  aussi. Avec `workers`, `kova debug` prend un élément, ou une question, à la fois ; les résultats
-  sont les mêmes.
+  aussi. `kova debug` suit les fils, un seul à la fois : un point d'arrêt dans un fil arrête tout le
+  programme à cet endroit, et un pas reste dans ce fil. Avec `workers`, il prend un élément, ou une
+  question, à la fois ; les résultats sont les mêmes.
 - `workers(1)` travaille un à la fois ; `workers(0)` arrête le programme, puisque rien ne tournerait.
 - `random` tire différemment dans chaque fil, donc un `random` dans le bloc donne d'autres nombres
   qu'un à la fois.

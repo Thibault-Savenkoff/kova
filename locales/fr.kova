@@ -164,7 +164,7 @@ lang fr {
     fault_closed := "envoi sur un canal fermé"
     fault_deadlock := "tous les threads attendent, et rien ne peut les réveiller"
     fault_channel_limit := "un canal contient au moins 1 valeur"
-    fault_threads_interpreted := "le débogueur ne suit pas encore les threads : utilisez `kova run`"
+    fault_threads_interpreted := "la console du débogueur ne peut pas lancer de threads"
     threads_made_help := "`threads.Channel<T>.new`, `threads.Channel<T>.limited(10)` ou `threads.Shared<T>.new(valeur)`"
     change_needs_var := "`change` prête la valeur : écrivez `x: var {type} =>`"
     select_case := "un cas de `threads.select` s'écrit `nom from canal`, `after(secondes)` ou `closed`"
