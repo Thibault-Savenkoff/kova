@@ -296,6 +296,8 @@ impl Parser<'_> {
             ("not", _) => t!("habit_not"),
             ("?", _) if word(2) == "?" => t!("habit_default"),
             (_, "=") => t!("habit_assign"),
+            (_, "in") => t!("habit_in", name = before),
+            (_, "=>") if self.pos > 0 && self.t[self.pos - 1].kind == Kind::Ident => t!("habit_block_type", name = before),
             (_, "and") => t!("habit_and"),
             (_, "or") => t!("habit_or"),
             _ => return None,
@@ -1441,6 +1443,15 @@ impl Parser<'_> {
             let body = Block { open: at, stmts: vec![], close: at };
             return Ok(Function { name, generics, receiver, params, breaks, ret, contracts, only, body });
         }
+        // `fn area(self) -> Int := self.w * self.h`: one expression, the function's whole body.
+        if self.is_sym(":=") {
+            let open = self.advance().span;
+            let value = self.expression()?;
+            let span = value.span;
+            let stmt = if ret.is_some() { Stmt::Return { value: Some(value), span } } else { Stmt::Expr(value) };
+            let body = Block { open, stmts: vec![stmt], close: span };
+            return Ok(Function { name, generics, receiver, params, breaks, ret, contracts, only, body });
+        }
         let body = self.block()?;
         Ok(Function { name, generics, receiver, params, breaks, ret, contracts, only, body })
     }
@@ -1638,6 +1649,7 @@ impl Parser<'_> {
                     Mode::Read
                 };
                 let e = self.heading_expr()?;
+                let step = self.step()?;
                 self.skip_newlines();
                 let body = self.block()?;
                 match e.kind {
@@ -1651,9 +1663,14 @@ impl Parser<'_> {
                         if mode == Mode::Move {
                             self.diags.push(Diag::new(start.span.to(end.span), t!("for_move_range")).help(t!("for_move_range_help")));
                         }
-                        Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, body })
+                        Ok(Stmt::Loop { counter, start: *start, end: *end, inclusive: op == BinOp::RangeInclusive, step: step.unwrap_or(1), body })
                     }
-                    _ => Ok(Stmt::Each { name: counter, value, mode, list: e, body }),
+                    _ => {
+                        if step.is_some() {
+                            self.diags.push(Diag::new(e.span, t!("step_needs_range")));
+                        }
+                        Ok(Stmt::Each { name: counter, value, mode, list: e, body })
+                    }
                 }
             }
             Kind::Keyword("from") => {
@@ -1670,8 +1687,9 @@ impl Parser<'_> {
                 }
                 self.advance();
                 let end = self.heading_expr()?;
+                let step = self.step()?.unwrap_or(1);
                 self.skip_newlines();
-                Ok(Stmt::Loop { counter, start, end, inclusive: true, body: self.block()? })
+                Ok(Stmt::Loop { counter, start, end, inclusive: true, step, body: self.block()? })
             }
             _ => {
                 let e = self.expression()?;
@@ -2076,6 +2094,29 @@ impl Parser<'_> {
     }
 
     /// `{ x: Int, y: Int => … }` or `{ … }` without parameters.
+    /// `step 2` or `step -1` after a range: a written number, which says which way the loop goes.
+    fn step(&mut self) -> R<Option<i64>> {
+        if self.kind() != Kind::Ident || self.text(self.token().span) != "step" {
+            return Ok(None);
+        }
+        self.advance();
+        let start = self.token().span;
+        let minus = self.is_sym("-");
+        if minus {
+            self.advance();
+        }
+        let Kind::Int(v) = self.kind() else {
+            return self.error(start, t!("step_number"));
+        };
+        let v = v as i64;
+        let span = self.advance().span;
+        if v == 0 {
+            self.diags.push(Diag::new(start.to(span), t!("step_number")));
+            return Ok(Some(1));
+        }
+        Ok(Some(if minus { -v } else { v }))
+    }
+
     fn block_literal(&mut self) -> R<Expr> {
         let open = self.advance().span; // {
         let mut params = vec![];

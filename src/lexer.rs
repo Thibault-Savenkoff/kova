@@ -157,8 +157,8 @@ fn raw_tokens(source: &str) -> (Vec<(Token, bool)>, Vec<Diag>) {
             Kind::Sym(s)
         } else {
             i += c.len_utf8();
-            let msg = t!("unexpected_char", char = c);
-            diags.push(Diag::new(Span::new(start, i), msg));
+            let d = Diag::new(Span::new(start, i), t!("unexpected_char", char = c));
+            diags.push(if c == ';' { d.help(t!("habit_semicolon")) } else { d });
             continue;
         };
 

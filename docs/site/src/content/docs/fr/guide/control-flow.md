@@ -144,6 +144,27 @@ Alan
   calculées une fois, avant le premier tour.
 - `write` affiche sans passer à la ligne ; `print` passe à la ligne.
 
+Pour avancer d'un autre pas, ou reculer, ajoute `step` et un nombre écrit. Un `step` négatif demande
+un début au-dessus de la fin :
+
+```kova
+fn main {
+    for i in 0..10 step 3 {
+        write(i)
+    }
+    print("")
+    for i in 3..=1 step -1 {
+        write(i)
+    }
+    print("")
+}
+```
+
+```text
+0369
+321
+```
+
 Avec deux noms, `for` donne aussi la place de chaque élément, comptée depuis 0 :
 
 ```kova

@@ -616,9 +616,16 @@ impl Owner<'_> {
         Some((q, r))
     }
 
+    /// `args` with each function given by its name as the block it stands for (`Checker::named_block`).
+    fn named_blocks(&self, args: &[Expr]) -> Vec<Expr> {
+        let block = |a: &Expr| self.info.filled.get(&a.id).filter(|f| matches!(f.kind, ExprKind::Block { .. })).cloned();
+        args.iter().map(|a| block(a).unwrap_or_else(|| a.clone())).collect()
+    }
+
     /// A call to `callee` (`shown` in messages), after its receiver if it is a method:
     /// a `move` parameter takes its argument, the others borrow it.
     fn arguments(&mut self, callee: &str, shown: &str, receiver: Option<(Mode, &Expr)>, args: &[Expr]) {
+        let args = &self.named_blocks(args);
         let modes = self.signatures.get(callee).map(|(_, m)| m.clone()).unwrap_or_default();
         let mut uses: Vec<(Mode, &Expr)> = receiver.into_iter().collect();
         for (i, a) in args.iter().enumerate() {
@@ -811,7 +818,8 @@ impl Owner<'_> {
             }
             // `l.each { … }`: like a `for` loop, the List is frozen during the block;
             // `l.fold(start) { … }` takes its start value.
-            ExprKind::Method { receiver, name, args } if matches!(args.last(), Some(Expr { kind: ExprKind::Block { .. }, .. })) => {
+            ExprKind::Method { receiver, name, args } if matches!(self.named_blocks(args).last(), Some(Expr { kind: ExprKind::Block { .. }, .. })) => {
+                let args = &self.named_blocks(args);
                 self.borrow(receiver);
                 if name.text == "fold" {
                     self.give(&args[0]);

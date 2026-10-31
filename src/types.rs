@@ -1940,6 +1940,7 @@ fn is_nothing(t: &TypeAst) -> bool {
 /// The written type; `Error` if it contains an unknown name.
 pub fn type_of(t: &TypeAst, structs: &Structs) -> Type {
     match t {
+        TypeAst::Inferred => Type::Error,
         TypeAst::Any(n) => Type::Any(n.text.clone()),
         // `Stack` alone is not a type: `Stack<Int>` is.
         TypeAst::Name(n) => primitive(&n.text)
@@ -2140,7 +2141,9 @@ impl Checker<'_> {
         };
         let vars = self.scopes.iter().flat_map(|s| s.keys());
         let known = vars.chain(self.functions.keys()).chain(self.structs.keys()).map(String::as_str);
-        let help = module_help(name).or_else(|| word.or_else(|| closest(name, known.chain(BASIC_TYPES).chain(["print"]))).map(|w| t!("did_you_mean", name = w)));
+        // A function's name alone: suggesting that same name would help nobody.
+        let function = (name == "print" || self.functions.contains_key(name)).then(|| t!("function_alone", name = name));
+        let help = module_help(name).or(function).or_else(|| word.or_else(|| closest(name, known.chain(BASIC_TYPES).chain(["print"]))).map(|w| t!("did_you_mean", name = w)));
         self.diags.push(match help {
             Some(h) => d.help(h),
             None => d,
@@ -2275,7 +2278,7 @@ impl Checker<'_> {
     fn equatable(&self, t: &Type) -> bool {
         match t {
             Type::Tuple(ts) => ts.iter().all(|t| self.equatable(t)),
-            Type::Optional(t) => self.equatable(t),
+            Type::Optional(t) | Type::List(t) => self.equatable(t),
             Type::Result(a, b) => self.equatable(a) && self.equatable(b),
             // `light = Light.Red`: an enum of copied values is compared like an `Int` (J4).
             Type::Enum(_) => is_copy(t) || self.has(t, "Equal"),
@@ -2287,7 +2290,7 @@ impl Checker<'_> {
     fn missing_equal(&self, t: &Type) -> Option<Type> {
         match t {
             Type::Tuple(ts) => ts.iter().find_map(|t| self.missing_equal(t)),
-            Type::Optional(t) => self.missing_equal(t),
+            Type::Optional(t) | Type::List(t) => self.missing_equal(t),
             Type::Result(a, b) => self.missing_equal(a).or_else(|| self.missing_equal(b)),
             t if self.equatable(t) => None,
             // `Answer<Dog>`: `Dog`.
@@ -2627,7 +2630,7 @@ impl Checker<'_> {
     fn field_type(&mut self, f: &File, decls: &HashMap<&str, usize>, t: &TypeAst, open: &mut Vec<usize>) -> Type {
         match t {
             // Refused by the parser: a block type is only a parameter's.
-            TypeAst::Block(..) => Type::Error,
+            TypeAst::Block(..) | TypeAst::Inferred => Type::Error,
             TypeAst::Any(n) => {
                 self.any_type(n);
                 Type::Any(n.text.clone())
@@ -2852,6 +2855,7 @@ impl Checker<'_> {
                 self.report_unknown(e);
             }
             TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.report_unknown(t)),
+            TypeAst::Inferred => {}
         }
     }
 
@@ -3193,6 +3197,12 @@ impl Checker<'_> {
             }
             return;
         }
+        // `l.map(double)`, `curve(bounce)`: a function by its name, where a block is expected.
+        if let (ExprKind::Var(n), Type::Block(ps, r)) = (&e.kind, expected)
+            && self.named_block(e, n, ps, Some(r))
+        {
+            return;
+        }
         // `[1, 2]` where a `List<Float>` is expected: each element is checked against `Float`; `[]` takes the type.
         if let (ExprKind::List(elems), Type::List(elem)) = (&e.kind, expected) {
             elems.iter().for_each(|x| self.expect(x, elem));
@@ -3388,6 +3398,8 @@ impl Checker<'_> {
                 d = d.help(t!("big_literal_help"));
             } else if matches!((expected, &t), (Type::Int, Type::BigInt) | (Type::BigInt, Type::Int)) {
                 d = d.help(t!("no_big_conversion"));
+            } else if *expected == Type::String && matches!(t, Type::Int | Type::Float | Type::Bool | Type::Char) {
+                d = d.help(t!("text_plus_help"));
             }
             self.diags.push(d);
         }
@@ -3396,14 +3408,15 @@ impl Checker<'_> {
     /// Checks that `e` has one of the `allowed` types; returns its type.
     fn one_of(&mut self, e: &Expr, allowed: &[Type], what: &str) -> Type {
         let t = self.expr(e);
-        if t == Type::Error || allowed.contains(&t) {
+        if t == Type::Error || allowed.contains(&t) || (what == "`+`" && matches!(t, Type::List(_))) {
             return t;
         }
         // `` `Int`, `Float` or `BigInt` ``
         let mut names: Vec<String> = allowed.iter().map(|t| format!("`{}`", t.text())).collect();
         let last = names.pop().unwrap_or_default();
         let names = if names.is_empty() { last } else { format!("{} {} {last}", names.join(", "), t!("word_or")) };
-        self.error(e.span, t!("applies_to", what = what, allowed = names, given = t.text()));
+        let d = Diag::new(e.span, t!("applies_to", what = what, allowed = names, given = t.text()));
+        self.diags.push(if what == "`*`" && t == Type::String { d.help(t!("text_times_help")) } else { d });
         Type::Error
     }
 
@@ -3705,7 +3718,7 @@ impl Checker<'_> {
         let fold = base == "fold";
         let expected = if fold || workers { 2 } else { 1 };
         let block = args.last().filter(|b| {
-            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
+            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if self.functions.contains_key(n) || matches!(self.lookup(n), Some(Variable { ty: Type::Block(..), .. }))))
         });
         let Some(block) = block else {
             let example = match name.text.as_str() {
@@ -3741,6 +3754,8 @@ impl Checker<'_> {
                 self.types[block.id] = t.clone();
                 t
             }
+            // `l.map(double)`: a function by its name.
+            ExprKind::Var(n) if self.named_block(block, n, &params_wanted, result.as_ref()) => self.types[block.id].clone(),
             // `l.each(f)`: a block parameter given along.
             _ => {
                 let t = self.passed(block);
@@ -3769,7 +3784,12 @@ impl Checker<'_> {
     /// Checks a block `{ x: Int => … }` against the parameters and the result expected (if known):
     /// its type, `{Int -> Bool}`. Its parameters are borrowed, like a function's.
     fn block_literal(&mut self, params: &[Param], body: &Block, wanted: Option<&[Type]>, result: Option<&Type>) -> Type {
-        let written: Vec<Type> = params.iter().map(|p| self.written_type(&p.ty)).collect();
+        let written: Vec<Type> = (params.iter().enumerate())
+            .map(|(i, p)| match &p.ty {
+                TypeAst::Inferred => wanted.and_then(|ps| ps.get(i)).cloned().unwrap_or(Type::Error),
+                ty => self.written_type(ty),
+            })
+            .collect();
         if let Some(ps) = wanted {
             let expected = Type::Block(ps.to_vec(), Box::new(result.cloned().unwrap_or(Type::Unit))).text();
             if ps.len() != written.len() {
@@ -3809,6 +3829,27 @@ impl Checker<'_> {
         self.loops = loops;
         self.scopes.pop();
         Type::Block(written, Box::new(r))
+    }
+
+    /// `double` given where a block taking `ps` is expected: the block `{ x => double(x) }`, kept in
+    /// `Info::filled`. Whether `e` is the name of such a function.
+    fn named_block(&mut self, e: &Expr, n: &str, ps: &[Type], result: Option<&Type>) -> bool {
+        let fits = self.lookup(n).is_none() && self.functions.get(n).is_some_and(|f| f.receiver.is_none() && f.params.len() == ps.len() && f.params.iter().all(|(m, _)| *m == Mode::Read));
+        if !fits {
+            return false;
+        }
+        let names: Vec<Name> = (0..ps.len()).map(|i| Name { text: format!("… {i}"), span: e.span }).collect();
+        let args = names.iter().map(|p| self.fresh(e.span, ExprKind::Var(p.text.clone()))).collect();
+        let call = self.fresh(e.span, ExprKind::Call { name: Name { text: n.to_string(), span: e.span }, args });
+        let body = Block { open: e.span, stmts: vec![Stmt::Expr(call)], close: e.span };
+        let params: Vec<Param> = names.into_iter().map(|name| Param { name, mode: Mode::Read, ty: TypeAst::Inferred, default: None }).collect();
+        let t = self.block_literal(&params, &body, Some(ps), result);
+        let block = self.fresh(e.span, ExprKind::Block { params, body });
+        self.types[block.id] = t.clone();
+        self.types[e.id] = t;
+        self.spans[e.id] = e.span;
+        self.filled.insert(e.id, block);
+        true
     }
 
     /// A block given along by its name (`repeat(n - 1, body)`, not called), or a block written there.
@@ -4173,6 +4214,7 @@ impl Checker<'_> {
                 self.exposes(owner, e);
             }
             TypeAst::Block(ps, r) => ps.iter().chain(r.as_deref()).for_each(|t| self.exposes(owner, t)),
+            TypeAst::Inferred => {}
         }
     }
 
@@ -4305,7 +4347,7 @@ impl Checker<'_> {
                     self.expect(value, &ty);
                     return;
                 }
-                let concat = *op == Some(BinOp::Plus) && ty == Type::String;
+                let concat = *op == Some(BinOp::Plus) && matches!(ty, Type::String | Type::List(_));
                 if op.is_some() && !concat && !matches!(ty, Type::Int | Type::Float | Type::BigInt | Type::Error) {
                     let text = &self.src[target.span().start..target.span().end];
                     self.error(target.span(), t!("not_numeric", target = text));
@@ -4618,9 +4660,16 @@ impl Checker<'_> {
                     };
                 }
                 self.expect(i, &Type::Int);
+                if matches!(t, Type::List(_)) && matches!(i.kind, ExprKind::Unary(UnOp::Neg, _)) {
+                    self.diags.push(Diag::new(i.span, t!("negative_index")).help(t!("negative_index_help")));
+                }
                 match t {
                     Type::List(elem) => *elem,
                     Type::Error => Type::Error,
+                    Type::String => {
+                        self.diags.push(Diag::new(e.span, t!("index_not_list", type = Type::String.text())).help(t!("text_index_help")));
+                        Type::Error
+                    }
                     t => {
                         self.error(e.span, t!("index_not_list", type = t.text()));
                         Type::Error
@@ -4940,7 +4989,6 @@ impl Checker<'_> {
                         match self.missing_equal(&ta) {
                             None => {}
                             Some(Type::Unit) => self.error(a.span, t!("expression_nothing")),
-                            Some(Type::List(_)) => self.error(e.span, t!("list_compare", op = op.text())),
                             Some(Type::Map(..)) => self.error(e.span, t!("map_compare", op = op.text())),
                             Some(Type::Set(_)) => self.error(e.span, t!("set_compare", op = op.text())),
                             Some(Type::Param(p)) => self.error(e.span, t!("param_compare", op = op.text(), type = p.name)),
@@ -5539,7 +5587,8 @@ impl Checker<'_> {
         }
         if BUILTINS.contains(&name.text.as_str()) {
             if args.len() != 1 {
-                self.error(name.span, t!("builtin_one_arg", name = name.text));
+                let d = Diag::new(name.span, t!("builtin_one_arg", name = name.text));
+                self.diags.push(if args.len() > 1 { d.help(t!("print_many_help", name = name.text)) } else { d });
             }
             for a in args {
                 match self.expr(a) {

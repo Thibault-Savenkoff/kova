@@ -94,6 +94,7 @@ erreur: types différents : `String` attendu, `Int` donné
   |
 3 |     print("Hello, " + name.length)
   |                       ^^^^^^^^^^^
+  = aide : mettez la valeur dans le texte : `"total : {x}"`
 ```
 
 `name.length` est un nombre, et `+` ne joint des textes qu'avec des textes : Kova ne transforme

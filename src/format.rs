@@ -75,7 +75,7 @@ pub fn format(src: &str) -> Option<String> {
             heading = matches!(t.kind, Kind::Keyword("struct" | "enum"));
         } else if let Some((p, g)) = prev
             && !(typed.last() == Some(&true) && (p.kind == Kind::Sym("{") || t.kind == Kind::Sym("}")))
-            && space(p, g, t, generic, k.checked_sub(2).map(|j| &tokens[j]), generics > 0, heading)
+            && space(src, p, g, t, generic, k.checked_sub(2).map(|j| &tokens[j]), generics > 0, heading)
         {
             out.push(' ');
         }
@@ -165,7 +165,7 @@ fn gap_out(out: &mut String, gap: &str, inside: usize, indent: usize, blank: boo
 /// Is there a space between `a` and `b` on the same line? `g`: `a` is a generic `<` or `>`;
 /// `generic`: `b` is one; `before`: the token before `a`; `in_generics`: between `<` and `>`;
 /// `heading`: on a `struct` or `enum` heading.
-fn space(a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in_generics: bool, heading: bool) -> bool {
+fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in_generics: bool, heading: bool) -> bool {
     // `-x`, `!done`: a sign, not a subtraction.
     let value_before = |t: Option<&Token>| match t.map(|t| t.kind) {
         Some(Kind::Sym(s)) => matches!(s, ")" | "]" | "}" | "?"),
@@ -175,7 +175,8 @@ fn space(a: Token, g: bool, b: &Token, generic: bool, before: Option<&Token>, in
     };
     let sign = match a.kind {
         Kind::Sym("!") => true,
-        Kind::Sym("-") => !value_before(before),
+        // `for i in 3..=1 step -1`: `step - 1` stays a subtraction on a variable.
+        Kind::Sym("-") => !value_before(before) || (a.span.end == b.span.start && before.is_some_and(|t| &source[t.span.start..t.span.end] == "step" && t.span.end < a.span.start)),
         _ => false,
     };
     // `r.header("Content-Type")`, `files.move(a)`: after a dot a reserved word is a name; and

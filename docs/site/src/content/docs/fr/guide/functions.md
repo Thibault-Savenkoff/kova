@@ -59,6 +59,21 @@ Les paramètres ne peuvent pas changer dans la fonction : ils sont ce que l'appe
 changer une valeur de l'appelant, le paramètre dit `var`, et l'appel aussi (voir
 [Possession](/fr/guide/ownership/)).
 
+Une fonction d'une seule expression peut se passer des accolades et du `return`. `:=` donne sa valeur
+à la fonction, comme il donne sa valeur à une variable :
+
+```kova
+fn add(a: Int, b: Int) -> Int := a + b
+
+fn main {
+    print(add(1, 2))
+}
+```
+
+```text
+3
+```
+
 ## Pas de `()` sans arguments
 
 Une fonction sans paramètres se déclare et s'appelle sans parenthèses :

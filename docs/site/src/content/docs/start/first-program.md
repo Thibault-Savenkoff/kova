@@ -93,6 +93,7 @@ error: different types: `String` expected, `Int` given
   |
 3 |     print("Hello, " + name.length)
   |                       ^^^^^^^^^^^
+  = help: put the value inside the text: `"total: {x}"`
 ```
 
 `name.length` is a number, and `+` joins texts only with texts: Kova never turns one type into

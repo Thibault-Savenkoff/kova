@@ -1,0 +1,52 @@
+// A function's name, where a block is expected: `{ x: Int => double(x) }` without the words.
+fn double(x: Int) -> Int {
+    return x * 2
+}
+
+fn big(x: Int) -> Bool {
+    return x > 1
+}
+
+fn show(x: Int) {
+    print(x)
+}
+
+fn later(a: Int, b: Int) -> Bool {
+    return a > b
+}
+
+fn add(sum: Int, x: Int) -> Int {
+    return sum + x
+}
+
+fn twice(x: Int, f: {Int -> Int}) -> Int {
+    return f(f(x))
+}
+
+fn name(x: Int) -> String {
+    return "n{x}"
+}
+
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l.map(double))
+    print(l.filter(big))
+    l.each(show)
+    print(l.sorted(later))
+    print(l.fold(0, add))
+    print(l.any(big))
+    print(twice(3, double))
+    print(l.map(name))
+    print(l.map(double).filter(big).map(double))
+}
+// expect: [2, 4, 6]
+// expect: [2, 3]
+// expect: 1
+// expect: 2
+// expect: 3
+// expect: [3, 2, 1]
+// expect: 6
+// expect: true
+// expect: 12
+// expect: ["n1", "n2", "n3"]
+// expect: [4, 8, 12]

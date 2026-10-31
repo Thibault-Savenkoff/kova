@@ -173,6 +173,26 @@ un set garde l'ordre dans lequel les valeurs ont été ajoutées la première fo
 
 ## Comparer des collections
 
-`=` n'est pas défini entre listes : deux listes peuvent être égales élément par élément, ou être la
-même liste, et Kova ne choisit pas pour toi. Compare ce que tu veux dire (`a.length = b.length`,
-une boucle), ou mets la liste dans une struct qui suit `Equal`.
+`=` compare deux listes élément par élément : même longueur, mêmes éléments, dans le même ordre. En
+Kova, une liste est une valeur, donc c'est bien ce que veut dire « égales ». `+` crée une nouvelle
+liste, `+=` ajoute à une liste :
+
+```kova
+fn main {
+    let a: List<Int> := [1, 2]
+    print(a = [1, 2])
+    print(a = [2, 1])
+    var b: List<Int> := a + [3]
+    b += [4, 5]
+    print(b)
+}
+```
+
+```text
+true
+false
+[1, 2, 3, 4, 5]
+```
+
+Les éléments doivent eux-mêmes pouvoir se comparer, comme les clés d'une map. Les maps et les sets
+n'ont pas encore de `=`.

@@ -34,6 +34,9 @@ du guide montre comment s'en servir ; cette page liste tout ce qu'elles ont.
 | `l.reversed -> List<T>` | une nouvelle liste, dans l'ordre inverse. |
 | `l[i]` | l'élément à la position `i`. Après la fin, le programme s'arrête. |
 | `l[i] := v` | remplace l'élément en `i` (`l` doit être un `var`). |
+| `a = b`, `a != b` | même longueur et mêmes éléments dans le même ordre. |
+| `a + b` | une nouvelle liste : les éléments de `a`, puis ceux de `b`, copiés. |
+| `l += other` | ajoute une copie de chaque élément de `other` à la fin. |
 | `l.add(v)` | met `v` à la fin. Une valeur qui possède de la mémoire y est déplacée : `l.add(move name)`. |
 | `l.remove(i) -> T` | retire l'élément en `i` et le donne ; ceux d'après reculent d'une place. |
 

@@ -1,0 +1,34 @@
+// A function of one expression, without braces or `return`.
+struct Rect {
+    w: Int
+    h: Int
+
+    fn area(self) -> Int := self.w * self.h
+}
+
+fn add(a: Int, b: Int) -> Int := a + b
+
+fn greet(name: String) := print("Hello {name}")
+
+fn seven -> Int := 7
+
+fn sign(x: Int) -> Int := if x < 0 { -1 } else { 1 }
+
+fn half(x: Int) -> Int
+    require x >= 0 else "not negative"
+:= x / 2
+
+fn main {
+    print(add(1, 2))
+    greet("Ada")
+    print(seven)
+    print(Rect { w := 2, h := 3 }.area)
+    print(sign(-4))
+    print(half(8))
+}
+// expect: 3
+// expect: Hello Ada
+// expect: 7
+// expect: 6
+// expect: -1
+// expect: 4

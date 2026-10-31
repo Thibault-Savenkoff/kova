@@ -353,6 +353,8 @@ pub enum TypeAst {
     Any(Name),
     /// `{Int -> Bool}`: a block taking an `Int` and giving a `Bool` (only a parameter's type).
     Block(Vec<TypeAst>, Option<Box<TypeAst>>),
+    /// A block's parameter whose type comes from what the block is given to.
+    Inferred,
 }
 
 impl TypeAst {
@@ -366,6 +368,7 @@ impl TypeAst {
             TypeAst::Result(t, e) => format!("{} or {}", t.text(), e.text()),
             TypeAst::Any(n) => format!("any {}", n.text),
             TypeAst::Block(ps, r) => block_text(ps.iter().map(TypeAst::text).collect(), r.as_ref().map(|r| r.text())),
+            TypeAst::Inferred => String::new(),
         }
     }
 }
@@ -470,7 +473,8 @@ pub enum Stmt {
     If { cond: Expr, then: Block, otherwise: Option<Block> },
     While { cond: Expr, body: Block },
     /// `for i in a..b` (`inclusive` = false) and `for i in a..=b` / `from i := a to b` (`inclusive` = true).
-    Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, body: Block },
+    /// `step`: what is added at each turn, 1 unless the loop says.
+    Loop { counter: Name, start: Expr, end: Expr, inclusive: bool, step: i64, body: Block },
     /// `for score in scores`: each element of a List, borrowed (PLAN 2.7.9).
     /// `for x in l`, or `for name, age in ages` on a Map (`value`).
     /// `for x in var l`: `mode` = `Var`, each `x` changes its element (PLAN 2.7.9).

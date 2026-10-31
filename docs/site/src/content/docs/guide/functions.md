@@ -57,6 +57,21 @@ Parameters cannot change inside the function: they are what the caller gave. To 
 of the caller, the parameter says `var`, and so does the call (see
 [Ownership](/guide/ownership/)).
 
+A function that is one expression can skip the braces and the `return`. `:=` gives the function
+its value, as it gives a variable its value:
+
+```kova
+fn add(a: Int, b: Int) -> Int := a + b
+
+fn main {
+    print(add(1, 2))
+}
+```
+
+```text
+3
+```
+
 ## No `()` without arguments
 
 A function without parameters is declared and called without parentheses:

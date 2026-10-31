@@ -1,0 +1,38 @@
+// `step` after a range, both ways.
+fn main {
+    for i in 0..10 step 3 {
+        write(i)
+    }
+    print("")
+    for i in 0..=9 step 3 {
+        write(i)
+    }
+    print("")
+    for i in 3..=1 step -1 {
+        write(i)
+    }
+    print("")
+    for i in 3..1 step -1 {
+        write(i)
+    }
+    print("")
+    from i := 10 to 0 step -5 {
+        write(i)
+        write(",")
+    }
+    print("")
+    for i in 1..=2 step -1 {
+        write(i)
+    }
+    print("none")
+    var step: Int := 2
+    step += 1
+    print(step)
+}
+// expect: 0369
+// expect: 0369
+// expect: 321
+// expect: 32
+// expect: 10,5,0,
+// expect: none
+// expect: 3

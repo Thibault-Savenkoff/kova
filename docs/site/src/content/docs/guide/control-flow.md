@@ -142,6 +142,27 @@ Alan
   before the first turn.
 - `write` prints without going to the next line; `print` goes to the next line.
 
+To go by another amount, or backwards, add `step` and a written number. A negative `step` needs a
+start above the end:
+
+```kova
+fn main {
+    for i in 0..10 step 3 {
+        write(i)
+    }
+    print("")
+    for i in 3..=1 step -1 {
+        write(i)
+    }
+    print("")
+}
+```
+
+```text
+0369
+321
+```
+
 With two names, `for` also gives each element's place, counted from 0:
 
 ```kova

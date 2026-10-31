@@ -172,6 +172,24 @@ keeps the order values were first added.
 
 ## Comparing collections
 
-`=` is not defined between lists: two lists may be equal element by element, or be the same
-list, and Kova does not choose for you. Compare what you mean (`a.length = b.length`, a loop),
-or put the list in a struct that follows `Equal`.
+`=` compares two lists element by element: same length, same elements, in the same order. A list
+in Kova is a value, so that is what equal means. `+` makes a new list, `+=` adds to a list:
+
+```kova
+fn main {
+    let a: List<Int> := [1, 2]
+    print(a = [1, 2])
+    print(a = [2, 1])
+    var b: List<Int> := a + [3]
+    b += [4, 5]
+    print(b)
+}
+```
+
+```text
+true
+false
+[1, 2, 3, 4, 5]
+```
+
+The elements must be comparable themselves, like the keys of a map. Maps and sets have no `=` yet.

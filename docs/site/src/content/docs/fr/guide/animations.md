@@ -321,8 +321,8 @@ suite ce que change un réglage, avant même d'ouvrir une fenêtre.
 `ui.Area` pour le départ et le but, et `curve` pour la façon. Il s'occupe des pas et de l'horloge, et
 reconstruit la vue à chaque image, donc un canvas `ui.fill` suit la fenêtre.
 
-Une courbe est un bloc, et un bloc peut appeler une fonction. Une courbe construite plus haut s'utilise
-donc en une ligne :
+`curve` prend un bloc, ou le nom d'une fonction. Une courbe construite plus haut s'utilise donc en une
+ligne :
 
 ```kova
 import ui
@@ -342,7 +342,7 @@ fn view(n: Int) -> ui.View {
 
 fn update(n: var Int, e: Event) {
     match e {
-        Grow => ui.animate(ui.screen) time(1200) curve { t: Float => bounce(t) }
+        Grow => ui.animate(ui.screen) time(1200) curve(bounce)
     }
 }
 
@@ -354,9 +354,6 @@ fn main {
 ```text
 [Grow] button "Grow"
 ```
-
-`curve` prend un bloc, pas un nom de fonction : `curve { t: Float => bounce(t) }`, jamais
-`curve(bounce)`.
 
 Le but est n'importe quelle `ui.Area`, donc c'est là que se décide le mouvement. Une taille gardée au
 centre de l'écran :

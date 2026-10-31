@@ -1111,7 +1111,7 @@ impl<'a> Translator<'a> {
         if let Helper::Equal(ty) = h {
             let (a, b) = (self.new_slots(ty), self.new_slots(ty));
             self.current = self.new_block();
-            let same = self.equal_variants(&a, &b, ty);
+            let same = if let Type::List(elem) = ty { self.equal_lists(a[0], b[0], elem) } else { self.equal_variants(&a, &b, ty) };
             self.finish(End::Return(vec![same]));
             return self.function(format!("equal {}", ty.text()), a.len() * 2, vec![Scalar::Int]);
         }
@@ -2033,7 +2033,7 @@ impl<'a> Translator<'a> {
                 }
                 same
             }
-            Type::Enum(_) | Type::Optional(_) | Type::Result(..) => {
+            Type::Enum(_) | Type::Optional(_) | Type::Result(..) | Type::List(_) => {
                 let f = self.helper(Helper::Equal(ty.clone()));
                 let d = self.int_local();
                 self.emit(Inst::Call(vec![d], f, [a, b].concat()));
@@ -2091,6 +2091,31 @@ impl<'a> Translator<'a> {
             // A `Float` (`0.0 = -0.0`, written differently), an `any`.
             _ => self.constant(0),
         }
+    }
+
+    /// Inside the `Equal` helper: same length, then the same elements in the same order.
+    fn equal_lists(&mut self, a: Local, b: Local, elem: &Type) -> Local {
+        let (n, m, same) = (self.int_local(), self.int_local(), self.int_local());
+        self.emit(Inst::ListLength(n, a));
+        self.emit(Inst::ListLength(m, b));
+        self.emit(Inst::Binary(same, Op::Eq, n, m, NOWHERE));
+        let (compare, after) = (self.new_block(), self.new_block());
+        self.go(End::Branch(same, compare, after), compare);
+        self.times(n, |t, i| {
+            let (x, y) = (t.load(a, i, elem), t.load(b, i, elem));
+            let eq = t.equal(&x, &y, elem, Span::new(0, 0));
+            t.emit(Inst::Binary(same, Op::Times, same, eq, NOWHERE));
+        });
+        self.go(End::Jump(after), after);
+        same
+    }
+
+    /// Adds a copy of each element of `from` to `list`.
+    fn add_all(&mut self, list: Local, from: Local, elem: &Type) {
+        self.each_element(from, elem, |t, _, v| {
+            let copy = t.clone_value(&v, elem);
+            t.push(list, &copy);
+        });
     }
 
     /// Inside the `Equal` helper: same variant, then the same fields for that variant.
@@ -2887,7 +2912,10 @@ impl<'a> Translator<'a> {
                     let v = self.expr1(value);
                     let (place, ty) = self.target_places(target).remove(0);
                     let old = self.read(&place)[0];
-                    let r = if ty == Type::String {
+                    let r = if let Type::List(elem) = &ty {
+                        self.add_all(old, v, elem);
+                        old
+                    } else if ty == Type::String {
                         let r = self.int_local();
                         self.emit(Inst::Str(r, StrOp::Concat, vec![old, v]));
                         self.emit(Inst::Free(old));
@@ -2950,7 +2978,7 @@ impl<'a> Translator<'a> {
                 self.loops.pop();
                 self.go(End::Jump(head), exit);
             }
-            Stmt::Loop { counter, start, end, inclusive, body } => {
+            Stmt::Loop { counter, start, end, inclusive, step, body } => {
                 // The end bound is computed only once, before the loop.
                 let s = self.expr1(start);
                 let i = self.int_local();
@@ -2964,7 +2992,12 @@ impl<'a> Translator<'a> {
                 let loc = self.loc(counter.span);
                 self.go(End::Jump(head), head);
                 let c = self.int_local();
-                let test = if *inclusive { Op::Le } else { Op::Lt };
+                let test = match (*inclusive, *step > 0) {
+                    (true, true) => Op::Le,
+                    (false, true) => Op::Lt,
+                    (true, false) => Op::Ge,
+                    (false, false) => Op::Gt,
+                };
                 self.emit(Inst::Binary(c, test, i, bound, loc));
                 self.go(End::Branch(c, b_body, exit), b_body);
 
@@ -2982,8 +3015,8 @@ impl<'a> Translator<'a> {
                 } else {
                     self.go(End::Jump(increment), increment);
                 }
-                let one = self.constant(1);
-                self.emit(Inst::Binary(i, Op::Plus, i, one, loc));
+                let by = self.constant(*step);
+                self.emit(Inst::Binary(i, Op::Plus, i, by, loc));
                 self.go(End::Jump(head), exit);
             }
             Stmt::Each { name, value, mode, list, body } => {
@@ -4142,7 +4175,7 @@ impl<'a> Translator<'a> {
     /// block's body copied inside (like Lisaac, which inlines its blocks). The List cannot change
     /// meanwhile (`ownership.rs`): its length is read once.
     fn block_method(&mut self, e: &Expr, list: Local, elem: &Type, name: &str, args: &[Expr]) -> Slots {
-        let block = args.last().expect("block checked by the type checker");
+        let block = self.written_block(args.last().expect("block checked by the type checker"));
         // `l.each(f)`: a block parameter, called at each turn.
         let given = (!matches!(block.kind, ExprKind::Block { .. })).then(|| self.expr(block));
         let ty = self.ty(e);
@@ -4384,6 +4417,7 @@ impl<'a> Translator<'a> {
     /// comes before the previous one, so equal elements keep their order.
     /// ponytail: insertion sort, O(n²); a merge sort when Lists of thousands are sorted.
     fn sorted(&mut self, list: Local, elem: &Type, block: Option<&Expr>, span: Span) -> Slots {
+        let block = block.map(|b| self.written_block(b));
         // A merge sort from the bottom up, stable: runs of 1, 2, 4… elements merged from `src` into
         // `dst`, then the two Lists change roles. Elements are moved, never copied: `dst` starts with
         // `n` empty elements, and the List left over at the end is freed without its elements.
@@ -4579,6 +4613,14 @@ impl<'a> Translator<'a> {
             self.emit(Inst::ListLoad(v, from, i, slot));
             self.emit(Inst::ListStore(to, k, slot, v));
         }
+    }
+
+    /// `block`, or the block a function given by its name stands for (`Checker::named_block`).
+    fn written_block<'b>(&self, block: &'b Expr) -> &'b Expr
+    where
+        'a: 'b,
+    {
+        self.info.filled.get(&block.id).filter(|f| matches!(f.kind, ExprKind::Block { .. })).unwrap_or(block)
     }
 
     /// Runs `block` on `vals`: its body copied here, or a call of the block `given`.
@@ -5544,6 +5586,15 @@ impl<'a> Translator<'a> {
                 let loc = self.operator(a);
                 let dst = self.big(*op, va, vb, loc);
                 self.temps.push((dst, Type::BigInt));
+                vec![dst]
+            }
+            ExprKind::Binary(BinOp::Plus, a, b) if matches!(self.ty(a), Type::List(_)) => {
+                let ty = self.ty(a);
+                let Type::List(elem) = &ty else { unreachable!() };
+                let (va, vb) = (self.expr1(a), self.expr1(b));
+                let dst = self.clone_value(&[va], &ty)[0];
+                self.add_all(dst, vb, elem);
+                self.temps.push((dst, ty.clone()));
                 vec![dst]
             }
             ExprKind::Binary(BinOp::Plus, a, b) if self.ty(a) == Type::String => {

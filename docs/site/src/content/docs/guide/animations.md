@@ -319,7 +319,7 @@ does, before any window opens.
 `ui.Area` for from where to where, and `curve` for how. It does the steps and the clock, and rebuilds
 the view at each image, so a `ui.fill` canvas follows the window.
 
-A curve is a block, and a block may call a function. So a curve you built above is used in one line:
+`curve` takes a block, or the name of a function. So a curve you built above is used in one line:
 
 ```kova
 import ui
@@ -339,7 +339,7 @@ fn view(n: Int) -> ui.View {
 
 fn update(n: var Int, e: Event) {
     match e {
-        Grow => ui.animate(ui.screen) time(1200) curve { t: Float => bounce(t) }
+        Grow => ui.animate(ui.screen) time(1200) curve(bounce)
     }
 }
 
@@ -351,9 +351,6 @@ fn main {
 ```text
 [Grow] button "Grow"
 ```
-
-`curve` takes a block, not a function's name: `curve { t: Float => bounce(t) }`, never
-`curve(bounce)`.
 
 The goal is any `ui.Area`, so the area is where the design happens. A size kept in the center of the
 screen:

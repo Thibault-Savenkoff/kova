@@ -101,6 +101,29 @@ ligne : `repeat(3) { … }` plutôt que `repeat(3, { … })`. Les deux sont acce
 que `web.serve(8080) { q: web.Request => … }` se lit comme une instruction du langage, alors que
 c'est une fonction de la bibliothèque.
 
+## Donner une fonction à la place d'un bloc
+
+Là où un bloc est attendu, le nom d'une fonction fait le même travail, si ses paramètres sont ceux du
+bloc. Un calcul garde ainsi un nom à lui, utilisable partout :
+
+```kova
+fn double(x: Int) -> Int := x * 2
+
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l.map(double))
+    print(l.map { x: Int => double(x) })
+}
+```
+
+```text
+[2, 4, 6]
+[2, 4, 6]
+```
+
+Les deux lignes sont le même programme. Une fonction donnée par son nom ne va qu'à un appel, comme un
+bloc : elle n'entre jamais dans une variable.
+
 ## Ce qu'un bloc ne peut pas faire
 
 Un bloc s'exécute à l'intérieur d'une autre fonction, à un moment choisi par elle. Donc :

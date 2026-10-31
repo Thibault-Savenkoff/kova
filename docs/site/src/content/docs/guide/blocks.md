@@ -100,6 +100,29 @@ When the block is the last argument, it is written after the call's parentheses,
 `web.serve(8080) { q: web.Request => … }` read like a statement of the language, while it is a
 function of the library.
 
+## Giving a function instead of a block
+
+Where a block is expected, the name of a function does the same work, if its parameters are the
+block's. That keeps a calculation with a name of its own, usable anywhere:
+
+```kova
+fn double(x: Int) -> Int := x * 2
+
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l.map(double))
+    print(l.map { x: Int => double(x) })
+}
+```
+
+```text
+[2, 4, 6]
+[2, 4, 6]
+```
+
+The two lines are the same program. A function by its name is only given to a call, like a block: it
+never goes into a variable.
+
 ## What a block cannot do
 
 A block runs inside another function, at a moment chosen by that function. So:

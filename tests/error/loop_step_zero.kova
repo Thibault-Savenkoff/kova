@@ -1,0 +1,6 @@
+fn main {
+    for i in 0..3 step 0 {
+        print(i)
+    }
+}
+// error: `step` is a written number other than 0: `step 2`, `step -1`

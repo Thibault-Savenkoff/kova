@@ -34,6 +34,9 @@ lists everything they have.
 | `l.reversed -> List<T>` | a new list, in the opposite order. |
 | `l[i]` | the element at position `i`. Past the end, the program stops. |
 | `l[i] := v` | replaces the element at `i` (`l` must be a `var`). |
+| `a = b`, `a != b` | same length and same elements in the same order. |
+| `a + b` | a new list: the elements of `a`, then those of `b`, copied. |
+| `l += other` | adds a copy of each element of `other` at the end. |
 | `l.add(v)` | puts `v` at the end. A value that owns memory is moved in: `l.add(move name)`. |
 | `l.remove(i) -> T` | takes the element at `i` out and gives it; the ones after move back by one. |
 

@@ -1,0 +1,43 @@
+// `=` compares Lists element by element, `+` makes a new List, `+=` adds to one.
+struct Dog : Equal {
+    name: String
+}
+
+fn main {
+    let a: List<Int> := [1, 2]
+    let b: List<Int> := [1, 2]
+    print(a = b)
+    print(a != b)
+    print(a = [1, 2, 3])
+    print(a = [])
+    let words: List<String> := ["x", "y"]
+    print(words = ["x", "y"])
+    print(words = ["x", "z"])
+    let nested: List<List<Int>> := [[1], [2, 3]]
+    print(nested = [[1], [2, 3]])
+    let dogs: List<Dog> := [Dog { name := "Rex" }]
+    print(dogs = [Dog { name := "Rex" }])
+    print(a + b)
+    print(words + ["z"])
+    var all: List<String> := words + words
+    all += ["z"]
+    all += words
+    print(all)
+    print(words)
+    var n: List<Int> := [1]
+    n += n
+    print(n)
+}
+// expect: true
+// expect: false
+// expect: false
+// expect: false
+// expect: true
+// expect: false
+// expect: true
+// expect: true
+// expect: [1, 2, 1, 2]
+// expect: ["x", "y", "z"]
+// expect: ["x", "y", "x", "y", "z", "x", "y"]
+// expect: ["x", "y"]
+// expect: [1, 1]
