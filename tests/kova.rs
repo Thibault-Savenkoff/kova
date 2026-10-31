@@ -114,6 +114,44 @@ fn ok_programs() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// Every program a page can hold, built with `--target web` and run under node, through the same
+/// runtime/web.js as a page (tests/web.mjs): the same output as the other two. Skipped without node.
+#[test]
+fn web_programs() {
+    if Command::new("node").arg("--version").output().is_err() {
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("kova-web-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let failures = in_parallel(&files("ok"), |f, failures| {
+        let name = test_name(f);
+        let source = std::fs::read_to_string(f).unwrap();
+        if !expectations(&source, "args").is_empty() {
+            return;
+        }
+        let module = tmp.join(name.trim_end_matches(".kova").replace('/', "_") + ".wasm");
+        let out = kova(LANG).arg("build").arg(f).args(["--target", "web", "-o"]).arg(&module).output().unwrap();
+        let report = text(&out.stderr);
+        if report.contains("rustup target add") || report.contains("in a web page") {
+            return;
+        }
+        if !out.status.success() {
+            failures.push(format!("{name} [web]: compilation failed\n  {}", report.trim()));
+            return;
+        }
+        let expected = Expected {
+            output: expectations(&source, "expect"),
+            code: expectations(&source, "code").first().map_or(0, |c| c.parse().unwrap()),
+            stderr: expectations(&source, "stderr"),
+        };
+        let input: String = expectations(&source, "stdin").iter().map(|l| format!("{l}\n")).collect();
+        let run = with_input(Command::new("node").args(["--stack-size=7000", "tests/web.mjs"]).arg(&module).env("KOVA_LANG", LANG).env("KOVA_LEAKS", "1"), &input);
+        check_output(&name, "web", &run, &expected, failures);
+    });
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
 /// The examples of the README and of the website (docs/site/src/content/docs): a ```kova block
 /// followed by a ```text block prints exactly that; followed by a ```txt block, it is refused with
 /// exactly that error. A block starting with `// geometry.kova` is a file of the program before it.
@@ -455,7 +493,7 @@ fn cross_build() {
     let source = dir.join("hello.kova");
     std::fs::copy("tests/ok/strings.kova", &source).unwrap();
     // The start of the file, then the processor's number at `at`.
-    let systems: [(&str, &str, &[u8], usize, u8); 7] = [
+    let systems: [(&str, &str, &[u8], usize, u8); 8] = [
         ("linux", "hello", b"\x7fELF", 0x12, 62),
         ("linux-arm", "hello", b"\x7fELF", 0x12, 183),
         ("windows", "hello.exe", b"MZ", 0x45, 0x86),
@@ -464,6 +502,7 @@ fn cross_build() {
         ("mac", "hello", b"\xca\xfe\xba\xbe\0\0\0\x02", 11, 0x07),
         ("mac-arm", "hello", b"\xcf\xfa\xed\xfe", 4, 0x0C),
         ("mac-intel", "hello", b"\xcf\xfa\xed\xfe", 4, 0x07),
+        ("web", "hello.html", b"<!doctype", 4, b'c'),
     ];
     for (target, file, start, at, cpu) in systems {
         let out = kova(LANG).arg("build").arg(&source).args(["--target", target]).output().unwrap();
@@ -473,7 +512,7 @@ fn cross_build() {
         }
         // The report: the file, the system, its size and the time taken.
         let report = text(&out.stderr);
-        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("windows-arm", "Windows arm"), ("mac", "Mac"), ("mac-arm", "Mac arm"), ("mac-intel", "Mac Intel")].iter().find(|(n, _)| *n == target).unwrap().1;
+        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("windows-arm", "Windows arm"), ("mac", "Mac"), ("mac-arm", "Mac arm"), ("mac-intel", "Mac Intel"), ("web", "Web")].iter().find(|(n, _)| *n == target).unwrap().1;
         assert!(out.status.success() && report.starts_with(&format!("✓ {}", dir.join(file).display())), "{target}: {report}");
         assert!(report.contains(&format!(" ({title}, ")) && report.contains(" KB) in ") && report.lines().count() == 1, "{report}");
         let exe = std::fs::read(dir.join(file)).unwrap();

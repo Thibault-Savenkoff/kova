@@ -11,7 +11,7 @@ use alloc::format;
 /// are in `std`, which the runtime does not have.
 pub const PACKINGS: [&str; 3] = ["deflate", "inflate", "crc32"];
 /// The most `data.inflate` gives.
-pub const INFLATED: usize = 1 << 32;
+pub const INFLATED: usize = if usize::BITS > 32 { 1 << (usize::BITS - 32) } else { 1 << 31 };
 
 /// `c.is_letter` and the others: the number of each is what `char_test` receives.
 pub const CHAR_TESTS: [&str; 7] = ["is_letter", "is_digit", "is_space", "is_upper", "is_lower", "to_upper", "to_lower"];

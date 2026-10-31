@@ -37,6 +37,7 @@ mod shared;
 #[cfg_attr(target_os = "linux", path = "linux.rs")]
 #[cfg_attr(windows, path = "windows.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
+#[cfg_attr(target_family = "wasm", path = "web.rs")]
 mod sys;
 
 use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error};
@@ -109,6 +110,7 @@ impl<T> Locked<T> {
 // `kova_nb_texts` per language in the order of `locale::RUNTIME`; the languages' codes; the
 // source files' paths (a site packs a file number and a line: `Loc::packed` in src/kir.rs);
 // the `header`'s language, or -1. Each text ends with a 0 byte.
+#[cfg(not(target_family = "wasm"))]
 unsafe extern "C" {
     fn kova_main();
     static kova_texts: [*const u8; 0];
@@ -120,15 +122,109 @@ unsafe extern "C" {
     static kova_icon: u64;
 }
 
+/// The same for a page (src/wasm.rs): an address cannot be linked in, `kova_web_start` receives them.
+#[cfg(target_family = "wasm")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Program {
+    texts: *const *const u8,
+    langs: *const *const u8,
+    files: *const *const u8,
+    icon: *const u64,
+    nb_langs: i32,
+    nb_texts: i32,
+    forced_lang: i32,
+}
+
+#[cfg(target_family = "wasm")]
+static PROGRAM: Global<Option<(Program, extern "C" fn())>> = Global::new(None);
+
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_start(program: *const Program, main: extern "C" fn()) {
+    if PROGRAM.get().is_some() {
+        sys::rewind();
+    }
+    *PROGRAM.get() = Some((unsafe { *program }, main));
+    run()
+}
+
+// The generated code leaves a waiting program and enters it again with these (src/wasm.rs).
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_unwinding() -> i32 {
+    sys::unwinding() as i32
+}
+
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_rewinding() -> i32 {
+    sys::rewinding() as i32
+}
+
+/// JavaScript's "too much recursion": the stack is the browser's, the module never sees it end.
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_stack_full() {
+    let mut m = Vec::new();
+    m.extend_from_slice(text(ERROR_PREFIX));
+    m.extend_from_slice(text(45));
+    m.push(b'\n');
+    error(&m);
+    exit(101)
+}
+
+#[cfg(target_family = "wasm")]
+static SAVED: Global<Vec<i64>> = Global::new(Vec::new());
+
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_push(v: i64) {
+    SAVED.get().push(v);
+}
+
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_pop() -> i64 {
+    SAVED.get().pop().unwrap_or(0)
+}
+
+#[cfg(target_family = "wasm")]
+fn program() -> Program {
+    PROGRAM.get().unwrap().0
+}
+
+/// `a * b` overflows: WebAssembly has no flag for it (src/wasm.rs asks only for big numbers).
+#[cfg(target_family = "wasm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_web_times_overflows(a: i64, b: i64) -> i32 {
+    a.checked_mul(b).is_none() as i32
+}
+
+/// The texts, the languages and the files, then how many languages and texts, and the `header`'s language.
+#[cfg(target_family = "wasm")]
+fn tables() -> ([*const *const u8; 3], [i32; 3], *const u64) {
+    let p = program();
+    ([p.texts, p.langs, p.files], [p.nb_langs, p.nb_texts, p.forced_lang], p.icon)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn tables() -> ([*const *const u8; 3], [i32; 3], *const u64) {
+    unsafe {
+        let tables = [&raw const kova_texts, &raw const kova_langs, &raw const kova_files].map(|t| t as *const *const u8);
+        (tables, [kova_nb_langs, kova_nb_texts, kova_forced_lang], &raw const kova_icon)
+    }
+}
+
 /// `header { icon := "…" }`: the PNG image's bytes, empty without one.
 pub fn icon() -> &'static [u8] {
-    let at = &raw const kova_icon;
+    let at = tables().2;
     unsafe { core::slice::from_raw_parts(at.add(1) as *const u8, core::ptr::read_volatile(at) as usize) }
 }
 
-/// Entry `i` of one of the tables above, without its final 0.
-fn entry(table: &'static [*const u8; 0], i: usize) -> &'static [u8] {
-    unsafe { c_text(*table.as_ptr().wrapping_add(i)) }
+/// Entry `i` of table `table` (of `tables`), without its final 0.
+fn entry(table: usize, i: usize) -> &'static [u8] {
+    unsafe { c_text(*tables().0[table].wrapping_add(i)) }
 }
 
 /// The bytes before the 0 at `p`.
@@ -142,7 +238,19 @@ unsafe fn c_text<'a>(p: *const u8) -> &'a [u8] {
     }
 }
 
+/// Runs the program, or goes on with it after a wait; it left, waiting, if this returns.
+#[cfg(target_family = "wasm")]
+fn run() {
+    COUNTING.store(sys::var("KOVA_LEAKS").is_some(), Relaxed);
+    PROGRAM.get().unwrap().1();
+    if !sys::unwinding() {
+        every_thread_ended();
+        exit(leaks())
+    }
+}
+
 /// Runs the program, then stops it (called by `sys`'s entry point once it knows `args`).
+#[cfg(not(target_family = "wasm"))]
 fn run() -> ! {
     COUNTING.store(sys::var("KOVA_LEAKS").is_some(), Relaxed);
     unsafe { kova_main() };
@@ -236,7 +344,7 @@ pub extern "C" fn kova_show_string(o: &mut Vec<u8>, value: i64) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_show_site(o: &mut Vec<u8>, value: i64) {
-    o.extend_from_slice(entry(unsafe { &kova_files }, (value >> 32) as usize));
+    o.extend_from_slice(entry(2, (value >> 32) as usize));
     o.push(b':');
     put_int(o, value & 0xffffffff);
 }
@@ -288,7 +396,7 @@ pub extern "C" fn kova_str_format(value: i64, show: i64) -> i64 {
 fn language() -> usize {
     static LANGUAGE: Global<Option<usize>> = Global::new(None);
     *LANGUAGE.get().get_or_insert_with(|| {
-        let forced = unsafe { kova_forced_lang };
+        let forced = tables().1[2];
         if forced >= 0 {
             return forced as usize;
         }
@@ -297,13 +405,13 @@ fn language() -> usize {
             return 0;
         };
         let code = value.split(['_', '.', '@', '-']).next().unwrap_or("").to_ascii_lowercase();
-        (0..unsafe { kova_nb_langs } as usize).find(|&l| entry(unsafe { &kova_langs }, l) == code.as_bytes()).unwrap_or(0)
+        (0..tables().1[0] as usize).find(|&l| entry(1, l) == code.as_bytes()).unwrap_or(0)
     })
 }
 
 /// Text number `i` of `locale::RUNTIME` (src/locale.rs) in the language of whoever runs the program.
 fn text(i: usize) -> &'static [u8] {
-    entry(unsafe { &kova_texts }, language() * unsafe { kova_nb_texts } as usize + i)
+    entry(0, language() * tables().1[1] as usize + i)
 }
 
 // Numbers of the texts in `locale::RUNTIME` (src/locale.rs), checked by a test there.
@@ -1767,6 +1875,11 @@ fn network() -> network_framework::Tls<sys::Net> {
     network_framework::Tls(sys::Net)
 }
 
+#[cfg(target_family = "wasm")]
+fn network() -> sys::Net {
+    sys::Net
+}
+
 // ---- Time and chance (src/interp.rs does the same) ----
 
 /// `x.sin`, `x.pow(y)`… (`kir::Math`): the same code as `kova run`'s.
@@ -1816,6 +1929,8 @@ impl http::Sockets for sys::Net {
     type Tls = openssl::Tls<sys::Net>;
     #[cfg(target_os = "macos")]
     type Tls = network_framework::Tls<sys::Net>;
+    #[cfg(target_family = "wasm")]
+    type Tls = sys::Net;
     fn plain() -> sys::Net {
         sys::Net
     }

@@ -65,6 +65,7 @@ lang en {
     fault_bad_key := "this is not a key made by `secure.key` (32 bytes in base64)"
     fault_password_settings := "`secure.password_hash` takes `memory` from 8 to 1024 (MB) and `passes` from 1 to 16"
     gpu_missing := "this computer has no OpenGL 3.3, which `ui.gpu` needs"
+    web_stack_full := "too many calls inside each other: the page has no stack left"
     gpu_shader := "a shader does not compile: "
     log_unknown_level := "KOVA_LOG={name} is no level: debug, info, warning or error"
     fault_int32 := "this number does not fit in C's `int` (`Int32`: from -2147483648 to 2147483647)"
@@ -685,4 +686,5 @@ lang en {
     not_handled := "not handled yet"
     completion_default := "{help} (default)"
     completion_setting := "{values}: {help}"
+    web_refuses := "`{what}` does not work in a web page yet (`--target web`)."
 }

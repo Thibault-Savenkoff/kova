@@ -86,6 +86,7 @@ pub const RUNTIME: &[&str] = &[
     "fault_threads_interpreted",
     "gpu_missing",
     "gpu_shader",
+    "web_stack_full",
 ];
 
 /// The texts of `RUNTIME` whose holes the runtime fills (`kova_listen`), written as `{name}`.

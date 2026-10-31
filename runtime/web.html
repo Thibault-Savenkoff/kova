@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 16px; font: 15px/1.45 ui-monospace, Menlo, Consolas, monospace; background: Canvas; color: CanvasText; }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.stderr { color: #c33; }
+</style>
+</head>
+<body>
+<pre id="kova-output"></pre>
+<script>
+{script}
+const kovaOutput = document.getElementById("kova-output");
+const kovaDecoders = [null, new TextDecoder(), new TextDecoder()];
+kovaRun(Uint8Array.from(atob("{module}"), c => c.charCodeAt(0)), {
+    write(fd, bytes) {
+        const part = document.createElement("span");
+        if (fd == 2) part.className = "stderr";
+        part.textContent = kovaDecoders[fd].decode(bytes, { stream: true });
+        kovaOutput.append(part);
+    },
+    variables: { language: navigator.language.split("-")[0] },
+});
+</script>
+</body>
+</html>

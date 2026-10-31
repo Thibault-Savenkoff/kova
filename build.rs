@@ -45,6 +45,13 @@ fn main() {
             }
         }
     }
+    let web = out.join("runtime-web.wasm");
+    if installed("wasm32-unknown-unknown") {
+        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out);
+    } else {
+        println!("cargo:warning=no runtime for `kova build --target web`: `rustup target add wasm32-unknown-unknown`, then build kova again");
+        std::fs::write(&web, []).unwrap();
+    }
 }
 
 /// `libm`'s sources, which cargo downloaded for Cargo.toml before running build.rs.
@@ -72,8 +79,10 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path) {
         .status()
         .expect("the Rust compiler");
     assert!(status.success(), "`libm` does not compile for {triple}");
+    // For a page, a whole module: src/wasm.rs adds the program to it.
+    let web = triple.starts_with("wasm");
     let status = Command::new(rustc)
-        .args(["--edition", "2024", "--crate-type", "staticlib", "--crate-name", "kova_runtime", "--target", triple])
+        .args(["--edition", "2024", "--crate-type", if web { "cdylib" } else { "staticlib" }, "--crate-name", "kova_runtime", "--target", triple])
         .args(codegen)
         .args(["-C", "lto=fat"])
         .args(model)
@@ -85,6 +94,9 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path) {
         .status()
         .expect("the Rust compiler");
     assert!(status.success(), "the runtime (runtime/kova.rs) does not compile for {triple}");
+    if web {
+        return;
+    }
     let archive = std::fs::read(lib).unwrap();
     std::fs::write(lib, reached(&archive)).unwrap();
 }

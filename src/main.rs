@@ -34,6 +34,7 @@ mod parser;
 mod regex;
 mod shared;
 mod types;
+mod wasm;
 mod ui;
 mod web;
 

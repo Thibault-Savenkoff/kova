@@ -37,6 +37,8 @@ pub enum Target {
     MacArm,
     /// macOS on x86-64 (the Macs before 2020).
     MacIntel,
+    /// A web page: one `.html` file holding a WebAssembly module (src/wasm.rs).
+    Web,
 }
 
 /// The systems an `extern` may name a library for (`windows "winsqlite3"`).
@@ -48,7 +50,7 @@ impl Target {
         self.name().split('-').next().unwrap()
     }
 
-    pub const NAMES: [(&str, Target); 7] = [
+    pub const NAMES: [(&str, Target); 8] = [
         ("linux", Target::Linux),
         ("windows", Target::Windows),
         ("mac", Target::Mac),
@@ -56,6 +58,7 @@ impl Target {
         ("windows-arm", Target::WindowsArm),
         ("mac-arm", Target::MacArm),
         ("mac-intel", Target::MacIntel),
+        ("web", Target::Web),
     ];
 
     pub fn named(name: &str) -> Option<Target> {
@@ -112,12 +115,17 @@ impl Target {
             Target::WindowsArm => "Windows arm",
             Target::MacArm => "Mac arm",
             Target::MacIntel => "Mac Intel",
+            Target::Web => "Web",
         }
     }
 
     /// The end of its executables' names.
     pub fn suffix(self) -> &'static str {
-        if matches!(self, Target::Windows | Target::WindowsArm) { ".exe" } else { "" }
+        match self {
+            Target::Windows | Target::WindowsArm => ".exe",
+            Target::Web => ".html",
+            _ => "",
+        }
     }
 
     /// What Cranelift and Rust call it (the first one: the one to install, see build.rs).
@@ -129,6 +137,7 @@ impl Target {
             Target::LinuxArm => "aarch64-unknown-linux-gnu",
             Target::WindowsArm => "aarch64-pc-windows-msvc",
             Target::MacIntel => "x86_64-apple-darwin",
+            Target::Web => "wasm32-unknown-unknown",
         }
     }
 
@@ -141,6 +150,7 @@ impl Target {
             Target::LinuxArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux-arm.a")),
             Target::WindowsArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows-arm.a")),
             Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),
+            Target::Web => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-web.wasm")),
         }
     }
 }
@@ -150,6 +160,17 @@ impl Target {
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, target: Option<Target>) -> Result<(), String> {
     let Some(target) = target.or(Target::host()) else { return Err(t!("unknown_system")) };
     let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy().into_owned());
+    if target == Target::Web {
+        let runtime = target.runtime();
+        if runtime.is_empty() {
+            return Err(t!("no_runtime", target = target.name(), triple = target.triple()));
+        }
+        // `-o x.wasm`: the module alone, for a page of one's own.
+        let module = crate::wasm::module(p, files, lang, runtime)?;
+        let title = name.trim_end_matches(".html");
+        let made = if name.ends_with(".wasm") { module } else { crate::wasm::page(&module, title) };
+        return std::fs::write(output, made).map_err(|e| e.to_string());
+    }
     write_executable(output, &executable(p, files, &name, lang, target)?)
 }
 
@@ -183,6 +204,7 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
         Target::WindowsArm => crate::link::pe(&object, runtime, true, &icon_images(p)),
         Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
         Target::MacIntel => crate::link::macho(&object, runtime, name, false),
+        Target::Web => unreachable!("made by `build`"),
     };
     exe.map_err(|e| t!("codegen_failed", error = e))
 }
@@ -258,7 +280,7 @@ const L_INDEX: usize = 8;
 const L_SET_INDEX: usize = 9;
 
 /// The runtime function of a String operation, and its number of arguments.
-fn str_op(op: StrOp) -> (usize, &'static str, usize) {
+pub fn str_op(op: StrOp) -> (usize, &'static str, usize) {
     match op {
         StrOp::Concat => (0, "kova_str_concat", 2),
         StrOp::Eq => (1, "kova_str_eq", 2),
@@ -643,7 +665,7 @@ fn runtime_texts(module: &mut ObjectModule, forced: Option<usize>, files: &[Stri
 }
 
 /// The number of a text of the runtime (`kova_texts` in the generated C).
-fn runtime_text(key: &str) -> i64 {
+pub fn runtime_text(key: &str) -> i64 {
     locale::RUNTIME.iter().position(|k| *k == key).expect("key of locale::RUNTIME") as i64
 }
 
