@@ -41,8 +41,8 @@ public:
         var whole: List<Int> := []
         var kind: Int := 0
         while true {
-            let first: Int := self.need(1)?[0]
-            let second: Int := self.need(1)?[0]
+            let first: Int := self.need(1)? [0]
+            let second: Int := self.need(1)? [0]
             let code: Int := first & 15
             var size: Int := second & 127
             if size = 126 {
@@ -146,7 +146,10 @@ fn connect(address: String) -> Socket or Error {
     if host.is_empty || port = none {
         return err(Error.BadAddress(address.clone))
     }
-    let opened: net.Link or net.Error := if secure { net.connect_secure(host, port) } else { net.connect(host, port) }
+    let opened: net.Link or net.Error := if secure { net.connect_secure(
+        host,
+        port
+    ) } else { net.connect(host, port) }
     var link: net.Link := opened?
     var key: List<Int> := []
     for k in 0..16 {
@@ -270,7 +273,13 @@ fn sha1(message: List<Int>) -> List<Int> {
             b := a
             a := next
         }
-        h := [(h[0] + a) & word, (h[1] + b) & word, (h[2] + c) & word, (h[3] + d) & word, (h[4] + e) & word]
+        h := [
+            (h[0] + a) & word,
+            (h[1] + b) & word,
+            (h[2] + c) & word,
+            (h[3] + d) & word,
+            (h[4] + e) & word
+        ]
     }
     var out: List<Int> := []
     for part in h {

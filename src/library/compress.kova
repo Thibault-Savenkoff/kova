@@ -35,7 +35,11 @@ fn gunzip(data: List<Int>) -> List<Int>? {
         return none
     }
     let unpacked: List<Int> := data[at..data.length - 8].inflate?
-    if unpacked.crc32 != read_little(data, data.length - 8, 4) || unpacked.length % 4294967296 != read_little(data, data.length - 4, 4) {
+    if unpacked.crc32 != read_little(
+        data,
+        data.length - 8,
+        4
+    ) || unpacked.length % 4294967296 != read_little(data, data.length - 4, 4) {
         return none
     }
     return unpacked

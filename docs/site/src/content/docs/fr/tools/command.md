@@ -79,9 +79,11 @@ comme `kova run` pour [`mode`](/fr/guide/run-or-build/#une-fonction-qui-diffère
 
 ## `kova fmt`
 
-Met le code en page de la façon standard : indentation et espaces. Il ne déplace jamais un saut de
-ligne, et refuse de changer un fichier si le résultat ne voulait pas dire exactement le même
-programme. L'éditeur le lance à l'enregistrement.
+Met le code en page de la façon standard : indentation et espaces. Une ligne de plus de 100 caractères
+est coupée à ses virgules, chaque élément de l'appel, de la liste ou de la struct sur sa propre ligne,
+et une liste de nombres ou de textes seulement autant qu'il faut. Il ne recolle jamais de lignes : une
+forme choisie par toi reste. Il refuse de changer un fichier si le résultat ne voulait pas dire
+exactement le même programme. L'éditeur le lance à chaque enregistrement.
 
 ## Les codes de sortie
 

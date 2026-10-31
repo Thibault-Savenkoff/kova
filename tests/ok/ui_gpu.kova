@@ -29,7 +29,9 @@ fn view(shade: Float) -> ui.View {
         g.uniform("shade", [shade])
         g.triangles([-1.0, -1.0, 1.0, -1.0, 0.0, 1.0])
         g.texture(1, 1, [255, 0, 0, 255])
-        g.triangles([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]) parts([3, 2])
+        g.triangles([
+            0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0
+        ]) parts([3, 2])
     }
     return area.on_mouse { m: ui.Mouse => Event.Press(m.x) }
 }

@@ -5,7 +5,7 @@ import files
 
 public:
 
-enum Error: Equal {
+enum Error : Equal {
     NotFound(path: String)
     // Not an uncompressed WAV.
     NotSound
@@ -35,8 +35,14 @@ fn play_bytes(data: List<Int>) -> Nothing or Error {
 fn wav(samples: List<Float>) rate(rate: Int := 44100) -> List<Int> {
     var out: List<Int> := []
     let size: Int := samples.length * 2
-    out += "RIFF".to_bytes + little(36 + size, 4) + "WAVEfmt ".to_bytes + little(16, 4) + little(1, 2) + little(1, 2)
-    out += little(rate, 4) + little(rate * 2, 4) + little(2, 2) + little(16, 2) + "data".to_bytes + little(size, 4)
+    out += "RIFF".to_bytes + little(
+        36 + size,
+        4
+    ) + "WAVEfmt ".to_bytes + little(16, 4) + little(1, 2) + little(1, 2)
+    out += little(
+        rate,
+        4
+    ) + little(rate * 2, 4) + little(2, 2) + little(16, 2) + "data".to_bytes + little(size, 4)
     for s in samples {
         let level: Float := if s > 1.0 { 1.0 } else if s < -1.0 { -1.0 } else { s }
         out += little((level * 32767.0).round & 65535, 2)

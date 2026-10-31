@@ -16,7 +16,15 @@ struct Book {
 }
 
 fn books {
-    let b := Book { title := "Le \"Petit\" Prince", price := 9.5, pages := 96, read := true, author := Author { name := "Saint-Ex", born := none }, tags := ["conte", "été"], notes := ["a" := 1, "b" := 2] }
+    let b := Book {
+        title := "Le \"Petit\" Prince",
+        price := 9.5,
+        pages := 96,
+        read := true,
+        author := Author { name := "Saint-Ex", born := none },
+        tags := ["conte", "été"],
+        notes := ["a" := 1, "b" := 2]
+    }
     let text: String := b.to_json
     print(text)
     match Book.from_json(text) {
@@ -73,7 +81,13 @@ struct People {
 }
 
 fn shapes {
-    let tree := Node { value := 1, kids := [Node { value := 2, kids := [] }, Node { value := 3, kids := [Node { value := 4, kids := [] }] }] }
+    let tree := Node {
+        value := 1,
+        kids := [
+            Node { value := 2, kids := [] },
+            Node { value := 3, kids := [Node { value := 4, kids := [] }] }
+        ]
+    }
     let t: String := tree.to_json
     print(t)
     print(Node.from_json(t))
@@ -90,7 +104,19 @@ fn shapes {
     print(Pair<Float>.from_json("\{\"a\": 1e400, \"b\": 1\}"))
     print(Pair<String>.from_json("\{\"a\": \"\\u00e9\\ud83d\\ude00\\u0041\\\"\\/\", \"b\": \"\"\}"))
     print(Pair<String>.from_json("\{\"a\": \"\\ud800\", \"b\": \"\"\}"))
-    let n := Numbers { f := [0.1, 1.5e-5, 1e16, -0.0, 1.0 / 3.0, 123456789012345680000.0, (-1.0).sqrt, 1e308 * 10.0], i := [0, -1, 42] }
+    let n := Numbers {
+        f := [
+            0.1,
+            1.5e-5,
+            1e16,
+            -0.0,
+            1.0 / 3.0,
+            123456789012345680000.0,
+            (-1.0).sqrt,
+            1e308 * 10.0
+        ],
+        i := [0, -1, 42]
+    }
     print(n.to_json)
     print(Pair<String> { a := "x", b := "y" }.to_json)
     print(People.from_json("\{\"list\": [\{\"a\": \"x\", \"b\": \"y\"\}, \{\"a\": \"z\"\}]\}"))
@@ -101,7 +127,10 @@ fn shapes {
 
 // A JSON text whose root is an array.
 fn lists {
-    let authors: List<Author> := [Author { name := "A", born := 1 }, Author { name := "B", born := none }]
+    let authors: List<Author> := [
+        Author { name := "A", born := 1 },
+        Author { name := "B", born := none }
+    ]
     let text: String := authors.to_json
     print(text)
     print(List<Author>.from_json(text))

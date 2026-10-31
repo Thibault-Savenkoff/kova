@@ -2,7 +2,7 @@
 
 public:
 
-enum Error: Equal {
+enum Error : Equal {
     Failed(message: String)
     // A rule of the table refused the change: `UNIQUE`, `NOT NULL`, a foreign key.
     Constraint(message: String)
@@ -11,7 +11,7 @@ enum Error: Equal {
 }
 
 // A value of a column, or one given to a `?` of a statement.
-enum Value: Equal {
+enum Value : Equal {
     Null
     Int(value: Int)
     Float(value: Float)
@@ -152,7 +152,13 @@ private:
         return done
     }
 
-    fn stepped(self, text: String, statement: Pointer, values: List<Value>, visit: {Row}) -> Nothing or Error {
+    fn stepped(
+        self,
+        text: String,
+        statement: Pointer,
+        values: List<Value>,
+        visit: {Row}
+    ) -> Nothing or Error {
         self.alone(text, statement)?
         for i, value in values {
             self.checked(bound(statement, i + 1, value))?
@@ -200,8 +206,20 @@ extern lib from "sqlite3" windows "winsqlite3" {
     fn open(path: String, db: var Pointer?) -> Int32 from "sqlite3_open"
     fn close(db: Pointer) -> Int32 from "sqlite3_close"
     fn message(db: Pointer) -> String from "sqlite3_errmsg"
-    fn exec(db: Pointer, statements: String, call: Pointer?, data: Pointer?, error: Pointer?) -> Int32 from "sqlite3_exec"
-    fn prepare(db: Pointer, statement: String, size: Int32, made: var Pointer?, tail: Pointer?) -> Int32 from "sqlite3_prepare_v2"
+    fn exec(
+        db: Pointer,
+        statements: String,
+        call: Pointer?,
+        data: Pointer?,
+        error: Pointer?
+    ) -> Int32 from "sqlite3_exec"
+    fn prepare(
+        db: Pointer,
+        statement: String,
+        size: Int32,
+        made: var Pointer?,
+        tail: Pointer?
+    ) -> Int32 from "sqlite3_prepare_v2"
     fn finalize(statement: Pointer) -> Int32 from "sqlite3_finalize"
     fn step(statement: Pointer) -> Int32 from "sqlite3_step"
     fn statement_text(statement: Pointer) -> String from "sqlite3_sql"
@@ -210,9 +228,25 @@ extern lib from "sqlite3" windows "winsqlite3" {
     fn bind_null(statement: Pointer, at: Int32) -> Int32 from "sqlite3_bind_null"
     fn bind_int(statement: Pointer, at: Int32, value: Int) -> Int32 from "sqlite3_bind_int64"
     fn bind_float(statement: Pointer, at: Int32, value: Float) -> Int32 from "sqlite3_bind_double"
-    fn bind_text(statement: Pointer, at: Int32, value: Pointer, size: Int32, keep: Int) -> Int32 from "sqlite3_bind_text"
-    fn bind_bytes(statement: Pointer, at: Int32, value: Pointer, size: Int32, keep: Int) -> Int32 from "sqlite3_bind_blob"
-    fn bind_nothing(statement: Pointer, at: Int32, size: Int32) -> Int32 from "sqlite3_bind_zeroblob"
+    fn bind_text(
+        statement: Pointer,
+        at: Int32,
+        value: Pointer,
+        size: Int32,
+        keep: Int
+    ) -> Int32 from "sqlite3_bind_text"
+    fn bind_bytes(
+        statement: Pointer,
+        at: Int32,
+        value: Pointer,
+        size: Int32,
+        keep: Int
+    ) -> Int32 from "sqlite3_bind_blob"
+    fn bind_nothing(
+        statement: Pointer,
+        at: Int32,
+        size: Int32
+    ) -> Int32 from "sqlite3_bind_zeroblob"
     fn column_count(statement: Pointer) -> Int32 from "sqlite3_column_count"
     fn column_name(statement: Pointer, at: Int32) -> String from "sqlite3_column_name"
     fn column_type(statement: Pointer, at: Int32) -> Int32 from "sqlite3_column_type"
@@ -242,7 +276,13 @@ fn bound_bytes(statement: Pointer, at: Int, data: List<Int>, text: Bool) -> Int 
     // Text in C keeps a place for its end, so an empty one has an address too.
     let memory: Pointer := lib.malloc(data.length + 1)
     memory.write_bytes(data)
-    let code: Int := if text { lib.bind_text(statement, at, memory, data.length, copies) } else { lib.bind_bytes(statement, at, memory, data.length, copies) }
+    let code: Int := if text { lib.bind_text(
+        statement,
+        at,
+        memory,
+        data.length,
+        copies
+    ) } else { lib.bind_bytes(statement, at, memory, data.length, copies) }
     lib.free(memory)
     return code
 }
@@ -259,7 +299,10 @@ fn cell(statement: Pointer, at: Int) -> Value {
         return Value.Null
     }
     // The address first: SQLite may convert the value, and the size is the converted one.
-    let address: Pointer? := if kind = 3 { lib.column_text(statement, at) } else { lib.column_bytes(statement, at) }
+    let address: Pointer? := if kind = 3 { lib.column_text(
+        statement,
+        at
+    ) } else { lib.column_bytes(statement, at) }
     let size: Int := lib.column_size(statement, at)
     let data: List<Int> := if address = none { [] } else { address.read_bytes(size) }
     return if kind = 3 { Value.Text(data.to_text else "") } else { Value.Bytes(data) }

@@ -39,7 +39,15 @@ fn view(app: App) -> ui.View {
         d.image("logo.png", 3, 4) size(5, 6)
     }
     return ui.column([plus, area]).menus([
-        ui.menu("File", [ui.item("Open", Event.Open), ui.item("Save", Event.Save), ui.separator, ui.item("Quit", Event.Quit)]),
+        ui.menu(
+            "File",
+            [
+                ui.item("Open", Event.Open),
+                ui.item("Save", Event.Save),
+                ui.separator,
+                ui.item("Quit", Event.Quit)
+            ]
+        ),
     ])
 }
 

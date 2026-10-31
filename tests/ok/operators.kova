@@ -25,7 +25,10 @@ struct Money {
     label: String
     cents: Int
 
-    fn +(self, other: Money) -> Money := Money { label := self.label.clone, cents := self.cents + other.cents }
+    fn +(
+        self,
+        other: Money
+    ) -> Money := Money { label := self.label.clone, cents := self.cents + other.cents }
     fn %(self, n: Int) -> Int := self.cents % n
     fn /(self, n: Int) -> Money := Money { label := "{self.label}/{n}", cents := self.cents / n }
 }

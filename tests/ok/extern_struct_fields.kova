@@ -20,7 +20,11 @@ fn letters(a: Pointer, b: Pointer) -> Int {
 
 fn main {
     let p: Pointer := c.calloc(32, 1)
-    let back: c.Named := c.put(p, c.Named { id := 7, name := "Rex", wide := "Rüdiger", note := none }, 32)
+    let back: c.Named := c.put(
+        p,
+        c.Named { id := 7, name := "Rex", wide := "Rüdiger", note := none },
+        32
+    )
     print("{back.id} {back.name}")
     print(back.wide)
     print(back.note)

@@ -43,7 +43,9 @@ fn main {
     print(url.decode("a%2"))
     print(url.query(["q" := "a b", "page" := "2"]))
     print(url.parse_query("page=2&q=a%20b")["q"] else "?")
-    let a: arguments.Arguments := arguments.read(["x", "--verbose", "--port", "80", "--name=v=2", "y", "--", "--z"]) options(["port"])
+    let a: arguments.Arguments := arguments.read([
+        "x", "--verbose", "--port", "80", "--name=v=2", "y", "--", "--z"
+    ]) options(["port"])
     print(a.words[0..2])
     print(a.flag("verbose"))
     print(a.flag("quiet"))

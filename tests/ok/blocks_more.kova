@@ -42,7 +42,11 @@ fn main {
     print(l)
     let words: List<String> := ["poire", "abricot", "pomme"]
     print(words.sorted)
-    let dogs: List<Dog> := [Dog { name := "Rex", age := 5 }, Dog { name := "Ida", age := 2 }, Dog { name := "Max", age := 5 }]
+    let dogs: List<Dog> := [
+        Dog { name := "Rex", age := 5 },
+        Dog { name := "Ida", age := 2 },
+        Dog { name := "Max", age := 5 }
+    ]
     for d in (dogs.sorted { a: Dog, b: Dog => a.age < b.age }) {
         print(d.name)
     }

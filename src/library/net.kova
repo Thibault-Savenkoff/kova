@@ -4,7 +4,7 @@ import net
 
 public:
 
-enum Error: Equal {
+enum Error : Equal {
     NoHost(host: String)
     Refused(host: String)
     TimedOut(host: String)
@@ -120,7 +120,11 @@ public:
         let got: List<Int> := net.raw_bytes(3, "", self.id, [], 0)
         checked(got[0], "")?
         let host: String := "{got[1]}.{got[2]}.{got[3]}.{got[4]}"
-        return ok(Datagram { data := got[7..got.length], host := host, port := got[5] * 256 + got[6] })
+        return ok(Datagram {
+            data := got[7..got.length],
+            host := host,
+            port := got[5] * 256 + got[6]
+        })
     }
 
     // The port it uses: the one the system chose after `udp(0)`.

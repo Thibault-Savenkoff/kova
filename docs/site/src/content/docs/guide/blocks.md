@@ -120,8 +120,10 @@ fn main {
 [2, 4, 6]
 ```
 
-The two lines are the same program. A function by its name is only given to a call, like a block: it
-never goes into a variable.
+The two lines are the same program. An enum's variant works the same way: `l.map(Event.Volume)` is
+`l.map { v: Int => Event.Volume(v) }`, and `.Volume` is enough where the enum is known, as when a
+parameter's type says `{Int -> Event}`. Only the plain case has this short form: as soon as the block
+does more, write it.
 
 ## What a block cannot do
 

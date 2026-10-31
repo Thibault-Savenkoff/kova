@@ -43,12 +43,19 @@ struct App {
 fn view(app: App) -> ui.View {
     let area: ui.View := ui.canvas(10, 10) { d: ui.Draw => d.clear(ui.white) }
     return ui.column([
-        ui.row([ui.input(app.name) { s: String => Event.Name(s.clone) }, ui.checkbox("Dark", app.dark) { on: Bool => Event.Dark(on) }]),
+        ui.row([
+            ui.input(app.name) { s: String => Event.Name(s.clone) },
+            ui.checkbox("Dark", app.dark) { on: Bool => Event.Dark(on) }
+        ]),
         area.on_mouse { m: ui.Mouse => Event.Press(m.x) },
         ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v) },
         ui.choice(["s", "m"], app.size) { i: Int => Event.Size(i) },
         ui.list(["a", "b", "c"], app.pick) { i: Int => Event.Pick(i) },
-        ui.table(["Name", "Age"], [["Ada", "36"], ["Linus", "54"]], app.line) { i: Int => Event.Line(i) },
+        ui.table(
+            ["Name", "Age"],
+            [["Ada", "36"], ["Linus", "54"]],
+            app.line
+        ) { i: Int => Event.Line(i) },
         ui.text(app.name),
         ui.tabs(["One", "Two"], app.tab) { i: Int => Event.Tab(i) },
     ])
@@ -68,5 +75,19 @@ fn update(app: var App, e: Event) {
 }
 
 fn main {
-    ui.run("Values", App { name := "", dark := false, x := 0, volume := 3, size := 0, pick := -1, line := -1, tab := 0 }, view, update)
+    ui.run(
+        "Values",
+        App {
+            name := "",
+            dark := false,
+            x := 0,
+            volume := 3,
+            size := 0,
+            pick := -1,
+            line := -1,
+            tab := 0
+        },
+        view,
+        update
+    )
 }

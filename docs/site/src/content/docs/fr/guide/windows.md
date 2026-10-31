@@ -210,9 +210,9 @@ struct App {
 
 fn view(app: App) -> ui.View {
     return ui.column([
-        ui.checkbox("Sombre", app.dark) { on: Bool => Event.Dark(on) },
-        ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v) },
-        ui.choice(["Petit", "Moyen", "Grand"], app.size) { i: Int => Event.Size(i) },
+        ui.checkbox("Sombre", app.dark, .Dark),
+        ui.slider(app.volume, 0, 10, .Volume),
+        ui.choice(["Petit", "Moyen", "Grand"], app.size, .Size),
         ui.text("Volume {app.volume}"),
     ])
 }
@@ -230,6 +230,10 @@ fn main {
 }
 ```
 
+`.Volume` remplace le bloc `{ v: Int => Event.Volume(v) }` : là où un bloc qui fabrique un `Event` est
+attendu, le nom d'une variante suffit si ses champs sont ce que le bloc reçoit. Quand il faut faire
+quelque chose avant, écris le bloc : `ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v * 2) }`.
+
 Bouger le curseur ne change rien tout seul côté Kova : l'événement arrive à `update`, l'état change,
 et `view` dessine le curseur à sa nouvelle place. Un programme peut donc refuser une valeur, ou lier
 deux widgets, simplement par ce que fait `update`.
@@ -243,7 +247,7 @@ tient en un `if` dans `view` :
 
 ```kova
 let page: ui.View := if app.tab = 0 { settings(app) } else { about(app) }
-return ui.column([ui.tabs(["Réglages", "À propos"], app.tab) { i: Int => Event.Tab(i) }, page])
+return ui.column([ui.tabs(["Réglages", "À propos"], app.tab, .Tab), page])
 ```
 
 ## Les menus

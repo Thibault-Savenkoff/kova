@@ -121,8 +121,10 @@ fn main {
 [2, 4, 6]
 ```
 
-Les deux lignes sont le même programme. Une fonction donnée par son nom ne va qu'à un appel, comme un
-bloc : elle n'entre jamais dans une variable.
+Les deux lignes sont le même programme. Une variante d'enum marche pareil : `l.map(Event.Volume)` vaut
+`l.map { v: Int => Event.Volume(v) }`, et `.Volume` suffit là où l'enum est connu, par exemple quand le
+type d'un paramètre dit `{Int -> Event}`. Seul le cas simple a cette forme courte : dès que le bloc fait
+plus, écris-le.
 
 ## Ce qu'un bloc ne peut pas faire
 

@@ -10,7 +10,11 @@ fn view(app: App) -> ui.View {
     return ui.column([
         ui.text("Title").size(20).bold.color(ui.rgb(1, 2, 3)),
         ui.input(app.name) { s: String => Event.Typed(s.clone) }.color(if wrong { ui.red } else { ui.black }),
-        ui.column([ui.text("a"), ui.text("b").size(9), ui.button("Go", Event.Go).color(ui.blue)]).size(12).color(ui.green).margin(4),
+        ui.column([
+            ui.text("a"),
+            ui.text("b").size(9),
+            ui.button("Go", Event.Go).color(ui.blue)
+        ]).size(12).color(ui.green).margin(4),
         ui.row([ui.text("c")]) align(center).margin(8),
     ]).margin(2)
 }

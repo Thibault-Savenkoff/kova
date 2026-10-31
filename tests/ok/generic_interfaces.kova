@@ -57,7 +57,11 @@ fn main {
     print(k)
     print("in {k}")
     print(loud(k))
-    let zoo: List<any Animal> := [Dog {}, Kennel<Int> { dog := 7, count := 1 }, Kennel<String> { dog := "pif", count := 3 }]
+    let zoo: List<any Animal> := [
+        Dog {},
+        Kennel<Int> { dog := 7, count := 1 },
+        Kennel<String> { dog := "pif", count := 3 }
+    ]
     for a in zoo {
         print(a.twice)
     }

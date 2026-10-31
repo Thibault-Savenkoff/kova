@@ -51,7 +51,12 @@ fn label_or_quit(i: Int) -> String {
 }
 
 fn main {
-    let items: List<Item> := [Item.Priced("tea", 2.5), Item.Counted(3), Item.Pair((1, "one")), Item.free]
+    let items: List<Item> := [
+        Item.Priced("tea", 2.5),
+        Item.Counted(3),
+        Item.Pair((1, "one")),
+        Item.free
+    ]
     print(items)
     for it in items {
         print(it.describe)

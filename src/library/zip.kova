@@ -55,13 +55,21 @@ fn unpack(data: List<Int>) -> List<Entry>? {
         let crc: Int := compress.read_little(data, at + 16, 4)
         let packed: Int := compress.read_little(data, at + 20, 4)
         let name_size: Int := compress.read_little(data, at + 28, 2)
-        let extra: Int := compress.read_little(data, at + 30, 2) + compress.read_little(data, at + 32, 2)
+        let extra: Int := compress.read_little(
+            data,
+            at + 30,
+            2
+        ) + compress.read_little(data, at + 32, 2)
         let local: Int := compress.read_little(data, at + 42, 4)
         let name: String := data[at + 46..at + 46 + name_size].to_text?
         if local + 30 > data.length {
             return none
         }
-        let start: Int := local + 30 + compress.read_little(data, local + 26, 2) + compress.read_little(data, local + 28, 2)
+        let start: Int := local + 30 + compress.read_little(
+            data,
+            local + 26,
+            2
+        ) + compress.read_little(data, local + 28, 2)
         if start + packed > data.length {
             return none
         }

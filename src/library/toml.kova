@@ -139,7 +139,12 @@ struct Json {
         if self.at = start {
             return err(self.fail)
         }
-        return ok(Item { kind := if word = "null" { 3 } else { 0 }, text := word, keys := [], kids := [] })
+        return ok(Item {
+            kind := if word = "null" { 3 } else { 0 },
+            text := word,
+            keys := [],
+            kids := []
+        })
     }
 }
 

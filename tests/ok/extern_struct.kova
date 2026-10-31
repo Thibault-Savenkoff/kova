@@ -26,13 +26,35 @@ extern c from "c" {
 }
 
 fn main {
-    let t := c.Time { second := 5, minute := 4, hour := 3, day := 25, month := 9, year := 126, weekday := 0, yearday := 0, summer := 0, offset := 0, zone := none }
+    let t := c.Time {
+        second := 5,
+        minute := 4,
+        hour := 3,
+        day := 25,
+        month := 9,
+        year := 126,
+        weekday := 0,
+        yearday := 0,
+        summer := 0,
+        offset := 0,
+        zone := none
+    }
     let p: Pointer := c.calloc(64, 1)
     print(c.strftime(p, 64, "%Y-%m-%d %H:%M:%S", t))
     print(c.text(p, ""))
     c.free(p)
-    let source := c.Shape { id := -7, inner := c.Inner { flag := true, ratio := 2.5 }, link := none, count := 1099511627776 }
-    var into := c.Shape { id := 0, inner := c.Inner { flag := false, ratio := 0.0 }, link := none, count := 0 }
+    let source := c.Shape {
+        id := -7,
+        inner := c.Inner { flag := true, ratio := 2.5 },
+        link := none,
+        count := 1099511627776
+    }
+    var into := c.Shape {
+        id := 0,
+        inner := c.Inner { flag := false, ratio := 0.0 },
+        link := none,
+        count := 0
+    }
     c.duplicate(var into, source, 40)
     print(into)
     print(into.inner.ratio * 2.0)

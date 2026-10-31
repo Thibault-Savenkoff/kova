@@ -205,9 +205,9 @@ struct App {
 
 fn view(app: App) -> ui.View {
     return ui.column([
-        ui.checkbox("Dark", app.dark) { on: Bool => Event.Dark(on) },
-        ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v) },
-        ui.choice(["Small", "Medium", "Large"], app.size) { i: Int => Event.Size(i) },
+        ui.checkbox("Dark", app.dark, .Dark),
+        ui.slider(app.volume, 0, 10, .Volume),
+        ui.choice(["Small", "Medium", "Large"], app.size, .Size),
         ui.text("Volume {app.volume}"),
     ])
 }
@@ -225,6 +225,10 @@ fn main {
 }
 ```
 
+`.Volume` stands for the block `{ v: Int => Event.Volume(v) }`: where a block making an `Event` is
+expected, a variant's name is enough when its fields are what the block receives. When you need to
+do something first, write the block: `ui.slider(app.volume, 0, 10) { v: Int => Event.Volume(v * 2) }`.
+
 Moving the slider changes nothing by itself on the Kova side: the event reaches `update`, the state
 changes, and `view` draws the slider at its new place. So a program can refuse a value, or tie two
 widgets together, simply by what `update` does.
@@ -238,7 +242,7 @@ in `view`:
 
 ```kova
 let page: ui.View := if app.tab = 0 { settings(app) } else { about(app) }
-return ui.column([ui.tabs(["Settings", "About"], app.tab) { i: Int => Event.Tab(i) }, page])
+return ui.column([ui.tabs(["Settings", "About"], app.tab, .Tab), page])
 ```
 
 ## Menus

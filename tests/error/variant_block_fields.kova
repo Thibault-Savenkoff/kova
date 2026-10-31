@@ -1,0 +1,12 @@
+// error: `.Name` needs an enum here, and `{Int -> Event}` is expected
+enum Event {
+    Name(s: String)
+}
+
+fn make(f: {Int -> Event}) -> Event {
+    return f(1)
+}
+
+fn main {
+    print(make(.Name))
+}

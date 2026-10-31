@@ -1,0 +1,34 @@
+// A variant by its name, where a block making it is expected.
+// expect: Event.Volume(3)
+// expect: Event.Volume(4)
+// expect: Event.Name("Ada")
+// expect: Ada
+// expect: Event.Moved(1, 2)
+// expect: [Event.Volume(1), Event.Volume(2)]
+enum Event {
+    Volume(v: Int)
+    Name(s: String)
+    Moved(x: Int, y: Int)
+}
+
+fn make(n: Int, f: {Int -> Event}) -> Event {
+    return f(n)
+}
+
+fn named(s: String, f: {String -> Event}) -> Event {
+    return f(s)
+}
+
+fn both(f: {Int, Int -> Event}) -> Event {
+    return f(1, 2)
+}
+
+fn main {
+    print(make(3, .Volume))
+    print(make(4, Event.Volume))
+    let word: String := "Ada"
+    print(named(word, .Name))
+    print(word)
+    print(both(.Moved))
+    print([1, 2].map(Event.Volume))
+}

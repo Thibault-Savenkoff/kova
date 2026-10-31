@@ -16,6 +16,90 @@ const INDENT: &str = "    ";
 /// The text laid out; `None` when it doesn't read (an unclosed text or comment…) or when laying
 /// it out would change its tokens: it then stays as it is.
 pub fn format(src: &str) -> Option<String> {
+    let mut out = layout(src)?;
+    while let Some(broken) = break_wide_line(&out) {
+        out = layout(&broken)?;
+    }
+    Some(out)
+}
+
+/// The widest a line should be.
+const WIDTH: usize = 100;
+
+/// `src` with its first wide line that can be cut cut: each element of a list in brackets on a line
+/// of its own. Line breaks are only ever added, and `layout` indents them.
+fn break_wide_line(src: &str) -> Option<String> {
+    let (tokens, _) = raw(src);
+    let mut start = 0;
+    for line in src.split_inclusive('\n') {
+        let end = start + line.len();
+        if line.trim_end().chars().count() > WIDTH && !line.trim_start().starts_with("//") {
+            let here: Vec<&Token> = tokens.iter().filter(|t| t.span.start >= start && t.span.end <= end).collect();
+            if let Some(mut cuts) = (0..here.len()).find_map(|k| list_cuts(&here, k)) {
+                let mut out = src.to_string();
+                cuts.dedup();
+                cuts.iter().rev().for_each(|at| out.insert(*at, '\n'));
+                return Some(out);
+            }
+        }
+        start = end;
+    }
+    None
+}
+
+/// If `tokens[k]` opens a list closed on the same line: where to cut it (after the bracket, after
+/// each comma of its own, before the closing bracket). Blocks have no list to cut: only a struct
+/// literal's `{`.
+fn list_cuts(tokens: &[&Token], k: usize) -> Option<Vec<usize>> {
+    let list = match tokens[k].kind {
+        Kind::Sym("(" | "[") => true,
+        Kind::Sym("{") => k > 0 && tokens[k - 1].kind == Kind::Type,
+        _ => false,
+    };
+    if !list {
+        return None;
+    }
+    let (mut depth, mut cuts) = (0, vec![tokens[k].span.end]);
+    for t in &tokens[k..] {
+        match t.kind {
+            Kind::Sym("(" | "[" | "{") => depth += 1,
+            Kind::Sym(")" | "]" | "}") => depth -= 1,
+            Kind::Sym(",") if depth == 1 => cuts.push(t.span.end),
+            _ => {}
+        }
+        if depth == 0 {
+            if cuts.len() == 1 {
+                return None;
+            }
+            cuts.push(t.span.start);
+            return Some(filled(tokens, k, cuts));
+        }
+    }
+    None
+}
+
+/// A list of numbers or texts alone needs no line for each: the cuts that keep its lines full.
+fn filled(tokens: &[&Token], k: usize, cuts: Vec<usize>) -> Vec<usize> {
+    let close = tokens.iter().position(|t| t.span.start == cuts[cuts.len() - 1]).unwrap_or(k);
+    let simple = |t: &&&Token| matches!(t.kind, Kind::Sym("," | "-") | Kind::Int(_) | Kind::Float(_) | Kind::Str);
+    if !tokens[k + 1..close].iter().all(|t| simple(&t)) {
+        return cuts;
+    }
+    let (first, last) = (cuts[0], cuts[cuts.len() - 1]);
+    let mut kept = vec![first];
+    let mut line = first;
+    for (at, next) in cuts[1..].iter().zip(&cuts[2..]) {
+        if next - line > WIDTH * 3 / 4 {
+            kept.push(*at);
+            line = *at;
+        }
+    }
+    kept.push(last);
+    kept
+}
+
+/// The layout of `src`, keeping its line breaks.
+fn layout(src: &str) -> Option<String> {
     let (tokens, diags) = raw(src);
     if !diags.is_empty() {
         return None;
@@ -204,6 +288,16 @@ fn space(source: &str, a: Token, g: bool, b: &Token, generic: bool, before: Opti
 #[cfg(test)]
 mod tests {
     use super::format;
+
+    #[test]
+    fn wide_lines_are_cut() {
+        let call = format!("fn main {{\n    print(f(\"{a}\", [1, 2], Dog {{ a := 1, b := 2 }}))\n}}\n", a = "x".repeat(90));
+        let cut = format(&call).unwrap();
+        assert!(cut.lines().all(|l| l.len() <= 100 || l.contains("xxx")), "{cut}");
+        assert_eq!(format(&cut).as_deref(), Some(&*cut), "cutting again changes nothing");
+        let plain = format!("fn main {{\n    print(\"{}\")\n}}\n", "x".repeat(120));
+        assert_eq!(format(&plain).as_deref(), Some(&*plain), "one element: nothing to cut");
+    }
 
     #[test]
     fn layout() {

@@ -78,7 +78,9 @@ broken `check` ([Contracts and tests](/guide/contracts-and-tests/#tests)). `kova
 
 ## `kova fmt`
 
-Lays the code out the standard way: indentation and spaces. It never moves a line break, and
+Lays the code out the standard way: indentation and spaces. A line wider than 100 characters is cut
+at its commas, each element of the call, list or struct on a line of its own, and a list of numbers
+or texts only as much as it needs. It never joins lines, so a shape you chose yourself stays. It
 refuses to change a file if the result would not mean exactly the same program. The editor runs it
 on save.
 

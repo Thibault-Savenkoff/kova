@@ -22,7 +22,11 @@ fn main {
     db.script("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT UNIQUE, age INTEGER, data BLOB); CREATE TABLE empty (x);")?
     db.run("INSERT INTO people (name, age) VALUES (?, ?)") with([.Text("Ada"), .Int(36)])?
     print(db.last_id)
-    db.run("INSERT INTO people (name, age, data) VALUES (?, ?, ?)") with([.Text("Linus"), .Null, .Bytes([0, 255, 7])])?
+    db.run("INSERT INTO people (name, age, data) VALUES (?, ?, ?)") with([
+        .Text("Linus"),
+        .Null,
+        .Bytes([0, 255, 7])
+    ])?
     print(db.changes + 1)
     let rows: List<sqlite.Row> := db.query("SELECT name, age, data, 1.5 AS half, 3 AS three FROM people ORDER BY id")?
     for row in rows {
@@ -38,7 +42,10 @@ fn main {
     print(db.query("SELECT * FROM missing"))
     print(db.query("SELECT * FROM empty")?.length)
     let inside: String := "a\0b"
-    let same: List<sqlite.Row> := db.query("SELECT ? AS empty, ? AS inside") with([.Text(""), .Text(inside)])?
+    let same: List<sqlite.Row> := db.query("SELECT ? AS empty, ? AS inside") with([
+        .Text(""),
+        .Text(inside)
+    ])?
     print("{same[0].text("empty") else "?"}".length + (same[0].text("inside") else "").length + 1)
     db.each("SELECT name FROM people ORDER BY id") { row: sqlite.Row => print(row.text("name") else "?") }?
     db.each("SELECT name FROM people WHERE id = ?") with([.Int(2)]) { row: sqlite.Row => print(row.text("name") else "?") }?

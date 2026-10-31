@@ -54,7 +54,10 @@ fn give(e: move Expr) -> Int {
 }
 
 fn main {
-    var c := Cell { value := 1, next := Cell { value := 2, next := Cell { value := 3, next := none } } }
+    var c := Cell {
+        value := 1,
+        next := Cell { value := 2, next := Cell { value := 3, next := none } }
+    }
     print(c)
     print(c.sum)
     print(c.length)

@@ -64,7 +64,10 @@ fn main {
     show(found("D/missing/*.txt", dir), dir)
     print(system.env("KOVA_LANG"))
     print(system.env("KOVA_NO_SUCH_VARIABLE"))
-    for f in ["{dir}/src/deep/d.kova", "{dir}/src/e.kova", "{dir}/src/.hidden.kova", "{dir}/src/c.txt", "{dir}/a.txt"] {
+    for f in [
+        "{dir}/src/deep/d.kova", "{dir}/src/e.kova", "{dir}/src/.hidden.kova",
+        "{dir}/src/c.txt", "{dir}/a.txt"
+    ] {
         show(files.remove(f), dir)
     }
 }

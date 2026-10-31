@@ -22,7 +22,11 @@ fn by_key(a: c.Pair, b: c.Pair) -> Int {
 
 fn main {
     let p: Pointer := c.calloc(3, 8)
-    let three := c.Three { first := c.Pair { key := 3, value := 30 }, second := c.Pair { key := 1, value := 10 }, third := c.Pair { key := 2, value := 20 } }
+    let three := c.Three {
+        first := c.Pair { key := 3, value := 30 },
+        second := c.Pair { key := 1, value := 10 },
+        third := c.Pair { key := 2, value := 20 }
+    }
     print(c.put(p, three, 24).first.value)
     c.qsort(p, 3, 8, by_key)
     var sorted: c.Three := three

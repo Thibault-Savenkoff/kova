@@ -3413,6 +3413,12 @@ impl Checker<'_> {
             }
             return;
         }
+        // `ui.slider(v, 0, 10, .Volume)`: a variant by its name, where a block making it is expected.
+        if let Type::Block(ps, r) = expected
+            && self.variant_block(e, ps, r)
+        {
+            return;
+        }
         // `.Red` where a `Color` is expected.
         if let ExprKind::Variant { ty, name, args, .. } = &e.kind
             && ty.text.is_empty()
@@ -4102,7 +4108,7 @@ impl Checker<'_> {
         let fold = base == "fold";
         let expected = if fold || workers { 2 } else { 1 };
         let block = args.last().filter(|b| {
-            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. }) || matches!(&b.kind, ExprKind::Var(n) if self.functions.contains_key(n) || matches!(self.lookup(n), Some(Variable { ty: Type::Block(..) | Type::Function(..), .. }))))
+            args.len() == expected && (matches!(b.kind, ExprKind::Block { .. } | ExprKind::Variant { .. }) || matches!(&b.kind, ExprKind::Var(n) if self.functions.contains_key(n) || matches!(self.lookup(n), Some(Variable { ty: Type::Block(..) | Type::Function(..), .. }))))
         });
         let Some(block) = block else {
             let example = match name.text.as_str() {
@@ -4145,6 +4151,8 @@ impl Checker<'_> {
             }
             // `l.map(double)`: a function by its name.
             ExprKind::Var(n) if self.named_block(block, n, &params_wanted, result.as_ref()) => self.types[block.id].clone(),
+            // `l.map(Event.Volume)`: a variant by its name.
+            ExprKind::Variant { ty, .. } if self.structs.get(&ty.text).cloned().is_some_and(|t| self.variant_block(block, &params_wanted, result.as_ref().unwrap_or(&t))) => self.types[block.id].clone(),
             // `l.each(f)`: a block parameter given along.
             _ => {
                 let t = match self.passed(block) {
@@ -4274,6 +4282,36 @@ impl Checker<'_> {
         let body = Block { open: e.span, stmts: vec![Stmt::Expr(call)], close: e.span };
         let params: Vec<Param> = names.into_iter().map(|name| Param { name, mode: Mode::Read, ty: TypeAst::Inferred, default: None }).collect();
         let t = self.block_literal(&params, &body, Some(ps), result);
+        let block = self.fresh(e.span, ExprKind::Block { params, body });
+        self.types[block.id] = t.clone();
+        self.types[e.id] = t;
+        self.spans[e.id] = e.span;
+        self.filled.insert(e.id, block);
+        true
+    }
+
+    /// `.Volume` or `Event.Volume` given where a block taking the variant's fields and making an
+    /// `Event` is expected: the block `{ v => Event.Volume(v) }`, kept in `Info::filled` like
+    /// `named_block`'s. A block's parameters are lent, so what is not a copy is cloned.
+    fn variant_block(&mut self, e: &Expr, ps: &[Type], r: &Type) -> bool {
+        let (ExprKind::Variant { ty, name, args, .. }, Type::Enum(d)) = (&e.kind, r) else { return false };
+        let fits = args.is_empty()
+            && (ty.text.is_empty() || ty.text == d.name)
+            && d.variant(&name.text).is_some_and(|(_, fields)| fields.len() == ps.len() && fields.iter().zip(ps).all(|((_, t), p)| t == p));
+        if !fits {
+            return false;
+        }
+        let names: Vec<Name> = (0..ps.len()).map(|i| Name { text: format!("… {i}"), span: e.span }).collect();
+        let values = names.iter().zip(ps).map(|(p, t)| {
+            let value = self.fresh(e.span, ExprKind::Var(p.text.clone()));
+            let clone = Name { text: "clone".to_string(), span: e.span };
+            if is_copy(t) { value } else { self.fresh(e.span, ExprKind::Method { receiver: Box::new(value), name: clone, args: vec![] }) }
+        });
+        let args = values.collect();
+        let made = self.fresh(e.span, ExprKind::Variant { ty: Name { text: d.name.clone(), span: e.span }, types: vec![], name: name.clone(), args });
+        let body = Block { open: e.span, stmts: vec![Stmt::Expr(made)], close: e.span };
+        let params: Vec<Param> = names.into_iter().map(|name| Param { name, mode: Mode::Read, ty: TypeAst::Inferred, default: None }).collect();
+        let t = self.block_literal(&params, &body, Some(ps), Some(r));
         let block = self.fresh(e.span, ExprKind::Block { params, body });
         self.types[block.id] = t.clone();
         self.types[e.id] = t;
