@@ -44,7 +44,7 @@ folder the program is started from, unless they start at the root.
 | `files.append(path, text) -> Nothing or IoError` | adds `text` at the end of the file, creating it if needed. |
 | `files.sha256(path) -> String or IoError` | the SHA-256 fingerprint of the file, any file, text or not. |
 
-To read a file line by line, `files.read(path)?.split("\n")`; for a table, see
+`files.lines(path) -> List<String> or IoError` gives its lines; for a table, see
 [CSV](/library/json-and-csv/#csv).
 
 ## Binary files

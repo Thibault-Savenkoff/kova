@@ -465,10 +465,12 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
                 continue;
             }
             // `import web`: Kova's own module, even from a file named `web.kova`.
-            if types::MODULES.contains(&m.as_str()) {
+            let bundled = types::bundled(m);
+            if (types::MODULES.contains(&m.as_str()) && bundled.is_none()) || chain.last() == Some(m) && bundled.is_some() {
                 continue;
             }
-            if let Some((address, version)) = &imp.package {
+            if bundled.is_some() {
+            } else if let Some((address, version)) = &imp.package {
                 match packs.get(m) {
                     Some((a, v, _)) if (a, v) == (&address.text, &version.text) => continue,
                     Some((a, v, _)) => {
@@ -521,10 +523,11 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
             };
             let shown = if dir_text.is_empty() { format!("{path}.kova") } else { format!("{dir_text}{sep}{path}.kova") };
             let file = std::path::PathBuf::from(&shown);
-            let Ok(text) = std::fs::read_to_string(&file) else {
+            let Some(text) = bundled.map(String::from).or_else(|| std::fs::read_to_string(&file).ok()) else {
                 diags.push(diag::Diag::new(imp.module.span, t!("import_not_found", file = shown)));
                 continue;
             };
+            let shown = if bundled.is_some() { format!("{m}.kova") } else { shown };
             let base = sources.add(&shown, &text);
             let origin = origin.unwrap_or(imp.module.span);
             *sources.origins.last_mut().unwrap() = Some(origin);

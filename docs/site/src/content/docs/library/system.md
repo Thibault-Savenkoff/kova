@@ -55,6 +55,7 @@ import system
 
 | Function | Gives |
 | --- | --- |
+| `system.cores -> Int` | how many processors this program may use: a good number for `workers(…)`. |
 | `system.env(name: String) -> String?` | the value of an environment variable, `none` if it is not set. |
 | `system.args -> List<String>` | the words given after the program's name: `kova run app.kova a b`, `./app a b`. |
 | `system.exit(code: Int)` | ends the program at once with this exit code (0 means success). |

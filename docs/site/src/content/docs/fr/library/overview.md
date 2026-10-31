@@ -32,6 +32,9 @@ presque la même chose.
 | `import secure` | [secure](/fr/library/secure/#import-secure) | hasard sûr, mots de passe, chiffrement |
 | `import log` | [log](/fr/library/log/) | des lignes datées par niveau |
 | `import threads` | [threads](/fr/library/threads/) | des fils, des canaux, des valeurs partagées |
+| `import paths` | [paths](/fr/library/paths/) | découper et assembler des chemins de fichiers |
+| `import url` | [url](/fr/library/url/) | encoder des textes pour les adresses web |
+| `import arguments` | [arguments](/fr/library/arguments/) | lire la ligne de commande |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 
 ## Chaque valeur a

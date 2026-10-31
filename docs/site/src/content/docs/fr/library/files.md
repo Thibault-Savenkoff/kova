@@ -44,7 +44,7 @@ dossier d'où le programme est lancé, sauf s'ils partent de la racine.
 | `files.append(path, text) -> Nothing or IoError` | ajoute `text` à la fin du fichier, et le crée si besoin. |
 | `files.sha256(path) -> String or IoError` | l'empreinte SHA-256 du fichier, n'importe quel fichier, texte ou non. |
 
-Pour lire un fichier ligne par ligne, `files.read(path)?.split("\n")` ; pour un tableau, voir
+`files.lines(path) -> List<String> or IoError` donne ses lignes ; pour un tableau, voir
 [CSV](/fr/library/json-and-csv/#csv).
 
 ## Fichiers binaires

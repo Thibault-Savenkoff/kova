@@ -157,6 +157,11 @@ Un caractère Unicode, écrit entre apostrophes : `'a'`, `'é'`, `'\n'`. Un `Str
 | Méthode | Donne |
 | --- | --- |
 | `c.to_int -> Int` | son code Unicode (`'A'.to_int` vaut `65`). |
+| `c.is_letter -> Bool` | une lettre de n'importe quel alphabet (`'é'`, `'я'`). |
+| `c.is_digit -> Bool` | un chiffre de `0` à `9`. |
+| `c.is_space -> Bool` | une espace, une tabulation, un saut de ligne… |
+| `c.is_upper -> Bool`, `c.is_lower -> Bool` | une lettre majuscule ou minuscule. |
+| `c.to_upper -> Char`, `c.to_lower -> Char` | la même lettre dans l'autre casse. |
 | `c.to_string -> String` | un texte de ce seul caractère. |
 
 Les caractères se comparent par leurs codes : `'a' < 'b'`.

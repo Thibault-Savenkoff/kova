@@ -156,6 +156,11 @@ them (`s.chars`).
 | Method | Gives |
 | --- | --- |
 | `c.to_int -> Int` | its Unicode code (`'A'.to_int` is `65`). |
+| `c.is_letter -> Bool` | a letter of any alphabet (`'é'`, `'я'`). |
+| `c.is_digit -> Bool` | one of `0` to `9`. |
+| `c.is_space -> Bool` | a space, a tab, a line break… |
+| `c.is_upper -> Bool`, `c.is_lower -> Bool` | an uppercase or lowercase letter. |
+| `c.to_upper -> Char`, `c.to_lower -> Char` | the same letter in the other case. |
 | `c.to_string -> String` | a text of this one character. |
 
 Characters compare by their codes: `'a' < 'b'`.

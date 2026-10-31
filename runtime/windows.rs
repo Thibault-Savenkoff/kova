@@ -49,6 +49,7 @@ unsafe extern "system" {
     fn FindNextFileW(h: Handle, found: *mut u32) -> i32;
     fn FindClose(h: Handle) -> i32;
     fn GetSystemTimePreciseAsFileTime(t: *mut u64);
+    fn GetActiveProcessorCount(group: u16) -> u32;
     fn FileTimeToLocalFileTime(utc: *const u64, local: *mut u64) -> i32;
     fn Sleep(ms: u32);
     fn GetCurrentProcessId() -> u32;
@@ -216,6 +217,11 @@ pub fn is_terminal(fd: usize) -> bool {
 }
 
 /// The nanoseconds since 1970 (UTC).
+pub fn cores() -> i64 {
+    // ALL_PROCESSOR_GROUPS.
+    (unsafe { GetActiveProcessorCount(0xffff) } as i64).max(1)
+}
+
 pub fn now() -> u64 {
     let mut t = 0; // in 100 ns since 1601
     unsafe { GetSystemTimePreciseAsFileTime(&mut t) };

@@ -70,6 +70,7 @@ mod numbers {
     pub const CLONE: usize = 56;
     pub const EXIT: usize = 60;
     pub const FUTEX: usize = 202;
+    pub const SCHED_GETAFFINITY: usize = 204;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -111,6 +112,7 @@ mod numbers {
     pub const CLONE: usize = 220;
     pub const EXIT: usize = 93;
     pub const FUTEX: usize = 98;
+    pub const SCHED_GETAFFINITY: usize = 123;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -258,6 +260,13 @@ pub fn read(fd: usize, b: &mut [u8]) -> usize {
 pub fn is_terminal(fd: usize) -> bool {
     let mut settings = [0u8; 64];
     unsafe { call(IOCTL, fd, 0x5401, settings.as_mut_ptr() as usize, 0, 0, 0) == 0 } // TCGETS
+}
+
+/// The processors this program may use.
+pub fn cores() -> i64 {
+    let mut mask = [0u64; 128];
+    let got = unsafe { call(SCHED_GETAFFINITY, 0, 1024, mask.as_mut_ptr() as usize, 0, 0, 0) };
+    if (got as isize) <= 0 { 1 } else { mask.iter().map(|m| m.count_ones() as i64).sum::<i64>().max(1) }
 }
 
 /// The nanoseconds since 1970 (UTC).

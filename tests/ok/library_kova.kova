@@ -1,0 +1,61 @@
+// expect: a/b/c.txt
+// expect: /etc
+// expect: a/b
+// expect: c.txt
+// expect: c
+// expect: txt
+// expect: [empty]
+// expect: .bashrc
+// expect: a%20b%26c%C3%A9
+// expect: "a b&cé"
+// expect: none
+// expect: page=2&q=a%20b
+// expect: a b
+// expect: ["x", "y"]
+// expect: true
+// expect: false
+// expect: 80
+// expect: name=v=2
+// expect: [--z]
+// expect: true true false false
+// expect: true true
+// expect: É 3
+// expect: true
+// expect: 2
+
+import paths
+import url
+import arguments
+import files
+import system
+
+fn main {
+    print(paths.join("a/b", "c.txt"))
+    print(paths.join("a/b/", "/etc"))
+    print(paths.folder("a/b/c.txt"))
+    print(paths.name("a/b/c.txt"))
+    print(paths.stem("a/b/c.txt"))
+    print(paths.extension("a/b/c.txt"))
+    print("[{paths.extension(".bashrc")}empty]")
+    print(paths.stem("x/.bashrc"))
+    print(url.encode("a b&cé"))
+    print(url.decode(url.encode("a b&cé")))
+    print(url.decode("a%2"))
+    print(url.query(["q" := "a b", "page" := "2"]))
+    print(url.parse_query("page=2&q=a%20b")["q"] else "?")
+    let a: arguments.Arguments := arguments.read(["x", "--verbose", "--port", "80", "--name=v=2", "y", "--", "--z"]) options(["port"])
+    print(a.words[0..2])
+    print(a.flag("verbose"))
+    print(a.flag("quiet"))
+    print(a.option("port") else "?")
+    print("name={a.option("name") else "?"}")
+    print(a.words[2..3].map { w: String => "[{w}]" }.join(""))
+    print("{'a'.is_letter} {'é'.is_lower} {'1'.is_letter} {'a'.is_digit}")
+    print("{' '.is_space} {'A'.is_upper}")
+    print("{'é'.to_upper} {'3'.to_int - '0'.to_int}")
+    print(system.cores >= 1)
+    match files.lines("tests/data/poem.txt") {
+        ok(lines) => print(lines.length)
+        err(e) => print(e)
+    }
+}

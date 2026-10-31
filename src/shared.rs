@@ -9,6 +9,22 @@ use alloc::format;
 /// The capital (`upper`) or small letter of `c`, for the Latin, Greek and Cyrillic alphabets;
 /// any other character stays. Rust's own `to_uppercase` knows all of Unicode, but its tables
 /// are in `std`, which the runtime does not have.
+/// `c.is_letter` and the others: the number of each is what `char_test` receives.
+pub const CHAR_TESTS: [&str; 7] = ["is_letter", "is_digit", "is_space", "is_upper", "is_lower", "to_upper", "to_lower"];
+
+pub fn char_test(c: i64, test: i64) -> i64 {
+    let Some(c) = u32::try_from(c).ok().and_then(char::from_u32) else { return 0 };
+    match test {
+        0 => c.is_alphabetic() as i64,
+        1 => c.is_ascii_digit() as i64,
+        2 => c.is_whitespace() as i64,
+        3 => c.is_uppercase() as i64,
+        4 => c.is_lowercase() as i64,
+        5 => case_of(c, true) as i64,
+        _ => case_of(c, false) as i64,
+    }
+}
+
 pub fn case_of(c: char, upper: bool) -> char {
     let c = c as u32;
     let pairs = |c: u32, even_upper: bool| {

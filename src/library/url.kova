@@ -1,0 +1,81 @@
+// `import url`: writing texts into web addresses, and reading them back.
+
+public:
+
+// `a b&c` → `a%20b%26c`: only letters, digits and `-_.~` stay as they are.
+fn encode(text: String) -> String {
+    var written: String := ""
+    for byte in text.to_bytes {
+        if plain(byte) {
+            written += [byte].to_text else ""
+        } else {
+            written += "%" + [byte].to_hex.to_upper
+        }
+    }
+    return written
+}
+
+// `a%20b` → `a b`, and `+` is a space as in forms. `none` if it is not a valid encoding.
+fn decode(text: String) -> String? {
+    let bytes: List<Int> := text.to_bytes
+    var out: List<Int> := []
+    var i: Int := 0
+    while i < bytes.length {
+        let byte: Int := bytes[i]
+        if byte = 37 {
+            if i + 2 >= bytes.length {
+                return none
+            }
+            let high: Int? := digit(bytes[i + 1])
+            let low: Int? := digit(bytes[i + 2])
+            if high = none || low = none {
+                return none
+            }
+            out.add(high * 16 + low)
+            i += 3
+        } else {
+            out.add(if byte = 43 { 32 } else { byte })
+            i += 1
+        }
+    }
+    return out.to_text
+}
+
+// `["q" := "a b", "page" := "2"]` → `page=2&q=a%20b`, sorted by name.
+fn query(values: Map<String, String>) -> String {
+    let pairs: List<String> := values.keys.sorted.map { name: String => encode(name) + "=" + encode(values[name] else "") }
+    return pairs.join("&")
+}
+
+// `page=2&q=a%20b` → its names and their values; a part that cannot be read is left out.
+fn parse_query(text: String) -> Map<String, String> {
+    var values: Map<String, String> := []
+    for part in text.split("&") {
+        let pair: List<String> := part.split("=")
+        let name: String? := decode(pair[0])
+        let value: String? := decode(if pair.length > 1 { pair[1].clone } else { "" })
+        if name != none && value != none {
+            values[name] := value
+        }
+    }
+    return values
+}
+
+private:
+
+fn plain(byte: Int) -> Bool {
+    return 48 <= byte && byte <= 57 || 65 <= byte && byte <= 90 || 97 <= byte && byte <= 122 || byte = 45 || byte = 95 || byte = 46 || byte = 126
+}
+
+fn digit(byte: Int) -> Int? {
+    if 48 <= byte && byte <= 57 {
+        return byte - 48
+    }
+    if 65 <= byte && byte <= 70 {
+        return byte - 55
+    }
+    if 97 <= byte && byte <= 102 {
+        return byte - 87
+    }
+    return none
+}

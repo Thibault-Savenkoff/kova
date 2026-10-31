@@ -1711,6 +1711,16 @@ pub extern "C" fn kova_now() -> i64 {
     ((t / 1_000_000_000) as f64 + (t % 1_000_000_000) as f64 / 1e9).to_bits() as i64
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_char_test(c: i64, test: i64) -> i64 {
+    shared::char_test(c, test)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_cores() -> i64 {
+    sys::cores()
+}
+
 /// `sleep(seconds)`, a Float's bits: what `print` left is shown first; 0 or less waits nothing.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_sleep(bits: i64) -> i64 {

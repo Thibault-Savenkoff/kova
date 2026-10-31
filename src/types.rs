@@ -452,7 +452,18 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments"];
+
+/// What Kova's library writes in Kova (`src/library`): read like a file of the program.
+pub fn bundled(module: &str) -> Option<&'static str> {
+    Some(match module {
+        "paths" => include_str!("library/paths.kova"),
+        "url" => include_str!("library/url.kova"),
+        "arguments" => include_str!("library/arguments.kova"),
+        "files" => include_str!("library/files.kova"),
+        _ => return None,
+    })
+}
 /// Their types.
 pub const MODULE_TYPES: &[&str] = &["threads.Channel", "threads.Task", "threads.Shared", "web.Request", "web.Response", "web.Answer", "web.Log", "web.WebError", "files.IoError", "system.Finished", "system.RunError", "log.Level"];
 
@@ -551,6 +562,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("system.run", "fn system.run(program: String) -> system.Finished or system.RunError"),
         ("system.run(…) args(…)", "fn system.run(program: String) args(words: List<String>) -> system.Finished or system.RunError"),
         ("system.clock", "fn system.clock -> Float"),
+        ("system.cores", "fn system.cores -> Int"),
         ("system.sleep", "fn system.sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
         ("secure.random", "fn secure.random(from..to) -> Int"),
@@ -811,7 +823,7 @@ fn quoted(names: &[&str]) -> String {
 
 /// The methods of `number_method`, numbers' and dates'.
 pub const NUMBER_METHODS: &[&str] = &[
-    "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "fixed", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
+    "is_letter", "is_digit", "is_space", "is_upper", "is_lower", "to_upper", "to_lower", "abs", "min", "max", "pow", "sqrt", "floor", "ceil", "round", "fixed", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log10", "exp",
     "plus_days", "plus_months", "plus_hours", "plus_minutes", "plus_seconds", "days_until", "seconds_until", "date", "weekday",
 ];
 
@@ -832,6 +844,8 @@ pub fn number_method(t: &Type, name: &str) -> Option<(Vec<Type>, Type)> {
         (Type::Date | Type::DateTime, "plus_days" | "plus_months") | (Type::DateTime, "plus_hours" | "plus_minutes" | "plus_seconds") => (vec![int()], t.clone()),
         (Type::Date, "days_until") | (Type::DateTime, "seconds_until") => (vec![t.clone()], int()),
         (Type::DateTime, "date") => (vec![], Type::Date),
+        (Type::Char, "is_letter" | "is_digit" | "is_space" | "is_upper" | "is_lower") => (vec![], Type::Bool),
+        (Type::Char, "to_upper" | "to_lower") => (vec![], Type::Char),
         (Type::Date | Type::DateTime, "weekday") => (vec![], weekday()),
         _ => return None,
     })
@@ -1458,6 +1472,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("system.run(…) args(…)".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(string())))], ran()));
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("system.clock".into(), Signature::new(None, vec![], Type::Float));
+    c.functions.insert("system.cores".into(), Signature::new(None, vec![], Type::Int));
     // What `ui.run` calls (src/ui.rs): shows a view, gives the button clicked, -1 once closed.
     c.functions.insert("ui.show".into(), Signature::new(None, vec![(Mode::Read, string()), (Mode::Read, string()), (Mode::Read, Type::Int), (Mode::Read, Type::Int)], Type::Int));
     c.functions.insert("ui.typed".into(), Signature::new(None, vec![], string()));

@@ -1,0 +1,86 @@
+// `import paths`: taking file paths apart and putting them together. A path is a plain String,
+// and both `/` and Windows' `\` separate its parts.
+
+public:
+
+fn join(first: String, second: String) -> String {
+    if first.is_empty || absolute(second) {
+        return second.clone
+    }
+    if ends_with_separator(first) {
+        return first + second
+    }
+    return first + "/" + second
+}
+
+// `a/b` of `a/b/c.txt`, empty when the path has no folder.
+fn folder(path: String) -> String {
+    let cut: Int := last_separator(path)
+    if cut < 0 {
+        return ""
+    }
+    if cut = 0 {
+        return path[0..1]
+    }
+    return path[0..cut]
+}
+
+// `c.txt` of `a/b/c.txt`.
+fn name(path: String) -> String {
+    return path[last_separator(path) + 1..path.length]
+}
+
+// `c` of `a/b/c.txt`.
+fn stem(path: String) -> String {
+    let whole: String := name(path)
+    let cut: Int := last_dot(whole)
+    if cut <= 0 {
+        return whole
+    }
+    return whole[0..cut]
+}
+
+// `txt` of `a/b/c.txt`, without its dot; empty if it has none. `.bashrc` has none.
+fn extension(path: String) -> String {
+    let whole: String := name(path)
+    let cut: Int := last_dot(whole)
+    if cut <= 0 {
+        return ""
+    }
+    return whole[cut + 1..whole.length]
+}
+
+fn absolute(path: String) -> Bool {
+    let c: List<Char> := path.chars
+    return c.length > 0 && separator(c[0]) || c.length > 2 && c[1] = ':' && separator(c[2])
+}
+
+private:
+
+fn separator(c: Char) -> Bool {
+    return c = '/' || c = '\\'
+}
+
+fn ends_with_separator(path: String) -> Bool {
+    return path.ends_with("/") || path.ends_with("\\")
+}
+
+fn last_separator(path: String) -> Int {
+    var last: Int := -1
+    for i, c in path.chars {
+        if separator(c) {
+            last := i
+        }
+    }
+    return last
+}
+
+fn last_dot(text: String) -> Int {
+    var last: Int := -1
+    for i, c in text.chars {
+        if c = '.' {
+            last := i
+        }
+    }
+    return last
+}

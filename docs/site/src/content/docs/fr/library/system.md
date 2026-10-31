@@ -55,6 +55,7 @@ import system
 
 | Fonction | Donne |
 | --- | --- |
+| `system.cores -> Int` | combien de processeurs ce programme peut utiliser : un bon nombre pour `workers(…)`. |
 | `system.env(name: String) -> String?` | la valeur d'une variable d'environnement, `none` si elle n'est pas définie. |
 | `system.args -> List<String>` | les mots donnés après le nom du programme : `kova run app.kova a b`, `./app a b`. |
 | `system.exit(code: Int)` | termine le programme tout de suite avec ce code de sortie (0 veut dire réussite). |

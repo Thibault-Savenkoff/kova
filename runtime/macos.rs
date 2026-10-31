@@ -22,6 +22,7 @@ mod c {
         pub fn getenv(name: *const u8) -> *const u8;
         pub fn isatty(fd: i32) -> i32;
         pub fn clock_gettime(clock: u32, t: *mut [i64; 2]) -> i32;
+        pub fn sysconf(name: i32) -> i64;
         pub fn getentropy(b: *mut u8, n: usize) -> i32;
         pub fn nanosleep(t: *const [i64; 2], rest: *mut [i64; 2]) -> i32;
         pub fn getpid() -> i32;
@@ -139,6 +140,11 @@ pub fn is_terminal(fd: usize) -> bool {
 }
 
 /// The nanoseconds since 1970 (UTC).
+pub fn cores() -> i64 {
+    // _SC_NPROCESSORS_ONLN.
+    unsafe { c::sysconf(58) }.max(1)
+}
+
 pub fn now() -> u64 {
     let mut t = [0; 2];
     unsafe { c::clock_gettime(0, &mut t) }; // CLOCK_REALTIME

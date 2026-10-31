@@ -1,0 +1,8 @@
+// The part of `import files` written in Kova.
+import files
+
+public:
+
+fn lines(path: String) -> List<String> or files.IoError {
+    return ok(files.read(path)?.lines)
+}

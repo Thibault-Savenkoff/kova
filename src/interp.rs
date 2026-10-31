@@ -1064,6 +1064,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                                 wait(end.is_some(), at, out, files, heap)?;
                             }
                         }
+                        StrOp::CharTest => crate::shared::char_test(locals[a[0]], locals[a[1]]),
+                        StrOp::Cores => std::thread::available_parallelism().map_or(1, |n| n.get() as i64),
                         StrOp::Spawn => {
                             start_thread(p, locals[a[0]] as usize, [locals[a[1]], locals[a[2]]], out, files, heap);
                             0

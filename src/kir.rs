@@ -395,6 +395,9 @@ pub enum StrOp {
     PipeTake,
     PipeClose,
     PipeSelect,
+    /// `c.is_letter`, `c.to_upper`…: `shared::char_test`.
+    CharTest,
+    Cores,
     Spawn,
     /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
     NotBytes,
@@ -4627,6 +4630,12 @@ impl<'a> Translator<'a> {
     /// `n.abs`, `a.min(b)`, `n.pow(k)`, `x.sqrt`, `x.round`… on the number `v` (Part 4, "Standard
     /// library v2"): the same instructions in run and build, so the same digits.
     fn number_method(&mut self, e: &Expr, v: Local, name: &str, args: &[Expr]) -> Slots {
+        if self.ty(e) == Type::Bool || self.ty(e) == Type::Char {
+            let test = crate::shared::CHAR_TESTS.iter().position(|t| *t == name).expect("checked by the type checker");
+            let (test, out) = (self.constant(test as i64), self.int_local());
+            self.emit(Inst::Str(out, StrOp::CharTest, vec![v, test]));
+            return vec![out];
+        }
         // `x.fixed(2)`, a text; `x.round(2)`, a Float: their digits are the same in run and build.
         if name == "fixed" || (name == "round" && !args.is_empty()) {
             let (digits, bits, dst) = (self.expr1(&args[0]), self.int_local(), self.int_local());
@@ -5686,6 +5695,11 @@ impl<'a> Translator<'a> {
                     let clicked = self.int_local();
                     self.emit(Inst::Str(clicked, StrOp::UiShow, vals));
                     return vec![clicked];
+                }
+                if name.text == "system.cores" {
+                    let n = self.int_local();
+                    self.emit(Inst::Str(n, StrOp::Cores, vec![]));
+                    return vec![n];
                 }
                 if name.text == "system.clock" {
                     let (bits, x) = (self.int_local(), self.new_slots(&Type::Float)[0]);

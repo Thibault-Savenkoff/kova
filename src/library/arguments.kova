@@ -1,0 +1,48 @@
+// `import arguments`: reading a program's command line.
+
+public:
+
+struct Arguments {
+public:
+    // What is neither an option nor a flag, in order.
+    words: List<String>
+    flags: Set<String>
+    options: Map<String, String>
+
+    fn flag(self, name: String) -> Bool {
+        return self.flags.contains(name)
+    }
+
+    fn option(self, name: String) -> String? {
+        return self.options[name]
+    }
+}
+
+// `--port 80`, `--port=80`, `-p 80`: the value of an option named in `options`. Any other `--name`
+// or `-n` is a flag, and everything after `--` is a word.
+fn read(words: List<String>) options(options: List<String> := []) -> Arguments {
+    var found: Arguments := Arguments { words := [], flags := Set[], options := [] }
+    var i: Int := 0
+    var only_words: Bool := false
+    while i < words.length {
+        let word: String := words[i].clone
+        i += 1
+        if only_words || !word.starts_with("-") || word = "-" {
+            found.words.add(word.clone)
+        } else if word = "--" {
+            only_words := true
+        } else {
+            let plain: String := word[if word.starts_with("--") { 2 } else { 1 }..word.length]
+            let parts: List<String> := plain.split("=")
+            if parts.length > 1 {
+                found.options[parts[0]] := plain[parts[0].length + 1..plain.length]
+            } else if options.contains(plain) && i < words.length {
+                found.options[plain] := words[i].clone
+                i += 1
+            } else {
+                found.flags.add(move plain)
+            }
+        }
+    }
+    return found
+}
