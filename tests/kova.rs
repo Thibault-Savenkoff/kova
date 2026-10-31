@@ -1272,6 +1272,17 @@ fn ui_place() {
     assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["40 60 400 300"], "{}", text(&out.stderr));
 }
 
+/// `ui.animate` plays to its last frame, on the system's real windows, hidden, and a clock of its
+/// own leaves the program's running. Nothing moves on Linux, as with `ui.place`.
+#[test]
+fn ui_animate() {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    let out = kova(LANG).args(["run", "tests/ui/animate.kova"]).env("KOVA_UI_HIDDEN", "1").env_remove("KOVA_UI_SCRIPT").output().unwrap();
+    assert_eq!(text(&out.stdout).lines().collect::<Vec<_>>(), ["40 60 400 300"], "{}", text(&out.stderr));
+}
+
 #[test]
 fn server_log() {
     let _alone = one_server();

@@ -1,0 +1,26 @@
+// A window, hidden, animated by Kova, which then reads where it ended.
+import ui
+
+enum Event {
+    Tick
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.text("animated").every(20, Event.Tick)
+}
+
+fn update(n: var Int, e: Event) {
+    n := n + 1
+    if n = 1 {
+        ui.animate(ui.Area { x := 40, y := 60, width := 400, height := 300 }) time(100)
+    }
+    if n = 40 {
+        let w: ui.Area := ui.window
+        print("{w.x} {w.y} {w.width} {w.height}")
+        ui.close
+    }
+}
+
+fn main {
+    ui.run("Animate", 0, view, update) frame(false)
+}

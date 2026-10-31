@@ -785,8 +785,12 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         if let Some((hearing, _)) = MAC_CANVASES.get().iter().find(|(_, c)| c.key.is_some()) {
             (kit.send_two)(w, kit.sel("makeFirstResponder:"), *hearing);
         }
+    }
+    let clocks = crate::shared::ui_clocks(view);
+    if clocks != *MAC_CLOCKS_ASKED.get() {
         let now = mac_now(kit);
-        *MAC_CLOCKS.get() = crate::shared::ui_clocks(view).into_iter().map(|(ms, n)| (ms as f64 / 1000.0, n, now + ms as f64 / 1000.0)).collect();
+        *MAC_CLOCKS.get() = clocks.iter().map(|&(ms, n)| (ms as f64 / 1000.0, n, now + ms as f64 / 1000.0)).collect();
+        *MAC_CLOCKS_ASKED.get() = clocks;
     }
     for ((leaf, style), &v) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter()) {
         mac_style(kit, v, leaf, style);
@@ -895,6 +899,8 @@ static MAC_WINDOWED: crate::Global<(f64, f64)> = crate::Global::new((0.0, 0.0));
 static MAC_HEARD: crate::Global<crate::shared::UiQueue> = crate::Global::new(crate::shared::UiQueue::new());
 /// The clocks: (seconds between ticks, button number, next tick).
 static MAC_CLOCKS: crate::Global<Vec<(f64, usize, f64)>> = crate::Global::new(Vec::new());
+/// What those clocks are (`shared::ui_clocks`).
+static MAC_CLOCKS_ASKED: crate::Global<Vec<(i32, usize)>> = crate::Global::new(Vec::new());
 /// Each canvas now on screen.
 static MAC_CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
 

@@ -20,6 +20,7 @@ lists what `ui` has.
 | `ui.close`, `ui.minimize`, `ui.maximize`, `ui.full_screen`, `ui.drag` | from `update`: closes the window, minimizes it, maximizes it or restores it, puts it in full screen or takes it out, moves it with the mouse after a press. |
 | `ui.window -> ui.Area`, `ui.screen -> ui.Area` | where the window is, what the screen leaves it: `x`, `y`, `width`, `height`. |
 | `ui.place(x, y) size(width, height)` | from `update`: puts the window there; does nothing on Linux yet. |
+| `ui.animate(area) time(ms) curve { t: Float => … }` | from `update`: takes the window to `area` over time, 300 ms if `time` is left out, starting and ending slowly if `curve` is; does nothing on Linux yet. |
 | `ui.text(s: String) -> ui.View` | a line of text. |
 | `ui.button(label: String, event: E) -> ui.View` | a button; a click sends `event` to `update`. |
 | `ui.input(value: String) { s: String => E } -> ui.View` | a text field holding `value`; at each change the user makes, the block's event, made from the text the field now holds, goes to `update` ([Text fields](/guide/windows/#text-fields)). |

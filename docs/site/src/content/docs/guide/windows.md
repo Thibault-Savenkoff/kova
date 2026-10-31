@@ -411,7 +411,25 @@ Without a frame, the window cannot be resized by its edges: give it its size wit
 the Dock or the taskbar. Both give a `ui.Area`, with `x`, `y`, `width` and `height`.
 `ui.place(x, y) size(width, height)` puts the window there, at once.
 
-With a clock, that is all an animation needs. This window grows from the center of the screen, at
+`ui.animate` takes the window to an area over time. It is called from `update`, Kova does the rest:
+
+```kova
+Grow => ui.animate(ui.screen) time(1000)
+```
+
+`time` is in milliseconds, 300 if you leave it out. The window starts slowly and ends slowly unless
+you give the curve yourself. A curve receives `t`, from 0 to 1 over the animation, and gives how far
+along the window is. Above 1, the window goes past its goal, which makes a rebound:
+
+```kova
+Grow => ui.animate(ui.screen) time(1000) curve { t: Float => t * t }
+```
+
+The goal is any `ui.Area`: `ui.Area { x := 100, y := 100, width := 640, height := 480 }`. The program
+goes on hearing clicks during the animation, and a new `ui.animate` replaces the one running.
+
+For anything else, such as a path that is not a straight line, the program moves the window itself.
+With a clock, `ui.place` is all an animation needs. This window grows from the center of the screen, at
 the speed you chose, with the curve you chose:
 
 ```kova

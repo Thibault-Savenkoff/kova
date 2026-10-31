@@ -1,0 +1,35 @@
+// `ui.animate`: Kova plays the frames, here two, each one a `ui.place`.
+import ui
+
+enum Event {
+    Grown
+    Curved
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.column([ui.button("grow", Event.Grown), ui.button("curve", Event.Curved)])
+}
+
+fn update(n: var Int, e: Event) {
+    let s: ui.Area := ui.screen
+    match e {
+        Grown => ui.animate(s) time(32)
+        Curved => ui.animate(ui.Area { x := 0, y := 0, width := 100, height := 100 }) curve { t: Float => t }
+    }
+    n := n + 1
+}
+
+fn main {
+    ui.run("Animate", 0, view, update)
+}
+// stdin: 0
+// stdin: 2
+// stdin: 2
+// stdin: 1
+// expect: [Animate] column(button "grow", button "curve")
+// expect: [Animate] column(button "grow", button "curve") every(16)
+// expect: [Animate] column(button "grow", button "curve") every(16)
+// expect: (place)
+// expect: [Animate] column(button "grow", button "curve")
+// expect: (place)
+// expect: [Animate] column(button "grow", button "curve") every(16)

@@ -922,17 +922,21 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         (win.release_dc)(w, dc);
         arrange(win, w, view, same);
         *SHOWN.get() = view;
-        if !same {
-            let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+        let user = |name: &str| library("user32.dll").and_then(|l| symbol(l, name)).unwrap_or(0);
+        let clocks = crate::shared::ui_clocks(view);
+        if clocks != *WIN_CLOCKS_ASKED.get() {
             let set_timer: extern "system" fn(Handle, usize, u32, usize) -> usize = core::mem::transmute(user("SetTimer"));
             let kill_timer: extern "system" fn(Handle, usize) -> i32 = core::mem::transmute(user("KillTimer"));
-            let focus: extern "system" fn(Handle) -> Handle = core::mem::transmute(user("SetFocus"));
             for clock in WIN_CLOCKS.get().drain(..) {
                 kill_timer(w, clock);
             }
-            for (ms, n) in crate::shared::ui_clocks(view) {
+            for &(ms, n) in &clocks {
                 WIN_CLOCKS.get().push(set_timer(w, n + 1, ms as u32, 0));
             }
+            *WIN_CLOCKS_ASKED.get() = clocks;
+        }
+        if !same {
+            let focus: extern "system" fn(Handle) -> Handle = core::mem::transmute(user("SetFocus"));
             if let Some((hearing, _)) = WIN_CANVASES.get().iter().find(|(_, c)| c.key.is_some()) {
                 focus(*hearing);
             }
@@ -1086,6 +1090,8 @@ fn win_edge() -> i32 {
 static WIN_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());
 /// The running clocks (`SetTimer`).
 static WIN_CLOCKS: Global<Vec<usize>> = Global::new(Vec::new());
+/// What those clocks are (`shared::ui_clocks`).
+static WIN_CLOCKS_ASKED: Global<Vec<(i32, usize)>> = Global::new(Vec::new());
 /// Each canvas now on the screen.
 static WIN_CANVASES: Global<Vec<(Handle, crate::shared::UiCanvas)>> = Global::new(Vec::new());
 

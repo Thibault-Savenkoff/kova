@@ -12,8 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 36] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill",
+const OWN: [&str; 37] = [
+    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -262,6 +262,23 @@ fn place(x: Int, y: Int) size(width: Int, height: Int) {
     ui.put(x, y, width, height)
 }
 
+fn animate(goal: Area) time(ms: Int := 300) {
+    animate(goal) time(ms) curve { t: Float => t * t * (3.0 - 2.0 * t) }
+}
+
+// Blocks are not kept: the curve runs here, each frame's place goes to `run` through the drawing
+// text, which nothing else fills during `update`.
+fn animate(goal: Area) time(ms: Int := 300) curve(eased: {Float -> Float})
+    require ms > 0 else "a time is at least 1 millisecond"
+{
+    let start: Area := window
+    let steps: Int := (ms + FRAME - 1) / FRAME
+    for step in 1..=steps {
+        let e: Float := eased(step.to_float / steps.to_float)
+        ui.draw("{between(start.x, goal.x, e)} {between(start.y, goal.y, e)} {between(start.width, goal.width, e)} {between(start.height, goal.height, e)}\n")
+    }
+}
+
 fn window -> Area {
     return Area { x := ui.room(3), y := ui.room(4), width := ui.room(5), height := ui.room(6) }
 }
@@ -275,12 +292,22 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame
         ui.act(0)
     }
     var s: STATE := state.clone
+    var frames: List<String> := []
+    var frame: Int := 0
     while true {
         ui.room(2)
         let v: View := VIEW(s)
-        let clicked: Int := ui.show(title, v.text, w, h)
+        let animating: Bool := frame < frames.length
+        let clicked: Int := ui.show(title, if animating { "SE{FRAME}:{v.text}" } else { v.text.clone }, w, h)
         if clicked = -1 {
             return
+        }
+        // The clock of `ui.animate`, the last event of the view.
+        if animating && clicked = v.events.length {
+            let p: List<String> := frames[frame].words
+            ui.put(number_in(p[0]), number_in(p[1]), number_in(p[2]), number_in(p[3]))
+            frame := frame + 1
+            continue
         }
         // A canvas took another size: the same state, drawn for it (`shared::UI_RESIZED`).
         if clicked = 1099511627776 {
@@ -298,10 +325,25 @@ fn run(title: String, state: STATE) width(w: Int := 0) height(h: Int := 0) frame
                 UPDATE(var s, event)
             }
         }
+        let planned: String := ui.drawn
+        if planned != "" {
+            frames := planned.trim.split("\n")
+            frame := 0
+        }
     }
 }
 
 private:
+
+let FRAME: Int := 16
+
+fn between(a: Int, b: Int, e: Float) -> Int {
+    return a + ((b - a).to_float * e).to_int
+}
+
+fn number_in(s: String) -> Int {
+    return s.to_int else 0
+}
 
 fn number(c: Color) -> Int {
     return c.r * 65536 + c.g * 256 + c.b

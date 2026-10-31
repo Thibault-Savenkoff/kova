@@ -420,7 +420,27 @@ Sans cadre, la fenêtre ne se redimensionne pas par ses bords : donne-lui sa tai
 Dock ou la barre des tâches. Les deux donnent un `ui.Area`, avec `x`, `y`, `width` et `height`.
 `ui.place(x, y) size(width, height)` met la fenêtre à cet endroit, tout de suite.
 
-Avec une horloge, c'est tout ce qu'il faut pour une animation. Cette fenêtre grandit depuis le centre
+`ui.animate` amène la fenêtre sur une zone, en douceur. Tu l'appelles depuis `update`, Kova fait le
+reste :
+
+```kova
+Grow => ui.animate(ui.screen) time(1000)
+```
+
+`time` est en millisecondes, 300 si tu ne le mets pas. La fenêtre démarre et arrive lentement, sauf
+si tu donnes toi-même la courbe. Une courbe reçoit `t`, de 0 à 1 pendant l'animation, et donne où en
+est la fenêtre. Au-dessus de 1, la fenêtre dépasse son but, ce qui fait un rebond :
+
+```kova
+Grow => ui.animate(ui.screen) time(1000) curve { t: Float => t * t }
+```
+
+Le but est n'importe quelle `ui.Area` : `ui.Area { x := 100, y := 100, width := 640, height := 480 }`.
+Le programme continue d'entendre les clics pendant l'animation, et un nouveau `ui.animate` remplace
+celui en cours.
+
+Pour tout le reste, comme un trajet qui n'est pas une ligne droite, le programme déplace la fenêtre
+lui-même. Avec une horloge, `ui.place` suffit à faire une animation. Cette fenêtre grandit depuis le centre
 de l'écran, à la vitesse et avec la courbe que tu choisis :
 
 ```kova

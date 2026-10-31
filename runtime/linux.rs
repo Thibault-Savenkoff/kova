@@ -1106,16 +1106,6 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             made.clear();
             GTK_CANVASES.get().clear();
             let root = gtk_make(&g, view, made, 1, 1);
-            // The clocks of the view that was there stop, this one's start. Below the redrawing
-            // (G_PRIORITY_DEFAULT_IDLE): a clock faster than the program must not stop it drawing.
-            let remove: extern "C" fn(u32) -> i32 = t(f("g_source_remove"));
-            let every: extern "C" fn(i32, u32, usize, P, P) -> u32 = t(f("g_timeout_add_full"));
-            CLOCKS.get().drain(..).for_each(|clock| {
-                remove(clock);
-            });
-            for (ms, n) in crate::shared::ui_clocks(view) {
-                CLOCKS.get().push(every(200, ms as u32, gtk_tick as usize, n as P, null_mut()));
-            }
             // 16 pixels around it; none in a window that has given up its frame.
             if !*GTK_BARE.get() {
                 g.margins.iter().for_each(|margin| margin(root, 16));
@@ -1128,6 +1118,20 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             if let Some((area, _)) = GTK_CANVASES.get().iter().find(|(area, _)| gtk_hears_keys(*area)) {
                 focus(*area);
             }
+        }
+        // The clocks of the view that was there stop, this one's start. Below the redrawing
+        // (G_PRIORITY_DEFAULT_IDLE): a clock faster than the program must not stop it drawing.
+        let clocks = crate::shared::ui_clocks(view);
+        if clocks != *CLOCKS_ASKED.get() {
+            let remove: extern "C" fn(u32) -> i32 = t(f("g_source_remove"));
+            let every: extern "C" fn(i32, u32, usize, P, P) -> u32 = t(f("g_timeout_add_full"));
+            CLOCKS.get().drain(..).for_each(|clock| {
+                remove(clock);
+            });
+            for &(ms, n) in &clocks {
+                CLOCKS.get().push(every(200, ms as u32, gtk_tick as usize, n as P, null_mut()));
+            }
+            *CLOCKS_ASKED.get() = clocks;
         }
         for ((_, style), (widget, _, class)) in crate::shared::ui_leaves(view).into_iter().zip(MADE.get().iter_mut()) {
             gtk_style(&f, *widget, style, class);
@@ -1215,6 +1219,8 @@ static GTK_BARE: Global<bool> = Global::new(false);
 static GTK_HEARD: Global<crate::shared::UiQueue> = Global::new(crate::shared::UiQueue::new());
 /// The running clocks (`g_timeout_add_full`).
 static CLOCKS: Global<Vec<u32>> = Global::new(Vec::new());
+/// What those clocks are (`shared::ui_clocks`).
+static CLOCKS_ASKED: Global<Vec<(i32, usize)>> = Global::new(Vec::new());
 /// Each canvas now on screen, with what it draws.
 static GTK_CANVASES: Global<Vec<(P, crate::shared::UiCanvas)>> = Global::new(Vec::new());
 

@@ -1098,7 +1098,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
         UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}", c.width, c.height, c.mouse, c.key),
-        UiNode::Every(ms, n, inner) => format!("E{ms}:{n}({})", ui_shape(inner)),
+        // Nor its clocks: each system compares those itself, widgets stay when one starts.
+        UiNode::Every(_, _, inner) => ui_shape(inner),
     }
 }
 
