@@ -391,6 +391,9 @@ pub enum StrOp {
     ToUpper,
     /// `s.to_bigint`: a new BigInt, or 0 if it is not a whole number.
     ToBigInt,
+    /// `s.padded(width)`, `s.padded_left(width)`: spaces after or before it, up to `width` characters.
+    Padded,
+    PaddedLeft,
     /// `s.reversed`: by character.
     Reversed,
     /// `s.to_bool`: 1 for "true", 0 for "false", 2 for anything else.
@@ -594,6 +597,8 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "to_upper" => StrOp::ToUpper,
         "to_lower" => StrOp::ToLower,
         "repeat" => StrOp::Repeat,
+        "padded" => StrOp::Padded,
+        "padded_left" => StrOp::PaddedLeft,
         "wrapped" => StrOp::Wrap,
         "matches" => StrOp::Matches,
         "all_matches" => StrOp::AllMatches,
@@ -1364,6 +1369,29 @@ impl<'a> Translator<'a> {
             Type::Int => self.emit(Inst::Str(text, StrOp::Format(Show::Int), vec![v[0]])),
             Type::Bool => self.emit(Inst::Str(text, StrOp::Format(Show::Bool), vec![v[0]])),
             Type::String => self.emit(Inst::Str(text, StrOp::JsonQuote, vec![v[0]])),
+            // `"Red"`: the name of the case (one with fields has no JSON form).
+            Type::Enum(d) => {
+                let after = self.new_block();
+                for (i, (name, _)) in d.variants().iter().enumerate() {
+                    let (yes, no) = (self.new_block(), self.new_block());
+                    let (number, test) = (self.constant(i as i64), self.int_local());
+                    self.emit(Inst::Binary(test, Op::Eq, v[0], number, NOWHERE));
+                    self.go(End::Branch(test, yes, no), yes);
+                    self.emit(Inst::Text(text, format!("\"{name}\"")));
+                    self.go(End::Jump(after), no);
+                }
+                self.emit(Inst::Text(text, "null".into()));
+                self.go(End::Jump(after), after);
+            }
+            // `"2026-10-31"`, as printed and as `to_date` reads it.
+            Type::Date | Type::DateTime => {
+                let (mark, mut pieces) = (self.temps.len(), vec![]);
+                self.date_pieces(v[0], ty, &mut pieces);
+                let shown = self.join(pieces);
+                self.emit(Inst::Str(text, StrOp::JsonQuote, vec![shown]));
+                self.emit(Inst::Free(shown));
+                self.free_temps(mark);
+            }
             _ => {
                 let f = self.helper(Helper::ToJson(ty.clone()));
                 self.emit(Inst::Call(vec![text], f, v.to_vec()));
@@ -1522,6 +1550,31 @@ impl<'a> Translator<'a> {
                 self.or_else(text, done, wrong);
                 let s = self.node(nodes, i, 1);
                 self.emit(Inst::Str(v[0], StrOp::Clone, vec![s]));
+            }
+            Type::Enum(d) => {
+                let text = is(&mut self, TEXT);
+                self.or_else(text, done, wrong);
+                let (s, found) = (self.node(nodes, i, 1), self.int_local());
+                self.emit(Inst::Const(found, 0));
+                for (k, (name, _)) in d.variants().iter().enumerate() {
+                    let (word, same, (yes, next)) = (self.int_local(), self.int_local(), (self.new_block(), self.new_block()));
+                    self.emit(Inst::Text(word, name.clone()));
+                    self.emit(Inst::Str(same, StrOp::Eq, vec![s, word]));
+                    self.emit(Inst::Free(word));
+                    self.go(End::Branch(same, yes, next), yes);
+                    self.emit(Inst::Const(v[0], k as i64));
+                    self.emit(Inst::Const(found, 1));
+                    self.go(End::Jump(next), next);
+                }
+                self.or_else(found, done, wrong);
+            }
+            Type::Date | Type::DateTime => {
+                let text = is(&mut self, TEXT);
+                self.or_else(text, done, wrong);
+                let (s, not_one, good) = (self.node(nodes, i, 1), self.constant(i64::MIN), self.int_local());
+                self.emit(Inst::Str(v[0], if *ty == Type::Date { StrOp::ToDate } else { StrOp::ToDateTime }, vec![s]));
+                self.emit(Inst::Binary(good, Op::Ne, v[0], not_one, NOWHERE));
+                self.or_else(good, done, wrong);
             }
             Type::Optional(t) | Type::Box(t) => {
                 // `null` is `none` (a missing field reads the last node, a `null`).
@@ -4601,7 +4654,7 @@ impl<'a> Translator<'a> {
 
     /// `l.chosen`: a copy of an element drawn by `random`'s chance, `none` if `l` is empty.
     /// A copy of the element `index` gives from the List's length, or `none` when the List is empty.
-    fn element_or_none(&mut self, list: Local, elem: &Type, index: impl FnOnce(&mut Self, Local) -> Local) -> Slots {
+    fn element_or_none(&mut self, list: Local, elem: &Type, at: Option<Local>, index: impl FnOnce(&mut Self, Local) -> Local) -> Slots {
         let ty = Type::Optional(Box::new(elem.clone()));
         let v = self.new_slots(&ty);
         v.iter().for_each(|&l| self.emit(Inst::Const(l, 0)));
@@ -4609,6 +4662,10 @@ impl<'a> Translator<'a> {
         self.emit(Inst::ListLength(n, list));
         let (some, yes, done) = (self.int_local(), self.new_block(), self.new_block());
         self.emit(Inst::Binary(some, Op::Gt, n, zero, NOWHERE));
+        if let Some(i) = at {
+            let (from, below) = (self.compare(Op::Ge, i, zero), self.compare(Op::Lt, i, n));
+            self.emit(Inst::Binary(some, Op::Times, from, below, NOWHERE));
+        }
         self.go(End::Branch(some, yes, done), yes);
         let i = index(self, n);
         let element = self.load(list, i, elem);
@@ -4621,7 +4678,7 @@ impl<'a> Translator<'a> {
     }
 
     fn chosen(&mut self, list: Local, elem: &Type) -> Slots {
-        self.element_or_none(list, elem, |t, n| {
+        self.element_or_none(list, elem, None, |t, n| {
             let (i, zero) = (t.int_local(), t.constant(0));
             t.emit(Inst::Str(i, StrOp::Random, vec![zero, n]));
             i
@@ -4630,7 +4687,7 @@ impl<'a> Translator<'a> {
 
     /// `l.min`, `l.max`: the first of the smallest, or of the biggest.
     fn extreme(&mut self, list: Local, elem: &Type, biggest: bool, span: Span) -> Slots {
-        self.element_or_none(list, elem, |t, _| {
+        self.element_or_none(list, elem, None, |t, _| {
             let best = t.constant(0);
             t.each_element(list, elem, |t, i, v| {
                 let kept = t.load(list, best, elem);
@@ -5741,6 +5798,15 @@ impl<'a> Translator<'a> {
             }
             // `a.header("Content-Type") is("text/html")`: a copy of `a`, the name in small letters
             // (so that it replaces Kova's own `content-type`).
+            ExprKind::Method { receiver, name, args } if self.ty(receiver) == crate::types::answer() && name.text == "status" => {
+                let ty = crate::types::answer();
+                let a = self.expr(receiver);
+                let v = self.clone_value(&a, &ty);
+                let status = self.expr1(&args[0]);
+                self.emit(Inst::Copy(v[0], status));
+                self.track(&v, &ty);
+                v
+            }
             ExprKind::Method { receiver, args, .. } if self.ty(receiver) == crate::types::answer() => {
                 let ty = crate::types::answer();
                 let a = self.expr(receiver);
@@ -5929,8 +5995,42 @@ impl<'a> Translator<'a> {
                     "sorted" => self.sorted(list, &elem, args.last(), e.span),
                     "shuffled" => self.shuffled(list, &elem),
                     "chosen" => self.chosen(list, &elem),
-                    "first" => self.element_or_none(list, &elem, |t, _| t.constant(0)),
-                    "last" => self.element_or_none(list, &elem, |t, n| {
+                    "first" => self.element_or_none(list, &elem, None, |t, _| t.constant(0)),
+                    "get" => {
+                        let i = self.expr1(&args[0]);
+                        self.element_or_none(list, &elem, Some(i), |_, _| i)
+                    }
+                    "take" | "skip" => {
+                        let (n, zero, wanted) = (self.int_local(), self.constant(0), self.expr1(&args[0]));
+                        self.emit(Inst::ListLength(n, list));
+                        // `wanted` kept between 0 and the length: a List shorter than that is no error.
+                        let (some, over, room, part) = (self.compare(Op::Gt, wanted, zero), self.int_local(), self.int_local(), self.int_local());
+                        self.emit(Inst::Binary(part, Op::Times, wanted, some, NOWHERE));
+                        self.emit(Inst::Binary(over, Op::Gt, part, n, NOWHERE));
+                        self.emit(Inst::Binary(room, Op::Minus, n, part, NOWHERE));
+                        self.emit(Inst::Binary(room, Op::Times, room, over, NOWHERE));
+                        self.emit(Inst::Binary(part, Op::Plus, part, room, NOWHERE));
+                        let (start, count) = (self.int_local(), self.int_local());
+                        if name.text == "take" {
+                            self.emit(Inst::Copy(start, zero));
+                            self.emit(Inst::Copy(count, part));
+                        } else {
+                            self.emit(Inst::Copy(start, part));
+                            self.emit(Inst::Binary(count, Op::Minus, n, part, NOWHERE));
+                        }
+                        let (ty, out) = (self.ty(e), self.int_local());
+                        self.emit(Inst::ListNew(out, scalars(&elem).len()));
+                        self.times(count, |t, i| {
+                            let at = t.int_local();
+                            t.emit(Inst::Binary(at, Op::Plus, start, i, NOWHERE));
+                            let v = t.load(list, at, &elem);
+                            let copy = t.clone_value(&v, &elem);
+                            t.push(out, &copy);
+                        });
+                        self.track(&[out], &ty);
+                        vec![out]
+                    }
+                    "last" => self.element_or_none(list, &elem, None, |t, n| {
                         let (one, i) = (t.constant(1), t.int_local());
                         t.emit(Inst::Binary(i, Op::Minus, n, one, NOWHERE));
                         i

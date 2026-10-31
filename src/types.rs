@@ -782,11 +782,11 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
 pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
-    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace(…) with(…)", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "wrapped", "matches", "all_matches", "replace_matches(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
+    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace(…) with(…)", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "padded", "padded_left", "wrapped", "matches", "all_matches", "replace_matches(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "all_matches", "replace_matches(…) with(…)", "groups"];
 
@@ -839,7 +839,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "chars" => (vec![], list(Type::Char)),
         "to_upper" | "to_lower" | "reversed" => (vec![], s()),
         "find" => (vec![s()], Type::Optional(Box::new(Type::Int))),
-        "repeat" => (vec![Type::Int], s()),
+        "repeat" | "padded" | "padded_left" => (vec![Type::Int], s()),
         "wrapped" => (vec![Type::Int], s()),
         "matches" => (vec![s()], Type::Bool),
         "all_matches" => (vec![s()], list(s())),
@@ -3656,6 +3656,8 @@ impl Checker<'_> {
                 (vec![(Mode::Read, elem.clone())], Type::Optional(Box::new(Type::Int)))
             }
             "first" | "last" => (vec![], Type::Optional(Box::new(elem.clone()))),
+            "get" => (vec![(Mode::Read, Type::Int)], Type::Optional(Box::new(elem.clone()))),
+            "take" | "skip" => (vec![(Mode::Read, Type::Int)], Type::List(Box::new(elem.clone()))),
             "reversed" => (vec![], Type::List(Box::new(elem.clone()))),
             "min" | "max" => {
                 if !self.has(elem, "Comparable") {
@@ -3719,7 +3721,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "find" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
+        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "find" | "get" | "take" | "skip" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -4220,7 +4222,8 @@ impl Checker<'_> {
     /// file where it is private.
     fn no_json(&self, t: &Type, path: &str, span: Span, seen: &mut Vec<String>) -> Option<(String, Result<Type, String>)> {
         match t {
-            Type::Int | Type::Float | Type::Bool | Type::String | Type::Error => None,
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Date | Type::DateTime | Type::Error => None,
+            Type::Enum(d) if d.variants().iter().all(|(_, fields)| fields.is_empty()) => None,
             Type::Optional(t) | Type::List(t) => self.no_json(t, path, span, seen),
             Type::Map(k, v) if **k == Type::String => self.no_json(v, path, span, seen),
             Type::Struct(d) if !seen.contains(&t.text()) => {
@@ -4844,6 +4847,11 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                // `web.Answer.text("no").status(400)`: a body with its status.
+                if t == answer() && name.text == "status" {
+                    self.arguments(name, args, &[(Mode::Read, Type::Int)], &[]);
+                    return t;
+                }
                 // `rex.walk` for `fn walk far(km: Int := 1)`: the method, with its default values.
                 if matches!(t, Type::Struct(_) | Type::Enum(_))
                     && let Some(c) = self.completed(e, &method_name(&t.owner(), &name.text))

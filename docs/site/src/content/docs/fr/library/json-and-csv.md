@@ -53,9 +53,10 @@ err(Missing("tags"))
 
 ### Ce que le JSON peut contenir
 
-Les champs peuvent être `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` et des
-structs faites de ceux-ci. Le compilateur refuse `from_json` sur une struct qui a un autre genre de
-champ (une `Date`, une enum) : dis comment l'écrire, avec un champ `String` par exemple.
+Les champs peuvent être `Int`, `Float`, `Bool`, `String`, `Date` et `DateTime` (des textes comme
+`"2026-10-31"`), une enum sans champs (le nom de son cas, `"Red"`), `T?`, `List<T>`,
+`Map<String, T>` et des structs faites de ceux-ci. Le compilateur refuse `from_json` sur une struct
+qui a un autre genre de champ (un `Char`, une enum avec des champs) : dis comment l'écrire, avec un champ `String` par exemple.
 
 - Un champ que la struct n'a pas est ignoré, donc un programme ne lit que ce dont il a besoin dans
   une grosse réponse.

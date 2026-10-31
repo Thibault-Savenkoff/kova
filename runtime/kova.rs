@@ -610,6 +610,16 @@ pub extern "C" fn kova_str_repeat(a: i64, n: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn kova_str_padded(a: i64, width: i64) -> i64 {
+    new_text(shared::padded(text_of(a), width, false).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_str_padded_left(a: i64, width: i64) -> i64 {
+    new_text(shared::padded(text_of(a), width, true).as_bytes())
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kova_str_wrap(a: i64, width: i64) -> i64 {
     new_text(shared::wrapped(text_of(a), width).as_bytes())
 }

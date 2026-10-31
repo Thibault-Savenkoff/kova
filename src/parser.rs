@@ -667,6 +667,10 @@ impl Parser<'_> {
                     structs.extend(e.structs.iter().map(Struct::kova_view));
                     externs.push(e)
                 }),
+                Kind::Ident if self.text(self.token().span) == "const" => {
+                    self.diags.push(Diag::new(self.token().span, t!("const_word")).help(t!("const_word_help")));
+                    Err(())
+                }
                 _ => {
                     let msg = t!("declaration_expected", found = self.describe());
                     self.error(self.token().span, msg)
@@ -1651,6 +1655,12 @@ impl Parser<'_> {
             }
             Kind::Keyword("for") => {
                 self.advance();
+                // `for var x in l`: the mark goes on what is walked over.
+                if self.is_keyword("var") || self.is_keyword("move") {
+                    let word = self.text(self.token().span);
+                    self.diags.push(Diag::new(self.token().span, t!("for_mark_place", word = word)).help(t!("for_mark_place_help", word = word)));
+                    return Err(());
+                }
                 let counter = self.value_name("what_variable")?;
                 // `for name, age in ages`: a Map's key and value.
                 let value = if self.is_sym(",") {
@@ -2275,6 +2285,9 @@ impl Parser<'_> {
             Kind::Sym("[") => {
                 self.advance();
                 let (mut elems, mut pairs) = (vec![], vec![]);
+                if self.is_sym(":") && self.kind_at(1) == Kind::Sym("]") {
+                    return self.error(self.token().span, t!("empty_map_colon"));
+                }
                 while !self.is_sym("]") {
                     let x = self.inner_expr()?;
                     // `["Rex" := 3]`: a Map, as soon as the first element has its `:=`.

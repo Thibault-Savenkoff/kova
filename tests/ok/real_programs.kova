@@ -1,0 +1,62 @@
+// What writing real programs asked for.
+enum Status {
+    Open
+    Closed
+}
+
+struct Task {
+    title: String
+    status: Status
+    due: Date
+    at: DateTime?
+}
+
+fn main {
+    let l: List<Int> := [1, 2, 3]
+    print(l.get(0))
+    print(l.get(3))
+    print(l.get(-1))
+    print(l.take(2))
+    print(l.take(9))
+    print(l.take(-1))
+    print(l.skip(2))
+    print(l.skip(9))
+    print(["a", "b"].get(1))
+    print(["a", "b"].take(1))
+    print("{"ab".padded(4)}|")
+    print("{"é".padded_left(3)}|")
+    print("long".padded(2))
+    print("x".padded(-1))
+    let d: Date := "2026-10-31".to_date else Date.today
+    let t := Task { title := "ship", status := .Closed, due := d, at := none }
+    let text: String := t.to_json
+    print(text)
+    match Task.from_json(text) {
+        ok(back) => print(back)
+        err(e) => print(e)
+    }
+    print(List<Status>.from_json("""["Open", "Closed"]"""))
+    print(List<Status>.from_json("""["Open", "Other"]"""))
+    print(Task.from_json("""{"title": "x", "status": "Open", "due": "soon"}"""))
+    print([Status.Open].to_json)
+}
+// expect: 1
+// expect: none
+// expect: none
+// expect: [1, 2]
+// expect: [1, 2, 3]
+// expect: []
+// expect: [3]
+// expect: []
+// expect: "b"
+// expect: ["a"]
+// expect: ab  |
+// expect:   é|
+// expect: long
+// expect: x
+// expect: {"title":"ship","status":"Closed","due":"2026-10-31","at":null}
+// expect: Task { title := "ship", status := Status.Closed, due := 2026-10-31, at := none }
+// expect: ok([Status.Open, Status.Closed])
+// expect: err(WrongKind("[1]"))
+// expect: err(WrongKind("due"))
+// expect: ["Open"]

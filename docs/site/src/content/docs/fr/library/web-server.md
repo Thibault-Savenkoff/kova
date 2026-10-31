@@ -64,6 +64,7 @@ répond, sur la sortie d'erreur :
 | `web.Answer.json(value)` | une struct, une liste ou une map en JSON, écrite comme `to_json` |
 | `web.Answer.status(404)` | ce statut, avec son nom comme corps (`404 Not Found`) |
 | `web.Answer.file(path)` | un fichier, son type d'après son nom (`.html`, `.css`, `.png`…) ; `404` s'il n'existe pas ou si le chemin remonte avec `..` |
+| `a.status(404)` | la réponse avec ce statut, en gardant son corps : `web.Answer.text("no such book").status(404)` |
 | `a.header(name) is(value)` | la réponse avec cet en-tête : `.header("Cache-Control") is("no-store")` |
 
 ## Servir un dossier

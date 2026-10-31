@@ -31,6 +31,9 @@ du guide montre comment s'en servir ; cette page liste tout ce qu'elles ont.
 | `l.min -> T?` | le plus petit élément, `none` si la liste est vide. |
 | `l.max -> T?` | le plus grand élément, `none` si la liste est vide. |
 | `l.sum -> T` | le total d'une `List<Int>` ou `List<Float>`, `0` si la liste est vide. |
+| `l.get(index: Int) -> T?` | l'élément à `index`, `none` s'il n'y en a pas ; `l[index]`, lui, arrête le programme. |
+| `l.take(n: Int) -> List<T>` | une nouvelle liste des `n` premiers éléments, moins si la liste est plus courte. |
+| `l.skip(n: Int) -> List<T>` | une nouvelle liste sans les `n` premiers éléments, vide si la liste est plus courte. |
 | `l.find(x: T) -> Int?` | la position du premier `x`, comparé avec `=` ; `none` s'il n'y est pas. |
 | `l.reversed -> List<T>` | une nouvelle liste, dans l'ordre inverse. |
 | `l[i]` | l'élément à la position `i`. Après la fin, le programme s'arrête. |

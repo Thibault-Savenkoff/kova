@@ -1,0 +1,9 @@
+const LIMIT: Int := 3
+
+fn main {
+    for var x in [1] {
+        print(x)
+    }
+}
+// error: a constant is a `let` at the top of the file
+// error: the mark goes on the List, not on the name

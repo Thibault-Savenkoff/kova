@@ -99,6 +99,8 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 | `s.trim -> String` | `s` without spaces, tabs and line breaks at both ends. |
 | `s.is_empty -> Bool` | whether `s` has no character. |
 | `s.lines -> List<String>` | the lines of `s`, without their line breaks (`\n` or `\r\n`). |
+| `s.padded(width: Int) -> String` | `s` with spaces after it, up to `width` characters: columns in a table. A longer text stays as it is. |
+| `s.padded_left(width: Int) -> String` | the same with the spaces before it: for numbers. |
 | `s.reversed -> String` | the characters of `s`, last one first. |
 | `s.to_upper -> String` | `s` in capitals, accented letters too (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` in small letters. |

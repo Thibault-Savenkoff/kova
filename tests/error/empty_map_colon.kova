@@ -1,0 +1,5 @@
+fn main {
+    let m: Map<String, Int> := [:]
+    print(m)
+}
+// error: an empty Map is written `[]`, where its type is known

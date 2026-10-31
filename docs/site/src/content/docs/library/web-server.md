@@ -63,6 +63,7 @@ the error output:
 | `web.Answer.json(value)` | a struct, a list or a map as JSON, written like `to_json` |
 | `web.Answer.status(404)` | that status, with its name as the body (`404 Not Found`) |
 | `web.Answer.file(path)` | a file, its type from its name (`.html`, `.css`, `.png`…); `404` if it does not exist or the path goes up with `..` |
+| `a.status(404)` | the answer with this status, keeping its body: `web.Answer.text("no such book").status(404)` |
 | `a.header(name) is(value)` | the answer with this header: `.header("Cache-Control") is("no-store")` |
 
 ## Serving a folder

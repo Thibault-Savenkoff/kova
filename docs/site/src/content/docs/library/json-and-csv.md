@@ -52,9 +52,10 @@ err(Missing("tags"))
 
 ### What JSON can hold
 
-Fields may be `Int`, `Float`, `Bool`, `String`, `T?`, `List<T>`, `Map<String, T>` and structs made
-of them. The compiler refuses `from_json` on a struct with another kind of field (a `Date`, an
-enum): say how to write it, as a `String` field, for instance.
+Fields may be `Int`, `Float`, `Bool`, `String`, `Date` and `DateTime` (texts like `"2026-10-31"`),
+an enum without fields (the name of its case, `"Red"`), `T?`, `List<T>`, `Map<String, T>` and structs
+made of them. The compiler refuses `from_json` on a struct with another kind of field (a `Char`, an
+enum with fields): say how to write it, as a `String` field, for instance.
 
 - A field the struct does not have is ignored, so a program reads only what it needs from a large
   answer.

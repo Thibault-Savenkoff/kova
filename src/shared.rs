@@ -1569,3 +1569,9 @@ pub fn exit_code(status: i32) -> i64 {
         signal => 128 + signal as i64,
     }
 }
+
+/// `s.padded(width)`: spaces after `s` (before it if `left`) up to `width` characters.
+pub fn padded(s: &str, width: i64, left: bool) -> String {
+    let spaces = " ".repeat((width.max(0) as usize).saturating_sub(s.chars().count()));
+    if left { spaces + s } else { String::from(s) + &spaces }
+}

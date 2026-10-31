@@ -1067,6 +1067,10 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         },
                         StrOp::CsvRead => csv_read(heap, locals[a[0]], locals[a[1]]),
                         StrOp::CsvWrite => csv_write(heap, locals[a[0]], locals[a[1]], locals[a[2]]),
+                        StrOp::Padded | StrOp::PaddedLeft => {
+                            let t = crate::shared::padded(s(0), locals[a[1]], matches!(op, StrOp::PaddedLeft));
+                            heap.make(t)
+                        }
                         StrOp::Repeat => {
                             let t = s(0).repeat(locals[a[1]].max(0) as usize);
                             heap.make(t)
