@@ -417,16 +417,58 @@ the Dock or the taskbar. Both give a `ui.Area`, with `x`, `y`, `width` and `heig
 Grow => ui.animate(ui.screen) time(1000)
 ```
 
-`time` is in milliseconds, 300 if you leave it out. The window starts slowly and ends slowly unless
-you give the curve yourself. A curve receives `t`, from 0 to 1 over the animation, and gives how far
-along the window is. Above 1, the window goes past its goal, which makes a rebound:
+`time` is in milliseconds, 300 if you leave it out. Without a curve, the window starts slowly, goes
+faster, and ends slowly, with no rebound.
+
+The goal is any `ui.Area`: `ui.Area { x := 100, y := 100, width := 640, height := 480 }`. The program
+goes on hearing clicks during the animation, and a new `ui.animate` replaces the one running.
+
+### Curves ready to copy
+
+A curve decides how the window moves between its start and its goal. It is a block that receives
+`t`, the time spent, from `0.0` at the start to `1.0` at the end, and gives how far along the window
+must be: `0.0` is the start, `1.0` is the goal, `0.5` is halfway.
 
 ```kova
 Grow => ui.animate(ui.screen) time(1000) curve { t: Float => t * t }
 ```
 
-The goal is any `ui.Area`: `ui.Area { x := 100, y := 100, width := 640, height := 480 }`. The program
-goes on hearing clicks during the animation, and a new `ui.animate` replaces the one running.
+Halfway through the time, `t * t` gives `0.25`: the window has done a quarter of the way, so it
+speeds up. Copy the curve you want after `curve`:
+
+| The window… | Curve |
+| --- | --- |
+| keeps the same speed | `{ t: Float => t }` |
+| starts and ends slowly (the default) | `{ t: Float => t * t * (3.0 - 2.0 * t) }` |
+| speeds up until the end | `{ t: Float => t * t }` |
+| slows down until the end | `{ t: Float => t * (2.0 - t) }` |
+
+A rebound needs two lines. A block's last line is its value, and `back` goes from `-1.0` to `0.0`.
+This curve goes about 10 % past the goal, then comes back:
+
+```kova
+Grow => ui.animate(goal) time(800) curve { t: Float =>
+    let back: Float := t - 1.0
+    1.0 + 2.7 * back * back * back + 1.7 * back * back
+}
+```
+
+Going past the goal cannot be seen when the goal is the whole screen: the window leaves the screen
+instead. There, this curve never goes past the goal. The window touches the edges, pulls back, and
+returns, three times, less each time:
+
+```kova
+Grow => ui.animate(ui.screen) time(1200) curve { t: Float =>
+    let back: Float := t - 1.0
+    1.0 + (t * Float.pi * 3.0).cos.abs * back * back * back
+}
+```
+
+Add one more `* back` at the end for a smaller rebound. A rebound takes longer to watch than a plain
+move: start around 1000 milliseconds. The window ends where the curve gives at `t = 1.0`, so a curve
+of your own should give `1.0` there.
+
+### Moving the window at each frame
 
 For anything else, such as a path that is not a straight line, the program moves the window itself.
 With a clock, `ui.place` is all an animation needs. This window grows from the center of the screen, at
