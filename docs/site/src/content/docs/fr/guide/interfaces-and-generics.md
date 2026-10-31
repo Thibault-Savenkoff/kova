@@ -216,6 +216,69 @@ none
 genre. Les fonctions statiques d'un type générique s'appellent sur le type complet :
 `Stack<Int>.empty`, `Tree<Int>.Leaf`.
 
+## Ajouter des méthodes à n'importe quel type
+
+`extend` ajoute des méthodes à un type que tu n'as pas écrit, qu'il vienne du langage, d'une
+bibliothèque ou d'un autre fichier de ton programme. À l'intérieur, `self` est la valeur, comme dans
+une struct. Ajouter `: Describe` fait suivre une interface au type : il peut alors être donné à une
+fonction générique ou tenu dans un `any Describe` :
+
+```kova
+interface Describe {
+    fn describe(self) -> String
+}
+
+extend String {
+    fn shout(self) -> String := self.to_upper + "!"
+}
+
+extend Int : Describe {
+    fn is_even(self) -> Bool := self % 2 = 0
+    fn describe(self) -> String := "the number {self}"
+}
+
+fn say<T: Describe>(x: T) {
+    print(x.describe)
+}
+
+fn main {
+    print("hello".shout)
+    print(4.is_even)
+    say(7)
+}
+```
+
+```text
+HELLO!
+true
+the number 7
+```
+
+`extend` marche sur `String`, `Int`, `Float`, `List<Int>`, `Map<String, Int>`, sur tes structs et sur
+celles d'un autre fichier. Une struct générique s'étend en entier, `extend Stack`, et ses méthodes
+utilisent son `T`. `extend List<T>` n'existe pas encore : choisis le type des éléments.
+
+Il ne fait qu'ajouter. Une méthode qui existe déjà ne peut pas être remplacée, sinon le même
+`s.length` voudrait dire autre chose d'un programme à l'autre :
+
+```kova
+extend String {
+    fn length(self) -> Int := 0
+}
+
+fn main {
+    print("a".length)
+}
+```
+
+```txt
+erreur: `length` existe déjà sur `String` : `extend` ajoute des méthodes, il ne peut pas en changer une
+ --> main.kova:2:8
+  |
+2 |     fn length(self) -> Int := 0
+  |        ^^^^^^
+```
+
 ## `any` : des valeurs de types différents ensemble
 
 Une `List<Animal>` ne peut pas exister : `Animal` n'est pas un type, seulement une promesse. Pour

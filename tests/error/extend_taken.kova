@@ -1,0 +1,19 @@
+// `extend` adds methods, it never changes one.
+extend String {
+    fn length(self) -> Int := 0
+}
+extend List<Int> {
+    fn sum(self) -> Int := 0
+}
+struct Stack<T> {
+    items: List<T>
+}
+extend Stack<Int> {
+    fn size(self) -> Int := 0
+}
+fn main {
+    print(1)
+}
+// error: `length` already exists on `String`
+// error: `sum` already exists on `List<Int>`
+// error: `extend` works on `Stack` as a whole

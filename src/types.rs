@@ -1037,6 +1037,18 @@ fn mentions(t: &Type, name: &str) -> bool {
     reaches(t, &|p| p.name == name)
 }
 
+/// Does the library give values of type `t` a method of this name? (`extend` cannot change it.)
+fn built_in_method(t: &Type, name: &str) -> bool {
+    name == "clone"
+        || name == "to_string"
+        || METHODS.iter().any(|(r, n, ..)| r == t && *n == name)
+        || number_method(t, name).is_some()
+        || (*t == Type::String && string_method(name).is_some())
+        || (matches!(t, Type::List(_)) && LIST_METHODS.contains(&name))
+        || (matches!(t, Type::Map(..)) && MAP_METHODS.contains(&name))
+        || (matches!(t, Type::Set(_)) && SET_METHODS.contains(&name))
+}
+
 /// Does `t` hold a `Type::Param` for which `f` is true?
 fn reaches(t: &Type, f: &dyn Fn(&ParamDef) -> bool) -> bool {
     match t {
@@ -1447,7 +1459,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let mut decls: HashMap<&str, usize> = HashMap::new();
     for (i, s) in f.structs.iter().enumerate() {
         let name = s.name.text.as_str();
-        if primitive(name).is_some() || c.structs.contains_key(name) || matches!(name, "Self" | "List" | "Map") || builtin_interface(f, name) {
+        // `extend String`: not a new type, so its name may be taken.
+        if s.extended.is_some() {
+            decls.insert(name, i);
+        } else if primitive(name).is_some() || c.structs.contains_key(name) || matches!(name, "Self" | "List" | "Map") || builtin_interface(f, name) {
             c.error(s.name.span, t!("type_builtin", name = name));
         } else if let Some(&j) = decls.get(name) {
             let (line, _) = line_col(src, f.structs[j].name.span.start);
@@ -1513,6 +1528,9 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
             c.open_generics(m, false);
             for t in m.params.iter().map(|p| &p.ty).chain(&m.ret) {
                 c.report_unknown(t);
+            }
+            if s.extended.is_some() && built_in_method(&c.structs[&s.name.text], &m.name.text) {
+                c.error(m.name.span, t!("extend_taken", name = m.name.text, type = s.name.text));
             }
             let params = m.params.iter().map(|p| (p.mode, type_of(&p.ty, &c.structs))).collect();
             let ret = m.ret.as_ref().map_or(Type::Unit, |t| type_of(t, &c.structs));
@@ -2313,7 +2331,7 @@ impl Checker<'_> {
             Type::Param(p) => p.bounds.iter().any(|b| b == interface),
             Type::Any(i) => i == interface,
             Type::Error => true,
-            t => primitive_follows(t, interface),
+            t => primitive_follows(t, interface) || self.follows(&t.owner(), interface),
         }
     }
 
@@ -2575,6 +2593,14 @@ impl Checker<'_> {
         let s = &f.structs[i];
         if let Some(d) = self.structs.get(&s.name.text) {
             return Some(d.clone());
+        }
+        if let Some(t) = &s.extended {
+            let ty = self.written_type(t);
+            if matches!(ty, Type::Struct(_) | Type::Enum(_)) && !ty.args().is_empty() {
+                self.error(s.name.span, t!("extend_instance", name = ty.owner()));
+            }
+            self.structs.insert(s.name.text.clone(), ty.clone());
+            return Some(ty);
         }
         if open.contains(&i) {
             return None;
@@ -3007,7 +3033,8 @@ impl Checker<'_> {
             // ponytail: not a `Kennel<T>` inside a generic function: its box would need a number
             // per copy of the function.
             Type::Struct(_) | Type::Enum(_) => self.follows(&t.owner(), interface) && !reaches(t, &|_| true),
-            _ => false,
+            // `extend Int : Describe`.
+            _ => self.follows(&t.owner(), interface),
         }
     }
 
@@ -4775,6 +4802,10 @@ impl Checker<'_> {
                 let call = match &called.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Var(_) => self.invoked.contains(&called.id),
+                    ExprKind::Apply(..) => true,
+                    // `button.on_click(3)`, or a method added by `extend`.
+                    ExprKind::Method { .. } if self.filled.get(&called.id).is_some_and(|f| matches!(f.kind, ExprKind::Apply(..))) => true,
+                    ExprKind::Method { receiver, name, .. } if self.functions.contains_key(&method_name(&self.types[receiver.id].owner(), &name.text)) => true,
                     ExprKind::Method { receiver, name, .. } => match &self.types[receiver.id] {
                         t @ (Type::Struct(_) | Type::Enum(_)) => {
                             let key = method_name(&t.owner(), &name.text);
@@ -5077,6 +5108,12 @@ impl Checker<'_> {
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),
             ExprKind::Method { receiver, name, args } => {
                 let t = self.expr(receiver);
+                // `"hi".shout`: added by `extend String`.
+                if !matches!(t, Type::Struct(_) | Type::Enum(_) | Type::Param(_) | Type::Any(_) | Type::Error)
+                    && let Some(sig) = self.functions.get(&method_name(&t.owner(), &name.text)).cloned()
+                {
+                    return self.method_call(receiver, &t.text(), name, args, sig);
+                }
                 // `web.Answer.text("no").status(400)`: a body with its status.
                 if t == answer() && name.text == "status" {
                     self.arguments(name, args, &[(Mode::Read, Type::Int)], &[]);

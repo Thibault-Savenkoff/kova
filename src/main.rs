@@ -541,6 +541,7 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
         root.externs.extend(m.externs);
         root.ui_runs.extend(m.ui_runs);
     }
+    root.join_extensions();
     (root, ids, diags, sources)
 }
 

@@ -31,6 +31,24 @@ pub struct File {
     pub ui_from: Option<usize>,
 }
 
+impl File {
+    /// Puts each `extend` on a struct or an enum of the program into it, and joins the ones on the
+    /// same library type: what stays are the library types extended, once each.
+    pub fn join_extensions(&mut self) {
+        let (extensions, mut structs): (Vec<Struct>, Vec<Struct>) = std::mem::take(&mut self.structs).into_iter().partition(|s| s.extended.is_some());
+        for e in extensions {
+            match structs.iter_mut().find(|s| s.name.text == e.name.text) {
+                Some(s) => {
+                    s.interfaces.extend(e.interfaces);
+                    s.methods.extend(e.methods);
+                }
+                None => structs.push(e),
+            }
+        }
+        self.structs = structs;
+    }
+}
+
 /// One `ui.run(…)`: where, and the names of its `view` and `update` functions.
 pub struct UiRun {
     pub call: Span,
@@ -110,6 +128,9 @@ pub struct Struct {
     pub variants: Option<Vec<Variant>>,
     /// Its methods (`fn sound(self)`) and static functions (`fn create(name: String) -> Dog`).
     pub methods: Vec<Function>,
+    /// `extend String { … }`: not a new type, only methods added to this one. One on a struct of
+    /// the program joins that struct (`File::join_extensions`).
+    pub extended: Option<TypeAst>,
 }
 
 impl Struct {
@@ -136,7 +157,7 @@ impl Struct {
         }
         let fields = self.fields.iter().map(|p| Param { ty: kova(&p.ty), ..p.clone() }).collect();
         let copy = self.fields.iter().all(|p| c_like(&p.ty));
-        Struct { copy, name: self.name.clone(), generics: vec![], interfaces: vec![], fields, variants: None, methods: vec![] }
+        Struct { copy, name: self.name.clone(), generics: vec![], interfaces: vec![], fields, variants: None, methods: vec![], extended: None }
     }
 }
 

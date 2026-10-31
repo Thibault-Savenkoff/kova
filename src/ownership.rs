@@ -613,6 +613,11 @@ impl Owner<'_> {
 
     /// `rex.sound`: the method called (`Dog.sound`, `List.add`) and how it receives `rex`.
     fn method(&self, receiver: &Expr, name: &Name) -> Option<(String, Mode)> {
+        // `"hi".shout`: added by `extend String`.
+        let added = method_name(&self.info.types[receiver.id].owner(), &name.text);
+        if let Some((Some(r), ..)) = self.signatures.get(&added) {
+            return Some((added, *r));
+        }
         let q = match &self.info.types[receiver.id] {
             t @ (Type::Struct(_) | Type::Enum(_)) => method_name(&t.owner(), &name.text),
             Type::List(_) => method_name("List", &name.text),

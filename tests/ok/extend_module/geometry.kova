@@ -1,0 +1,10 @@
+public:
+
+struct Point {
+public:
+    x: Int
+}
+
+extend String {
+    fn loud(self) -> String := self.to_upper
+}

@@ -673,6 +673,8 @@ impl Parser<'_> {
                     self.advance();
                     self.expect(":=").and_then(|_| self.type_()).map(|_| ())
                 }
+                // Neither is `extend`.
+                Kind::Ident if self.text(self.token().span) == "extend" && matches!(self.kind_at(1), Kind::Type | Kind::Ident) => self.extension().map(|s| structs.push(s)),
                 // Neither is `extern`.
                 Kind::Ident if self.at_extern() => self.extern_().map(|e| {
                     structs.extend(e.structs.iter().map(Struct::kova_view));
@@ -1115,7 +1117,7 @@ impl Parser<'_> {
                 Kind::Eof | Kind::Keyword("test" | "struct" | "copy" | "enum" | "interface") => {
                     let span = self.token().span;
                     self.diags.push(Diag::new(span, t!("struct_unclosed", name = name.text)));
-                    return Ok(Struct { copy, name, generics, interfaces, fields, variants, methods });
+                    return Ok(Struct { copy, name, generics, interfaces, fields, variants, methods, extended: None });
                 }
                 Kind::Keyword(word @ ("public" | "private")) if self.t[self.pos + 1].kind == Kind::Sym(":") => {
                     public = word == "public";
@@ -1143,7 +1145,42 @@ impl Parser<'_> {
             }
         }
         self.advance(); // }
-        Ok(Struct { copy, name, generics, interfaces, fields, variants, methods })
+        Ok(Struct { copy, name, generics, interfaces, fields, variants, methods, extended: None })
+    }
+
+    /// `extend String { fn shout(self) -> String … }`, `extend Int : Addable { … }`.
+    fn extension(&mut self) -> R<Struct> {
+        self.advance(); // extend
+        let ty = self.type_()?;
+        let name = Name { text: ty.text(), span: self.t[self.pos - 1].span };
+        let mut interfaces = vec![];
+        if self.is_sym(":") {
+            self.advance();
+            interfaces.push(self.type_name()?);
+            while self.is_sym(",") {
+                self.advance();
+                interfaces.push(self.type_name()?);
+            }
+        }
+        self.skip_newlines();
+        self.expect("{")?;
+        let mut methods = vec![];
+        loop {
+            self.skip_newlines();
+            match self.kind() {
+                Kind::Sym("}") => break,
+                Kind::Keyword("fn") => match self.function(true) {
+                    Ok(f) => methods.push(f),
+                    Err(()) => self.skip_statement(),
+                },
+                _ => {
+                    self.diags.push(Diag::new(self.token().span, t!("extend_item", found = self.describe())));
+                    self.skip_statement();
+                }
+            }
+        }
+        self.advance(); // }
+        Ok(Struct { copy: false, name, generics: vec![], interfaces, fields: vec![], variants: None, methods, extended: Some(ty) })
     }
 
     /// `interface Animal { fn sound(self) -> String … }`: signatures, and default methods with a body.

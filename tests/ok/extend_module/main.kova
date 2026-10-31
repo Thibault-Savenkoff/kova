@@ -1,0 +1,14 @@
+// expect: point 3
+// expect: AB
+
+import geometry
+
+extend geometry.Point {
+    fn show(self) -> String := "point {self.x}"
+}
+
+fn main {
+    let p := geometry.Point { x := 3 }
+    print(p.show)
+    print("ab".loud)
+}

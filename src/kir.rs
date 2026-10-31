@@ -4954,11 +4954,7 @@ impl<'a> Translator<'a> {
 
     /// `rex.sound`: the struct method called (its name, `Dog.sound`, and how it receives `rex`).
     fn method(&self, receiver: &Expr, name: &ast::Name) -> Option<(String, Mode)> {
-        let t = &self.ty(receiver);
-        if !matches!(t, Type::Struct(_) | Type::Enum(_)) {
-            return None;
-        }
-        let q = method_name(&t.owner(), &name.text);
+        let q = method_name(&self.ty(receiver).owner(), &name.text);
         let r = self.signatures.get(&q)?.0.expect("static function called on a value: refused by the type checker");
         Some((q, r))
     }

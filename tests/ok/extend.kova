@@ -1,0 +1,86 @@
+// expect: HI!
+// expect: abab
+// expect: y
+// expect: true
+// expect: 5
+// expect: number 7
+// expect: point 1
+// expect: point 3
+// expect: 2
+// expect: 12
+// expect: 1.5
+// expect: number 5
+// expect: point 2
+
+interface Addable {
+    fn +(self, other: Self) -> Self
+}
+
+interface Describe {
+    fn describe(self) -> String
+}
+
+struct Point {
+    x: Int
+}
+
+struct Stack<T> {
+    items: List<T>
+}
+
+extend Int: Addable, Describe {
+    fn +(self, other: Int) -> Int := self + other
+    fn describe(self) -> String := "number {self}"
+    fn is_even(self) -> Bool := self % 2 = 0
+}
+
+extend String {
+    fn shout(self) -> String := self.to_upper + "!"
+    fn twice(self) -> String {
+        return self + self
+    }
+    fn fill(var self, s: String) {
+        self := s.clone
+    }
+}
+
+extend Point: Describe {
+    fn describe(self) -> String := "point {self.x}"
+    fn moved(self, by: Int) -> Point := Point { x := self.x + by }
+}
+
+extend Stack {
+    fn size(self) -> Int := self.items.length
+}
+
+extend List<Int> {
+    fn total_twice(self) -> Int := self.sum * 2
+}
+
+extend Float {
+    fn half(self) -> Float := self / 2.0
+}
+
+fn total<T: Addable>(a: T, b: T) -> T := a + b
+
+fn say<T: Describe>(x: T) -> String := x.describe
+
+fn main {
+    print("hi".shout)
+    print("ab".twice)
+    var s: String := "x"
+    s.fill("y")
+    print(s)
+    print(4.is_even)
+    print(total(2, 3))
+    print(say(7))
+    print(say(Point { x := 1 }))
+    print(Point { x := 1 }.moved(2).describe)
+    print(Stack<Int> { items := [1, 2] }.size)
+    print([1, 2, 3].total_twice)
+    print(3.0.half)
+    let all: List<any Describe> := [5, Point { x := 2 }]
+    for a in all {
+        print(a.describe)
+    }
+}

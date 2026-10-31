@@ -213,6 +213,69 @@ none
 A generic type's static functions are called on the full type: `Stack<Int>.empty`,
 `Tree<Int>.Leaf`.
 
+## Adding methods to any type
+
+`extend` adds methods to a type you did not write, whether it comes from the language, from a
+library or from another file of your program. Inside, `self` is the value, as in a struct. Adding
+`: Describe` makes the type follow an interface, so it can then be given to a generic function or
+be held in an `any Describe`:
+
+```kova
+interface Describe {
+    fn describe(self) -> String
+}
+
+extend String {
+    fn shout(self) -> String := self.to_upper + "!"
+}
+
+extend Int : Describe {
+    fn is_even(self) -> Bool := self % 2 = 0
+    fn describe(self) -> String := "the number {self}"
+}
+
+fn say<T: Describe>(x: T) {
+    print(x.describe)
+}
+
+fn main {
+    print("hello".shout)
+    print(4.is_even)
+    say(7)
+}
+```
+
+```text
+HELLO!
+true
+the number 7
+```
+
+`extend` works on `String`, `Int`, `Float`, `List<Int>`, `Map<String, Int>`, on your own structs and
+on those of another file. A generic struct is extended as a whole, `extend Stack`, and its methods
+use its `T`. `extend List<T>` does not exist yet: choose the element type.
+
+It only adds. A method that already exists cannot be replaced, otherwise the same `s.length` would
+mean different things from one program to the next:
+
+```kova
+extend String {
+    fn length(self) -> Int := 0
+}
+
+fn main {
+    print("a".length)
+}
+```
+
+```txt
+error: `length` already exists on `String`: `extend` adds methods, it cannot change one
+ --> main.kova:2:8
+  |
+2 |     fn length(self) -> Int := 0
+  |        ^^^^^^
+```
+
 ## `any`: values of different types together
 
 A `List<Animal>` cannot exist: `Animal` is not a type, only a promise. To hold a dog and a cat in
