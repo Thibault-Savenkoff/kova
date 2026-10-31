@@ -899,6 +899,25 @@ pub enum UiNode {
     Canvas(UiCanvas),
     /// A view and a clock: every so many milliseconds, the button number's event.
     Every(i32, usize, alloc::boxed::Box<UiNode>),
+    /// A check box: its label, whether it is ticked, its number among the fields.
+    Check(String, bool, usize),
+    /// A slider: its value, its limits, its number among the fields.
+    Slider(i32, i32, i32, usize),
+    /// A drop-down list: its items, the one selected, its number among the fields.
+    Choice(Vec<String>, i32, usize),
+    /// A list of lines to pick from.
+    Table(UiTable),
+}
+
+/// `ui.list` (no headers, one column) and `ui.table`.
+#[derive(Clone, Default)]
+pub struct UiTable {
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// -1: none.
+    pub selected: i32,
+    /// Its number among the fields.
+    pub number: usize,
 }
 
 /// `ui.canvas`: its size, its drawing, and the numbers (counted with the fields) of what hears the
@@ -1134,6 +1153,11 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Text(_) => "T".into(),
         UiNode::Button(..) => "B".into(),
         UiNode::Input(..) => "I".into(),
+        UiNode::Check(..) => "X".into(),
+        UiNode::Slider(_, min, max, _) => format!("W{min}:{max}"),
+        // Their items: a list only changes its selection in place.
+        UiNode::Choice(items, ..) => format!("O{items:?}"),
+        UiNode::Table(t) => format!("G{:?}{:?}", t.headers, t.rows),
         UiNode::Column(parts, a) | UiNode::Row(parts, a) => {
             let inside: Vec<String> = parts.iter().map(ui_shape).collect();
             let kind = if matches!(node, UiNode::Row(..)) { 'R' } else { 'C' };
@@ -1235,7 +1259,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1252,6 +1276,28 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             let (width, height) = size.split_once(' ').unwrap_or((size, ""));
             counts[2] += 1;
             UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), number: counts[2] - 1, ops: ui_ops(ops), ..UiCanvas::default() })
+        }
+        'X' | 'W' | 'O' | 'G' => {
+            let body: String = chars.by_ref().take(n).collect();
+            counts[1] += 1;
+            let number = counts[1] - 1;
+            let (head, rest) = body.split_once('\n').unwrap_or((&body, ""));
+            let numbers: Vec<i32> = head.split(' ').map(|w| w.parse().unwrap_or(0)).collect();
+            let at = |k: usize| numbers.get(k).copied().unwrap_or(0);
+            let lines: Vec<String> = rest.split('\n').map(String::from).collect();
+            match kind {
+                'X' => UiNode::Check(rest.into(), at(0) == 1, number),
+                'W' => UiNode::Slider(at(0), at(1), at(2), number),
+                'O' => UiNode::Choice(if rest.is_empty() { Vec::new() } else { lines }, at(0), number),
+                _ => {
+                    // The selection, the columns, whether the first line is the headers, the lines.
+                    let (columns, headed) = (at(1).max(1) as usize, at(2) == 1);
+                    let cells: Vec<String> = if rest.is_empty() { Vec::new() } else { lines };
+                    let mut rows: Vec<Vec<String>> = cells.chunks(columns).map(|c| c.to_vec()).collect();
+                    let headers = if headed && !rows.is_empty() { rows.remove(0) } else { Vec::new() };
+                    UiNode::Table(UiTable { headers, rows, selected: at(0), number })
+                }
+            }
         }
         'T' | 'B' | 'I' | 'P' => {
             let label: String = chars.by_ref().take(n).collect();
@@ -1289,6 +1335,11 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Text(t) => out.push_str(&format!("text {t:?}")),
             UiNode::Button(t, _) => out.push_str(&format!("button {t:?}")),
             UiNode::Input(t, _) => out.push_str(&format!("input {t:?}")),
+            UiNode::Check(t, on, _) => out.push_str(&format!("checkbox {t:?} {}", if *on { "on" } else { "off" })),
+            UiNode::Slider(v, min, max, _) => out.push_str(&format!("slider {v} of {min} to {max}")),
+            UiNode::Choice(items, k, _) => out.push_str(&format!("choice {items:?} at {k}")),
+            UiNode::Table(t) if t.headers.is_empty() => out.push_str(&format!("list {:?} at {}", t.rows, t.selected)),
+            UiNode::Table(t) => out.push_str(&format!("table {:?} {:?} at {}", t.headers, t.rows, t.selected)),
             UiNode::Column(parts, UiAlign::Start) => group("column", parts, out),
             UiNode::Column(parts, UiAlign::Center) => group("column center", parts, out),
             UiNode::Column(parts, UiAlign::End) => group("column right", parts, out),

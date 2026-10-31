@@ -12,8 +12,8 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 37] = [
-    "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
+const OWN: [&str; 43] = [
+    "checkbox", "slider", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -212,6 +212,55 @@ fn input(value: String, changed: {String -> EVENT}) -> View {
     return View { text := "I{value.length}:{value}", events := [], typed := [typed] }
 }
 
+// A value changing gives its new value to `ui.typed`, as a text field does; these blocks only run
+// on a value that is theirs: another field may have left any text there.
+fn checkbox(label: String, on: Bool, changed: {Bool -> EVENT}) -> View {
+    let flag: String := ui.typed
+    let body: String := "{if on { 1 } else { 0 }}\n{one_line(label)}"
+    return leaf("X", body, if flag = "on" || flag = "off" { changed(flag = "on") } else { none })
+}
+
+fn slider(value: Int, least: Int, most: Int, changed: {Int -> EVENT}) -> View
+    require least < most else "a slider goes from a value to a larger one"
+{
+    let body: String := "{value} {least} {most}"
+    return leaf("W", body, match ui.typed.to_int {
+        none => none
+        v => if v >= least && v <= most { changed(v) } else { none }
+    })
+}
+
+fn choice(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
+    let body: String := "{selected}\n{items.map { s: String => one_line(s) }.join("\n")}"
+    return leaf("O", body, picked(items.length, changed))
+}
+
+fn list(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
+    let body: String := "{selected} 1 0\n{items.map { s: String => one_line(s) }.join("\n")}"
+    return leaf("G", body, picked(items.length, changed))
+}
+
+// `lines`: each line's cells, as many as there are headers.
+fn table(headers: List<String>, lines: List<List<String>>, selected: Int, changed: {Int -> EVENT}) -> View
+    require (lines.all { l: List<String> => l.length = headers.length }) else "a table's lines have one cell per header"
+{
+    var cells: List<String> := headers.map { s: String => one_line(s) }
+    for l in lines {
+        cells += l.map { s: String => one_line(s) }
+    }
+    let body: String := "{selected} {headers.length} 1\n{cells.join("\n")}"
+    return leaf("G", body, picked(lines.length, changed))
+}
+
+// The tab in use, then a button for each of the others: the program shows the page it stands for.
+fn tabs(names: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
+    var parts: List<View> := []
+    for i, name in names {
+        parts.add(if i = selected { text(name).bold } else { button(name, changed(i)) })
+    }
+    return row(parts) align(Align.Center)
+}
+
 fn image(path: String) -> View
     require files.exists(path) else "no image at {path}"
 {
@@ -372,6 +421,21 @@ fn pressed -> Key? {
         return none
     }
     return Key { name := t[4..t.length] }
+}
+
+fn one_line(s: String) -> String {
+    return s.replace("\n") with(" ")
+}
+
+fn leaf(kind: String, body: String, event: EVENT?) -> View {
+    return View { text := "{kind}{body.length}:{body}", events := [], typed := [event.clone] }
+}
+
+fn picked(count: Int, changed: {Int -> EVENT}) -> EVENT? {
+    return match ui.typed.to_int {
+        none => none
+        i => if i >= 0 && i < count { changed(i) } else { none }
+    }
 }
 
 fn group(kind: String, items: List<View>, a: Align) -> View {

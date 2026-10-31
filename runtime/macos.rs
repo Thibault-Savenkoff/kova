@@ -744,6 +744,42 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
     extern "C" fn closing(_me: Id, _message: Id, _note: Id) {
         *CLICKED.get() = -1;
     }
+    fn valued(kit: &Kit, sender: Id, text: String) {
+        *TYPED.get() = text;
+        *CLICKED.get() = crate::shared::ui_changed((kit.send_int)(sender, kit.sel("tag")) as usize);
+    }
+    extern "C" fn checked(_me: Id, _message: Id, sender: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        valued(kit, sender, (if (kit.send_int)(sender, kit.sel("state")) != 0 { "on" } else { "off" }).into());
+    }
+    extern "C" fn slid(_me: Id, _message: Id, sender: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        valued(kit, sender, alloc::format!("{}", (kit.send_int)(sender, kit.sel("integerValue"))));
+    }
+    extern "C" fn chosen(_me: Id, _message: Id, sender: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        valued(kit, sender, alloc::format!("{}", (kit.send_int)(sender, kit.sel("indexOfSelectedItem"))));
+    }
+    extern "C" fn table_lines(_me: Id, _message: Id, table: Id) -> i64 {
+        MAC_TABLES.get().iter().find(|e| e.0 == table).map_or(0, |e| e.1.rows.len() as i64)
+    }
+    extern "C" fn table_cell(_me: Id, _message: Id, table: Id, column: Id, line: i64) -> Id {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        let k = (kit.send_int_of)(kit.send(table, "tableColumns"), kit.sel("indexOfObject:"), column) as usize;
+        let cell = MAC_TABLES.get().iter().find(|e| e.0 == table).and_then(|e| e.1.rows.get(line as usize)?.get(k));
+        kit.text(cell.map_or("", |c| c))
+    }
+    extern "C" fn table_chose(_me: Id, _message: Id, note: Id) {
+        let kit = KIT.get().as_ref().expect("made before the window");
+        let table = kit.send(note, "object");
+        let line = (kit.send_int)(table, kit.sel("selectedRow"));
+        if !*MAC_SETTING.get() && line >= 0 {
+            if let Some(e) = MAC_TABLES.get().iter().find(|e| e.0 == table) {
+                *TYPED.get() = alloc::format!("{line}");
+                *CLICKED.get() = crate::shared::ui_changed(e.1.number);
+            }
+        }
+    }
     if *CLICKED.get() == -1 {
         return -1;
     }
@@ -762,6 +798,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 send_int: t(send),
                 send_id: t(send),
                 send_two: t(send),
+                send_int_of: t(send),
                 send_text: t(send),
                 send_float: t(send),
                 send_size: t(send),
@@ -798,6 +835,12 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             add(class, kit.sel("clicked:"), clicked as usize, c"v@:@".as_ptr() as *const u8);
             add(class, kit.sel("windowWillClose:"), closing as usize, c"v@:@".as_ptr() as *const u8);
             add(class, kit.sel("controlTextDidChange:"), changed as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("checked:"), checked as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("slid:"), slid as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("chosen:"), chosen as usize, c"v@:@".as_ptr() as *const u8);
+            add(class, kit.sel("numberOfRowsInTableView:"), table_lines as usize, c"q@:@".as_ptr() as *const u8);
+            add(class, kit.sel("tableView:objectValueForTableColumn:row:"), table_cell as usize, c"@@:@@q".as_ptr() as *const u8);
+            add(class, kit.sel("tableViewSelectionDidChange:"), table_chose as usize, c"v@:@".as_ptr() as *const u8);
             register(class);
             kit.target = kit.send(kit.send(class, "alloc"), "init");
             // The view of a `ui.canvas`: y going down, as everywhere else.
@@ -854,6 +897,24 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             let (s, setter) = match leaf {
                 Text(s) | Input(s, _) => (s, "setStringValue:"),
                 Button(s, _) => (s, "setTitle:"),
+                Check(_, on, _) => {
+                    (kit.send_id)(v, kit.sel("setState:"), *on as i64);
+                    continue;
+                }
+                Slider(value, ..) => {
+                    if (kit.send_int)(v, kit.sel("integerValue")) != *value as i64 {
+                        (kit.send_id)(v, kit.sel("setIntegerValue:"), *value as i64);
+                    }
+                    continue;
+                }
+                Choice(_, k, _) => {
+                    (kit.send_id)(v, kit.sel("selectItemAtIndex:"), *k as i64);
+                    continue;
+                }
+                Table(table) => {
+                    mac_select(kit, v, table.selected);
+                    continue;
+                }
                 Canvas(c) => {
                     if let Some(there) = MAC_CANVASES.get().iter_mut().find(|e| e.0 == v) {
                         there.1 = c.clone();
@@ -875,6 +936,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         let made = MADE.get();
         made.clear();
         MAC_CANVASES.get().clear();
+        MAC_TABLES.get().clear();
         // 16 points around it; none in a window that has given up its frame.
         let edge = if *MAC_BARE.get() { 0.0 } else { 16.0 };
         let root = mac_make(kit, view, made, 2.0 * edge);
@@ -1385,6 +1447,7 @@ struct Kit {
     send_int: extern "C" fn(Id, Id) -> i64,
     send_id: extern "C" fn(Id, Id, i64) -> Id,
     send_two: extern "C" fn(Id, Id, Id) -> Id,
+    send_int_of: extern "C" fn(Id, Id, Id) -> i64,
     send_text: extern "C" fn(Id, Id, *const u8) -> Id,
     send_float: extern "C" fn(Id, Id, f64) -> Id,
     send_size: extern "C" fn(Id, Id, Size) -> Id,
@@ -1418,7 +1481,7 @@ impl Kit {
 /// Gives a text, button or field its style; without one, the system's font and color.
 fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::shared::UiStyle) {
     use crate::shared::UiNode::*;
-    if matches!(leaf, Image(..) | Canvas(_)) {
+    if matches!(leaf, Image(..) | Canvas(_) | Check(..) | Slider(..) | Choice(..) | Table(_)) {
         return;
     }
     let size = if style.size > 0 { style.size as f64 } else { 13.0 }; // `NSFont.systemFontSize`
@@ -1438,6 +1501,56 @@ fn mac_style(kit: &Kit, view: Id, leaf: &crate::shared::UiNode, style: crate::sh
     (kit.send_two)(view, kit.sel("setTextColor:"), color);
 }
 
+/// What each `NSTableView` of the view shows.
+static MAC_TABLES: crate::Global<Vec<(Id, crate::shared::UiTable)>> = crate::Global::new(Vec::new());
+/// A selection being set from here: the table must not tell it was the user.
+static MAC_SETTING: crate::Global<bool> = crate::Global::new(false);
+
+fn mac_select(kit: &Kit, table: Id, k: i32) {
+    if (kit.send_int)(table, kit.sel("selectedRow")) == k as i64 {
+        return;
+    }
+    *MAC_SETTING.get() = true;
+    if k < 0 {
+        (kit.send_two)(table, kit.sel("deselectAll:"), core::ptr::null_mut());
+    } else {
+        let lines = (kit.send_id)(kit.class("NSIndexSet"), kit.sel("indexSetWithIndex:"), k as i64);
+        let select: extern "C" fn(Id, Id, Id, bool) = unsafe { core::mem::transmute(kit.send as usize) };
+        select(table, kit.sel("selectRowIndexes:byExtendingSelection:"), lines, false);
+    }
+    *MAC_SETTING.get() = false;
+}
+
+/// `ui.list`, `ui.table`: an `NSTableView` in an `NSScrollView`; the first is what `made` keeps.
+fn mac_table(kit: &Kit, table: &crate::shared::UiTable) -> (Id, Id) {
+    let make = |class: &str| kit.send(kit.send(kit.class(class), "alloc"), "init");
+    let view = make("NSTableView");
+    let columns = table.headers.len().max(table.rows.first().map_or(1, |r| r.len()));
+    for k in 0..columns {
+        let name = kit.text(&alloc::format!("{k}"));
+        let column = (kit.send_two)(kit.send(kit.class("NSTableColumn"), "alloc"), kit.sel("initWithIdentifier:"), name);
+        (kit.send_two)(column, kit.sel("setTitle:"), kit.text(table.headers.get(k).map_or("", |h| h)));
+        (kit.send_float)(column, kit.sel("setWidth:"), 300.0 / columns as f64);
+        (kit.send_two)(view, kit.sel("addTableColumn:"), column);
+    }
+    if table.headers.is_empty() {
+        (kit.send_two)(view, kit.sel("setHeaderView:"), core::ptr::null_mut());
+    }
+    MAC_TABLES.get().push((view, table.clone()));
+    (kit.send_two)(view, kit.sel("setDataSource:"), kit.target);
+    (kit.send_two)(view, kit.sel("setDelegate:"), kit.target);
+    mac_select(kit, view, table.selected);
+    let scroll = make("NSScrollView");
+    (kit.send_id)(scroll, kit.sel("setHasVerticalScroller:"), 1);
+    (kit.send_id)(scroll, kit.sel("setBorderType:"), 1);
+    (kit.send_two)(scroll, kit.sel("setDocumentView:"), view);
+    for (anchor, length) in [("widthAnchor", 320.0), ("heightAnchor", 200.0)] {
+        let fixed = (kit.send_float)(kit.send(scroll, anchor), kit.sel("constraintEqualToConstant:"), length);
+        (kit.send_id)(fixed, kit.sel("setActive:"), 1);
+    }
+    (view, scroll)
+}
+
 /// A stack view's part that fills its width, `insets` kept from its edges.
 fn mac_fill(kit: &Kit, part: Id, stack: Id, insets: f64) {
     let equal: extern "C" fn(Id, Id, Id, f64) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
@@ -1452,6 +1565,37 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
     use crate::shared::UiNode::*;
     let leaf = match node {
         Text(s) => (kit.send_two)(kit.class("NSTextField"), kit.sel("labelWithString:"), kit.text(s)),
+        Check(s, on, n) => {
+            let make: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+            let b = make(kit.class("NSButton"), kit.sel("checkboxWithTitle:target:action:"), kit.text(s), kit.target, kit.sel("checked:"));
+            (kit.send_id)(b, kit.sel("setTag:"), *n as i64);
+            (kit.send_id)(b, kit.sel("setState:"), *on as i64);
+            b
+        }
+        Slider(v, min, max, n) => {
+            let make: extern "C" fn(Id, Id, f64, f64, f64, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+            let s = make(kit.class("NSSlider"), kit.sel("sliderWithValue:minValue:maxValue:target:action:"), *v as f64, *min as f64, *max as f64, kit.target, kit.sel("slid:"));
+            (kit.send_id)(s, kit.sel("setTag:"), *n as i64);
+            let wide = (kit.send_float)(kit.send(s, "widthAnchor"), kit.sel("constraintGreaterThanOrEqualToConstant:"), 200.0);
+            (kit.send_id)(wide, kit.sel("setActive:"), 1);
+            s
+        }
+        Choice(items, k, n) => {
+            let p = kit.send(kit.send(kit.class("NSPopUpButton"), "alloc"), "init");
+            items.iter().for_each(|i| {
+                (kit.send_two)(p, kit.sel("addItemWithTitle:"), kit.text(i));
+            });
+            (kit.send_id)(p, kit.sel("selectItemAtIndex:"), *k as i64);
+            (kit.send_id)(p, kit.sel("setTag:"), *n as i64);
+            (kit.send_two)(p, kit.sel("setTarget:"), kit.target);
+            (kit.send_two)(p, kit.sel("setAction:"), kit.sel("chosen:"));
+            p
+        }
+        Table(table) => {
+            let (view, scroll) = mac_table(kit, table);
+            made.push(view);
+            return scroll;
+        }
         Button(s, n) => {
             let make: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
             let b = make(kit.class("NSButton"), kit.sel("buttonWithTitle:target:action:"), kit.text(s), kit.target, kit.sel("clicked:"));

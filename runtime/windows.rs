@@ -925,6 +925,41 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 (win.post)(0, 0, 0, 0);
                 0
             }
+            // WM_COMMAND from a check box (BN_CLICKED) or a drop-down list (CBN_SELCHANGE).
+            0x0111 if w >> 16 == 0 && id >= FIELD && !*SETTING.get() => {
+                *TYPED.get() = (if (win.send)(l as Handle, 0x00F0, 0, 0) == 1 { "on" } else { "off" }).into();
+                *CLICKED.get() = crate::shared::ui_changed(id - FIELD);
+                (win.post)(0, 0, 0, 0);
+                0
+            }
+            0x0111 if w >> 16 == 1 && id >= FIELD && !*SETTING.get() => {
+                *TYPED.get() = alloc::format!("{}", (win.send)(l as Handle, 0x0147, 0, 0));
+                *CLICKED.get() = crate::shared::ui_changed(id - FIELD);
+                (win.post)(0, 0, 0, 0);
+                0
+            }
+            // WM_HSCROLL from a slider: TBM_GETPOS.
+            0x0114 if l != 0 && !*SETTING.get() => {
+                let at = alloc::format!("{}", (win.send)(l as Handle, 0x0400, 0, 0));
+                let number = (win.control_id)(l as Handle) as usize - FIELD;
+                if *TYPED.get() != at || *CLICKED.get() == WAITING {
+                    *TYPED.get() = at;
+                    *CLICKED.get() = crate::shared::ui_changed(number);
+                    (win.post)(0, 0, 0, 0);
+                }
+                0
+            }
+            // WM_NOTIFY, LVN_ITEMCHANGED from a list: `NMLISTVIEW` holds the line, then its states.
+            0x004E if !*SETTING.get() => {
+                let note = l as *const u8;
+                let read = |at: usize| unsafe { (note.add(at) as *const i32).read_unaligned() };
+                if read(16) == -101 && read(32) & 2 != 0 && read(36) & 2 == 0 {
+                    *TYPED.get() = alloc::format!("{}", read(24));
+                    *CLICKED.get() = crate::shared::ui_changed(read(8) as usize - FIELD);
+                    (win.post)(0, 0, 0, 0);
+                }
+                (win.default)(h, message, w, l)
+            }
             // WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC: a text color goes on top of the system's defaults.
             0x0133 | 0x0138 => {
                 let brush = (win.default)(h, message, w, l);
@@ -971,6 +1006,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                 set_text: t(f(user, "SetWindowTextW")),
                 get_text: t(f(user, "GetWindowTextW")),
                 text_length: t(f(user, "GetWindowTextLengthW")),
+                control_id: t(f(user, "GetDlgCtrlID")),
                 send: t(f(user, "SendMessageW")),
                 post: t(f(user, "PostMessageW")),
                 default: t(f(user, "DefWindowProcW")),
@@ -1547,6 +1583,7 @@ struct Win32 {
     set_text: extern "system" fn(Handle, *const u16) -> i32,
     get_text: extern "system" fn(Handle, *mut u16, i32) -> i32,
     text_length: extern "system" fn(Handle) -> i32,
+    control_id: extern "system" fn(Handle) -> i32,
     send: extern "system" fn(Handle, u32, usize, isize) -> isize,
     post: extern "system" fn(Handle, u32, usize, isize) -> i32,
     default: extern "system" fn(Handle, u32, usize, isize) -> isize,
@@ -1570,6 +1607,85 @@ struct Win32 {
 /// Pixels between the parts of a column or a row.
 const GAP: i32 = 8;
 
+/// Sliders and lists are in `comctl32.dll`, which registers them when it is loaded.
+fn win_common() {
+    static DONE: Global<bool> = Global::new(false);
+    if !core::mem::replace(DONE.get(), true) {
+        if let Some(f) = library("comctl32.dll").and_then(|l| symbol(l, "InitCommonControls")) {
+            let start: extern "system" fn() = unsafe { core::mem::transmute(f) };
+            start();
+        }
+    }
+}
+
+/// `LVCOLUMNW`.
+#[repr(C)]
+#[derive(Default)]
+struct ListColumn {
+    mask: u32,
+    format: i32,
+    width: i32,
+    text: usize,
+    room: i32,
+    sub_item: i32,
+    image: i32,
+    order: i32,
+    least: i32,
+    default: i32,
+    ideal: i32,
+}
+
+/// `LVITEMW`.
+#[repr(C)]
+#[derive(Default)]
+struct ListItem {
+    mask: u32,
+    item: i32,
+    sub_item: i32,
+    state: u32,
+    state_mask: u32,
+    text: usize,
+    room: i32,
+    image: i32,
+    param: isize,
+    indent: i32,
+    group: i32,
+    columns: u32,
+    column_list: usize,
+    formats: usize,
+    group_again: i32,
+}
+
+/// Fills a `SysListView32`: LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETITEMW.
+fn win_table(win: &Win32, list: Handle, table: &crate::shared::UiTable, width: i32) {
+    let columns = table.headers.len().max(table.rows.first().map_or(1, |r| r.len())).max(1);
+    for k in 0..columns {
+        let name = wide(table.headers.get(k).map_or("", |h| h));
+        let column = ListColumn { mask: 2 | 4, width: (width - 24) / columns as i32, text: name.as_ptr() as usize, ..Default::default() };
+        (win.send)(list, 0x1061, k, &column as *const ListColumn as isize);
+    }
+    for (line, cells) in table.rows.iter().enumerate() {
+        for (k, cell) in cells.iter().enumerate() {
+            let text = wide(cell);
+            let item = ListItem { mask: 1, item: line as i32, sub_item: k as i32, text: text.as_ptr() as usize, ..Default::default() };
+            (win.send)(list, if k == 0 { 0x104D } else { 0x104C }, 0, &item as *const ListItem as isize);
+        }
+    }
+}
+
+/// Selects line `k` of a `SysListView32` (-1: none), if it is not: LVM_GETNEXTITEM, LVM_SETITEMSTATE.
+fn win_select(win: &Win32, list: Handle, k: i32) {
+    let now = (win.send)(list, 0x100C, usize::MAX, 2);
+    if now != k as isize {
+        for (line, state) in [(now, 0), (k as isize, 2)] {
+            if line >= 0 {
+                let item = ListItem { state, state_mask: 2, ..Default::default() };
+                (win.send)(list, 0x102B, line as usize, &item as *const ListItem as isize);
+            }
+        }
+    }
+}
+
 /// The (width, height) of a view's controls.
 /// ponytail: one line per text, no wrapping; DPI scaling left to Windows.
 fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32) {
@@ -1592,6 +1708,16 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
             let (wide, _) = text("abcdefghijklmnopqrstuvwx");
             (w.max(wide) + 12, h + 10)
         }
+        Check(s, ..) => {
+            let (w, h) = text(s);
+            (w + 24, h + 6)
+        }
+        Slider(..) => (200, 30),
+        Choice(items, ..) => {
+            let (w, h) = items.iter().map(|i| text(i)).fold((0, 0), |a, b| (a.0.max(b.0), a.1.max(b.1)));
+            (w.max(60) + 40, h + 12)
+        }
+        Table(_) => (320, 200),
         Column(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((0, -GAP), |(w, h), (pw, ph)| (w.max(pw), h + GAP + ph)),
         Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
         Image(path, width) => win_image(path, *width).map_or((0, 0), |(_, w, h)| (w, h)),
@@ -1620,7 +1746,7 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         let c = if same {
             let c = made[*at];
             (win.set_pos)(c, 0, x, y, w, h, 0x4 | 0x10); // SWP_NOZORDER | SWP_NOACTIVATE
-            if win_text(win, c) != s {
+            if matches!(class, "BUTTON" | "EDIT" | "STATIC") && win_text(win, c) != s {
                 (win.set_text)(c, wide(s).as_ptr());
             }
             c
@@ -1651,6 +1777,52 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
     };
     match node {
         Text(s) => control("STATIC", s, 0, 0),
+        // BS_AUTOCHECKBOX, WS_TABSTOP; BM_GETCHECK, BM_SETCHECK.
+        Check(s, on, n) => {
+            control("BUTTON", s, FIELD + n, 3 | 0x0001_0000);
+            let c = made[*at - 1];
+            if ((win.send)(c, 0x00F0, 0, 0) == 1) != *on {
+                (win.send)(c, 0x00F1, *on as usize, 0);
+            }
+        }
+        // TBM_SETRANGEMIN, TBM_SETRANGEMAX, TBM_GETPOS, TBM_SETPOS.
+        Slider(v, min, max, n) => {
+            win_common();
+            control("msctls_trackbar32", "", FIELD + n, 0x0001_0000);
+            let c = made[*at - 1];
+            if !same {
+                (win.send)(c, 0x0407, 0, *min as isize);
+                (win.send)(c, 0x0408, 1, *max as isize);
+            }
+            if (win.send)(c, 0x0400, 0, 0) != *v as isize {
+                (win.send)(c, 0x0405, 1, *v as isize);
+            }
+        }
+        // CBS_DROPDOWNLIST, WS_VSCROLL, WS_TABSTOP. Its height is the open list's too.
+        Choice(items, k, n) => {
+            control("COMBOBOX", "", FIELD + n, 3 | 0x0020_0000 | 0x0001_0000);
+            let c = made[*at - 1];
+            (win.set_pos)(c, 0, x, y, w, h + 160, 0x4 | 0x10);
+            if !same {
+                items.iter().for_each(|i| {
+                    (win.send)(c, 0x0143, 0, wide(i).as_ptr() as isize); // CB_ADDSTRING
+                });
+            }
+            if (win.send)(c, 0x0147, 0, 0) != *k as isize {
+                (win.send)(c, 0x014E, *k as usize, 0); // CB_SETCURSEL
+            }
+        }
+        // LVS_REPORT, LVS_SINGLESEL, LVS_SHOWSELALWAYS, LVS_NOCOLUMNHEADER, WS_BORDER, WS_TABSTOP.
+        Table(table) => {
+            win_common();
+            let bare = if table.headers.is_empty() { 0x4000 } else { 0 };
+            control("SysListView32", "", FIELD + table.number, 1 | 4 | 8 | bare | 0x0080_0000 | 0x0001_0000);
+            let c = made[*at - 1];
+            if !same {
+                win_table(win, c, table, w);
+            }
+            win_select(win, c, table.selected);
+        }
         Button(s, n) => control("BUTTON", s, n + 1, 0),
         // WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL
         Input(s, n) => control("EDIT", s, FIELD + n, 0x0080_0000 | 0x0001_0000 | 0x80),

@@ -1114,6 +1114,28 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
         *CLICKED.get() = -1;
         0
     }
+    fn valued(text: String, number: usize) {
+        *TYPED.get() = text;
+        *CLICKED.get() = crate::shared::ui_changed(number);
+    }
+    extern "C" fn toggled(b: P, number: P) {
+        let get: extern "C" fn(P) -> i32 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_check_button_get_active").unwrap_or(0)) };
+        valued((if get(b) != 0 { "on" } else { "off" }).into(), number as usize);
+    }
+    extern "C" fn slid(r: P, number: P) {
+        let get: extern "C" fn(P) -> f64 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_range_get_value").unwrap_or(0)) };
+        valued(format!("{}", get(r) as i64), number as usize);
+    }
+    extern "C" fn chosen(d: P, _spec: P, number: P) {
+        let get: extern "C" fn(P) -> u32 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_drop_down_get_selected").unwrap_or(0)) };
+        valued(format!("{}", get(d)), number as usize);
+    }
+    extern "C" fn row_chosen(_list: P, row: P, number: P) {
+        if !row.is_null() {
+            let get: extern "C" fn(P) -> i32 = unsafe { core::mem::transmute(symbol(*GTK.get(), "gtk_list_box_row_get_index").unwrap_or(0)) };
+            valued(format!("{}", get(row)), number as usize);
+        }
+    }
     if *GTK.get() == 0 {
         *GTK.get() = library("libgtk-4.so.1").unwrap_or(1);
     }
@@ -1139,6 +1161,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
             connect: t(f("g_signal_connect_data")),
             clicked: clicked as usize,
             changed: changed as usize,
+            values: [toggled as usize, slid as usize, chosen as usize, row_chosen as usize],
         };
         if *WINDOW.get() == 0 {
             // The program's name, for the taskbar (on Wayland, the window's app id).
@@ -1204,6 +1227,36 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, width: i32, height: i3
                             there.ops.clone_from(&c.ops);
                         }
                         draw_again(widget);
+                    }
+                    // Set from here, a value must not tell its handler the user changed it.
+                    Check(_, on, _) => {
+                        let (get, set): (extern "C" fn(P) -> i32, extern "C" fn(P, i32)) = (t(f("gtk_check_button_get_active")), t(f("gtk_check_button_set_active")));
+                        if (get(widget) != 0) != *on {
+                            block(widget, handler);
+                            set(widget, *on as i32);
+                            unblock(widget, handler);
+                        }
+                    }
+                    Slider(v, ..) => {
+                        let (get, set): (extern "C" fn(P) -> f64, extern "C" fn(P, f64)) = (t(f("gtk_range_get_value")), t(f("gtk_range_set_value")));
+                        if get(widget) as i32 != *v {
+                            block(widget, handler);
+                            set(widget, *v as f64);
+                            unblock(widget, handler);
+                        }
+                    }
+                    Choice(_, k, _) => {
+                        let (get, set): (extern "C" fn(P) -> u32, extern "C" fn(P, u32)) = (t(f("gtk_drop_down_get_selected")), t(f("gtk_drop_down_set_selected")));
+                        if get(widget) != *k as u32 {
+                            block(widget, handler);
+                            set(widget, *k as u32);
+                            unblock(widget, handler);
+                        }
+                    }
+                    Table(table) => {
+                        block(widget, handler);
+                        gtk_select(&g, widget, table.selected);
+                        unblock(widget, handler);
                     }
                     // Set from here, a field must not tell `changed` it was typed into.
                     Input(s, _) if gtk_text(field_text(widget)) != *s => {
@@ -1605,6 +1658,73 @@ struct Gtk {
     connect: extern "C" fn(P, *const u8, usize, P, P, i32) -> u64,
     clicked: usize,
     changed: usize,
+    /// What hears a check box, a slider, a drop-down list and a list.
+    values: [usize; 4],
+}
+
+impl Gtk {
+    fn get(&self, name: &str) -> usize {
+        symbol(self.library, name).unwrap_or(0)
+    }
+}
+
+/// The line `k` of a `GtkListBox` selected, the others not.
+fn gtk_select(g: &Gtk, list: P, k: i32) {
+    use core::mem::transmute as t;
+    unsafe {
+        let line: extern "C" fn(P, i32) -> P = t(g.get("gtk_list_box_get_row_at_index"));
+        let select: extern "C" fn(P, P) = t(g.get("gtk_list_box_select_row"));
+        select(list, if k < 0 { null_mut() } else { line(list, k) });
+    }
+}
+
+/// `ui.list`, `ui.table`: the headers, then the lines in a scrolled area; a size group per column
+/// gives the same width to its cells. The `GtkListBox` that holds the lines, and what holds both.
+fn gtk_table(g: &Gtk, table: &crate::shared::UiTable, handler: &mut u64) -> (P, P) {
+    use core::mem::transmute as t;
+    unsafe {
+        let new_group: extern "C" fn(i32) -> P = t(g.get("gtk_size_group_new"));
+        let add: extern "C" fn(P, P) = t(g.get("gtk_size_group_add_widget"));
+        let align: extern "C" fn(P, f32) = t(g.get("gtk_label_set_xalign"));
+        let columns = table.headers.len().max(table.rows.first().map_or(1, |r| r.len()));
+        let groups: Vec<P> = (0..columns).map(|_| new_group(1)).collect();
+        let line = |cells: &[String]| {
+            let row = (g.boxed)(0, 16);
+            (g.margins[2])(row, 6);
+            (g.margins[3])(row, 6);
+            for (cell, &group) in cells.iter().zip(&groups) {
+                let label = (g.label)(c_string(cell).as_ptr());
+                align(label, 0.0);
+                add(group, label);
+                (g.append)(row, label);
+            }
+            row
+        };
+        let outer = (g.boxed)(1, 4);
+        if !table.headers.is_empty() {
+            (g.append)(outer, line(&table.headers));
+        }
+        let new_list: extern "C" fn() -> P = t(g.get("gtk_list_box_new"));
+        let list = new_list();
+        let mode: extern "C" fn(P, i32) = t(g.get("gtk_list_box_set_selection_mode"));
+        mode(list, 1); // GTK_SELECTION_SINGLE
+        let append: extern "C" fn(P, P) = t(g.get("gtk_list_box_append"));
+        table.rows.iter().for_each(|cells| append(list, line(cells)));
+        gtk_select(g, list, table.selected);
+        *handler = (g.connect)(list, c"row-selected".as_ptr() as *const u8, g.values[3], table.number as P, null_mut(), 0);
+        let new_scrolled: extern "C" fn() -> P = t(g.get("gtk_scrolled_window_new"));
+        let scrolled = new_scrolled();
+        let tall: extern "C" fn(P, i32) = t(g.get("gtk_scrolled_window_set_min_content_height"));
+        let wide: extern "C" fn(P, i32) = t(g.get("gtk_scrolled_window_set_min_content_width"));
+        let natural: extern "C" fn(P, i32) = t(g.get("gtk_scrolled_window_set_propagate_natural_width"));
+        let child: extern "C" fn(P, P) = t(g.get("gtk_scrolled_window_set_child"));
+        tall(scrolled, 200);
+        wide(scrolled, 300);
+        natural(scrolled, 1);
+        child(scrolled, list);
+        (g.append)(outer, scrolled);
+        (list, outer)
+    }
 }
 
 /// The widgets of a view: a button gives its number to `clicked`, a field to `changed`. Each
@@ -1613,8 +1733,45 @@ struct Gtk {
 fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize)>, h: i32, v: i32) -> P {
     use crate::shared::UiNode::*;
     let mut handler = 0;
+    let mut inner = None;
     let widget = match node {
         Text(s) => (g.label)(c_string(s).as_ptr()),
+        Check(s, on, n) => unsafe {
+            use core::mem::transmute as t;
+            let (new, set): (extern "C" fn(*const u8) -> P, extern "C" fn(P, i32)) = (t(g.get("gtk_check_button_new_with_label")), t(g.get("gtk_check_button_set_active")));
+            let b = new(c_string(s).as_ptr());
+            set(b, *on as i32);
+            handler = (g.connect)(b, c"toggled".as_ptr() as *const u8, g.values[0], *n as P, null_mut(), 0);
+            b
+        },
+        Slider(v, min, max, n) => unsafe {
+            use core::mem::transmute as t;
+            let new: extern "C" fn(i32, f64, f64, f64) -> P = t(g.get("gtk_scale_new_with_range"));
+            let set: extern "C" fn(P, f64) = t(g.get("gtk_range_set_value"));
+            let size: extern "C" fn(P, i32, i32) = t(g.get("gtk_widget_set_size_request"));
+            let s = new(0, *min as f64, *max as f64, 1.0);
+            set(s, *v as f64);
+            size(s, 200, -1);
+            handler = (g.connect)(s, c"value-changed".as_ptr() as *const u8, g.values[1], *n as P, null_mut(), 0);
+            s
+        },
+        Choice(items, k, n) => unsafe {
+            use core::mem::transmute as t;
+            let texts: Vec<Vec<u8>> = items.iter().map(|i| c_string(i)).collect();
+            let mut list: Vec<*const u8> = texts.iter().map(|i| i.as_ptr()).collect();
+            list.push(null());
+            let new: extern "C" fn(*const *const u8) -> P = t(g.get("gtk_drop_down_new_from_strings"));
+            let set: extern "C" fn(P, u32) = t(g.get("gtk_drop_down_set_selected"));
+            let d = new(list.as_ptr());
+            set(d, *k as u32);
+            handler = (g.connect)(d, c"notify::selected".as_ptr() as *const u8, g.values[2], *n as P, null_mut(), 0);
+            d
+        },
+        Table(table) => {
+            let (list, outer) = gtk_table(g, table, &mut handler);
+            inner = Some(list);
+            outer
+        }
         Button(s, n) => {
             let b = (g.button)(c_string(s).as_ptr());
             (g.connect)(b, c"clicked".as_ptr() as *const u8, g.clicked, *n as P, null_mut(), 0);
@@ -1675,7 +1832,7 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
         }
     };
     if !matches!(node, Column(..) | Row(..)) {
-        made.push((widget, handler, 0));
+        made.push((inner.unwrap_or(widget), handler, 0));
     }
     // By default on the left and at the top, as Win32 and AppKit place it: GTK would centre a
     // text alone on its line. GTK_ALIGN_FILL = 0.
