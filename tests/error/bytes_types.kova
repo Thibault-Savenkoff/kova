@@ -1,0 +1,7 @@
+// error: `to_hex` works on bytes, a `List<Int>`, not on `List<String>`
+// error: `from_hex` works on bytes, a `List<Int>`, not on `List<String>`
+
+fn main {
+    print(["a"].to_hex)
+    print(List<String>.from_hex("00"))
+}

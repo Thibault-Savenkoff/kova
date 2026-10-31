@@ -238,6 +238,7 @@ explodes, whatever the pattern.
 | --- | --- |
 | `s.sha256 -> String` | the SHA-256 fingerprint of the text, 64 hexadecimal digits. |
 | `s.hmac_sha256(key: String) -> String` | the HMAC-SHA-256 signature of the text with a secret key. |
+| `s.to_bytes -> List<Int>` | the UTF-8 bytes of the text ([bytes](/library/list/#bytes)). |
 | `s.to_base64 -> String` | the text written in base64. |
 | `s.to_base64url -> String` | the same, with the alphabet used in addresses and without `=`. |
 | `String.from_base64(code: String) -> String?` | the text back from base64, `none` if `code` is not the base64 of a text. |

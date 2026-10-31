@@ -111,6 +111,46 @@ fn main {
 a, b, c
 ```
 
+## Octets
+
+Des octets sont une `List<Int>` de nombres de 0 à 255 : aucun autre type à apprendre. Ces méthodes
+existent sur toute `List<Int>`, et arrêtent le programme avec `un octet va de 0 à 255` si un nombre
+ne tient pas.
+
+| Méthode | Donne |
+| --- | --- |
+| `data.to_text -> String?` | le texte que ces octets écrivent en UTF-8 ; `none` s'ils n'en écrivent pas. |
+| `data.to_hex -> String` | deux chiffres hexadécimaux par octet. |
+| `data.to_base64 -> String` | les octets en base64. |
+| `data.to_base64url -> String` | la même chose, avec l'alphabet des adresses et sans `=`. |
+| `data.sha256 -> String` | l'empreinte SHA-256, 64 chiffres hexadécimaux. |
+| `List<Int>.from_hex(code: String) -> List<Int>?` | les octets retrouvés, `none` si `code` n'est pas de l'hexadécimal. |
+| `List<Int>.from_base64(code: String) -> List<Int>?` | les octets retrouvés depuis le base64. |
+| `List<Int>.from_base64url(code: String) -> List<Int>?` | la même chose pour `to_base64url`. |
+
+`s.to_bytes` passe d'un texte à ses octets. Pour changer un bit, utilise les
+[opérateurs de bits](/fr/library/numbers/) ; pour les lire et les écrire, les
+[fichiers binaires](/fr/library/files/#fichiers-binaires).
+
+```kova
+fn main {
+    let word: List<Int> := "Kova".to_bytes
+    print(word)
+    print(word.to_hex)
+    print(word.to_text)
+    print(List<Int>.from_hex("00ff10"))
+    print([255].to_text)
+}
+```
+
+```text
+[75, 111, 118, 97]
+4b6f7661
+"Kova"
+[0, 255, 16]
+none
+```
+
 ## JSON et CSV
 
 `books.to_json` et `List<Book>.from_json(text)` écrivent et lisent une liste en JSON ;

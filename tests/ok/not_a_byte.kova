@@ -1,0 +1,7 @@
+// code: 101
+// stderr: error: a byte goes from 0 to 255
+// stderr: not_a_byte.kova:6:11
+
+fn main {
+    print([300].to_hex)
+}

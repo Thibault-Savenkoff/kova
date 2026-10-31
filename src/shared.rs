@@ -488,6 +488,32 @@ pub fn secure_random(fill: &mut dyn FnMut(&mut [u8; 8]), from: i64, to: i64) -> 
     (from as u64).wrapping_add(x % n) as i64
 }
 
+/// How bytes are written as a text: a number passed to `bytes_text` and `text_bytes`.
+pub const BYTE_FORMS: [&str; 5] = ["text", "hex", "base64", "base64url", "sha256"];
+
+/// `data.to_hex` and the others: `none` only for `to_text` of bytes that are not UTF-8.
+pub fn bytes_text(form: i64, bytes: &[u8]) -> Option<String> {
+    match form {
+        0 => String::from_utf8(bytes.to_vec()).ok(),
+        1 => Some(hex(bytes)),
+        2 | 3 => Some(crate::crypto::base64(bytes, form == 3)),
+        _ => Some(hex(&crate::crypto::sha256(bytes))),
+    }
+}
+
+/// `s.to_bytes` and `List<Int>.from_hex`, `from_base64`: `None` if the text is not such a code.
+pub fn text_bytes(form: i64, text: &str) -> Option<Vec<u8>> {
+    match form {
+        0 => Some(text.as_bytes().to_vec()),
+        1 => text
+            .as_bytes()
+            .chunks(2)
+            .map(|c| Some(((*c.first()? as char).to_digit(16)? * 16 + (*c.get(1)? as char).to_digit(16)?) as u8))
+            .collect(),
+        _ => crate::crypto::from_base64(text, form == 3),
+    }
+}
+
 /// `secure.token(n)`: `n` bytes of chance, written in hexadecimal (2 digits each).
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

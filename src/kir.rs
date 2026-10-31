@@ -359,6 +359,16 @@ pub enum StrOp {
     Less,
     /// `read_file(path)`: a new String, or minus the number of the failure (`types::io_error`).
     ReadFile,
+    /// `files.read_bytes(path)`: a List of numbers, or minus the `IoError` variant + 1.
+    ReadBytes,
+    /// `files.write_bytes` and `append_bytes`: path, List, 1 to add at the end.
+    WriteBytes,
+    /// A List of numbers: 1 if one of them is not a byte, then `Fault::NotByte`.
+    NotBytes,
+    /// A List of bytes to a text (`shared::bytes_text`), 0 if it has no such text.
+    BytesText,
+    /// A text to a List of bytes (`shared::text_bytes`), 0 if it has no such bytes.
+    TextBytes,
     /// `write_file(path, text)`, `append_file(path, text)`, `make_folder(path)`, `remove_file(path)`:
     /// 0, or minus the number of the failure; `list_dir(path)`: a new `List<String>` or minus it.
     WriteFile,
@@ -728,6 +738,8 @@ pub enum Fault {
     NotText,
     /// `1 << 64`: a shift goes from 0 to 63.
     Shift,
+    /// `[300].to_hex`: a byte goes from 0 to 255.
+    NotByte,
     /// `split("")` or `replace("", …)`: an empty text cannot be looked for.
     EmptyText,
     /// `exit(300)`: a program's exit code is between 0 and 255.
@@ -768,6 +780,7 @@ impl Fault {
         match self {
             Fault::Overflow => "fault_overflow",
             Fault::Shift => "fault_shift",
+            Fault::NotByte => "fault_not_byte",
             Fault::DivisionByZero => "fault_division_by_zero",
             Fault::BadConversion => "fault_bad_conversion",
             Fault::Index => "fault_index",
@@ -2013,6 +2026,14 @@ impl<'a> Translator<'a> {
     /// `read_file(path)`, `write_file(path, text)`, `list_dir(path)`…: `ok(value)` (or `ok` for a
     /// `Nothing or IoError`), or `err(IoError.X(path: a copy of path))`. `op` gives the value
     /// (or 0) when it works, minus the failure's number otherwise.
+    /// Stops the program if a List given as bytes holds a number outside 0..=255.
+    fn only_bytes(&mut self, list: Local, at: Span) {
+        let wrong = self.int_local();
+        self.emit(Inst::Str(wrong, StrOp::NotBytes, vec![list]));
+        let loc = self.loc(at);
+        self.emit(Inst::FaultIf(wrong, Fault::NotByte, loc));
+    }
+
     fn io_call(&mut self, op: StrOp, args: &[Expr], ty: &Type) -> Slots {
         let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
         self.io_result(op, vals, ty)
@@ -5149,6 +5170,7 @@ impl<'a> Translator<'a> {
                 }
                 let io = match name.text.as_str() {
                     "files.read" => Some(StrOp::ReadFile),
+                    "files.read_bytes" => Some(StrOp::ReadBytes),
                     "files.write" => Some(StrOp::WriteFile),
                     "files.append" => Some(StrOp::AppendFile),
                     "files.list" => Some(StrOp::ListDir),
@@ -5165,6 +5187,13 @@ impl<'a> Translator<'a> {
                 if let Some(op) = io {
                     let ty = self.ty(e);
                     return self.io_call(op, args, &ty);
+                }
+                if matches!(name.text.as_str(), "files.write_bytes" | "files.append_bytes") {
+                    let ty = self.ty(e);
+                    let (path, data) = (self.expr1(&args[0]), self.expr1(&args[1]));
+                    self.only_bytes(data, args[1].span);
+                    let append = self.constant((name.text == "files.append_bytes") as i64);
+                    return self.io_result(StrOp::WriteBytes, vec![path, data, append], &ty);
                 }
                 // `get(url)`, `post(url) body(text)` (PLAN Part 4 "The web"): the address, the
                 // method, what is sent, and whether the redirections are followed.
@@ -5456,6 +5485,16 @@ impl<'a> Translator<'a> {
                 let (body, seconds, follow) = (self.text(""), self.float_constant(DEFAULT_SECONDS), self.constant(1));
                 let v = vec![method, url[0], headers, body, seconds, follow];
                 self.track(&v, &crate::types::request());
+                v
+            }
+            ExprKind::Static { ty, name, args, .. } if ty.text == "List" && matches!(name.text.as_str(), "from_hex" | "from_base64" | "from_base64url") => {
+                let (code, l) = (self.expr1(&args[0]), self.int_local());
+                let kind = self.constant(crate::shared::BYTE_FORMS.iter().position(|f| name.text == format!("from_{f}")).unwrap() as i64);
+                self.emit(Inst::Str(l, StrOp::TextBytes, vec![code, kind]));
+                let (zero, present) = (self.constant(0), self.int_local());
+                self.emit(Inst::Binary(present, Op::Ne, l, zero, NOWHERE));
+                let v = vec![present, l];
+                self.track(&v, &self.ty(e));
                 v
             }
             ExprKind::Static { ty, name, args, .. } if ty.text == "String" && name.text.starts_with("from_base64") => {
@@ -6113,6 +6152,21 @@ impl<'a> Translator<'a> {
                         self.go(End::Jump(after), after);
                         vec![present, x]
                     }
+                    "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" => {
+                        self.only_bytes(list, receiver.span);
+                        let form = name.text.strip_prefix("to_").unwrap_or(&name.text);
+                        let kind = self.constant(crate::shared::BYTE_FORMS.iter().position(|f| form == *f).unwrap() as i64);
+                        let (text, zero, present) = (self.int_local(), self.constant(0), self.int_local());
+                        self.emit(Inst::Str(text, StrOp::BytesText, vec![list, kind]));
+                        if name.text != "to_text" {
+                            self.temps.push((text, Type::String));
+                            return vec![text];
+                        }
+                        self.emit(Inst::Binary(present, Op::Ne, text, zero, NOWHERE));
+                        let v = vec![present, text];
+                        self.track(&v, &self.ty(e));
+                        v
+                    }
                     "join" => {
                         let (sep, text) = (self.expr1(&args[0]), self.int_local());
                         self.emit(Inst::Str(text, StrOp::Join, vec![list, sep]));
@@ -6214,6 +6268,12 @@ impl<'a> Translator<'a> {
                     let v = vec![present, big];
                     self.track(&v, &self.ty(e));
                     return v;
+                }
+                if self.ty(receiver) == Type::String && name.text == "to_bytes" {
+                    let (list, kind) = (self.int_local(), self.constant(0));
+                    self.emit(Inst::Str(list, StrOp::TextBytes, vec![v, kind]));
+                    self.temps.push((list, self.ty(e)));
+                    return vec![list];
                 }
                 if self.ty(receiver) == Type::String && name.text == "to_bool" {
                     let (answer, two, present, value) = (self.int_local(), self.constant(2), self.int_local(), self.int_local());

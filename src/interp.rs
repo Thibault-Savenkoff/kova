@@ -630,6 +630,38 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::IsInt => crate::kir::parse_int(s(0)).is_some() as i64,
                         StrOp::ToInt => crate::kir::parse_int(s(0)).unwrap_or(0),
+                        StrOp::ReadBytes if std::path::Path::new(s(0)).is_dir() => -3,
+                        StrOp::ReadBytes => match std::fs::read(s(0)) {
+                            Ok(b) => {
+                                let slots: Vec<i64> = b.iter().map(|&b| b as i64).collect();
+                                heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                            }
+                            Err(e) => -failure(&e),
+                        },
+                        StrOp::WriteBytes if std::path::Path::new(s(0)).is_dir() => -3,
+                        StrOp::WriteBytes => {
+                            let path = s(0).to_string();
+                            let bytes: Vec<u8> = heap.list(locals[a[1]]).2.iter().map(|&x| x as u8).collect();
+                            let mut file = std::fs::OpenOptions::new();
+                            file.create(true);
+                            if locals[a[2]] != 0 { file.append(true) } else { file.write(true).truncate(true) };
+                            match file.open(path).and_then(|mut f| f.write_all(&bytes)) {
+                                Ok(()) => 0,
+                                Err(e) => -failure(&e),
+                            }
+                        }
+                        StrOp::NotBytes => heap.list(locals[a[0]]).2.iter().any(|x| !(0..256).contains(x)) as i64,
+                        StrOp::BytesText => {
+                            let bytes: Vec<u8> = heap.list(locals[a[0]]).2.iter().map(|&x| x as u8).collect();
+                            crate::shared::bytes_text(locals[a[1]], &bytes).map_or(0, |t| heap.make(t))
+                        }
+                        StrOp::TextBytes => match crate::shared::text_bytes(locals[a[1]], s(0)) {
+                            Some(b) => {
+                                let slots: Vec<i64> = b.iter().map(|&b| b as i64).collect();
+                                heap.add(Object::List { width: 1, length: slots.len(), slots, index: 0 })
+                            }
+                            None => 0,
+                        },
                         StrOp::WriteFile | StrOp::AppendFile if std::path::Path::new(s(0)).is_dir() => -3,
                         StrOp::WriteFile | StrOp::AppendFile => {
                             let mut file = std::fs::OpenOptions::new();

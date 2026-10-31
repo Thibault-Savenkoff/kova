@@ -522,6 +522,9 @@ fn module_help(name: &str) -> Option<String> {
 pub const LIBRARY: &[(&str, &str)] =
     &[
         ("files.read", "fn files.read(path: String) -> String or files.IoError"),
+        ("files.read_bytes", "fn files.read_bytes(path: String) -> List<Int> or files.IoError"),
+        ("files.write_bytes", "fn files.write_bytes(path: String, data: List<Int>) -> Nothing or files.IoError"),
+        ("files.append_bytes", "fn files.append_bytes(path: String, data: List<Int>) -> Nothing or files.IoError"),
         ("files.write", "fn files.write(path: String, text: String) -> Nothing or files.IoError"),
         ("files.append", "fn files.append(path: String, text: String) -> Nothing or files.IoError"),
         ("files.exists", "fn files.exists(path: String) -> Bool"),
@@ -782,7 +785,7 @@ pub fn time_exists(v: &[i64]) -> bool {
 }
 
 /// The methods of a `List`, a `Map` and the `String` methods of `string_method`, for the messages and the editor.
-pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)"];
+pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter", "map", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "join", "clone", "each workers(…)", "map workers(…)", "to_text", "to_hex", "to_base64", "to_base64url", "sha256"];
 pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
@@ -847,6 +850,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "groups" => (vec![s()], Type::Optional(Box::new(list(s())))),
         // PLAN Part 4 "The library after Python, step 4".
         "sha256" | "to_base64" | "to_base64url" => (vec![], s()),
+        "to_bytes" => (vec![], list(Type::Int)),
         "hmac_sha256" => (vec![s()], s()),
         n if crate::shared::PAINTS.iter().any(|(p, _)| *p == n) => (vec![], s()),
         _ => return None,
@@ -1368,6 +1372,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     for (name, n, result) in [
         ("web.get", 1, web()),
         ("web.post(…) body(…)", 2, web()),
+        ("files.read_bytes", 1, io(Type::List(Box::new(Type::Int)))),
         ("files.write", 2, io(Type::Unit)),
         ("files.append", 2, io(Type::Unit)),
         ("files.exists", 1, Type::Bool),
@@ -1384,6 +1389,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         ("files.sha256", 1, io(string())),
     ] {
         c.functions.insert(name.into(), Signature::new(None, paths(n), result));
+    }
+    for name in ["files.write_bytes", "files.append_bytes"] {
+        let params = vec![(Mode::Read, string()), (Mode::Read, Type::List(Box::new(Type::Int)))];
+        c.functions.insert(name.into(), Signature::new(None, params, io(Type::Unit)));
     }
     let ran = || Type::Result(Box::new(finished()), Box::new(run_error()));
     c.functions.insert("system.run".into(), Signature::new(None, paths(1), ran()));
@@ -3708,6 +3717,15 @@ impl Checker<'_> {
                 });
                 return Some(Type::Error);
             }
+            // Bytes are a `List<Int>` of 0..=255 (PLAN Part 4 "Bytes").
+            "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" if *elem == Type::Int => {
+                let text = if name.text == "to_text" { Type::Optional(Box::new(Type::String)) } else { Type::String };
+                (vec![], text)
+            }
+            "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" => {
+                self.error(name.span, t!("bytes_need_ints", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
+                return Some(Type::Error);
+            }
             "clone" => return None,
             _ => {
                 let t = Type::List(Box::new(elem.clone())).text();
@@ -3721,7 +3739,7 @@ impl Checker<'_> {
                 return Some(Type::Error);
             }
         };
-        if !matches!(name.text.as_str(), "length" | "is_empty" | "contains" | "find" | "get" | "take" | "skip" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
+        if !matches!(name.text.as_str(), "length" | "is_empty" | "to_text" | "to_hex" | "to_base64" | "to_base64url" | "sha256" | "contains" | "find" | "get" | "take" | "skip" | "first" | "last" | "reversed" | "min" | "max" | "sum" | "join" | "to_json" | "to_csv" | "to_csv separator(…)" | "shuffled" | "chosen" | "mean" | "median") {
             self.changes(receiver, t!("var_method_temporary", name = name.text));
         }
         if params.is_empty() && !args.is_empty() {
@@ -4105,6 +4123,15 @@ impl Checker<'_> {
             self.csv_form(&elem, &format!("{}.from_csv", list.text()), name.span);
             self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
             return Type::Result(Box::new(list), Box::new(csv_error()));
+        }
+        // `List<Int>.from_hex(code)`: the bytes a text writes (PLAN Part 4 "Bytes").
+        if let ("List", "from_hex" | "from_base64" | "from_base64url", [elem]) = (ty.text.as_str(), name.text.as_str(), types) {
+            let elem = self.written_type(elem);
+            if elem != Type::Int {
+                self.error(name.span, t!("bytes_need_ints", name = name.text, type = Type::List(Box::new(elem.clone())).text()));
+            }
+            self.arguments(name, args, &[(Mode::Read, Type::String)], &[]);
+            return Type::Optional(Box::new(Type::List(Box::new(elem))));
         }
         // `String.from_base64(code)` (PLAN Part 4 "The library after Python, step 4").
         if let ("String", "from_base64" | "from_base64url", []) = (ty.text.as_str(), name.text.as_str(), types) {

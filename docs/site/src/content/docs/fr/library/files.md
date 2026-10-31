@@ -47,6 +47,48 @@ dossier d'où le programme est lancé, sauf s'ils partent de la racine.
 Pour lire un fichier ligne par ligne, `files.read(path)?.split("\n")` ; pour un tableau, voir
 [CSV](/fr/library/json-and-csv/#csv).
 
+## Fichiers binaires
+
+Un fichier est une suite d'octets. Kova te les donne dans une simple `List<Int>` de nombres de 0 à
+255, donc tout ce que font les listes marche dessus : `data[0]`, `data[4..8]`, `data.length`, `+`,
+`=`, `for`.
+
+| Fonction | Fait |
+| --- | --- |
+| `files.read_bytes(path) -> List<Int> or IoError` | tous les octets d'un fichier, n'importe quel fichier. |
+| `files.write_bytes(path, data: List<Int>) -> Nothing or IoError` | écrit `data`, en remplaçant ce qui y était, et crée le fichier si besoin. |
+| `files.append_bytes(path, data: List<Int>) -> Nothing or IoError` | ajoute `data` à la fin du fichier, et le crée si besoin. |
+
+Pour lire un format, cherche où se trouve chaque valeur, puis reconstruis le nombre à partir de ses
+octets. Un nombre rangé sur deux octets, le grand d'abord, vaut `first * 256 + second`, c'est-à-dire
+`(first << 8) | second` : chaque octet monte de 8 bits pour laisser la place au suivant. Ici un
+petit en-tête contient un genre à la place 0 et une taille sur deux octets aux places 1 et 2 :
+
+```kova
+import files
+
+fn main {
+    files.write_bytes("header.bin", [7, 1, 44])?
+    let data: List<Int> := files.read_bytes("header.bin")?
+    print(data[0])
+    print((data[1] << 8) | data[2])
+    files.remove("header.bin")?
+}
+```
+
+```text
+7
+300
+```
+
+Dans l'autre sens, `>>` et `&` découpent un nombre en octets : `n >> 8` est le grand octet de `n`,
+et `n & 255` le petit. Un nombre hors de 0..255 dans une liste donnée comme octets arrête le
+programme avec `un octet va de 0 à 255` : `write_bytes(path, [n >> 8, n & 255])` est donc sûr, et
+`write_bytes(path, [n])` te prévient quand `n` ne tient pas.
+
+Octets et textes se changent l'un en l'autre avec `s.to_bytes` et `data.to_text`
+([List](/fr/library/list/#octets)).
+
 ## Fichiers et dossiers
 
 | Fonction | Fait |

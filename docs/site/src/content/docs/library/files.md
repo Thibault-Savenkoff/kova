@@ -47,6 +47,47 @@ folder the program is started from, unless they start at the root.
 To read a file line by line, `files.read(path)?.split("\n")`; for a table, see
 [CSV](/library/json-and-csv/#csv).
 
+## Binary files
+
+A file is a row of bytes. Kova gives them to you as a plain `List<Int>` of numbers from 0 to 255,
+so everything lists do works on them: `data[0]`, `data[4..8]`, `data.length`, `+`, `=`, `for`.
+
+| Function | Does |
+| --- | --- |
+| `files.read_bytes(path) -> List<Int> or IoError` | every byte of a file, any file. |
+| `files.write_bytes(path, data: List<Int>) -> Nothing or IoError` | writes `data`, replacing what was there, creating the file if needed. |
+| `files.append_bytes(path, data: List<Int>) -> Nothing or IoError` | adds `data` at the end of the file, creating it if needed. |
+
+To read a format, look up where each value sits, then rebuild the number from its bytes. A number
+stored on two bytes, the big one first, is `first * 256 + second`, which is `(first << 8) | second`:
+each byte moves 8 bits up to leave room for the next one. Here a small header holds a kind at
+place 0 and a size on two bytes at places 1 and 2:
+
+```kova
+import files
+
+fn main {
+    files.write_bytes("header.bin", [7, 1, 44])?
+    let data: List<Int> := files.read_bytes("header.bin")?
+    print(data[0])
+    print((data[1] << 8) | data[2])
+    files.remove("header.bin")?
+}
+```
+
+```text
+7
+300
+```
+
+Going the other way, `>>` and `&` cut a number into bytes: `n >> 8` is the big byte of `n`, and
+`n & 255` the small one. A number outside 0..255 in a list given as bytes stops the program with
+`a byte goes from 0 to 255`, so `write_bytes(path, [n >> 8, n & 255])` is safe and
+`write_bytes(path, [n])` tells you when `n` does not fit.
+
+Bytes and texts turn into each other with `s.to_bytes` and `data.to_text`
+([List](/library/list/#bytes)).
+
 ## Files and folders
 
 | Function | Does |

@@ -238,6 +238,7 @@ texte et n'explose jamais, quel que soit le motif.
 
 | Méthode | Donne |
 | --- | --- |
+| `s.to_bytes -> List<Int>` | les octets UTF-8 du texte ([octets](/fr/library/list/#octets)). |
 | `s.sha256 -> String` | l'empreinte SHA-256 du texte, 64 chiffres hexadécimaux. |
 | `s.hmac_sha256(key: String) -> String` | la signature HMAC-SHA-256 du texte avec une clé secrète. |
 | `s.to_base64 -> String` | le texte écrit en base64. |

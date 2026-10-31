@@ -884,7 +884,7 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
     };
     let mut fold = block("fold", format!("(start: A) {{A, {elem} -> A}} -> A"), "");
     fold.insert_text = Some(format!("fold(${{1:0}}) {{ acc: ${{2:Int}}, x: {elem} => $0 }}"));
-    vec![
+    let mut items = vec![
         plain("length", "-> Int".into()),
         plain("add", format!("(x: move {elem})")),
         plain("remove", format!("(index: Int) -> {elem}")),
@@ -916,7 +916,11 @@ fn list_methods(elem: &str) -> Vec<CompletionItem> {
         plain("to_json", "-> String".into()),
         plain("to_csv", "-> String".into()),
         plain("to_csv separator(…)", "(c: Char) -> String".into()),
-    ]
+    ];
+    if elem == "Int" {
+        items.extend([plain("to_text", "-> String?".into()), plain("to_hex", "-> String".into()), plain("to_base64", "-> String".into()), plain("to_base64url", "-> String".into()), plain("sha256", "-> String".into())]);
+    }
+    items
 }
 
 /// The tokens before the cursor, without the name being typed, and the innermost `{` still open
@@ -1551,7 +1555,7 @@ mod tests {
         assert_eq!(at(&src, src.find("ba)").unwrap() + 2), ["name", "age", "bark", "to_json", "clone"]);
         // Right after the `.`, and on a List.
         let src = DOGS.replace("print(rex.bark)", "ages.");
-        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "clone"]);
+        assert_eq!(at(&src, src.find("ages.").unwrap() + 5), ["length", "add", "remove", "each", "filter", "map", "each workers(…)", "map workers(…)", "any", "all", "fold", "sorted", "contains", "find", "get", "take", "skip", "first", "last", "is_empty", "sum", "min", "max", "reversed", "shuffled", "chosen", "mean", "median", "to_json", "to_csv", "to_csv separator(…)", "to_text", "to_hex", "to_base64", "to_base64url", "sha256", "clone"]);
         let src = "fn main {\n  let s: String := \"a\"\n  print(s.)\n}";
         let found = at(src, src.find(".)").unwrap() + 1);
         assert!(found.contains(&"trim".to_string()) && found.contains(&"to_int".to_string()), "{found:?}");

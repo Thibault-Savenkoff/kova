@@ -1,0 +1,50 @@
+// expect: [75, 111, 118, 97]
+// expect: 4b6f7661
+// expect: S292YQ==
+// expect: Kova
+// expect: [0, 255, 16]
+// expect: true
+// expect: [0, 255, 16, 7]
+// expect: 4
+// expect: [0, 255, 16]
+// expect: none
+// expect: none
+// expect: [0, 255, 16]
+// expect: [251, 255]
+// expect: none
+// expect: --8
+// expect: true
+// expect: 3
+// expect: err(NotFound("kova-nothing.bin"))
+
+import files
+
+fn main {
+    let word: List<Int> := "Kova".to_bytes
+    print(word)
+    print(word.to_hex)
+    print(word.to_base64)
+    print(word.to_text else "?")
+
+    let path: String := "kova-bytes-test.bin"
+    let data: List<Int> := [0, 255, 16]
+    files.write_bytes(path, data)?
+    let back: List<Int> := files.read_bytes(path)?
+    print(back)
+    print(back = data)
+    files.append_bytes(path, [7])?
+    print(files.read_bytes(path)?)
+    print(files.size(path)?)
+    files.remove(path)?
+
+    print(List<Int>.from_hex("00ff10"))
+    print(List<Int>.from_hex("00FF1"))
+    print(List<Int>.from_hex("zz"))
+    print(List<Int>.from_base64("AP8Q"))
+    print(List<Int>.from_base64url("-_8"))
+    print([255].to_text)
+    print([251, 239].to_base64url)
+    print("abc".to_bytes.sha256 = "abc".sha256)
+    print((data[1] >> 4) & 3)
+    print(files.read_bytes("kova-nothing.bin"))
+}

@@ -111,6 +111,45 @@ fn main {
 a, b, c
 ```
 
+## Bytes
+
+Bytes are a `List<Int>` of numbers from 0 to 255: there is no other type to learn. These methods
+exist on every `List<Int>`, and stop the program with `a byte goes from 0 to 255` if a number
+does not fit.
+
+| Method | Gives |
+| --- | --- |
+| `data.to_text -> String?` | the text these bytes write in UTF-8; `none` if they do not. |
+| `data.to_hex -> String` | two hexadecimal digits per byte. |
+| `data.to_base64 -> String` | the bytes in base64. |
+| `data.to_base64url -> String` | the same, with the alphabet used in addresses and without `=`. |
+| `data.sha256 -> String` | the SHA-256 fingerprint, 64 hexadecimal digits. |
+| `List<Int>.from_hex(code: String) -> List<Int>?` | the bytes back, `none` if `code` is not hexadecimal. |
+| `List<Int>.from_base64(code: String) -> List<Int>?` | the bytes back from base64. |
+| `List<Int>.from_base64url(code: String) -> List<Int>?` | the same for `to_base64url`. |
+
+`s.to_bytes` goes from a text to its bytes. To change one bit, use the
+[bit operators](/library/numbers/); to read and write them, [binary files](/library/files/#binary-files).
+
+```kova
+fn main {
+    let word: List<Int> := "Kova".to_bytes
+    print(word)
+    print(word.to_hex)
+    print(word.to_text)
+    print(List<Int>.from_hex("00ff10"))
+    print([255].to_text)
+}
+```
+
+```text
+[75, 111, 118, 97]
+4b6f7661
+"Kova"
+[0, 255, 16]
+none
+```
+
 ## JSON and CSV
 
 `books.to_json` and `List<Book>.from_json(text)` write and read a list as JSON;

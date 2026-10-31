@@ -854,6 +854,19 @@ pub extern "C" fn kova_read_file(p: i64) -> i64 {
     }
 }
 
+/// The same as a List of numbers.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_read_bytes(p: i64) -> i64 {
+    match path(p) {
+        None => -5,
+        Some(p) if is_dir(p) => -3,
+        Some(p) => match sys::read_file(p) {
+            Ok(b) => numbers(b.iter().map(|&b| b as i64)),
+            Err(f) => -f,
+        },
+    }
+}
+
 fn put_file(p: i64, t: i64, append: bool) -> i64 {
     match path(p) {
         None => -5,
@@ -870,6 +883,35 @@ pub extern "C" fn kova_write_file(p: i64, t: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_append_file(p: i64, t: i64) -> i64 {
     put_file(p, t, true)
+}
+
+/// The numbers of a List that `kova_not_bytes` has checked.
+fn bytes_of(l: i64) -> Vec<u8> {
+    floats_of(l).iter().map(|&x| x as u8).collect()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_write_bytes(p: i64, l: i64, append: i64) -> i64 {
+    match path(p) {
+        None => -5,
+        Some(p) if is_dir(p) => -3,
+        Some(p) => result(sys::write_file(p, &bytes_of(l), append != 0)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_not_bytes(l: i64) -> i64 {
+    floats_of(l).iter().any(|x| !(0..256).contains(x)) as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_bytes_text(l: i64, form: i64) -> i64 {
+    maybe(shared::bytes_text(form, &bytes_of(l)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_text_bytes(t: i64, form: i64) -> i64 {
+    shared::text_bytes(form, text_of(t)).map_or(0, |b| numbers(b.iter().map(|&b| b as i64)))
 }
 
 #[unsafe(no_mangle)]
