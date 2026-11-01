@@ -129,6 +129,32 @@ fn ok_programs() {
 
 /// Every program a page can hold, built with `--target web` and run under node, through the same
 /// runtime/web.js as a page (tests/web.mjs): the same output as the other two. Skipped without node.
+/// An app on a running Android emulator or phone (`KOVA_ANDROID=1`, `adb` in the `PATH`): `print`
+/// reaches the system's log, threads run, the working folder can be written.
+#[test]
+fn android_app() {
+    if std::env::var_os("KOVA_ANDROID").is_none() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kova-android-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("kovatest.kova");
+    std::fs::write(&source, "import files\nimport threads\n\nfn main {\n    let t: threads.Task<Int> := threads.spawn { 6 * 7 }\n    print(\"thread {t.wait}\")\n    files.write(\"x.txt\", \"kept\")?\n    print(files.read(\"x.txt\")?)\n}\n").unwrap();
+    let apk = dir.join("kovatest.apk");
+    let out = kova(LANG).arg("build").arg(&source).arg("-o").arg(&apk).args(["--target", "android"]).env("KOVA_ANDROID_KEY", dir.join("android.key")).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let adb = |args: &[&str]| text(&Command::new("adb").args(args).output().unwrap().stdout);
+    adb(&["uninstall", "dev.kova.app.kovatest"]);
+    assert!(adb(&["install", apk.to_str().unwrap()]).contains("Success"));
+    adb(&["logcat", "-c"]);
+    adb(&["shell", "am", "start", "-W", "-n", "dev.kova.app.kovatest/dev.kova.Main"]);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let log = adb(&["logcat", "-d", "-s", "kova"]);
+    adb(&["uninstall", "dev.kova.app.kovatest"]);
+    assert!(log.contains("thread 42") && log.contains("kept"), "{log}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn web_programs() {
     if Command::new("node").arg("--version").output().is_err() {

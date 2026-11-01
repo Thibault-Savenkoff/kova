@@ -22,12 +22,17 @@ pub fn abi(arm: bool) -> &'static str {
 }
 
 /// The `.apk` of a program named `title`: one library per processor (Android's name, its bytes).
-pub fn apk(title: &str, libraries: &[(&str, Vec<u8>)]) -> Result<Vec<u8>, String> {
-    let manifest = manifest(&format!("dev.kova.app.{}", package_word(title)), title);
+pub fn apk(title: &str, libraries: &[(&str, Vec<u8>)], icon: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let manifest = manifest(&format!("dev.kova.app.{}", package_word(title)), title, icon.is_some());
+    let table = resources();
     let code = include_bytes!("../runtime/android/classes.dex");
     let mut files: Vec<(String, &[u8])> = vec![("AndroidManifest.xml".to_string(), &manifest), ("classes.dex".to_string(), code)];
     for (abi, library) in libraries {
         files.push((format!("lib/{abi}/libkova.so"), library));
+    }
+    if let Some(png) = icon {
+        files.push(("resources.arsc".to_string(), &table));
+        files.push((ICON_FILE.to_string(), png));
     }
     let zip = zip(&files);
     signed(zip, &key()?)
@@ -45,16 +50,19 @@ enum Value<'a> {
     Text(&'a str),
     Number(u32),
     Bool(bool),
+    /// A resource of the app, by its number.
+    Resource(u32),
 }
 
-use Value::{Bool, Number, Text};
+use Value::{Bool, Number, Resource, Text};
 
 /// An XML element: its name, its attributes (name, value), what it holds.
 struct Element<'a>(&'a str, Vec<(&'a str, Value<'a>)>, Vec<Element<'a>>);
 
 /// The attributes of the `android:` namespace, with the numbers Android knows them by.
-const ATTRIBUTES: [(&str, u32); 10] = [
+const ATTRIBUTES: [(&str, u32); 11] = [
     ("label", 0x0101_0001),
+    ("icon", 0x0101_0002),
     ("name", 0x0101_0003),
     ("exported", 0x0101_0010),
     ("configChanges", 0x0101_001f),
@@ -69,9 +77,13 @@ const ATTRIBUTES: [(&str, u32); 10] = [
 const NAMESPACE: &str = "http://schemas.android.com/apk/res/android";
 const NONE: u32 = u32::MAX;
 
-fn manifest(package: &str, title: &str) -> Vec<u8> {
+fn manifest(package: &str, title: &str, icon: bool) -> Vec<u8> {
     let category = |name| Element("category", vec![("name", Text(name))], vec![]);
     let action = |name| Element("action", vec![("name", Text(name))], vec![]);
+    let mut application = vec![("label", Text(title)), ("extractNativeLibs", Bool(false)), ("usesCleartextTraffic", Bool(true))];
+    if icon {
+        application.push(("icon", Resource(ICON)));
+    }
     let root = Element(
         "manifest",
         vec![("versionCode", Number(1)), ("versionName", Text("1.0")), ("package", Text(package))],
@@ -80,8 +92,8 @@ fn manifest(package: &str, title: &str) -> Vec<u8> {
             Element("uses-permission", vec![("name", Text("android.permission.INTERNET"))], vec![]),
             Element(
                 "application",
-                // Plain `http://` stays allowed, as on every other system.
-                vec![("label", Text(title)), ("extractNativeLibs", Bool(false)), ("usesCleartextTraffic", Bool(true))],
+                // `usesCleartextTraffic`: plain `http://` stays allowed, as on every other system.
+                application,
                 vec![Element(
                     "activity",
                     vec![
@@ -115,6 +127,24 @@ fn words(v: &[u32]) -> Vec<u8> {
     v.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
+/// A table of texts, in UTF-16.
+fn string_pool(strings: &[&str]) -> Vec<u8> {
+    let (mut offsets, mut texts) = (vec![], vec![]);
+    for s in strings {
+        offsets.push(texts.len() as u32);
+        let units: Vec<u16> = s.encode_utf16().collect();
+        texts.extend((units.len() as u16).to_le_bytes());
+        units.iter().for_each(|u| texts.extend(u.to_le_bytes()));
+        texts.extend([0, 0]);
+    }
+    texts.resize(texts.len().next_multiple_of(4), 0);
+    let n = strings.len() as u32;
+    let mut pool = words(&[n, 0, 0, 28 + 4 * n, 0]);
+    pool.extend(words(&offsets));
+    pool.extend(texts);
+    chunk(0x0001, 28, &pool)
+}
+
 fn binary_xml(root: &Element) -> Vec<u8> {
     // The names Android must recognize come first: the table after this one numbers them.
     let mut strings: Vec<&str> = ATTRIBUTES.iter().map(|(name, _)| *name).collect();
@@ -138,21 +168,7 @@ fn binary_xml(root: &Element) -> Vec<u8> {
     collect(root, &mut strings);
     let index = |s: &str| strings.iter().position(|t| *t == s).unwrap() as u32;
 
-    // The texts, in UTF-16.
-    let (mut offsets, mut texts) = (vec![], vec![]);
-    for s in &strings {
-        offsets.push(texts.len() as u32);
-        let units: Vec<u16> = s.encode_utf16().collect();
-        texts.extend((units.len() as u16).to_le_bytes());
-        units.iter().for_each(|u| texts.extend(u.to_le_bytes()));
-        texts.extend([0, 0]);
-    }
-    texts.resize(texts.len().next_multiple_of(4), 0);
-    let n = strings.len() as u32;
-    let mut pool = words(&[n, 0, 0, 28 + 4 * n, 0]);
-    pool.extend(words(&offsets));
-    pool.extend(texts);
-    let mut body = chunk(0x0001, 28, &pool);
+    let mut body = string_pool(&strings);
     let numbers: Vec<u32> = ATTRIBUTES.iter().map(|(_, n)| *n).collect();
     assert_eq!(known, numbers.len());
     body.extend(chunk(0x0180, 8, &words(&numbers)));
@@ -174,6 +190,7 @@ fn binary_xml(root: &Element) -> Vec<u8> {
                 Text(t) => (index(t), 0x03u8, index(t)),
                 Number(n) => (NONE, 0x10, *n),
                 Bool(b) => (NONE, 0x12, if *b { u32::MAX } else { 0 }),
+                Resource(n) => (NONE, 0x01, *n),
             };
             let space = if number(name) == u32::MAX { NONE } else { uri };
             start.extend(words(&[space, index(name), raw]));
@@ -187,6 +204,41 @@ fn binary_xml(root: &Element) -> Vec<u8> {
     write(root, &index, uri, &mut body);
     body.extend(chunk(0x0101, 16, &namespace));
     chunk(0x0003, 8, &body)
+}
+
+// ---- The icon: the one resource, in a table of Android's own form ----
+
+const ICON_FILE: &str = "res/icon.png";
+/// Package 0x7f, type 1, entry 0.
+const ICON: u32 = 0x7F01_0000;
+
+fn resources() -> Vec<u8> {
+    let types = string_pool(&["drawable"]);
+    let keys = string_pool(&["icon"]);
+    let mut name = vec![0u8; 256];
+    name[..4].copy_from_slice(&[b'k', 0, b'o', 0]);
+    const PACKAGE_HEADER: u32 = 288;
+    // Package number, name, then where the two tables are and how many are public.
+    let mut package = words(&[0x7F]);
+    package.extend(name);
+    package.extend(words(&[PACKAGE_HEADER, 1, PACKAGE_HEADER + types.len() as u32, 1, 0]));
+    package.extend(types);
+    package.extend(keys);
+    // The type's one entry changes with no setting of the phone.
+    package.extend(chunk(0x0202, 16, &words(&[1, 1, 0])));
+    // For every configuration (an empty one of 64 bytes): one entry, a text of the first table.
+    const TYPE_HEADER: u32 = 20 + 64;
+    let mut kind = words(&[1, 1, TYPE_HEADER + 4]);
+    let mut config = vec![0; 64];
+    config[0] = 64;
+    kind.extend(config);
+    kind.extend(words(&[0]));
+    kind.extend(words(&[8, 0, 0x0300_0008, 0]));
+    package.extend(chunk(0x0201, TYPE_HEADER as u16, &kind));
+    let mut body = words(&[1]);
+    body.extend(string_pool(&[ICON_FILE]));
+    body.extend(chunk(0x0200, PACKAGE_HEADER as u16, &package));
+    chunk(0x0002, 12, &body)
 }
 
 // ---- The zip file ----

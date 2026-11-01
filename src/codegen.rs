@@ -196,7 +196,9 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, t
         for &half in halves {
             libraries.push((crate::android::abi(half == Target::AndroidArm), executable(p, files, &name, lang, half)?));
         }
-        return std::fs::write(output, crate::android::apk(name.trim_end_matches(".apk"), &libraries)?).map_err(|e| e.to_string());
+        let icon = p.icon.as_ref().map(|i| crate::icon::sized(&i.png, 192).unwrap_or_else(|| i.png.clone()));
+        let app = crate::android::apk(name.trim_end_matches(".apk"), &libraries, icon.as_deref())?;
+        return std::fs::write(output, app).map_err(|e| e.to_string());
     }
     write_executable(output, &executable(p, files, &name, lang, target)?)
 }
@@ -632,6 +634,8 @@ fn make_object(p: &Program, files: &[String], lang: Option<usize>, triple: targe
     // The runtime's icon: a Mac takes its own .icns as it is (all its sizes), else the PNG.
     let icon = match &p.icon {
         None => &[][..],
+        // Android's launcher reads the app's own resource (src/android.rs).
+        Some(_) if system == "android" => &[][..],
         Some(i) if system == "mac" && i.original.starts_with(b"icns") => &i.original,
         Some(i) => &i.png,
     };

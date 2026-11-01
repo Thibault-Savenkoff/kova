@@ -162,6 +162,9 @@ public class Main extends Activity {
         console = new TextView(this);
         console.setTypeface(Typeface.MONOSPACE);
         console.setTextIsSelectable(true);
+        console.setDefaultFocusHighlightEnabled(false);
+        text(console, new Style());
+        console.setTypeface(Typeface.MONOSPACE);
         int gap = dp(8);
         console.setPadding(gap, gap, gap, gap);
         consoleLine = new EditText(this);
@@ -496,6 +499,7 @@ public class Main extends Activity {
             }
             case "W": {
                 SeekBar bar = new SeekBar(this);
+                bar.setMinimumWidth(dp(200));
                 bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                     @Override
                     public void onProgressChanged(SeekBar b, int value, boolean byUser) {
@@ -616,6 +620,7 @@ public class Main extends Activity {
     TextView cell(String text) {
         TextView v = new TextView(this);
         v.setText(text);
+        text(v, new Style());
         v.setPadding(dp(8), dp(8), dp(8), dp(8));
         return v;
     }

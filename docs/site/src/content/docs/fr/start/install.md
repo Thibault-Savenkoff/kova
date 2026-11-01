@@ -92,7 +92,7 @@ cherchés qu'au lancement du programme.
 
 Chaque `kova` compile pour tous les systèmes : `kova build app.kova --target windows` crée un
 exécutable Windows depuis Linux ou un Mac, et ainsi de suite (`linux`, `linux-arm`, `windows`,
-`windows-arm`, `mac`, `mac-arm`, `mac-intel`, et `web` pour un navigateur). Sur Mac, `kova build` fait par défaut un seul
+`windows-arm`, `mac`, `mac-arm`, `mac-intel`, `web` pour un navigateur, et `android` pour les téléphones). Sur Mac, `kova build` fait par défaut un seul
 exécutable pour tous les Mac.
 
 ## 3. Construire Kova lui-même (pour le modifier)

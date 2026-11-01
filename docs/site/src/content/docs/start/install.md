@@ -90,7 +90,7 @@ runs.
 
 Each `kova` builds for every system: `kova build app.kova --target windows` makes a Windows
 executable from Linux or a Mac, and so on (`linux`, `linux-arm`, `windows`, `windows-arm`, `mac`,
-`mac-arm`, `mac-intel`, and `web` for a browser). On a Mac, `kova build` makes one executable for every Mac by default.
+`mac-arm`, `mac-intel`, `web` for a browser, and `android` for phones). On a Mac, `kova build` makes one executable for every Mac by default.
 
 ## 3. Building Kova itself (to change it)
 

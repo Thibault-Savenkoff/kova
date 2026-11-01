@@ -52,6 +52,7 @@ From any system, `--target` builds for any other:
 | `mac-arm` | Macs with an Apple chip only |
 | `mac-intel` | Intel Macs only |
 | `web` | one `.html` file that runs in a browser ([Kova in a web page](/tools/web/)) |
+| `android` | one signed `.apk` for phones and emulators ([Kova on Android](/tools/android/)); `android-arm`, `android-intel` hold one processor |
 
 Each target needs a small piece of Kova compiled for it, added to Rust before installing Kova
 ([Installing](/start/install/#3-build-for-other-systems-optional)); `kova build` says which one is
