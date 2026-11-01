@@ -256,9 +256,21 @@ fn run() {
 #[cfg(not(target_family = "wasm"))]
 fn run() -> ! {
     COUNTING.store(sys::var("KOVA_LEAKS").is_some(), Relaxed);
+    sys::watch_stacks();
     unsafe { kova_main() };
     every_thread_ended();
     exit(leaks())
+}
+
+/// A thread used up its stack (the system said so). Directly: it may hold the lock of `OUT`, and
+/// this runs on a small stack of its own.
+#[cfg(not(target_family = "wasm"))]
+fn stack_full() -> ! {
+    sys::write(1, unsafe { &*OUT.value.get() });
+    for part in [text(ERROR_PREFIX), text(45), b"\n"] {
+        sys::write(2, part);
+    }
+    sys::exit(101)
 }
 
 /// Stops the program; what `print` left is written first.

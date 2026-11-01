@@ -475,6 +475,7 @@ fn mix(a: i64, b: i64) -> i64 {
 /// is an error (code 102); `KOVA_LEAKS=count` also prints how many were made.
 /// `args` = what `args` gives the program.
 pub fn run(p: &Program, files: &[String], args: &[String]) -> i32 {
+    STACK.with(|s| s.set((0, 900 << 20))); // of the 1 GB `main.rs` gives this thread
     let mut out = BufWriter::new(std::io::stdout());
     let mut heap = Heap { args: args.to_vec(), ..Heap::default() };
     let result = call(p, p.main.expect("checked by main.rs"), &[], &mut out, files, &mut heap);
@@ -688,7 +689,30 @@ enum Stop {
 
 // ponytail: Rust recursion = the interpreter's stack (1 GB, src/main.rs); an infinite recursion
 // crashes without a nice message, as in native (code 134 here, 139 there). To handle with stack errors.
+thread_local! {
+    /// Where this thread's stack began, and how much of it Kova calls may use.
+    static STACK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 1 << 26)) };
+}
+
+/// Each Kova call is a call of the interpreter: past the room of this thread, the same error as
+/// a built program, instead of Rust's abort.
+fn stack_full() -> bool {
+    let mark = 0u8;
+    let here = std::hint::black_box(&mark) as *const u8 as usize;
+    STACK.with(|s| {
+        let (base, room) = s.get();
+        if base == 0 {
+            s.set((here, room));
+        }
+        base != 0 && base.abs_diff(here) > room
+    })
+}
+
 fn call(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[String], heap: &mut Heap) -> Outcome {
+    if stack_full() {
+        let text = |k| crate::locale::text(k, &[]);
+        return Err(Stop::Error(format!("{}{}\n", text("error_prefix"), text("fault_stack"))));
+    }
     let Some(d) = &mut heap.debugger else { return execute(p, num, args, out, files, heap) };
     d.enter(&p.functions[num].name);
     let result = execute(p, num, args, out, files, heap);

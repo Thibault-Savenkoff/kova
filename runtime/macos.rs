@@ -15,6 +15,12 @@ mod c {
         pub fn __ulock_wait(operation: u32, address: *mut u8, value: u64, timeout: u32) -> i32;
         pub fn __ulock_wake(operation: u32, address: *mut u8, value: u64) -> i32;
         pub fn write(fd: i32, b: *const u8, n: usize) -> isize;
+        pub fn sigaltstack(new: *const [usize; 3], old: *mut u8) -> i32;
+        pub fn sigaction(signal: i32, new: *const [usize; 2], old: *mut u8) -> i32;
+        pub fn signal(signal: i32, handler: usize) -> usize;
+        pub fn pthread_self() -> usize;
+        pub fn pthread_get_stackaddr_np(thread: usize) -> usize;
+        pub fn pthread_get_stacksize_np(thread: usize) -> usize;
         pub fn read(fd: i32, b: *mut u8, n: usize) -> isize;
         pub fn open(path: *const u8, flags: i32, ...) -> i32;
         pub fn close(fd: i32) -> i32;
@@ -674,6 +680,7 @@ pub struct Thread(usize);
 /// `f(arg)` on a new thread. None if the system cannot start it.
 pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     extern "C" fn begin(p: *mut u8) -> *mut u8 {
+        watch_stack();
         let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
         f(arg);
         core::ptr::null_mut()
@@ -686,6 +693,39 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
         let started = c::pthread_create(&mut thread, &attributes, begin, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as *mut u8) == 0;
         started.then_some(Thread(thread))
     }
+}
+
+/// A fault at the low end of this thread's stack is a full stack: Kova says so. Any other (a C
+/// library's) happens again without this handler, as it was.
+unsafe extern "C" fn on_fault(signal: i32, info: *const u8, _context: *const u8) {
+    unsafe {
+        let address = *(info.add(24) as *const usize);
+        let thread = c::pthread_self();
+        let low = c::pthread_get_stackaddr_np(thread) - c::pthread_get_stacksize_np(thread);
+        if address.abs_diff(low) < 1 << 20 {
+            crate::stack_full();
+        }
+        c::signal(signal, 0);
+    }
+}
+
+pub fn watch_stacks() {
+    // `sa_handler`, then `sa_mask` (0) and `sa_flags` in one word: SA_ONSTACK | SA_SIGINFO.
+    let action = [on_fault as usize, (0x41usize) << 32];
+    for signal in [10, 11] {
+        unsafe { c::sigaction(signal, &action, core::ptr::null_mut()) };
+    }
+    watch_stack();
+}
+
+/// A full stack leaves no room to say so: each thread gets a small second one.
+/// ponytail: never freed, 64 KB per thread ever started.
+fn watch_stack() {
+    const ROOM: usize = 1 << 16;
+    let room = alloc::vec![0u8; ROOM].leak();
+    // `ss_sp`, `ss_size`, `ss_flags`.
+    let stack = [room.as_mut_ptr() as usize, ROOM, 0];
+    unsafe { c::sigaltstack(&stack, core::ptr::null_mut()) };
 }
 
 /// Waits for the end of `t`.

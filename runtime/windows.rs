@@ -18,6 +18,8 @@ const INVALID: Handle = -1;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetStdHandle(n: u32) -> Handle;
+    fn AddVectoredExceptionHandler(first: u32, handler: extern "system" fn(*const *const u32) -> i32) -> Handle;
+    fn SetThreadStackGuarantee(size: *mut u32) -> i32;
     fn GetUserDefaultLocaleName(name: *mut u16, n: i32) -> i32;
     fn WriteFile(h: Handle, b: *const u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
     fn ReadFile(h: Handle, b: *mut u8, n: u32, done: *mut u32, overlapped: *mut u8) -> i32;
@@ -846,6 +848,7 @@ pub struct Thread(Handle);
 /// `f(arg)` on a new thread. None if the system cannot start it.
 pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     extern "system" fn begin(p: *mut u8) -> u32 {
+        watch_stack();
         let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
         f(arg);
         0
@@ -854,6 +857,25 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     // STACK_SIZE_PARAM_IS_A_RESERVATION: 8 MB kept for its stack, taken as it grows.
     let h = unsafe { CreateThread(core::ptr::null(), 8 << 20, begin, arg, 0x10000, core::ptr::null_mut()) };
     (h != 0).then_some(Thread(h))
+}
+
+/// EXCEPTION_STACK_OVERFLOW: Kova says so. Any other goes on as it was.
+extern "system" fn on_exception(pointers: *const *const u32) -> i32 {
+    if unsafe { **pointers } == 0xC000_00FD {
+        crate::stack_full();
+    }
+    0
+}
+
+pub fn watch_stacks() {
+    unsafe { AddVectoredExceptionHandler(1, on_exception) };
+    watch_stack();
+}
+
+/// A full stack leaves no room to say so: Windows keeps this much for the handler.
+fn watch_stack() {
+    let mut room = 1 << 16;
+    unsafe { SetThreadStackGuarantee(&mut room) };
 }
 
 /// Waits for the end of `t`.

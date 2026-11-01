@@ -1008,6 +1008,12 @@ pub enum Thread {
 /// `f(arg)` on a new thread. None if the system cannot start it.
 pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     not_alone();
+    extern "C" fn watched(p: i64) {
+        watch_stack();
+        let (f, arg) = *unsafe { alloc::boxed::Box::from_raw(p as *mut (extern "C" fn(i64), i64)) };
+        f(arg);
+    }
+    let (f, arg): (extern "C" fn(i64), i64) = (watched, alloc::boxed::Box::into_raw(alloc::boxed::Box::new((f, arg))) as i64);
     let create = *PTHREAD_CREATE.get();
     if create != 0 {
         type Start = extern "C" fn(*mut u8) -> *mut u8;
@@ -1043,6 +1049,68 @@ pub fn spawn(f: extern "C" fn(i64), arg: i64) -> Option<Thread> {
     }
     Some(Thread::Own(word, base))
 }
+
+#[cfg(all(not(android), target_arch = "x86_64"))]
+mod signals {
+    pub const SIGACTION: usize = 13;
+    pub const SIGALTSTACK: usize = 131;
+    pub const KILL: usize = 62;
+    pub const GETPID: usize = 39;
+    /// Where the interrupted stack pointer is in the context the system gives.
+    pub const CONTEXT_SP: usize = 160;
+}
+#[cfg(all(not(android), target_arch = "aarch64"))]
+mod signals {
+    pub const SIGACTION: usize = 134;
+    pub const SIGALTSTACK: usize = 132;
+    pub const KILL: usize = 129;
+    pub const GETPID: usize = 172;
+    pub const CONTEXT_SP: usize = 432;
+}
+
+/// A fault close to the stack pointer is a full stack: Kova says so. Any other (a C library's)
+/// stays what it was.
+#[cfg(not(android))]
+unsafe extern "C" fn on_fault(signal: i32, info: *const u8, context: *const u8) {
+    use signals::*;
+    unsafe {
+        let address = *(info.add(16) as *const usize);
+        let sp = *(context.add(CONTEXT_SP) as *const usize);
+        if address.abs_diff(sp) < 1 << 20 {
+            crate::stack_full();
+        }
+        let plain = [0usize; 4];
+        call(SIGACTION, signal as usize, plain.as_ptr() as usize, 0, 8, 0, 0);
+        call(KILL, call(GETPID, 0, 0, 0, 0, 0, 0) as usize, signal as usize, 0, 0, 0, 0);
+    }
+}
+
+/// The handler is never returned from, so its restorer is never called (Linux still wants one on
+/// x86-64). SA_SIGINFO | SA_ONSTACK | SA_RESTORER | SA_NODEFER.
+#[cfg(not(android))]
+pub fn watch_stacks() {
+    let action = [on_fault as usize, 4 | 0x0800_0000 | 0x0400_0000 | 0x4000_0000, on_fault as usize, 0];
+    unsafe { call(signals::SIGACTION, 11, action.as_ptr() as usize, 0, 8, 0, 0) };
+    watch_stack();
+}
+
+/// A full stack leaves no room to say so: each thread gets a small second one.
+/// ponytail: never freed, 64 KB of untouched memory per thread ever started.
+#[cfg(not(android))]
+fn watch_stack() {
+    const ROOM: usize = 1 << 16;
+    let base = unsafe { call(MMAP, 0, ROOM, 3, 0x22, usize::MAX, 0) };
+    if base > 0 {
+        let stack = [base as usize, 0, ROOM];
+        unsafe { call(signals::SIGALTSTACK, stack.as_ptr() as usize, 0, 0, 0, 0, 0) };
+    }
+}
+
+/// Android keeps its own handlers.
+#[cfg(android)]
+pub fn watch_stacks() {}
+#[cfg(android)]
+fn watch_stack() {}
 
 /// Waits for the end of `t`.
 pub fn join(t: Thread) {

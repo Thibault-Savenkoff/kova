@@ -1,0 +1,12 @@
+// expect: before
+// code: 101
+// stderr: error: too many calls inside each other: the stack is full
+
+fn deep(n: Int) -> Int {
+    return deep(n + 1) + 1
+}
+
+fn main {
+    print("before")
+    print(deep(0))
+}
