@@ -55,6 +55,21 @@ Pip is a puppy
 
 The [language guide](https://thibault-savenkoff.github.io/kova/guide/values/) explains the whole language, chapter by chapter.
 
+## What it can do
+
+Everything here comes with Kova, with nothing else to install unless noted.
+
+| | |
+| --- | --- |
+| **Windows** | `import ui`: each system's native widgets, a canvas, OpenGL (`ui.gpu`), menus, dialogs, your own frames |
+| **Web** | `import web`: HTTP(S) client and server; `import websocket`, `import net` (TCP/UDP) |
+| **Concurrency** | `import threads`: tasks, channels, shared state, `select`; `l.map workers(8) { … }` |
+| **Data** | JSON, CSV, TOML, XML, regular expressions, zip, compression; SQLite through the system's library |
+| **Everyday** | files, paths, dates, command-line arguments, big integers, secure random, encryption, sound (WAV) |
+| **C libraries** | `extern`: call any C function, with structs and callbacks |
+| **Packages** | `import json from "github.com/ada/kova-json" version "1.2.0"`, locked by `kova.lock`; `kova search` finds them, no server involved |
+| **Targets** | Linux, Windows and Mac (x86-64 and arm64), the browser (WebAssembly, one `.html`), Android (a signed `.apk`), all from any machine |
+
 ## Install
 
 A ready-made `kova`, with nothing else to install (no Rust, no C compiler, no linker). On Linux and
@@ -70,8 +85,8 @@ On Windows, in PowerShell:
 irm https://raw.githubusercontent.com/Thibault-Savenkoff/kova/main/install.ps1 | iex
 ```
 
-Each `kova` builds for every system (`kova build app.kova --target windows`, `linux`, `mac`, and
-their `-arm` variants); on a Mac, one executable runs on every Mac. To build Kova itself from a
+Each `kova` builds for every system (`kova build app.kova --target windows`, `linux`, `mac`, their
+`-arm` variants, `web`, `android`); on a Mac, one executable runs on every Mac. To build Kova itself from a
 clone: install Rust with [rustup](https://rustup.rs), then
 
 ```sh
@@ -94,16 +109,24 @@ completion, types on hover, renaming, run / build / test buttons and a debugger.
 
 ## Status
 
-Kova is young (version 0.1): the language works and is tested on the three systems, but it still changes.
-The web (`import web`: `web.get`, `web.post`, a server with `web.serve`, `https://`) and files
-(`import files`) are Kova's own modules.
+Kova is young (version 0.2) and still changes. Everything above works and is tested, but it has
+not yet been proven by large programs or by other people's use. What to expect:
+
+- **No references that outlive their block.** That is what removes lifetimes, and its price: a tree
+  whose nodes point back at their parent, or a graph, is written with indexes into a `List`.
+- **Speed.** Native code through Cranelift, built in milliseconds, but less optimized than LLVM. In the browser,
+  WebAssembly runs 1.3 to 4 times slower than Kova's native code.
+- **Android** has only been run on emulators, and apps are not ready for the Play Store. **iOS** is
+  not done.
+- **The package index is new and empty**: yours could be the first.
 
 ## How Kova is made
 
-Kova is a vibe-coded language, but a tested one: its author decides what Kova is (its syntax, its keywords,
-what a programmer sees, what comes next), and an AI writes the compiler and chooses the technical details.
-Every change must pass the tests: 107 programs that `kova run` and `kova build` must run with the same
-output on Linux, Windows and macOS, and 132 programs whose errors must be the expected ones.
+Kova is a vibe-coded language, but a tested one: its author decides what Kova is (what a programmer
+sees, what comes next), and an AI writes the compiler and chooses the technical details. No person
+has reviewed the compiler. Every change must pass the tests: about 200 programs that `kova run` and
+`kova build` must run with the same output, and about 200 programs whose errors must be the
+expected ones. Linux, Windows and macOS are checked at each milestone.
 
 ## License
 
