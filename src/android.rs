@@ -225,15 +225,14 @@ fn zip(files: &[(String, &[u8])]) -> Zip {
         common.extend(words(&[crc, size, size]));
         common.extend((name.len() as u16).to_le_bytes());
         // The room before the data, as `zipalign` makes it.
+        let alignment = if name.ends_with(".so") { PAGE } else { 4 };
+        let before = entries.len() + 30 + name.len() + 6;
+        let padding = before.next_multiple_of(alignment) - before + 2;
         let mut extra = vec![];
-        if name.ends_with(".so") {
-            let before = entries.len() + 30 + name.len() + 6;
-            extra.extend(0xD935u16.to_le_bytes());
-            let padding = before.next_multiple_of(PAGE) - before + 2;
-            extra.extend((padding as u16).to_le_bytes());
-            extra.extend((PAGE as u16).to_le_bytes());
-            extra.resize(4 + padding, 0);
-        }
+        extra.extend(0xD935u16.to_le_bytes());
+        extra.extend((padding as u16).to_le_bytes());
+        extra.extend((alignment as u16).to_le_bytes());
+        extra.resize(4 + padding, 0);
         entries.extend(b"PK\x03\x04");
         entries.extend(&common);
         entries.extend((extra.len() as u16).to_le_bytes());
