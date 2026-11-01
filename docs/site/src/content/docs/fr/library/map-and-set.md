@@ -20,7 +20,7 @@ Leurs clés peuvent être de n'importe quel type qui se compare avec `=` : nombr
 | `["a" := 1, "b" := 2]` | une map de ces entrées ; `[]` en est une vide là où le type est connu |
 | `m.length -> Int` | le nombre d'entrées. |
 | `m.is_empty -> Bool` | si la Map n'a aucune entrée. |
-| `m[k] -> V?` | la valeur de `k`, `none` s'il n'y en a pas. |
+| `m[k] -> V?` | une copie de la valeur de `k`, `none` s'il n'y en a pas. Pour lire une grosse valeur sans la copier, utilise `if v := m[k] { … }` ou `match m[k] { … }` : `v` est alors prêtée, et `m` ne peut pas changer pendant ce temps. |
 | `m[k] := v` | donne à `k` la valeur `v`, en ajoutant la clé si besoin (`m` doit être un `var`). |
 | `m[k, else v]` | la valeur de `k` elle-même, ajoutée avec la valeur `v` si elle manque ; `v` n'est calculé qu'alors. Elle se change sur place : `groups[k, else []].add(x)`, `counts[w, else 0] += 1` (`m` doit être un `var`). |
 | `m.contains(k: K) -> Bool` | si `k` a une valeur. |

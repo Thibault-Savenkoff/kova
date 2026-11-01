@@ -5,6 +5,7 @@
 
 use resvg::{tiny_skia, usvg};
 
+#[derive(Clone)]
 pub struct Icon {
     /// The image as a square PNG: the largest one of a .ico or a .icns.
     pub png: Vec<u8>,

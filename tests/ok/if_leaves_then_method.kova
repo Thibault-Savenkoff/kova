@@ -1,0 +1,21 @@
+// expect: 2
+// expect: 5
+// expect: 5
+
+fn main {
+    for i in [1, 2] {
+        let d: Int := (if i = 3 {
+            break
+        } else {
+            i * 2
+        }) + (i - 1)
+        print(d)
+    }
+    for i in [4] {
+        let e: Int := (match i {
+            0 => return
+            _ => i
+        }) + 1
+        print(e)
+    }
+}

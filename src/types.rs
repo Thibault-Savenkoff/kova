@@ -1191,6 +1191,14 @@ pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     }
 }
 
+/// `ages["Rex"]` read from a variable: the Map, which a `match` may read without a copy.
+pub fn map_read<'e>(e: &'e Expr, types: &[Type]) -> Option<&'e Expr> {
+    match &e.kind {
+        ExprKind::Index(x, i) if matches!(types[x.id], Type::Map(..)) && !matches!(i.kind, ExprKind::KeyElse(..)) && place_root(x, types).is_some() => Some(x),
+        _ => None,
+    }
+}
+
 struct Checker<'a> {
     src: &'a str,
     /// Functions, methods and static functions (`Dog.sound`).
@@ -6094,7 +6102,7 @@ impl Checker<'_> {
             }
             if value {
                 let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
-                if result.is_none() {
+                if result.is_none() && ty != Type::Error {
                     result = Some(ty);
                 }
             } else {
@@ -6218,7 +6226,7 @@ impl Checker<'_> {
             self.scopes.push(HashMap::new());
             if value {
                 let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
-                if result.is_none() {
+                if result.is_none() && ty != Type::Error {
                     result = Some(ty);
                 }
             } else {
@@ -6247,7 +6255,8 @@ impl Checker<'_> {
             self.error(otherwise.open, msg);
             return Type::Error;
         }
-        a
+        // A branch that leaves (`break`) has no type: the other one says it.
+        if a == Type::Error { b } else { a }
     }
 
     /// The type of a block giving a value: that of its last line.

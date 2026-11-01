@@ -38,7 +38,7 @@ use crate::diag::{Span, line_col};
 use crate::locale;
 pub use crate::shared::{case_of, float_text, parse_float, parse_int};
 use crate::types::Held;
-use crate::types::{CType, c_layout, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, method_name, narrowed, place_root, substitute, type_of};
+use crate::types::{CType, c_layout, changes, changes_in, EnumDef, Info, Type, enum_view, is_copy, map_read, method_name, narrowed, place_root, substitute, type_of};
 
 pub type Local = usize;
 pub type BlockId = usize;
@@ -211,6 +211,7 @@ pub struct Watch {
     pub look: usize,
 }
 
+#[derive(Clone)]
 pub struct Program {
     pub functions: Vec<Function>,
     /// `None` for a file without `main` (a module): only `kova test` runs it.
@@ -832,6 +833,14 @@ pub enum Fault {
     ChannelLimit,
     Closed,
     Deadlock,
+}
+
+/// What `lookup` does with a Map's value.
+#[derive(Clone, Copy, PartialEq)]
+enum Take {
+    Copy,
+    Remove,
+    Lend,
 }
 
 impl Fault {
@@ -2996,7 +3005,7 @@ impl<'a> Translator<'a> {
     }
 
     /// `ages["Rex"]` (`remove`: and takes it out): an `Int?`, a copy of the value or `none`.
-    fn lookup(&mut self, map: Local, key: &[Local], k: &Type, v: &Type, remove: bool) -> Slots {
+    fn lookup(&mut self, map: Local, key: &[Local], k: &Type, v: &Type, how: Take) -> Slots {
         let i = self.find(map, key, k);
         let ty = Type::Optional(Box::new(v.clone()));
         let result = self.new_slots(&ty);
@@ -3009,7 +3018,9 @@ impl<'a> Translator<'a> {
         for (s, &d) in value.iter().enumerate() {
             self.emit(Inst::ListLoad(d, map, i, n + s));
         }
-        if remove {
+        if how == Take::Lend {
+            self.copy(&result[1..], &value);
+        } else if how == Take::Remove {
             // The key goes, the value is given to the caller.
             let keys = self.load(map, i, k);
             self.free_value(&keys, k);
@@ -3024,7 +3035,9 @@ impl<'a> Translator<'a> {
             self.emit(Inst::Const(l, 0));
         }
         self.go(End::Jump(done), done);
-        self.track(&result, &ty);
+        if how != Take::Lend {
+            self.track(&result, &ty);
+        }
         result
     }
 
@@ -5390,9 +5403,23 @@ impl<'a> Translator<'a> {
             ExprKind::Index(x, i) => (!matches!(self.ty(x), Type::Map(..)) || matches!(i.kind, ExprKind::KeyElse(..))) && i.range().is_none(),
             _ => false,
         };
-        let borrowed = part || place_root(&m.subject, &self.info.types).is_some();
+        let map = map_read(&m.subject, &self.info.types);
+        let borrowed = part || map.is_some() || place_root(&m.subject, &self.info.types).is_some();
         let mut place = None;
-        let v = if borrowed {
+        let v = if let (Some(map), ExprKind::Index(_, key)) = (map, &m.subject.kind) {
+            // `match m[k]`: the value stays in the Map, which cannot change meanwhile.
+            let Type::Map(k, value) = self.ty(map) else { unreachable!() };
+            let map = self.expr1(map);
+            let key = self.expr(key);
+            let v = self.lookup(map, &key, &k, &value, Take::Lend);
+            if is_copy(&ty) {
+                let c = self.new_slots(&ty);
+                self.copy(&c, &v);
+                c
+            } else {
+                v
+            }
+        } else if borrowed {
             let (p, _) = self.place(&m.subject);
             let v = self.read(&p);
             place = Some(p);
@@ -5655,7 +5682,7 @@ impl<'a> Translator<'a> {
                 let Type::Map(k, v) = self.ty(x) else { unreachable!() };
                 let map = self.expr1(x);
                 let key = self.expr(i);
-                self.lookup(map, &key, &k, &v, false)
+                self.lookup(map, &key, &k, &v, Take::Copy)
             }
             ExprKind::Index(x, i) if i.range().is_some() => self.slice(e, x, i),
             ExprKind::Index(..) => {
@@ -6439,7 +6466,7 @@ impl<'a> Translator<'a> {
                         let key = self.int_local();
                         self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
                         self.track(&[key], &Type::String);
-                        self.lookup(r[2], &[key], &Type::String, &Type::String, false)
+                        self.lookup(r[2], &[key], &Type::String, &Type::String, Take::Copy)
                     }
                 }
             }
@@ -6530,7 +6557,7 @@ impl<'a> Translator<'a> {
                 let key = self.int_local();
                 self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
                 self.track(&[key], &Type::String);
-                self.lookup(r[3], &[key], &Type::String, &Type::String, false)
+                self.lookup(r[3], &[key], &Type::String, &Type::String, Take::Copy)
             }
             ExprKind::Method { receiver, name, args } if self.method(receiver, name).is_some() => {
                 let (q, r) = self.method(receiver, name).unwrap();
@@ -6584,7 +6611,7 @@ impl<'a> Translator<'a> {
                     }
                     "remove" => {
                         let key = self.expr(&args[0]);
-                        self.lookup(map, &key, &k, &v, true)
+                        self.lookup(map, &key, &k, &v, Take::Remove)
                     }
                     // A copy of each key, or of each value.
                     "keys" | "values" => {

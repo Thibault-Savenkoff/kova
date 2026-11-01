@@ -18,7 +18,7 @@ tuples of them, and types that follow [`Equal`](/guide/interfaces-and-generics/#
 | `["a" := 1, "b" := 2]` | a map of these entries; `[]` is an empty one where the type is known |
 | `m.length -> Int` | the number of entries. |
 | `m.is_empty -> Bool` | whether the Map has no entry. |
-| `m[k] -> V?` | the value of `k`, `none` if there is none. |
+| `m[k] -> V?` | a copy of the value of `k`, `none` if there is none. To read a large value without copying it, use `if v := m[k] { … }` or `match m[k] { … }`: `v` is then lent, and `m` cannot change meanwhile. |
 | `m[k] := v` | gives `k` the value `v`, adding the key if needed (`m` must be a `var`). |
 | `m[k, else v]` | the value of `k` itself, added with the value `v` if it is missing; `v` is computed only then. It can be changed in place: `groups[k, else []].add(x)`, `counts[w, else 0] += 1` (`m` must be a `var`). |
 | `m.contains(k: K) -> Bool` | whether `k` has a value. |

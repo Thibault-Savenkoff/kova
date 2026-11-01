@@ -15,6 +15,7 @@ mod diag;
 mod format;
 mod http;
 mod install;
+mod inline;
 mod icon;
 mod json;
 #[cfg(target_os = "macos")]

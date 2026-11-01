@@ -18,7 +18,7 @@ use crate::ast::*;
 use crate::diag::{Diag, Span, line_col};
 use crate::locale::t;
 use crate::types::Held;
-use crate::types::{Info, Type, enum_view, is_copy, method_name, narrowed, place_root};
+use crate::types::{Info, Type, enum_view, is_copy, map_read, method_name, narrowed, place_root};
 
 /// A visible name.
 #[derive(Clone)]
@@ -266,7 +266,8 @@ impl Owner<'_> {
         let ty = self.info.types[m.subject.id].clone();
         // `None` for a `match` on values (`match n { 0 => … }`): no field to bind.
         let d = enum_view(&ty);
-        let root = place_root(&m.subject, &self.info.types).map(|(r, _)| self.lookup(r).id);
+        let place = map_read(&m.subject, &self.info.types).unwrap_or(&m.subject);
+        let root = place_root(place, &self.info.types).map(|(r, _)| self.lookup(r).id);
         // `match var`: frozen only in the cases that name its fields (the checker lends it there).
         let frozen = root.filter(|_| !is_copy(&ty) && m.mode == Mode::Read);
         if let Some(id) = frozen {

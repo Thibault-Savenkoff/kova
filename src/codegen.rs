@@ -174,6 +174,7 @@ impl Target {
 /// `lang` = the language forced by the `header`; otherwise the executable picks it at launch.
 /// `target`: the system to make it for (the machine's own if none is given).
 pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, target: Option<Target>) -> Result<(), String> {
+    let p = &crate::inline::inlined(p);
     let Some(target) = target.or(Target::host()) else { return Err(t!("unknown_system")) };
     let name = Path::new(output).file_name().map_or("program".into(), |n| n.to_string_lossy().into_owned());
     if target == Target::Web {
