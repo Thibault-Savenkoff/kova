@@ -38,16 +38,26 @@ fn main() {
     for (name, triples) in targets {
         let lib = out.join(format!("runtime-{name}.a"));
         match triples.iter().find(|t| installed(t)) {
-            Some(triple) => compile(&rustc, triple, &lib, &libm, &out),
+            Some(triple) => compile(&rustc, triple, &lib, &libm, &out, false),
             None => {
                 println!("cargo:warning=no runtime for `kova build --target {name}`: `rustup target add {}`, then build kova again", triples[0]);
                 std::fs::write(&lib, []).unwrap();
             }
         }
     }
+    // Android: Linux's runtime, loaded at any address. Its system calls are Linux's and it brings
+    // its own Rust library, so Rust's `linux` targets are all it needs.
+    for (name, triple) in [("android-arm", "aarch64-unknown-linux-gnu"), ("android-x86", "x86_64-unknown-linux-gnu")] {
+        let lib = out.join(format!("runtime-{name}.a"));
+        if installed(triple) {
+            compile(&rustc, triple, &lib, &libm, &out, true);
+        } else {
+            std::fs::write(&lib, []).unwrap();
+        }
+    }
     let web = out.join("runtime-web.wasm");
     if installed("wasm32-unknown-unknown") {
-        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out);
+        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out, false);
     } else {
         println!("cargo:warning=no runtime for `kova build --target web`: `rustup target add wasm32-unknown-unknown`, then build kova again");
         std::fs::write(&web, []).unwrap();
@@ -64,11 +74,15 @@ fn libm_source() -> PathBuf {
     found.unwrap_or_else(|| panic!("`libm` 0.2.16 not found in {}", registry.display()))
 }
 
-fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path) {
-    // Linux executables are static, not "position independent".
-    let model: &[&str] = if triple.contains("linux") { &["-C", "relocation-model=static"] } else { &[] };
+fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, android: bool) {
+    // Linux executables are static, not "position independent"; Android's libraries are.
+    let model: &[&str] = match (android, triple.contains("linux")) {
+        (true, _) => &["-C", "relocation-model=pic", "--cfg", "android"],
+        (_, true) => &["-C", "relocation-model=static"],
+        _ => &[],
+    };
     let codegen = ["-C", "panic=abort", "-C", "opt-level=2", "-C", "codegen-units=1"];
-    let rlib = out.join(format!("libm-{triple}.rlib"));
+    let rlib = out.join(format!("libm-{triple}-{android}.rlib"));
     let status = Command::new(rustc)
         .args(["--edition", "2021", "--crate-type", "rlib", "--crate-name", "libm", "--cap-lints", "allow", "--target", triple])
         .args(codegen)

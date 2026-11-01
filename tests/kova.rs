@@ -506,7 +506,7 @@ fn cross_build() {
     let source = dir.join("hello.kova");
     std::fs::copy("tests/ok/strings.kova", &source).unwrap();
     // The start of the file, then the processor's number at `at`.
-    let systems: [(&str, &str, &[u8], usize, u8); 8] = [
+    let systems: [(&str, &str, &[u8], usize, u8); 9] = [
         ("linux", "hello", b"\x7fELF", 0x12, 62),
         ("linux-arm", "hello", b"\x7fELF", 0x12, 183),
         ("windows", "hello.exe", b"MZ", 0x45, 0x86),
@@ -516,16 +516,18 @@ fn cross_build() {
         ("mac-arm", "hello", b"\xcf\xfa\xed\xfe", 4, 0x0C),
         ("mac-intel", "hello", b"\xcf\xfa\xed\xfe", 4, 0x07),
         ("web", "hello.html", b"<!doctype", 4, b'c'),
+        // A zip file, the version needed to read it.
+        ("android", "hello.apk", b"PK\x03\x04", 4, 10),
     ];
     for (target, file, start, at, cpu) in systems {
-        let out = kova(LANG).arg("build").arg(&source).args(["--target", target]).output().unwrap();
+        let out = kova(LANG).arg("build").arg(&source).args(["--target", target]).env("KOVA_ANDROID_KEY", dir.join("android.key")).output().unwrap();
         // A `kova` built without Rust's library for that system says what to install (build.rs).
         if text(&out.stderr).contains("rustup target add") {
             continue;
         }
         // The report: the file, the system, its size and the time taken.
         let report = text(&out.stderr);
-        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("windows-arm", "Windows arm"), ("mac", "Mac"), ("mac-arm", "Mac arm"), ("mac-intel", "Mac Intel"), ("web", "Web")].iter().find(|(n, _)| *n == target).unwrap().1;
+        let title = [("linux", "Linux"), ("linux-arm", "Linux arm"), ("windows", "Windows"), ("windows-arm", "Windows arm"), ("mac", "Mac"), ("mac-arm", "Mac arm"), ("mac-intel", "Mac Intel"), ("web", "Web"), ("android", "Android")].iter().find(|(n, _)| *n == target).unwrap().1;
         assert!(out.status.success() && report.starts_with(&format!("✓ {}", dir.join(file).display())), "{target}: {report}");
         assert!(report.contains(&format!(" ({title}, ")) && report.contains(" KB) in ") && report.lines().count() == 1, "{report}");
         let exe = std::fs::read(dir.join(file)).unwrap();
@@ -1125,7 +1127,7 @@ fn web() {
 fn server() {
     let _alone = one_server();
     use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpStream;
     let source = "tests/web/server.kova";
     let ask = |port: u16, request: &[u8]| -> String {
         // The server may still be starting.
@@ -1243,7 +1245,7 @@ fn server() {
 fn server_workers() {
     let _alone = one_server();
     use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpStream;
     use std::time::Instant;
     let ask = |port: u16, path: &str| -> String {
         for _ in 0..400 {
@@ -1380,7 +1382,7 @@ fn ui_animate() {
 fn server_log() {
     let _alone = one_server();
     use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpStream;
     let source = "tests/web/quiet.kova";
     let exe = std::env::temp_dir().join(format!("kova-quiet-{}{EXE}", std::process::id()));
     let out = kova(LANG).arg("build").arg(source).arg("-o").arg(&exe).output().unwrap();
@@ -1427,7 +1429,7 @@ fn server_log() {
 fn server_network() {
     let _alone = one_server();
     use std::io::{Read, Write};
-    use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
+    use std::net::{IpAddr, TcpStream, UdpSocket};
     // Which address this computer would send from: connecting UDP sends nothing.
     let Some(ip) = UdpSocket::bind("0.0.0.0:0").and_then(|u| u.connect("192.0.2.1:80").and(u.local_addr())).ok().map(|a| a.ip()).filter(|ip| !ip.is_loopback() && matches!(ip, IpAddr::V4(_))) else {
         eprintln!("server_network: no network address, skipped");

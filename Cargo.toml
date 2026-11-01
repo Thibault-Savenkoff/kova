@@ -24,6 +24,7 @@ target-lexicon = "0.13.5"
 resvg = { version = "0.49.0", default-features = false }
 zune-jpeg = { version = "0.5.9", default-features = false, features = ["std"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "png-format"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 
 [build-dependencies]
 # Keeping only the runtime's objects an executable can reach (build.rs).

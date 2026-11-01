@@ -1277,9 +1277,9 @@ pub extern "C" fn kova_modified(p: i64) -> i64 {
 
 /// The local time at `utc`, by the rules of that day.
 fn local_at(utc: i64) -> i64 {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, android)))]
     return utc + shared::local_offset(utc, sys::var("TZ").as_deref(), &|p| sys::read_file(p).ok());
-    #[cfg(windows)]
+    #[cfg(any(windows, android))]
     sys::local_at(utc)
 }
 
@@ -1897,8 +1897,7 @@ pub extern "C" fn kova_math(op: i64, x: f64, y: f64) -> f64 {
 pub extern "C" fn kova_local_now() -> i64 {
     #[cfg(not(windows))]
     {
-        let utc = (sys::now() / 1_000_000_000) as i64;
-        utc + shared::local_offset(utc, sys::var("TZ").as_deref(), &|p| sys::read_file(p).ok())
+        local_at((sys::now() / 1_000_000_000) as i64)
     }
     #[cfg(windows)]
     sys::local_now()

@@ -17,6 +17,12 @@ use crate::{Global, Locked, c_text};
 
 pub const SLASH: char = '/';
 
+#[cfg(android)]
+#[path = "android.rs"]
+mod android;
+#[cfg(android)]
+pub use android::local_at;
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn call(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
     let r;
@@ -225,9 +231,16 @@ unsafe extern "C" fn start(stack: *const usize) -> ! {
 
 /// The environment's variables say it (`LANG`).
 pub fn system_language() -> Option<String> {
+    #[cfg(android)]
+    return android::language();
+    #[cfg(not(android))]
     None
 }
 
+#[cfg(android)]
+pub use android::var;
+
+#[cfg(not(android))]
 pub fn var(name: &str) -> Option<String> {
     ENVIRONMENT.get().iter().find_map(|&e| {
         let e = unsafe { c_text(e) };
@@ -242,6 +255,10 @@ pub fn exit(code: i32) -> ! {
 }
 
 pub fn write(fd: usize, mut b: &[u8]) {
+    #[cfg(android)]
+    if fd <= 2 {
+        return android::log(b);
+    }
     while !b.is_empty() {
         match unsafe { call(WRITE, fd, b.as_ptr() as usize, b.len(), 0, 0, 0) } {
             n if n > 0 => b = &b[n as usize..],
@@ -316,7 +333,10 @@ struct AddrInfo {
     socktype: i32,
     protocol: i32,
     addrlen: u32,
+    #[cfg(android)]
+    canonname: *const u8,
     addr: *const u8,
+    #[cfg(not(android))]
     canonname: *const u8,
     next: *mut AddrInfo,
 }

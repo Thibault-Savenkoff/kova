@@ -369,15 +369,32 @@ fn is_got(flags: RelocationFlags) -> bool {
 /// first segment (read and run); data then zeros in a second one (read and write), which starts on
 /// a new page at the same place in the page as in the file (the system maps whole pages).
 pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
-    // An arm64 Linux may have pages of 4, 16 or 64 KB: aligned for the largest.
-    let page_size = if arm { 0x10000 } else { PAGE };
+    elf_file(main, runtime, arm, None)
+}
+
+/// The same as a shared library holding one public function, `export`: what Android loads into an
+/// app's process (PLAN Part 4 "Android"). It may land at any address, so `ld.so` is told every
+/// place holding an address (`relative`), and it carries section headers: Android refuses a
+/// library without them.
+pub fn library(main: &[u8], runtime: &[u8], arm: bool, export: &str) -> Result<Vec<u8>, String> {
+    elf_file(main, runtime, arm, Some(export))
+}
+
+fn elf_file(main: &[u8], runtime: &[u8], arm: bool, export: Option<&str>) -> Result<Vec<u8>, String> {
+    use object::elf::{R_AARCH64_ABS64, R_X86_64_64};
+    let shared = export.is_some();
+    // An arm64 Linux may have pages of 4, 16 or 64 KB, Android too on any processor: aligned for
+    // the largest.
+    let page_size = if arm || shared { 0x10000 } else { PAGE };
     let inputs = Inputs::read(main, runtime, true)?;
-    let mut r = inputs.reach("_start", is_got)?;
+    let mut r = inputs.reach(export.unwrap_or("_start"), is_got)?;
     // A program calling the C library's functions (the web's) is linked with it, by the system's
     // dynamic linker (`ld.so`) at launch, and starts through it: `kova_libc_start`.
-    let dynamic = !r.imports.is_empty();
+    let dynamic = shared || !r.imports.is_empty();
     if dynamic {
-        r = inputs.reach("kova_libc_start", is_got)?;
+        if !shared {
+            r = inputs.reach("kova_libc_start", is_got)?;
+        }
         for f in r.imports.clone() {
             let t = Target::Import(f, false);
             if !r.got.contains(&t) {
@@ -388,8 +405,14 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let parts = inputs.sorted(&mut r)?;
     let split = r.kept.iter().position(|p| parts[p] >= Part::Data).unwrap_or(r.kept.len());
     let (first, second) = r.kept.split_at(split);
-    let headers: u64 = if dynamic { 6 } else { 3 };
-    let interp: &[u8] = if arm { b"/lib/ld-linux-aarch64.so.1\0" } else { b"/lib64/ld-linux-x86-64.so.2\0" };
+    let headers: u64 = if shared { 5 } else if dynamic { 6 } else { 3 };
+    let interp: &[u8] = if shared {
+        b""
+    } else if arm {
+        b"/lib/ld-linux-aarch64.so.1\0"
+    } else {
+        b"/lib64/ld-linux-x86-64.so.2\0"
+    };
     let interp_at = ELF_BASE + 64 + 56 * headers;
 
     // The first segment (read and run): the headers, the dynamic linker's name, code and
@@ -402,18 +425,43 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let stubs = align(at, 4);
     let stub = |f: &str| stubs + stub_size * r.imports.iter().position(|g| g == f).unwrap() as u64;
     // `dlopen` (src/openssl.rs) is in `libc.so.6` since glibc 2.34, in `libdl.so.2` before.
-    let mut strings = b"\0libc.so.6\0libdl.so.2\0".to_vec();
+    let libraries: &[&str] = if shared { &["libc.so", "libdl.so", "liblog.so", "libandroid.so", "libkova.so"] } else { &["libc.so.6", "libdl.so.2"] };
+    let mut strings = vec![0];
+    let mut library_names = vec![];
+    for l in libraries {
+        library_names.push(strings.len() as u64);
+        strings.extend(l.as_bytes());
+        strings.push(0);
+    }
     let names: Vec<u64> = r.imports.iter().map(|f| {
         let at = strings.len() as u64;
         strings.extend(f.as_bytes());
         strings.push(0);
         at
     }).collect();
+    let export_name = strings.len() as u64;
+    if let Some(e) = export {
+        strings.extend(e.as_bytes());
+        strings.push(0);
+    }
+    // The names: a first empty one, the imported functions, the public one.
+    let symbols = n + 1 + shared as u64;
+    let absolute = |flags: RelocationFlags| matches!(flags, RelocationFlags::Elf { r_type } if r_type == R_X86_64_64 || r_type == R_AARCH64_ABS64);
+    // The places `ld.so` must add the library's address to.
+    let mut relative = 0;
+    if shared {
+        relative = r.got.iter().filter(|t| matches!(t, Target::At(..))).count() as u64;
+        for &p in &r.kept {
+            for (_, _, rel) in inputs.relocations(p)? {
+                relative += (absolute(rel.flags()) && inputs.target(p.0, rel.target())? != Target::Nothing) as u64;
+            }
+        }
+    }
     let dynsym = align(stubs + stub_size * n, 8);
-    let dynstr = dynsym + 24 * (n + 1);
+    let dynstr = dynsym + 24 * symbols;
     let hash = align(dynstr + strings.len() as u64, 8);
-    let rela = align(hash + 4 * (3 + n + 1), 8);
-    let first_end = align(if dynamic { rela + 24 * n } else { stubs }, 8);
+    let rela = align(hash + 4 * (3 + symbols), 8);
+    let first_end = align(if dynamic { rela + 24 * (n + relative) } else { stubs }, 8);
 
     // The second one (read and write): the GOT, the `dynamic` table, data then zeros. Its
     // addresses are `shift` further than its place in the file.
@@ -421,9 +469,14 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     let got_at = first_end + shift;
     let dynamic_at = got_at + 8 * r.got.len() as u64;
     let table: Vec<(u64, u64)> = if dynamic {
-        // NEEDED (twice), HASH, STRTAB, SYMTAB, RELA, RELASZ, RELAENT, STRSZ, SYMENT; every address at once
-        // (BIND_NOW, FLAGS = BIND_NOW, FLAGS_1 = NOW); the end.
-        vec![(1, 1), (1, 11), (4, hash), (5, dynstr), (6, dynsym), (7, rela), (8, 24 * n), (9, 24), (10, strings.len() as u64), (11, 24), (24, 0), (30, 8), (0x6fff_fffb, 1), (0, 0)]
+        // NEEDED (one each; the last is a shared library's own name, SONAME), HASH, STRTAB, SYMTAB,
+        // RELA, RELASZ, RELAENT, STRSZ, SYMENT; every address at once (BIND_NOW, FLAGS = BIND_NOW,
+        // FLAGS_1 = NOW); the end.
+        let needed = library_names.len() - shared as usize;
+        let mut t: Vec<(u64, u64)> = library_names[..needed].iter().map(|&s| (1, s)).collect();
+        t.extend(library_names[needed..].iter().map(|&s| (14, s)));
+        t.extend([(4, hash), (5, dynstr), (6, dynsym), (7, rela), (8, 24 * (n + relative)), (9, 24), (10, strings.len() as u64), (11, 24), (24, 0), (30, 8), (0x6fff_fffb, 1), (0, 0)]);
+        t
     } else {
         vec![]
     };
@@ -455,9 +508,17 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         }
     }
     let slot_of = |t: &Target| got_at + 8 * r.got.iter().position(|g| g == t).unwrap() as u64;
+    let moved = RefCell::new(vec![]);
     let apply = |out: &mut [u8], rel: &object::Relocation, t: &Target, place: u64, value: i64| {
         use object::elf::*;
         let RelocationFlags::Elf { r_type } = rel.flags() else { return Err("not an ELF relocation".to_string()) };
+        if shared && absolute(rel.flags()) && *t != Target::Nothing {
+            // Only the second segment can be written at load time.
+            if place < got_at {
+                return Err("an address in code or constants".to_string());
+            }
+            moved.borrow_mut().push((place, value));
+        }
         let slot = || slot_of(t) as i64;
         let place = place as i64;
         match r_type {
@@ -491,6 +552,25 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     inputs.write(&r.kept, &address, offset, &mut out, address_of, apply)?;
 
     if dynamic {
+        if shared {
+            let mut moved = moved.take();
+            for (slot, t) in r.got.iter().enumerate() {
+                if matches!(t, Target::At(..)) {
+                    moved.push((got_at + 8 * slot as u64, address_of(t)? as i64));
+                }
+            }
+            for (k, (place, value)) in moved.into_iter().enumerate() {
+                let o = offset(rela) + 24 * (n as usize + k);
+                out[o..o + 8].copy_from_slice(&place.to_le_bytes());
+                out[o + 8..o + 16].copy_from_slice(&(if arm { 1027u64 } else { 8 }).to_le_bytes()); // RELATIVE
+                out[o + 16..o + 24].copy_from_slice(&value.to_le_bytes());
+            }
+            let o = offset(dynsym) + 24 * (n as usize + 1);
+            out[o..o + 4].copy_from_slice(&(export_name as u32).to_le_bytes());
+            out[o + 4] = 0x12;
+            out[o + 6] = 1; // defined (in any section but none)
+            out[o + 8..o + 16].copy_from_slice(&(address[&r.entry.0] + r.entry.1).to_le_bytes());
+        }
         let o = offset(interp_at);
         out[o..o + interp.len()].copy_from_slice(interp);
         for (k, f) in r.imports.iter().enumerate() {
@@ -518,10 +598,14 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
         }
         let o = offset(dynstr);
         out[o..o + strings.len()].copy_from_slice(&strings);
-        // One bucket, empty: the program gives no names to the libraries.
+        // One bucket: a program gives no names to the libraries, a shared library one.
         let o = offset(hash);
         out[o..o + 4].copy_from_slice(&1u32.to_le_bytes());
-        out[o + 4..o + 8].copy_from_slice(&(n as u32 + 1).to_le_bytes());
+        out[o + 4..o + 8].copy_from_slice(&(symbols as u32).to_le_bytes());
+        // The bucket's one name: the public function.
+        if shared {
+            out[o + 8..o + 12].copy_from_slice(&(symbols as u32 - 1).to_le_bytes());
+        }
         for (k, (tag, value)) in table.iter().enumerate() {
             let o = offset(dynamic_at) + 16 * k;
             out[o..o + 8].copy_from_slice(&tag.to_le_bytes());
@@ -532,14 +616,14 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     // The headers: the ELF header, then the segments (no sections' headers, like `strip`).
     let mut h = Vec::new();
     h.extend_from_slice(b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0"); // 64 bits, little-endian, version 1
-    h.extend_from_slice(&2u16.to_le_bytes()); // an executable
+    h.extend_from_slice(&(if shared { 3u16 } else { 2 }).to_le_bytes()); // shared library or executable
     h.extend_from_slice(&(if arm { 183u16 } else { 62 }).to_le_bytes()); // arm64 or x86-64
     h.extend_from_slice(&1u32.to_le_bytes());
     h.extend_from_slice(&(address[&r.entry.0] + r.entry.1).to_le_bytes());
     h.extend_from_slice(&64u64.to_le_bytes()); // the segments' headers follow
-    h.extend_from_slice(&0u64.to_le_bytes());
+    h.extend_from_slice(&(if shared { out.len() as u64 } else { 0 }).to_le_bytes());
     h.extend_from_slice(&0u32.to_le_bytes());
-    for v in [64u16, 56, headers as u16, 64, 0, 0] {
+    for v in [64u16, 56, headers as u16, 64, 4 * shared as u16, 3 * shared as u16] {
         h.extend_from_slice(&v.to_le_bytes());
     }
     let mut segment = |kind: u32, flags: u32, offset: u64, address: u64, file: u64, memory: u64| {
@@ -552,6 +636,8 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     };
     if dynamic {
         segment(6, 4, 64, ELF_BASE + 64, 56 * headers, 56 * headers); // PT_PHDR: these headers
+    }
+    if dynamic && !shared {
         segment(3, 4, interp_at - ELF_BASE, interp_at, interp.len() as u64, interp.len() as u64); // PT_INTERP
     }
     segment(1, 5, 0, ELF_BASE, first_end - ELF_BASE, first_end - ELF_BASE); // PT_LOAD, read + run
@@ -561,6 +647,22 @@ pub fn elf(main: &[u8], runtime: &[u8], arm: bool) -> Result<Vec<u8>, String> {
     }
     segment(0x6474e551, 6, 0, 0, 0, 0); // PT_GNU_STACK: the stack does not run
     out[..h.len()].copy_from_slice(&h);
+    if shared {
+        // The section headers Android wants: nothing, `.dynstr`, `.dynamic`, their names.
+        let names = b"\0.dynstr\0.dynamic\0.shstrtab\0";
+        let names_at = out.len() as u64 + 64 * 4;
+        // Words of 64 bits: name and type, flags, address, offset, size, link, alignment, entry size.
+        let sections: [[u64; 8]; 4] = [
+            [0; 8],
+            [1 | 3 << 32, 2, dynstr, offset(dynstr) as u64, strings.len() as u64, 0, 1, 0],
+            [9 | 6 << 32, 3, dynamic_at, offset(dynamic_at) as u64, 16 * table.len() as u64, 1, 8, 16],
+            [18 | 3 << 32, 0, 0, names_at, names.len() as u64, 0, 1, 0],
+        ];
+        for word in sections.as_flattened() {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        out.extend_from_slice(names);
+    }
     Ok(out)
 }
 

@@ -39,10 +39,15 @@ pub enum Target {
     MacIntel,
     /// A web page: one `.html` file holding a WebAssembly module (src/wasm.rs).
     Web,
+    /// An Android app: one `.apk` file holding the arm64 and x86-64 libraries (src/android.rs).
+    Android,
+    /// The two halves of an Android app.
+    AndroidArm,
+    AndroidIntel,
 }
 
 /// The systems an `extern` may name a library for (`windows "winsqlite3"`).
-pub const SYSTEMS: [&str; 3] = ["linux", "mac", "windows"];
+pub const SYSTEMS: [&str; 4] = ["linux", "mac", "windows", "android"];
 
 impl Target {
     /// Its system in `SYSTEMS`.
@@ -50,7 +55,7 @@ impl Target {
         self.name().split('-').next().unwrap()
     }
 
-    pub const NAMES: [(&str, Target); 8] = [
+    pub const NAMES: [(&str, Target); 11] = [
         ("linux", Target::Linux),
         ("windows", Target::Windows),
         ("mac", Target::Mac),
@@ -59,6 +64,9 @@ impl Target {
         ("mac-arm", Target::MacArm),
         ("mac-intel", Target::MacIntel),
         ("web", Target::Web),
+        ("android", Target::Android),
+        ("android-arm", Target::AndroidArm),
+        ("android-intel", Target::AndroidIntel),
     ];
 
     pub fn named(name: &str) -> Option<Target> {
@@ -116,6 +124,9 @@ impl Target {
             Target::MacArm => "Mac arm",
             Target::MacIntel => "Mac Intel",
             Target::Web => "Web",
+            Target::Android => "Android",
+            Target::AndroidArm => "Android arm",
+            Target::AndroidIntel => "Android Intel",
         }
     }
 
@@ -124,6 +135,7 @@ impl Target {
         match self {
             Target::Windows | Target::WindowsArm => ".exe",
             Target::Web => ".html",
+            Target::Android | Target::AndroidArm | Target::AndroidIntel => ".apk",
             _ => "",
         }
     }
@@ -138,6 +150,8 @@ impl Target {
             Target::WindowsArm => "aarch64-pc-windows-msvc",
             Target::MacIntel => "x86_64-apple-darwin",
             Target::Web => "wasm32-unknown-unknown",
+            Target::Android | Target::AndroidArm => "aarch64-unknown-linux-gnu",
+            Target::AndroidIntel => "x86_64-unknown-linux-gnu",
         }
     }
 
@@ -151,6 +165,8 @@ impl Target {
             Target::WindowsArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows-arm.a")),
             Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),
             Target::Web => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-web.wasm")),
+            Target::Android | Target::AndroidArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-android-arm.a")),
+            Target::AndroidIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-android-x86.a")),
         }
     }
 }
@@ -170,6 +186,17 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, t
         let title = name.trim_end_matches(".html");
         let made = if name.ends_with(".wasm") { module } else { crate::wasm::page(&module, title) };
         return std::fs::write(output, made).map_err(|e| e.to_string());
+    }
+    if matches!(target, Target::Android | Target::AndroidArm | Target::AndroidIntel) {
+        let halves: &[Target] = match target {
+            Target::Android => &[Target::AndroidArm, Target::AndroidIntel],
+            t => vec![t].leak(),
+        };
+        let mut libraries = vec![];
+        for &half in halves {
+            libraries.push((crate::android::abi(half == Target::AndroidArm), executable(p, files, &name, lang, half)?));
+        }
+        return std::fs::write(output, crate::android::apk(name.trim_end_matches(".apk"), &libraries)?).map_err(|e| e.to_string());
     }
     write_executable(output, &executable(p, files, &name, lang, target)?)
 }
@@ -204,7 +231,9 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
         Target::WindowsArm => crate::link::pe(&object, runtime, true, &icon_images(p)),
         Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
         Target::MacIntel => crate::link::macho(&object, runtime, name, false),
-        Target::Web => unreachable!("made by `build`"),
+        Target::AndroidArm => crate::link::library(&object, runtime, true, "ANativeActivity_onCreate"),
+        Target::AndroidIntel => crate::link::library(&object, runtime, false, "ANativeActivity_onCreate"),
+        Target::Web | Target::Android => unreachable!("made by `build`"),
     };
     exe.map_err(|e| t!("codegen_failed", error = e))
 }

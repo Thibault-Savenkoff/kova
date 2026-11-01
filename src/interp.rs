@@ -292,7 +292,7 @@ impl Heap {
 /// Fills `b` with the system's unguessable chance (`secure.random`), like `sys::chance` in the
 /// runtime.
 #[cfg(unix)]
-fn chance(b: &mut [u8]) {
+pub fn chance(b: &mut [u8]) {
     use std::io::Read;
     std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(b)).expect("/dev/urandom");
 }
@@ -320,7 +320,7 @@ fn colors() -> bool {
 }
 
 #[cfg(windows)]
-fn chance(b: &mut [u8]) {
+pub fn chance(b: &mut [u8]) {
     #[link(name = "bcrypt")]
     unsafe extern "system" {
         fn BCryptGenRandom(algorithm: isize, b: *mut u8, n: u32, flags: u32) -> i32;
