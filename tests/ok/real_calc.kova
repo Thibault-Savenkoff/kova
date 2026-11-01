@@ -1,0 +1,224 @@
+// expect: 1 + 2 * 3 = 7
+// expect: fib(20) = 6765
+// expect: Failure.DivideByZero
+// expect: Failure.Unknown("nope")
+// expect: Failure.Syntax("unexpected end")
+
+// A small language: numbers, variables, functions, if, recursion.
+enum Token {
+    Number(value: Int)
+    Name(text: String)
+    Symbol(text: String)
+    End
+}
+
+enum Node {
+    Number(value: Int)
+    Variable(name: String)
+    Binary(op: String, left: Node, right: Node)
+    If(cond: Node, yes: Node, no: Node)
+    Call(name: String, args: List<Node>)
+}
+
+struct Function {
+    params: List<String>
+    body: Node
+}
+
+enum Failure {
+    Syntax(message: String)
+    Unknown(name: String)
+    DivideByZero
+}
+
+fn tokens(text: String) -> List<Token> or Failure {
+    var out: List<Token> := []
+    let chars: List<Char> := text.chars
+    var i: Int := 0
+    while i < chars.length {
+        let c: Char := chars[i]
+        if c.is_space {
+            i += 1
+        } else if c.is_digit {
+            var n: Int := 0
+            while i < chars.length && chars[i].is_digit {
+                n := n * 10 + ("{chars[i]}".to_int else 0)
+                i += 1
+            }
+            out.add(Token.Number(n))
+        } else if c.is_letter {
+            var word: String := ""
+            while i < chars.length && chars[i].is_letter {
+                word := word + "{chars[i]}"
+                i += 1
+            }
+            out.add(Token.Name(word))
+        } else {
+            out.add(Token.Symbol("{c}"))
+            i += 1
+        }
+    }
+    out.add(Token.End)
+    return ok(out)
+}
+
+struct Parser {
+    items: List<Token>
+    at: Int
+
+    fn peek_is(self, s: String) -> Bool {
+        return match self.items[self.at] {
+            .Symbol(t) => t = s
+            .Name(t) => t = s
+            _ => false
+        }
+    }
+
+    fn accept(var self, s: String) -> Bool {
+        if self.peek_is(s) {
+            self.at += 1
+            return true
+        }
+        return false
+    }
+
+    fn expect(var self, s: String) -> Nothing or Failure {
+        if self.accept(s) {
+            return ok
+        }
+        return err(Failure.Syntax("expected {s}"))
+    }
+
+    fn expression(var self) -> Node or Failure {
+        if self.accept("if") {
+            let cond: Node := self.expression?
+            self.expect("then")?
+            let yes: Node := self.expression?
+            self.expect("else")?
+            let no: Node := self.expression?
+            return ok(Node.If(cond, yes, no))
+        }
+        return self.compare
+    }
+
+    fn compare(var self) -> Node or Failure {
+        var left: Node := self.sum?
+        while self.peek_is("<") {
+            self.at += 1
+            let right: Node := self.sum?
+            left := Node.Binary("<", left, right)
+        }
+        return ok(left)
+    }
+
+    fn sum(var self) -> Node or Failure {
+        var left: Node := self.product?
+        while self.peek_is("+") || self.peek_is("-") {
+            let op: String := if self.peek_is("+") { "+" } else { "-" }
+            self.at += 1
+            let right: Node := self.product?
+            left := Node.Binary(op, left, right)
+        }
+        return ok(left)
+    }
+
+    fn product(var self) -> Node or Failure {
+        var left: Node := self.atom?
+        while self.peek_is("*") || self.peek_is("/") {
+            let op: String := if self.peek_is("*") { "*" } else { "/" }
+            self.at += 1
+            let right: Node := self.atom?
+            left := Node.Binary(op, left, right)
+        }
+        return ok(left)
+    }
+
+    fn atom(var self) -> Node or Failure {
+        let token: Token := self.items[self.at].clone
+        self.at += 1
+        match token {
+            .Number(v) => return ok(Node.Number(v))
+            .Name(n) => {
+                if !self.accept("(") {
+                    return ok(Node.Variable(n.clone))
+                }
+                var args: List<Node> := []
+                while !self.accept(")") {
+                    args.add(self.expression?)
+                    let more: Bool := self.accept(",")
+                }
+                return ok(Node.Call(n.clone, args))
+            }
+            .Symbol(s) => {
+                if s = "(" {
+                    let inner: Node := self.expression?
+                    self.expect(")")?
+                    return ok(inner)
+                }
+                return err(Failure.Syntax("unexpected {s}"))
+            }
+            .End => return err(Failure.Syntax("unexpected end"))
+        }
+    }
+}
+
+fn eval(n: Node, scope: Map<String, Int>, functions: Map<String, Function>) -> Int or Failure {
+    match n {
+        .Number(v) => return ok(v)
+        .Variable(name) => {
+            return match scope[name] {
+                none => err(Failure.Unknown(name.clone))
+                v => ok(v)
+            }
+        }
+        .Binary(op, l, r) => {
+            let a: Int := eval(l, scope, functions)?
+            let b: Int := eval(r, scope, functions)?
+            return match op {
+                "+" => ok(a + b)
+                "-" => ok(a - b)
+                "*" => ok(a * b)
+                "<" => ok(if a < b { 1 } else { 0 })
+                _ => if b = 0 { err(Failure.DivideByZero) } else { ok(a / b) }
+            }
+        }
+        .If(cond, yes, no) => {
+            let t: Int := eval(cond, scope, functions)?
+            return if t != 0 { eval(yes, scope, functions) } else { eval(no, scope, functions) }
+        }
+        .Call(name, args) => {
+            let f: Function? := functions[name]
+            if f = none {
+                return err(Failure.Unknown(name.clone))
+            }
+            var inner: Map<String, Int> := []
+            for i, a in args {
+                inner[f.params[i]] := eval(a, scope, functions)?
+            }
+            return eval(f.body, inner, functions)
+        }
+    }
+}
+
+fn parse(text: String) -> Node or Failure {
+    var p: Parser := Parser { items := tokens(text)?, at := 0 }
+    return p.expression
+}
+
+fn main {
+    var functions: Map<String, Function> := []
+    functions["fib"] := Function {
+        params := ["n"]
+        body := parse("if n < 2 then n else fib(n - 1) + fib(n - 2)") else Node.Number(0)
+    }
+    for line in ["1 + 2 * 3", "fib(20)", "10 / (5 - 5)", "nope + 1", "2 +"] {
+        let scope: Map<String, Int> := []
+        match parse(line) {
+            err(e) => print(e)
+            ok(tree) => match eval(tree, scope, functions) {
+                ok(v) => print("{line} = {v}")
+                err(e) => print(e)
+            }
+        }
+    }
+}
