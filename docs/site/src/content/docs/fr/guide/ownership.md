@@ -328,10 +328,78 @@ Pourquoi ça marche bien :
 - **Les nœuds sont côte à côte en mémoire**, ce qui est rapide à parcourir.
 - **Sauvegarder est simple** : les numéros passent en JSON tels quels, pas des pointeurs.
 
-Ce dont tu t'occupes toi-même : un numéro reste valable tant que son nœud reste à sa place. Pour
-retirer un nœud, marque-le comme libre ou détache ses liens plutôt que de décaler la List. Pour un
-graphe dont les nœuds ont des noms, utilise de la même façon une `Map<String, List<String>>`, avec
-les noms comme liens.
+Cette List est la forme la plus rapide, mais elle te fait confiance : un numéro n'est juste que tant
+que son nœud reste à sa place. Elle convient donc à une structure dont on ne retire jamais de nœud.
+
+### Quand des nœuds peuvent disparaître
+
+Garde les nœuds dans une Map, avec un type propre pour les identifiants et des numéros jamais
+utilisés deux fois. Kova vérifie alors ce qu'un simple numéro ne peut pas vérifier :
+
+```kova
+copy struct NodeId : Equal {
+    number: Int
+}
+
+struct Node {
+    name: String
+    parent: NodeId?
+}
+
+struct Tree {
+    nodes: Map<NodeId, Node>
+    next: Int
+
+    fn add(var self, name: String, parent: NodeId?) -> NodeId {
+        let id: NodeId := NodeId { number := self.next }
+        self.next += 1
+        self.nodes[id] := Node { name := name.clone, parent := parent }
+        return id
+    }
+
+    fn parent_name(self, id: NodeId) -> String? {
+        if n := self.nodes[id] {
+            if p := n.parent {
+                if parent := self.nodes[p] {
+                    return parent.name.clone
+                }
+            }
+        }
+        return none
+    }
+}
+
+fn main {
+    var tree: Tree := Tree { nodes := [], next := 0 }
+    let arm: NodeId := tree.add("arm", none)
+    let hand: NodeId := tree.add("hand", arm)
+    print(tree.parent_name(hand) else "no parent")
+    if var n := tree.nodes[arm] {
+        n.name := "left arm"
+    }
+    print(tree.parent_name(hand) else "no parent")
+    let gone: Node? := tree.nodes.remove(arm)
+    print(tree.parent_name(hand) else "no parent")
+}
+```
+
+```text
+arm
+left arm
+no parent
+```
+
+- **Un lien mort vaut `none`, jamais le mauvais nœud** : le numéro d'un nœud retiré n'est jamais
+  redonné, et lire une Map oblige à traiter le cas manquant.
+- **Les identifiants ne se mélangent pas** : un `NodeId` n'est pas un `Int`, et une clé d'un autre
+  type est refusée.
+- **`if var n := nodes[id]`** change un nœud sur place. Pendant ce temps, `nodes` est prêtée : rien
+  d'autre ne peut ajouter ou retirer un nœud.
+
+Le prix est la vitesse : chaque pas le long d'un lien cherche une clé au lieu de lire une position.
+
+Pour un graphe dont les nœuds ont des noms, utilise de la même façon une `Map<String, List<String>>`,
+avec les noms comme liens.
 
 ## Pourquoi ce choix
 

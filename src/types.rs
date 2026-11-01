@@ -1354,6 +1354,11 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         may_stop: false,
         diags: vec![],
     };
+    // A field's `Map<NodeId, Node>` asks whether `NodeId` follows `Equal`, whatever the order.
+    for s in &f.structs {
+        let names = s.interfaces.iter().map(|n| n.text.clone());
+        c.follows.entry(s.name.text.clone()).or_default().extend(names);
+    }
     // Hovering a declaration shows it too.
     c.seen = c.places.values().map(|(decl, text)| Seen { span: *decl, decl: *decl, text: text.clone() }).collect();
     // A method that an interface promises is reached through the interface: it stays visible.
@@ -2363,7 +2368,6 @@ impl Checker<'_> {
                 self.error(n.span, t!("interface_twice", name = n.text, line = line));
                 continue;
             }
-            self.follows.entry(s.name.text.clone()).or_default().push(n.text.clone());
             let it = &f.interfaces[k];
             let mut asked: Vec<&str> = vec![];
             for (j, (m, body)) in it.methods.iter().enumerate() {
@@ -5958,7 +5962,8 @@ impl Checker<'_> {
             return Type::Error;
         }
         if m.mode == Mode::Var {
-            self.changes(&m.subject, t!("match_var_temporary"));
+            let place = map_read(&m.subject, &self.types).unwrap_or(&m.subject);
+            self.changes(place, t!("match_var_temporary"));
         }
         if matches!(t, Type::Int | Type::Char | Type::String) {
             return self.match_values(m, &t, expected, value);
@@ -6083,7 +6088,7 @@ impl Checker<'_> {
                     // lent to this case (only to the cases that name its fields).
                     if m.mode == Mode::Var
                         && let Some(first) = binds.first()
-                        && let Some((root, _)) = place_root(&m.subject, &self.types)
+                        && let Some((root, _)) = place_root(map_read(&m.subject, &self.types).unwrap_or(&m.subject), &self.types)
                         && let Some(v) = self.lookup(root)
                     {
                         let at = match first {

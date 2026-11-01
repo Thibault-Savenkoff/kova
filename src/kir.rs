@@ -5412,6 +5412,10 @@ impl<'a> Translator<'a> {
             let map = self.expr1(map);
             let key = self.expr(key);
             let v = self.lookup(map, &key, &k, &value, Take::Lend);
+            if m.mode == ast::Mode::Var {
+                let i = self.find(map, &key, &k);
+                place = Some(Place::Element { list: map, index: i, start: scalars(&k).len(), kinds: scalars(&value) });
+            }
             if is_copy(&ty) {
                 let c = self.new_slots(&ty);
                 self.copy(&c, &v);
@@ -5492,7 +5496,7 @@ impl<'a> Translator<'a> {
                     let mut at = variant_slice(d, i).0;
                     // `match var`: the value changed through the names goes back to its place.
                     if m.mode == ast::Mode::Var {
-                        self.writes.push((self.loops.len(), place.clone().expect("a place checked by the type checker"), v.clone()));
+                        self.writes.push((self.loops.len(), place.clone().expect("a place checked by the type checker"), if map.is_some() { v[1..].to_vec() } else { v.clone() }));
                     }
                     for (p, (_, t)) in binds.into_iter().zip(fields) {
                         let n = scalars(&laid_out(&d.name, t)).len();

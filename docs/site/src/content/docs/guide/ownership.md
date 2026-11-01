@@ -324,9 +324,77 @@ Why it works well:
 - **The nodes sit side by side in memory**, which is fast to walk through.
 - **Saving is easy**: numbers go into JSON as they are; pointers would not.
 
-What you take care of yourself: a number stays valid only while its node stays in place. To remove
-a node, mark it as free or detach its links rather than shifting the List. For a graph whose nodes
-have names, use a `Map<String, List<String>>` the same way, with names as links.
+This List is the fastest form, but it trusts you: a number stays right only while its node stays
+in place, so it fits a structure whose nodes are never removed.
+
+### When nodes can be removed
+
+Keep the nodes in a Map, with a type of their own for the identifiers and numbers that are never
+used twice. Kova then checks what a plain number cannot:
+
+```kova
+copy struct NodeId : Equal {
+    number: Int
+}
+
+struct Node {
+    name: String
+    parent: NodeId?
+}
+
+struct Tree {
+    nodes: Map<NodeId, Node>
+    next: Int
+
+    fn add(var self, name: String, parent: NodeId?) -> NodeId {
+        let id: NodeId := NodeId { number := self.next }
+        self.next += 1
+        self.nodes[id] := Node { name := name.clone, parent := parent }
+        return id
+    }
+
+    fn parent_name(self, id: NodeId) -> String? {
+        if n := self.nodes[id] {
+            if p := n.parent {
+                if parent := self.nodes[p] {
+                    return parent.name.clone
+                }
+            }
+        }
+        return none
+    }
+}
+
+fn main {
+    var tree: Tree := Tree { nodes := [], next := 0 }
+    let arm: NodeId := tree.add("arm", none)
+    let hand: NodeId := tree.add("hand", arm)
+    print(tree.parent_name(hand) else "no parent")
+    if var n := tree.nodes[arm] {
+        n.name := "left arm"
+    }
+    print(tree.parent_name(hand) else "no parent")
+    let gone: Node? := tree.nodes.remove(arm)
+    print(tree.parent_name(hand) else "no parent")
+}
+```
+
+```text
+arm
+left arm
+no parent
+```
+
+- **A dead link is `none`, never the wrong node**: the number of a removed node is not given again,
+  and reading a Map forces you to handle the missing case.
+- **Identifiers cannot be mixed**: a `NodeId` is not an `Int`, and a key of another type is refused.
+- **`if var n := nodes[id]`** changes a node where it is. Meanwhile, `nodes` is lent: nothing else
+  can add or remove a node under it.
+
+The price is speed: each step along a link looks a key up instead of reading a position.
+
+For a graph whose nodes have names, use a `Map<String, List<String>>` the same way, with names as
+links.
 
 ## Why this design
 

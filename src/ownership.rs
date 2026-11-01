@@ -261,7 +261,7 @@ impl Owner<'_> {
         // others cannot even reach it (the checker lends it to them).
         if m.mode == Mode::Var {
             self.pending.truncate(mark);
-            self.changes(&m.subject);
+            self.changes(map_read(&m.subject, &self.info.types).unwrap_or(&m.subject));
         }
         let ty = self.info.types[m.subject.id].clone();
         // `None` for a `match` on values (`match n { 0 => … }`): no field to bind.

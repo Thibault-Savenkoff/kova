@@ -21,6 +21,7 @@ tuples of them, and types that follow [`Equal`](/guide/interfaces-and-generics/#
 | `m[k] -> V?` | a copy of the value of `k`, `none` if there is none. To read a large value without copying it, use `if v := m[k] { … }` or `match m[k] { … }`: `v` is then lent, and `m` cannot change meanwhile. |
 | `m[k] := v` | gives `k` the value `v`, adding the key if needed (`m` must be a `var`). |
 | `m[k, else v]` | the value of `k` itself, added with the value `v` if it is missing; `v` is computed only then. It can be changed in place: `groups[k, else []].add(x)`, `counts[w, else 0] += 1` (`m` must be a `var`). |
+| `if var v := m[k] { … }` | changes the value of `k` where it is, if there is one; `m` is lent meanwhile. |
 | `m.contains(k: K) -> Bool` | whether `k` has a value. |
 | `m.remove(k: K) -> V?` | takes the entry of `k` out and gives its value, `none` if there was none. |
 | `m.keys -> List<K>` | copies of the keys, in order. |

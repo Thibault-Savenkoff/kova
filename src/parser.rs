@@ -1869,24 +1869,31 @@ impl Parser<'_> {
     }
 
     /// The `x :=` of `if x := e {`, which goes on with the value of an optional when it has one.
-    fn found_name(&mut self) -> Option<Name> {
+    fn found_name(&mut self) -> Option<(Name, Mode)> {
+        // `if var x := m[k] {`: `x` changes the value where it is.
+        let mode = if self.is_keyword("var") && self.kind_at(1) == Kind::Ident && self.kind_at(2) == Kind::Sym(":=") {
+            self.advance();
+            Mode::Var
+        } else {
+            Mode::Read
+        };
         if self.kind() != Kind::Ident || self.kind_at(1) != Kind::Sym(":=") {
             return None;
         }
         let t = self.advance();
         self.advance();
-        Some(Name { text: self.text(t.span).to_string(), span: t.span })
+        Some((Name { text: self.text(t.span).to_string(), span: t.span }, mode))
     }
 
     /// `if x := e { then } else { otherwise }` is `match e { x => then, none => otherwise }`.
-    fn found_match(name: Name, subject: Expr, then: Block, otherwise: Block) -> Match {
+    fn found_match((name, mode): (Name, Mode), subject: Expr, then: Block, otherwise: Block) -> Match {
         let none = Name { text: "none".to_string(), span: name.span };
         let close = then.close;
         let arms = vec![
             Arm { case: Case::Bind(Pattern::Name(name)), also: vec![], body: then },
             Arm { case: Case::Variant { name: none, binds: vec![] }, also: vec![], body: otherwise },
         ];
-        Match { mode: Mode::Read, subject, arms, close, found: true }
+        Match { mode, subject, arms, close, found: true }
     }
 
     fn if_stmt(&mut self) -> R<Stmt> {

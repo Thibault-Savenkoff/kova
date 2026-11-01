@@ -114,7 +114,8 @@ not yet been proven by large programs or by other people's use. What to expect:
 
 - **No references that outlive their block.** That is what removes lifetimes, and its price: a tree
   whose nodes point back at their parent, or a graph, is written with
-  [numbers as links](https://thibault-savenkoff.github.io/kova/guide/ownership/#trees-and-graphs).
+  [identifiers as links](https://thibault-savenkoff.github.io/kova/guide/ownership/#trees-and-graphs):
+  in a `Map`, a link to a removed node is `none`, never the wrong node, at the cost of a lookup.
 - **Speed.** Native code through Cranelift, built in milliseconds, but less optimized than LLVM. In the browser,
   WebAssembly runs 1.3 to 4 times slower than Kova's native code.
 - **Android** has only been run on emulators, and apps are not ready for the Play Store. **iOS** is

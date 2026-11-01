@@ -1,0 +1,65 @@
+// expect: arm
+// expect: none
+// expect: 1
+// expect: ["hand"]
+
+copy struct NodeId: Equal {
+    number: Int
+}
+
+struct Node {
+    name: String
+    parent: NodeId?
+    children: List<NodeId>
+}
+
+struct Tree {
+    nodes: Map<NodeId, Node>
+    next: Int
+
+    fn add(var self, name: String, parent: NodeId?) -> NodeId {
+        let id: NodeId := NodeId { number := self.next }
+        self.next += 1
+        self.nodes[id] := Node { name := name.clone, parent := parent, children := [] }
+        if p := parent {
+            if var n := self.nodes[p] {
+                n.children.add(id)
+            }
+        }
+        return id
+    }
+
+    fn remove(var self, id: NodeId) {
+        if gone := self.nodes.remove(id) {
+            if p := gone.parent {
+                if var n := self.nodes[p] {
+                    n.children := n.children.filter { c: NodeId => c != id }
+                }
+            }
+        }
+    }
+
+    fn parent_name(self, id: NodeId) -> String? {
+        if n := self.nodes[id] {
+            if p := n.parent {
+                if parent := self.nodes[p] {
+                    return parent.name.clone
+                }
+            }
+        }
+        return none
+    }
+}
+
+fn main {
+    var tree: Tree := Tree { nodes := [], next := 0 }
+    let root: NodeId := tree.add("root", none)
+    let arm: NodeId := tree.add("arm", root)
+    let hand: NodeId := tree.add("hand", arm)
+    print(tree.parent_name(hand) else "none")
+    tree.remove(arm)
+    // `hand` still names `arm`: the link is dead, and it says so.
+    print(tree.parent_name(hand) else "none")
+    print(tree.nodes.length - 1)
+    print(tree.nodes.values.map { n: Node => n.name.clone }.filter { s: String => s = "hand" })
+}

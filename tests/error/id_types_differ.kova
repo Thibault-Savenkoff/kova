@@ -1,0 +1,14 @@
+// error: different types
+copy struct A : Equal {
+    n: Int
+}
+
+copy struct B : Equal {
+    n: Int
+}
+
+fn main {
+    var m: Map<A, Int> := []
+    let b: B := B { n := 1 }
+    m[b] := 1
+}
