@@ -82,27 +82,46 @@ fn cache() -> PathBuf {
     base.unwrap_or_else(std::env::temp_dir).join("kova").join("packages")
 }
 
+fn git_present() -> bool {
+    Command::new("git").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
+}
+
+/// Clones `url` (at `tag`, else its main branch) into `into`; what went wrong if not.
+fn clone(url: &str, into: &Path, tag: Option<&str>, seconds: u64) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(into);
+    let mut git = Command::new("git");
+    // The same bytes on every system (no CRLF on Windows), never a question in the terminal.
+    git.args(["-c", "core.autocrlf=false", "clone", "--quiet", "--depth", "1"]);
+    if let Some(tag) = tag {
+        git.args(["--branch", tag]);
+    }
+    git.arg("--").arg(url).arg(into);
+    match run(quiet(git), seconds) {
+        Some((true, _)) => Ok(()),
+        Some((false, err)) => Err(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string()),
+        None => Err(t!("package_too_long")),
+    }
+}
+
+fn quiet(mut git: Command) -> Command {
+    git.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    git
+}
+
 /// Clones the tag `v{version}` (else `{version}`) into `dir`, through a folder of this process
 /// (two programs may download at once); the commit.
 fn fetch(address: &str, version: &str, dir: &Path) -> Result<String, String> {
-    if Command::new("git").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+    if !git_present() {
         return Err(t!("package_git_missing", address = address));
     }
-    // `KOVA_PACKAGES_FROM`: another place to clone from (the tests use local repositories).
-    let from = std::env::var("KOVA_PACKAGES_FROM").unwrap_or_else(|_| "https://".into());
-    let url = format!("{from}{address}");
+    let url = format!("{}{address}", from());
     let parent = dir.parent().expect("an address has parts");
     let _ = std::fs::create_dir_all(parent);
     let temp = parent.join(format!(".{version}-{}", std::process::id()));
     let mut said = String::new();
     for tag in [format!("v{version}"), version.to_string()] {
-        let _ = std::fs::remove_dir_all(&temp);
-        let mut git = Command::new("git");
-        // The same bytes on every system (no CRLF on Windows), never a question in the terminal.
-        git.args(["-c", "core.autocrlf=false", "clone", "--quiet", "--depth", "1", "--branch", &tag, "--"]).arg(&url).arg(&temp);
-        git.env("GIT_TERMINAL_PROMPT", "0").env("GCM_INTERACTIVE", "never").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
-        match run(git, 300) {
-            Some((true, _)) => {
+        match clone(&url, &temp, Some(&tag), 300) {
+            Ok(()) => {
                 let commit = head(&temp).unwrap_or_else(|| "-".into());
                 if std::fs::rename(&temp, dir).is_err() {
                     // Downloaded meanwhile by another program: theirs is checked like any other.
@@ -110,26 +129,39 @@ fn fetch(address: &str, version: &str, dir: &Path) -> Result<String, String> {
                 }
                 return Ok(commit);
             }
-            Some((false, err)) => said = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string(),
-            None => said = t!("package_too_long"),
+            Err(e) => said = e,
         }
     }
     let _ = std::fs::remove_dir_all(&temp);
     Err(t!("package_download_failed", address = address, version = version, reason = said))
 }
 
-/// Runs a command for at most `seconds`: whether it succeeded, and its error output; `None` if
-/// it took too long (it is then stopped).
+/// `KOVA_PACKAGES_FROM`: another place to clone from (the tests use local repositories).
+fn from() -> String {
+    std::env::var("KOVA_PACKAGES_FROM").unwrap_or_else(|_| "https://".into())
+}
+
+/// Runs a command for at most `seconds`: whether it succeeded, and what it printed (its error
+/// output if it failed); `None` if it took too long (it is then stopped).
 fn run(mut command: Command, seconds: u64) -> Option<(bool, String)> {
     let mut child = command.spawn().ok()?;
+    // Read while it runs: a full pipe would stop it.
+    let read = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_string(&mut text);
+            }
+            text
+        })
+    };
+    let out = read(child.stdout.take().map(|p| Box::new(p) as _));
+    let err = read(child.stderr.take().map(|p| Box::new(p) as _));
     let start = std::time::Instant::now();
     loop {
         if let Ok(Some(status)) = child.try_wait() {
-            let mut err = String::new();
-            if let Some(mut e) = child.stderr.take() {
-                let _ = std::io::Read::read_to_string(&mut e, &mut err);
-            }
-            return Some((status.success(), err));
+            let said = if status.success() { out } else { err };
+            return Some((status.success(), said.join().unwrap_or_default()));
         }
         if start.elapsed().as_secs() >= seconds {
             let _ = child.kill();
@@ -173,6 +205,86 @@ pub fn fingerprint(dir: &Path) -> String {
     crate::shared::hex(&crate::crypto::sha256(&all))
 }
 
+/// The package index (PLAN Part 4 "Package index"): a public git repository whose `index.txt`
+/// holds one line per package, `name address description`. It only helps to find a package:
+/// `import` never reads it, so what a program runs still depends on its address and `kova.lock`.
+const INDEX: &str = "github.com/Thibault-Savenkoff/kova-packages";
+/// At most this many packages asked for their versions: each is one trip over the network.
+const SHOWN: usize = 20;
+
+/// `kova search word…`: the packages of the index holding every word; what stopped it if not.
+pub fn search(words: &[&str]) -> Result<(), String> {
+    if !git_present() {
+        return Err(t!("index_git_missing"));
+    }
+    let url = std::env::var("KOVA_INDEX").unwrap_or_else(|_| format!("{}{INDEX}", from()));
+    let dir = cache().join("index");
+    let _ = std::fs::create_dir_all(cache());
+    let temp = cache().join(format!(".index-{}", std::process::id()));
+    match clone(&url, &temp, None, 30) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::rename(&temp, &dir);
+        }
+        // Offline: the last index still finds packages.
+        Err(_) if dir.join("index.txt").is_file() => eprintln!("{}", t!("index_old")),
+        Err(reason) => return Err(t!("index_unreachable", reason = reason)),
+    }
+    let _ = std::fs::remove_dir_all(&temp);
+    let found = matching(&std::fs::read_to_string(dir.join("index.txt")).unwrap_or_default(), words);
+    if found.is_empty() {
+        println!("{}", if words.is_empty() { t!("index_empty") } else { t!("index_nothing", words = words.join(" ")) });
+    }
+    let shown = &found[..found.len().min(SHOWN)];
+    let newest: Vec<Option<String>> = std::thread::scope(|s| {
+        let asked: Vec<_> = shown.iter().map(|p| s.spawn(move || newest(&p.1))).collect();
+        asked.into_iter().map(|t| t.join().unwrap_or(None)).collect()
+    });
+    for ((name, address, about), version) in shown.iter().zip(newest) {
+        match version {
+            Some(v) => println!("{name} {v}: {about}\n    import {name} from \"{address}\" version \"{v}\""),
+            None => println!("{name}: {about}\n    {}", t!("index_no_version", address = address)),
+        }
+    }
+    if found.len() > SHOWN {
+        println!("{}", t!("index_more", count = found.len() - SHOWN));
+    }
+    Ok(())
+}
+
+/// The lines of `index.txt` holding every word, in any case. The file is written by strangers:
+/// a line whose name or address is not plain is left out, and no control character is printed.
+fn matching(index: &str, words: &[&str]) -> Vec<(String, String, String)> {
+    let plain_name = |n: &str| !n.starts_with(|c: char| c.is_ascii_digit()) && !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    (index.lines())
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(3, char::is_whitespace);
+            let (name, address) = (parts.next()?, parts.next()?);
+            let about: String = parts.next().unwrap_or("").trim().chars().filter(|c| !c.is_control()).collect();
+            let text = l.to_lowercase();
+            (plain_name(name) && address_fits(address) && words.iter().all(|w| text.contains(&w.to_lowercase())))
+                .then(|| (name.to_string(), address.to_string(), about))
+        })
+        .collect()
+}
+
+/// The highest version a repository has tagged, read from its tags: the index never holds
+/// versions, so it cannot be out of date. Only numbers count (`v1.2.0`, not `1.3.0-beta`).
+fn newest(address: &str) -> Option<String> {
+    let mut git = Command::new("git");
+    git.args(["ls-remote", "--tags", "--refs", "--"]).arg(format!("{}{address}", from()));
+    let (true, tags) = run(quiet(git), 20)? else { return None };
+    tags.lines().filter_map(|l| release(l.rsplit("refs/tags/").next()?)).max().map(|(_, v)| v)
+}
+
+/// A tag's numbers, to compare them, and its version.
+fn release(tag: &str) -> Option<(Vec<u64>, String)> {
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    let numbers: Option<Vec<u64>> = version.split('.').map(|n| n.parse().ok()).collect();
+    Some((numbers?, version.to_string()))
+}
+
 type Entry = (String, String, String, String);
 
 /// `kova.lock`: one line per package, `address version commit sha256`.
@@ -210,5 +322,18 @@ mod tests {
         }
         assert!(super::version_fits("1.2.0") && super::version_fits("2024-10-01"));
         assert!(!super::version_fits("--branch") && !super::version_fits("1..2") && !super::version_fits(""));
+    }
+
+    #[test]
+    fn index_lines() {
+        let index = "# comment\njson github.com/ada/json Reads JSON\n\nbad-name github.com/ada/x A\nx --upload-pack=y/z/w B\ncsv github.com/ada/csv Tables\x1b[2J\n";
+        let names = |w: &[&str]| super::matching(index, w).into_iter().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(names(&[]), ["json", "csv"]);
+        assert_eq!(names(&["READS", "ada"]), ["json"]);
+        assert_eq!(names(&["reads", "tables"]), [] as [&str; 0]);
+        assert_eq!(super::matching(index, &["csv"])[0].2, "Tables[2J");
+        // 1.10 is after 1.9; a pre-release is no release.
+        let best = ["v1.9.0", "1.10.0", "2.0.0-beta", "latest"].iter().filter_map(|t| super::release(t)).max().unwrap();
+        assert_eq!(best.1, "1.10.0");
     }
 }

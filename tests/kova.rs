@@ -473,6 +473,8 @@ fn packages() {
     git(&["add", "."]);
     git(&["commit", "-q", "-m", "first"]);
     git(&["tag", "v1.0.0"]);
+    git(&["tag", "v1.10.0"]);
+    git(&["tag", "v1.9.0"]);
     let program = dir.join("main.kova");
     std::fs::write(&program, "import greet from \"example.com/ada/greet\" version \"1.0.0\"\n\nfn main {\n    print(greet.greet(\"Ada\"))\n}\n").unwrap();
     let cache = dir.join("cache");
@@ -491,8 +493,35 @@ fn packages() {
     // Changed in the cache: refused.
     std::fs::write(cache.join("example.com/ada/greet/1.0.0/words.kova"), "public:\n\nfn hello -> String {\n    return \"bye\"\n}\n").unwrap();
     let out = run(&dir.join("from"));
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(!out.status.success() && text(&out.stderr).contains("its files changed"), "{}", text(&out.stderr));
+    search(&dir, &cache);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `kova search`: a local index repository, the `greet` package `packages` just made, then the
+/// same search once the index is gone.
+fn search(dir: &Path, cache: &Path) {
+    let index = dir.join("index");
+    std::fs::create_dir_all(&index).unwrap();
+    std::fs::write(index.join("index.txt"), "# name address description\ngreet example.com/ada/greet Says hello\ngone example.com/ada/gone Never tagged\n").unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&index).args(["-c", "user.name=k", "-c", "user.email=k@k"]).args(args).output().unwrap().status.success());
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "first"]);
+    let find = |word: &str, index: &Path| {
+        let mut c = kova(LANG);
+        c.arg("search").arg(word).env("KOVA_PACKAGES", cache);
+        c.env("KOVA_INDEX", format!("file://{}", index.display())).env("KOVA_PACKAGES_FROM", format!("file://{}/from/", dir.display()));
+        c.output().unwrap()
+    };
+    let out = find("HELLO", &index);
+    assert_eq!(text(&out.stdout), "greet 1.10.0: Says hello\n    import greet from \"example.com/ada/greet\" version \"1.10.0\"\n", "{}", text(&out.stderr));
+    let out = find("tagged", &index);
+    assert_eq!(text(&out.stdout), "gone: Never tagged\n    no version yet: example.com/ada/gone\n");
+    assert_eq!(text(&find("nothing", &index).stdout), "no package found for `nothing`\n");
+    // Offline: the last index, said to be old.
+    let out = find("hello", &dir.join("nowhere"));
+    assert!(text(&out.stdout).contains("greet 1.10.0") && text(&out.stderr).contains("last one seen"), "{}", text(&out.stderr));
 }
 
 /// `kova install`: on Linux, the program in `~/.local/bin`, a program with windows also in the

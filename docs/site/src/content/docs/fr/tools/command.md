@@ -59,6 +59,12 @@ Chaque cible a besoin d'un petit morceau de Kova compilé pour elle, ajouté à 
 Kova ([Installation](/fr/start/install/#3-compiler-pour-dautres-systèmes-facultatif)) ; sinon
 `kova build` dit lequel manque.
 
+## `kova search`
+
+`kova search json` liste les paquets de l'index qui contiennent tous les mots donnés, chacun avec sa
+dernière version et la ligne `import` à copier ; `kova search` seul les liste tous (20 au plus). Il
+faut `git`. Voir [Trouver et publier un paquet](/fr/guide/modules/#trouver-et-publier-un-paquet).
+
 ## `kova install`
 
 `kova install compteur.kova` construit le programme et l'installe pour toi, là où ton système

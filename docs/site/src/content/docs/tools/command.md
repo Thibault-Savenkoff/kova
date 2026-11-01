@@ -58,6 +58,12 @@ Each target needs a small piece of Kova compiled for it, added to Rust before in
 ([Installing](/start/install/#3-build-for-other-systems-optional)); `kova build` says which one is
 missing otherwise.
 
+## `kova search`
+
+`kova search json` lists the packages of the index that hold every word given, each with its newest
+version and the `import` line to copy; `kova search` alone lists them all (20 at most). It needs
+`git`. See [Finding and publishing a package](/guide/modules/#finding-and-publishing-a-package).
+
 ## `kova install`
 
 `kova install counter.kova` builds the program and installs it for you, where your system looks

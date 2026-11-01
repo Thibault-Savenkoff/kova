@@ -87,6 +87,10 @@ fn kova() {
         ["test", f, name] => (Some(Command::Test { only: Some(name.to_string()) }), *f),
         ["install", f] => (Some(Command::Install), *f),
         ["uninstall", f] => (Some(Command::Uninstall), *f),
+        ["search", words @ ..] => match packages::search(words) {
+            Ok(()) => return,
+            Err(e) => fail(e),
+        },
         ["build", f, options @ ..] => match build_options(options) {
             Some((output, boost, target)) => (Some(Command::Build { output, boost, target }), *f),
             None => usage_error(),

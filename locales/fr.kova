@@ -20,7 +20,7 @@ lang fr {
     what_field := "champ"
 
     // ---- Command line ----
-    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|windows-arm|mac-arm|mac-intel|web|android]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova install <fichier.kova>          installe le programme pour toi : menu des applications, icône (uninstall : le retire)\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
+    usage := "usage :\n  kova <fichier.kova>                  lance selon le header du fichier (run par défaut)\n  kova run <fichier.kova>              lance tout de suite\n  kova build <fichier.kova> [-o sortie] [--boost] [--target linux|windows|mac|linux-arm|windows-arm|mac-arm|mac-intel|web|android]\n                                       crée un exécutable autonome (pour cette machine, ou celle nommée)\n  kova test <fichier.kova> [\"nom\"]    lance les blocs `test` (ou seulement celui-là)\n  kova install <fichier.kova>          installe le programme pour toi : menu des applications, icône (uninstall : le retire)\n  kova search <mot>...                 cherche un paquet dans l'index\n  kova fmt <fichier.kova>...           met les fichiers en forme (espaces, indentation)\n  kova lsp                             serveur de langage (pour l'éditeur)\n  kova debug                           débogueur (pour l'éditeur)\n  kova --version"
     cannot_read := "impossible de lire `{file}` : {error}"
     cannot_write := "impossible d'écrire `{file}` : {error}"
     fmt_unreadable := "`{file}` n'est pas mis en forme : il ne se lit pas (un texte ou un commentaire jamais fermé, un caractère inconnu) ; `kova run` dit où"
@@ -645,6 +645,13 @@ lang fr {
     package_not_downloaded := "`{address}` {version} n'est pas encore téléchargé : `kova run` ou `kova build` le télécharge"
     package_changed := "`{address}` {version} n'est plus ce qu'il était quand `{lock}` l'a noté : ses fichiers ont changé. Si c'est voulu, retire sa ligne de `{lock}`"
     package_git_missing := "télécharger `{address}` demande `git`, qui n'est pas installé"
+    index_git_missing := "chercher dans l'index des paquets demande `git`, qui n'est pas installé"
+    index_old := "note : l'index des paquets est injoignable : voici le dernier vu"
+    index_unreachable := "l'index des paquets est injoignable : {reason}"
+    index_nothing := "aucun paquet trouvé pour `{words}`"
+    index_no_version := "pas encore de version : {address}"
+    index_empty := "l'index ne contient encore aucun paquet"
+    index_more := "et {count} de plus : ajoutez un mot pour affiner la recherche"
     package_too_long := "pas de réponse après 5 minutes"
     package_download_failed := "impossible de télécharger `{address}` {version} (étiquettes cherchées : `v{version}` et `{version}`) : {reason}"
     package_two_versions := "le paquet `{name}` est déjà importé en {first} : un programme en utilise une seule version, ici {second}"

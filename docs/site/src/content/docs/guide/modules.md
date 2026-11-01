@@ -163,6 +163,37 @@ A package's repository holds a `package.kova`: that is what `import` reads. Its 
 its own modules (`import words` inside it reads its `words.kova`), and like any module it shows
 only what is under `public:`.
 
+### Finding and publishing a package
+
+`kova search` looks in the package index, a public list of packages, for every word you give it,
+and prints the `import` line to copy:
+
+```bash
+kova search json
+```
+
+```plaintext
+json 1.2.0: Reads and writes JSON
+    import json from "github.com/ada/kova-json" version "1.2.0"
+```
+
+The number is the highest version the package's repository has tagged, so it is always current.
+Offline, the search uses the last index it saw and says so.
+
+The index only helps you find a package. `import` never reads it: your program depends on the
+address written in it and on `kova.lock`, whether the index changes or disappears.
+
+To publish a package:
+
+1. Put a `package.kova` at the root of a public git repository.
+2. Tag a version: `git tag v1.0.0`, then `git push --tags`.
+3. It already works for anyone who writes its address in an `import`.
+4. To make it findable, add a line to `index.txt` in
+   [kova-packages](https://github.com/Thibault-Savenkoff/kova-packages) by pull request:
+   `json github.com/ada/kova-json Reads and writes JSON`.
+
+New versions need nothing more than a new tag.
+
 :::caution[A package runs with your rights]
 A package's code is code your program runs: it can read and write your files, run programs
 (`system.run`) and call C (`extern`). Import only packages you trust, at a version you have read.

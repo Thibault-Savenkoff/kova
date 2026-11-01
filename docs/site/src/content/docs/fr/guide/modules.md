@@ -167,6 +167,37 @@ Le dépôt d'un paquet contient un `package.kova` : c'est lui que l'`import` lit
 sont ses propres modules (`import words` à l'intérieur lit son `words.kova`), et comme tout module
 il ne montre que ce qui est sous `public:`.
 
+### Trouver et publier un paquet
+
+`kova search` cherche chacun de tes mots dans l'index des paquets, une liste publique, et affiche
+la ligne `import` à copier :
+
+```bash
+kova search json
+```
+
+```plaintext
+json 1.2.0: Reads and writes JSON
+    import json from "github.com/ada/kova-json" version "1.2.0"
+```
+
+Le numéro est la plus haute version étiquetée dans le dépôt du paquet : il est donc toujours à
+jour. Sans réseau, la recherche utilise le dernier index vu et le dit.
+
+L'index sert seulement à trouver un paquet. `import` ne le lit jamais : ton programme dépend de
+l'adresse écrite dedans et de `kova.lock`, que l'index change ou disparaisse.
+
+Pour publier un paquet :
+
+1. Mets un `package.kova` à la racine d'un dépôt git public.
+2. Étiquette une version : `git tag v1.0.0`, puis `git push --tags`.
+3. Il marche déjà pour quiconque écrit son adresse dans un `import`.
+4. Pour qu'on le trouve, ajoute une ligne à `index.txt` dans
+   [kova-packages](https://github.com/Thibault-Savenkoff/kova-packages) par pull request :
+   `json github.com/ada/kova-json Reads and writes JSON`.
+
+Une nouvelle version ne demande rien de plus qu'une nouvelle étiquette.
+
 :::caution[Un paquet a tes droits]
 Le code d'un paquet est du code que ton programme lance : il peut lire et écrire tes fichiers,
 lancer des programmes (`system.run`) et appeler du C (`extern`). N'importe que des paquets de
