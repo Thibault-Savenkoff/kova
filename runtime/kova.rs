@@ -730,7 +730,7 @@ pub extern "C" fn kova_str_replace(a: i64, old: i64, new: i64) -> i64 {
 
 /// A new List of these bytes.
 fn byte_list(b: Vec<u8>) -> i64 {
-    new_list(List { length: b.len(), data: core::ptr::null_mut(), width: 1, slots: Vec::new(), index: 0, small: Some(b) })
+    new_list(List { length: b.len(), data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 1, slots: Vec::new(), index: 0, small: Some(b) })
 }
 
 /// A new List of Strings.
@@ -740,7 +740,7 @@ fn texts<'a>(parts: impl Iterator<Item = &'a str>) -> i64 {
 
 fn numbers(items: impl Iterator<Item = i64>) -> i64 {
     let slots: Vec<i64> = items.collect();
-    new_list(List { length: slots.len(), data: core::ptr::null_mut(), width: 1, slots, index: 0, small: None })
+    new_list(List { length: slots.len(), data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 1, slots, index: 0, small: None })
 }
 
 /// `separator` is never empty (src/kir.rs checks it before).
@@ -839,7 +839,7 @@ pub extern "C" fn kova_csv_read(text: i64, spec: i64) -> i64 {
                 csv::Slot::Int(n) => n,
                 csv::Slot::Text(t) => new_text(t.as_bytes()),
             }).collect();
-            new_list(List { length: slots.len() / width.max(1), data: core::ptr::null_mut(), width, slots, index: 0, small: None })
+            new_list(List { length: slots.len() / width.max(1), data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width, slots, index: 0, small: None })
         }
         Err(p) => p.code(),
     }
@@ -945,6 +945,8 @@ struct List {
     /// The start of `slots`, or null while the values are in `small`.
     data: *mut i64,
     width: usize,
+    /// The start of `small`, or null: the code Kova generates reads it directly.
+    bytes: *mut u8,
     slots: Vec<i64>,
     index: i64,
     /// While every value of a List of one slot per element fits 0..=255 (bytes above all): the
@@ -958,6 +960,7 @@ impl List {
         if let Some(b) = self.small.take() {
             self.slots = b.iter().map(|&b| b as i64).collect();
             self.data = self.slots.as_mut_ptr();
+            self.bytes = core::ptr::null_mut();
         }
         &mut self.slots
     }
@@ -965,8 +968,9 @@ impl List {
 
 fn new_list(mut l: List) -> i64 {
     made();
-    if l.small.is_none() {
-        l.data = l.slots.as_mut_ptr();
+    match &mut l.small {
+        Some(b) => l.bytes = b.as_mut_ptr(),
+        None => l.data = l.slots.as_mut_ptr(),
     }
     Box::into_raw(Box::new(l)) as i64
 }
@@ -979,7 +983,7 @@ fn list<'a>(l: i64) -> &'a mut List {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_list_new(width: i64) -> i64 {
     let width = width as usize;
-    new_list(List { length: 0, data: core::ptr::null_mut(), width, slots: Vec::new(), index: 0, small: (width == 1).then(Vec::new) })
+    new_list(List { length: 0, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width, slots: Vec::new(), index: 0, small: (width == 1).then(Vec::new) })
 }
 
 #[unsafe(no_mangle)]
@@ -1021,7 +1025,10 @@ pub extern "C" fn kova_list_store(l: i64, i: i64, k: i64, v: i64) {
 pub extern "C" fn kova_list_grow(l: i64) -> i64 {
     let l = list(l);
     match &mut l.small {
-        Some(b) => b.push(0),
+        Some(b) => {
+            b.push(0);
+            l.bytes = b.as_mut_ptr();
+        }
         None => {
             l.slots.resize(l.slots.len() + l.width, 0);
             l.data = l.slots.as_mut_ptr();
@@ -1338,7 +1345,7 @@ pub extern "C" fn kova_run(p: i64, words: i64) -> i64 {
     match sys::run(&program, &words) {
         Ok((output, errors, code)) => {
             let slots = alloc::vec![new_text(String::from_utf8_lossy(&output).as_bytes()), new_text(String::from_utf8_lossy(&errors).as_bytes()), code];
-            new_list(List { length: 1, data: core::ptr::null_mut(), width: 3, slots, index: 0, small: None })
+            new_list(List { length: 1, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 3, slots, index: 0, small: None })
         }
         Err(f) => -f,
     }
@@ -1407,7 +1414,7 @@ pub extern "C" fn kova_json_parse(s: i64) -> i64 {
         Err(line) => -line,
         Ok(nodes) => {
             let slots = json::slots(nodes, |t| new_text(t.as_bytes()));
-            new_list(List { length: slots.len() / 4, data: core::ptr::null_mut(), width: 4, slots, index: 0, small: None })
+            new_list(List { length: slots.len() / 4, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 4, slots, index: 0, small: None })
         }
     }
 }
@@ -1464,9 +1471,9 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
     let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
     let slots = q.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-    let headers = new_list(List { length, data: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
+    let headers = new_list(List { length, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
     let slots = alloc::vec![new_text(q.method.as_bytes()), new_text(q.url.as_bytes()), headers, new_text(q.body.as_bytes()), 0, 0, byte_list(q.data), link as i64];
-    new_list(List { length: 1, data: core::ptr::null_mut(), width: 8, slots, index: 0, small: None })
+    new_list(List { length: 1, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 8, slots, index: 0, small: None })
 }
 
 /// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
@@ -1870,9 +1877,9 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
         Ok(a) => {
             let length = a.headers.len();
             let slots = a.headers.iter().flat_map(|(n, v)| [new_text(n.as_bytes()), new_text(v.as_bytes())]).collect();
-            let headers = new_list(List { length, data: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
+            let headers = new_list(List { length, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 2, slots, index: 0, small: None });
             let slots = alloc::vec![a.status, new_text(a.url.as_bytes()), new_text(a.body.as_bytes()), headers, byte_list(a.data)];
-            new_list(List { length: 1, data: core::ptr::null_mut(), width: 5, slots, index: 0, small: None })
+            new_list(List { length: 1, data: core::ptr::null_mut(), bytes: core::ptr::null_mut(), width: 5, slots, index: 0, small: None })
         }
     }
 }

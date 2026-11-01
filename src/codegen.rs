@@ -302,7 +302,6 @@ const L_NEW: usize = 0;
 #[allow(dead_code)] // read directly, the table keeps its place
 const L_LENGTH: usize = 1;
 const L_CHECK: usize = 2;
-const L_LOAD: usize = 3;
 const L_STORE: usize = 4;
 const L_GROW: usize = 5;
 const L_REMOVE: usize = 6;
@@ -1192,7 +1191,6 @@ impl Generator<'_> {
             Inst::ListLoad(d, l, i, k) => {
                 let (l, i) = (self.read(*l), self.read(*i));
                 let (fast, bytes, next) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
-                self.b.set_cold_block(bytes);
                 let mut v = self.b.append_block_param(next, I64);
                 let data = self.b.ins().load(I64, MemFlagsData::trusted(), l, 8);
                 self.b.ins().brif(data, fast, &[], bytes, &[]);
@@ -1200,9 +1198,12 @@ impl Generator<'_> {
                 let at = self.list_slot(l, data, i, *k);
                 let read = self.b.ins().load(I64, MemFlagsData::trusted(), at, 0);
                 self.b.ins().jump(next, &[BlockArg::Value(read)]);
+                // One byte each (`List.small`): the pointer is never null here, a List without
+                // slots always has it.
                 self.b.switch_to_block(bytes);
-                let k = self.b.ins().iconst(I64, *k as i64);
-                let read = self.list_call(L_LOAD, &[l, i, k]).unwrap();
+                let start = self.b.ins().load(I64, MemFlagsData::trusted(), l, 24);
+                let at = self.b.ins().iadd(start, i);
+                let read = self.b.ins().uload8(I64, MemFlagsData::trusted(), at, 0);
                 self.b.ins().jump(next, &[BlockArg::Value(read)]);
                 self.b.switch_to_block(next);
                 if self.types[*d] == Scalar::Float {
@@ -1216,15 +1217,24 @@ impl Generator<'_> {
                 if self.types[*value] == Scalar::Float {
                     v = self.b.ins().bitcast(I64, MemFlagsData::new(), v);
                 }
-                let (fast, bytes, next) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
-                self.b.set_cold_block(bytes);
+                let (fast, bytes, one, wide, next) = (self.b.create_block(), self.b.create_block(), self.b.create_block(), self.b.create_block(), self.b.create_block());
+                self.b.set_cold_block(wide);
                 let data = self.b.ins().load(I64, MemFlagsData::trusted(), l, 8);
                 self.b.ins().brif(data, fast, &[], bytes, &[]);
                 self.b.switch_to_block(fast);
                 let at = self.list_slot(l, data, i, *k);
                 self.b.ins().store(MemFlagsData::trusted(), v, at, 0);
                 self.b.ins().jump(next, &[]);
+                // A value that needs more than one byte turns the List into slots.
                 self.b.switch_to_block(bytes);
+                let fits = self.b.ins().icmp_imm_u(IntCC::UnsignedLessThan, v, 256);
+                self.b.ins().brif(fits, one, &[], wide, &[]);
+                self.b.switch_to_block(one);
+                let start = self.b.ins().load(I64, MemFlagsData::trusted(), l, 24);
+                let at = self.b.ins().iadd(start, i);
+                self.b.ins().istore8(MemFlagsData::trusted(), v, at, 0);
+                self.b.ins().jump(next, &[]);
+                self.b.switch_to_block(wide);
                 let k = self.b.ins().iconst(I64, *k as i64);
                 self.list_call(L_STORE, &[l, i, k, v]);
                 self.b.ins().jump(next, &[]);
