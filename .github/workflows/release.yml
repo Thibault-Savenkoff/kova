@@ -1,4 +1,4 @@
-# A ready-made `kova` for each system, holding the runtimes of all eight targets: nothing to
+# A ready-made `kova` for each system, holding the runtimes of all its targets: nothing to
 # install to use it (no Rust, no rustup). Only in the public repository, where minutes cost nothing.
 # Started by hand: `gh workflow run release.yml -R Thibault-Savenkoff/kova -f version=0.1.0`
 # publishes the release `v0.1.0`; with `-f dry=true`, everything is built and checked, nothing is
@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           printf 'fn main {\n    print("hello")\n}\n' > hello.kova
-          for t in linux linux-arm windows windows-arm mac mac-arm mac-intel; do
+          for t in linux linux-arm windows windows-arm mac mac-arm mac-intel web android; do
             out/kova build hello.kova --target $t -o hello-$t 2> said.txt || { cat said.txt; exit 1; }
             if grep -q rustup said.txt; then cat said.txt; exit 1; fi
           done
