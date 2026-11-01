@@ -611,33 +611,52 @@ fn close(fd: usize) -> isize {
 /// Ok(true) for a directory, Ok(false) for anything else that is there.
 pub fn kind(path: &str) -> Result<bool, i64> {
     let p = c_path(path);
-    let mut st = [0u8; 256];
-    match unsafe { call(STATX, AT_FDCWD, p.as_ptr() as usize, 0, 1, st.as_mut_ptr() as usize, 0) } {
-        0 => Ok(u16::from_ne_bytes([st[0x1C], st[0x1D]]) & 0o170000 == 0o040000),
-        e => Err(failure(e)),
+    #[cfg(android)]
+    return android::stat(p.as_ptr(), 0).map(|(kind, ..)| kind == 0o040000).map_err(failure);
+    #[cfg(not(android))]
+    {
+        let mut st = [0u8; 256];
+        match unsafe { call(STATX, AT_FDCWD, p.as_ptr() as usize, 0, 1, st.as_mut_ptr() as usize, 0) } {
+            0 => Ok(u16::from_ne_bytes([st[0x1C], st[0x1D]]) & 0o170000 == 0o040000),
+            e => Err(failure(e)),
+        }
     }
 }
 
 /// What `files.size` and `files.modified` say; `follow` = a link's target rather than the link.
 pub fn info(path: &str, follow: bool) -> Result<crate::Info, i64> {
     let p = c_path(path);
-    let mut st = [0u8; 256];
-    // STATX_TYPE | STATX_MODE | STATX_MTIME | STATX_SIZE, AT_SYMLINK_NOFOLLOW.
-    let flags = if follow { 0 } else { 0x100 };
-    match unsafe { call(STATX, AT_FDCWD, p.as_ptr() as usize, flags, 0x243, st.as_mut_ptr() as usize, 0) } {
-        0 => {
-            let kind = u16::from_ne_bytes([st[0x1C], st[0x1D]]) & 0o170000;
-            let number = |at: usize| i64::from_ne_bytes(st[at..at + 8].try_into().unwrap());
-            Ok(crate::Info { folder: kind == 0o040000, link: kind == 0o120000, size: number(0x28), modified: number(0x70) })
+    #[cfg(android)]
+    {
+        let flags = if follow { 0 } else { 0x100 };
+        return android::stat(p.as_ptr(), flags)
+            .map(|(kind, size, modified)| crate::Info { folder: kind == 0o040000, link: kind == 0o120000, size, modified })
+            .map_err(failure);
+    }
+    #[cfg(not(android))]
+    {
+        let mut st = [0u8; 256];
+        // STATX_TYPE | STATX_MODE | STATX_MTIME | STATX_SIZE, AT_SYMLINK_NOFOLLOW.
+        let flags = if follow { 0 } else { 0x100 };
+        match unsafe { call(STATX, AT_FDCWD, p.as_ptr() as usize, flags, 0x243, st.as_mut_ptr() as usize, 0) } {
+            0 => {
+                let kind = u16::from_ne_bytes([st[0x1C], st[0x1D]]) & 0o170000;
+                let number = |at: usize| i64::from_ne_bytes(st[at..at + 8].try_into().unwrap());
+                Ok(crate::Info { folder: kind == 0o040000, link: kind == 0o120000, size: number(0x28), modified: number(0x70) })
+            }
+            e => Err(failure(e)),
         }
-        e => Err(failure(e)),
     }
 }
 
 /// `a` named `b` from now on; Err(0) if they are on two disks (EXDEV).
 pub fn rename(a: &str, b: &str) -> Result<(), i64> {
     let (a, b) = (c_path(a), c_path(b));
-    match unsafe { call(RENAMEAT2, AT_FDCWD, a.as_ptr() as usize, AT_FDCWD, b.as_ptr() as usize, 0, 0) } {
+    #[cfg(android)]
+    let asked = unsafe { call(android::RENAMEAT, AT_FDCWD, a.as_ptr() as usize, AT_FDCWD, b.as_ptr() as usize, 0, 0) };
+    #[cfg(not(android))]
+    let asked = unsafe { call(RENAMEAT2, AT_FDCWD, a.as_ptr() as usize, AT_FDCWD, b.as_ptr() as usize, 0, 0) };
+    match asked {
         0 => Ok(()),
         -18 => Err(0),
         e => Err(failure(e)),

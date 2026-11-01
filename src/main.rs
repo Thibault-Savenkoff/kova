@@ -144,6 +144,7 @@ fn kova() {
     let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. } | Command::Install), false);
 
     program.icon = icon(file, &tree).and_then(Result::ok);
+    program.title = types::program_name(&tree).unwrap_or_else(|| project_name(file));
     match command {
         Command::Run => {
             let skip = if args[0] == "run" { 2 } else { 1 };
@@ -597,6 +598,19 @@ fn load(path: &str, source: &str) -> (ast::File, usize, Vec<diag::Diag>, diag::S
     }
     root.join_extensions();
     (root, ids, diags, sources)
+}
+
+/// A program's name when its `header` gives none: its file's; a `main.kova` says nothing, so its
+/// folder's. An Android app's identity comes from it: two projects must not get the same one.
+fn project_name(file: &str) -> String {
+    let path = std::path::Path::new(file);
+    let stem = |p: &std::path::Path| p.file_stem().map(|s| s.to_string_lossy().into_owned());
+    let folder = || std::fs::canonicalize(path).ok().and_then(|p| p.parent().and_then(|f| stem(f)));
+    match stem(path) {
+        Some(name) if name == "main" => folder().unwrap_or(name),
+        Some(name) => name,
+        None => "program".into(),
+    }
 }
 
 /// Reads `-o output`, `--boost` and `--target system`, in any order.

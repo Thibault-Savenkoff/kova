@@ -197,7 +197,7 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, t
             libraries.push((crate::android::abi(half == Target::AndroidArm), executable(p, files, &name, lang, half)?));
         }
         let icon = p.icon.as_ref().map(|i| crate::icon::sized(&i.png, 192).unwrap_or_else(|| i.png.clone()));
-        let app = crate::android::apk(name.trim_end_matches(".apk"), &libraries, icon.as_deref())?;
+        let app = crate::android::apk(&p.title, &libraries, icon.as_deref())?;
         return std::fs::write(output, app).map_err(|e| e.to_string());
     }
     write_executable(output, &executable(p, files, &name, lang, target)?)

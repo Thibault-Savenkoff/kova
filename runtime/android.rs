@@ -208,6 +208,32 @@ pub fn local_at(utc: i64) -> i64 {
     utc + tm[5]
 }
 
+// Android 8 kills an app calling `statx` or `renameat2` (too new for its list of allowed system
+// calls), and its older versions never learn them: the older calls work everywhere.
+#[cfg(target_arch = "x86_64")]
+const NEWFSTATAT: usize = 262;
+#[cfg(target_arch = "aarch64")]
+const NEWFSTATAT: usize = 79;
+#[cfg(target_arch = "x86_64")]
+pub const RENAMEAT: usize = 264;
+#[cfg(target_arch = "aarch64")]
+pub const RENAMEAT: usize = 38;
+
+/// A file's kind, size and modification time, or the system's error (negative).
+pub fn stat(path: *const u8, flags: usize) -> Result<(u16, i64, i64), isize> {
+    let mut st = [0u8; 256];
+    let asked = unsafe { super::call(NEWFSTATAT, super::AT_FDCWD, path as usize, st.as_mut_ptr() as usize, flags, 0, 0) };
+    if asked != 0 {
+        return Err(asked);
+    }
+    #[cfg(target_arch = "x86_64")]
+    let mode = u32::from_ne_bytes(st[24..28].try_into().unwrap());
+    #[cfg(target_arch = "aarch64")]
+    let mode = u32::from_ne_bytes(st[16..20].try_into().unwrap());
+    let number = |at: usize| i64::from_ne_bytes(st[at..at + 8].try_into().unwrap());
+    Ok((mode as u16 & 0o170000, number(48), number(88)))
+}
+
 /// `print`: for the app's console, and one line of the system's log for each line of `b`
 /// (`adb logcat -s kova`).
 pub fn print(b: &[u8]) {

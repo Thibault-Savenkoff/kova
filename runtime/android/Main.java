@@ -226,7 +226,7 @@ public class Main extends Activity {
                     String text = new String(content, StandardCharsets.UTF_8);
                     ui.post(() -> {
                         console.append(text);
-                        consoleBox.post(() -> consoleBox.fullScroll(View.FOCUS_DOWN));
+                        consoleBox.post(() -> consoleBox.scrollTo(0, consoleColumn.getHeight()));
                     });
                     break;
                 }
@@ -242,6 +242,7 @@ public class Main extends Activity {
                     ui.post(() -> {
                         if (!showing) consoleLine.setVisibility(View.VISIBLE);
                         consoleLine.requestFocus();
+                        getSystemService(android.view.inputmethod.InputMethodManager.class).showSoftInput(consoleLine, 0);
                     });
                     break;
                 case 'A':

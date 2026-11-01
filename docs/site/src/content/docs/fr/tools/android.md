@@ -52,7 +52,8 @@ langue est celle du téléphone, sauf si le `header` en décide autrement. Les t
 sont indépendantes de la densité de l'écran : une vue a le même aspect partout.
 
 `header { name := "Counter" }` nomme l'app et le fichier, et `icon := "counter.svg"` lui donne son
-icône, comme sur les autres systèmes.
+icône, comme sur les autres systèmes. Sans nom, l'app prend celui de son fichier, ou de son dossier
+pour un `main.kova`. Android distingue les apps par ce nom : deux apps qui ont le même se remplacent.
 
 ## Comment ça se comporte
 

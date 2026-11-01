@@ -147,7 +147,7 @@ fn android_app() {
     adb(&["uninstall", "dev.kova.app.kovatest"]);
     assert!(adb(&["install", apk.to_str().unwrap()]).contains("Success"));
     adb(&["logcat", "-c"]);
-    adb(&["shell", "am", "start", "-W", "-n", "dev.kova.app.kovatest/dev.kova.Main"]);
+    adb(&["shell", "am", "start", "-n", "dev.kova.app.kovatest/dev.kova.Main"]);
     std::thread::sleep(std::time::Duration::from_secs(2));
     let log = adb(&["logcat", "-d", "-s", "kova"]);
     adb(&["uninstall", "dev.kova.app.kovatest"]);

@@ -223,6 +223,9 @@ pub struct Program {
     pub c_structs: Vec<Vec<CType>>,
     /// `header { icon := "…" }` (filled by `main`).
     pub icon: Option<crate::icon::Icon>,
+    /// The program's name, for what must not depend on an output file: an Android app's identity
+    /// (filled by `main`).
+    pub title: String,
 }
 
 impl Program {
@@ -1089,7 +1092,7 @@ pub fn translate<'f>(f: &'f ast::File, info: &Info, src: &str, contracts: bool, 
     }
     let tests = all[n..].iter().enumerate().map(|(i, t)| (t.0.clone(), n + i)).collect();
     let externs = extern_order(info).into_iter().map(|n| info.externs[n].clone()).collect();
-    Program { functions, main: numbers.get("main").copied(), tests, externs, c_structs: info.c_structs.clone(), icon: None }
+    Program { functions, main: numbers.get("main").copied(), tests, externs, c_structs: info.c_structs.clone(), icon: None, title: String::new() }
 }
 
 struct Translator<'a> {

@@ -52,7 +52,8 @@ language is the phone's, unless the `header` says otherwise. The sizes you write
 independent pixels, so a view looks the same on any screen.
 
 `header { name := "Counter" }` names the app and the file, and `icon := "counter.svg"` gives it its
-icon, as on the other systems.
+icon, as on the other systems. Without a name, the app takes its file's, or its folder's for a
+`main.kova`. Android tells apps apart by that name: two apps with the same one replace each other.
 
 ## How it behaves
 
