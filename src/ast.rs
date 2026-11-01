@@ -566,6 +566,8 @@ pub enum ExprKind {
     /// `scores[i]`: an element of a List (a place, like a field); `scores[1..3]`: a new List of
     /// copies of some elements (not a place).
     Index(Box<Expr>, Box<Expr>),
+    /// Inside the `[ ]` of a Map: `groups[k, else []]`, key then the value added if it is missing.
+    KeyElse(Box<Expr>, Box<Expr>),
     /// `actions[0](3)`, `make(2)(3)`: calls the function a value holds.
     Apply(Box<Expr>, Vec<Expr>),
     /// `t.0`

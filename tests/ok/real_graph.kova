@@ -1,0 +1,131 @@
+// expect: root
+// expect:   arm
+// expect:     hand
+// expect:   leg
+// expect: root/arm/hand
+// expect: (15.0, 2.0)
+// expect: root
+// expect:   leg
+// expect: arm/hand
+// expect: (0.0, -3.0)
+// expect: ["lib", "ui", "app"]
+// expect: none
+
+// A scene tree with parents and a dependency graph, the way Kova writes them: nodes in one List,
+// links as numbers.
+struct Node {
+    name: String
+    parent: Int?
+    children: List<Int>
+    x: Float
+    y: Float
+}
+
+struct Scene {
+    nodes: List<Node>
+
+    fn add(var self, name: String, parent: Int?, x: Float, y: Float) -> Int {
+        let id: Int := self.nodes.length
+        self.nodes.add(Node {
+            name := name.clone,
+            parent := parent,
+            children := [],
+            x := x,
+            y := y
+        })
+        if parent != none {
+            self.nodes[parent].children.add(id)
+        }
+        return id
+    }
+
+    fn position(self, id: Int) -> (Float, Float) {
+        let n: Node := self.nodes[id].clone
+        return match n.parent {
+            none => (n.x, n.y)
+            p => {
+                let (px, py): (Float, Float) := self.position(p)
+                (px + n.x, py + n.y)
+            }
+        }
+    }
+
+    fn path(self, id: Int) -> String {
+        let n: Node := self.nodes[id].clone
+        return match n.parent {
+            none => n.name.clone
+            p => "{self.path(p)}/{n.name}"
+        }
+    }
+
+    fn detach(var self, id: Int) {
+        let parent: Int? := self.nodes[id].parent
+        if parent != none {
+            self.nodes[parent].children := self.nodes[parent].children.filter { c: Int => c != id }
+        }
+        self.nodes[id].parent := none
+    }
+
+    fn walk(self, id: Int, depth: Int) {
+        print("{" ".repeat(depth * 2)}{self.nodes[id].name}")
+        for c in self.nodes[id].children {
+            self.walk(c, depth + 1)
+        }
+    }
+}
+
+struct Graph {
+    edges: Map<String, List<String>>
+
+    fn depends(var self, a: String, b: String) {
+        self.edges[a, else []].add(b.clone)
+        if !self.edges.contains(b) {
+            self.edges[b] := []
+        }
+    }
+
+    fn order(self) -> List<String>? {
+        var left: Map<String, Int> := []
+        for k, deps in self.edges {
+            left[k] := deps.length
+        }
+        var ready: List<String> := left.keys.filter { k: String => left[k] = 0 }
+        var out: List<String> := []
+        while ready.length > 0 {
+            let done: String := ready.remove(0)
+            out.add(done.clone)
+            for k, deps in self.edges {
+                if deps.contains(done) {
+                    left[k, else 0] -= 1
+                    if left[k] = 0 {
+                        ready.add(k.clone)
+                    }
+                }
+            }
+        }
+        return if out.length = self.edges.length { out } else { none }
+    }
+}
+
+fn main {
+    var s: Scene := Scene { nodes := [] }
+    let root: Int := s.add("root", none, 0.0, 0.0)
+    let arm: Int := s.add("arm", root, 10.0, 0.0)
+    let hand: Int := s.add("hand", arm, 5.0, 2.0)
+    let leg: Int := s.add("leg", root, 0.0, -3.0)
+    s.walk(root, 0)
+    print(s.path(hand))
+    print(s.position(hand))
+    s.detach(arm)
+    s.walk(root, 0)
+    print(s.path(hand))
+    print(s.position(leg))
+
+    var g: Graph := Graph { edges := [] }
+    g.depends("app", "lib")
+    g.depends("app", "ui")
+    g.depends("ui", "lib")
+    print(g.order)
+    g.depends("lib", "app")
+    print(g.order)
+}

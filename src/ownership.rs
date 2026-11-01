@@ -879,6 +879,10 @@ impl Owner<'_> {
                 }
             }
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Mark(_, x) => self.borrow(x),
+            ExprKind::KeyElse(key, value) => {
+                self.borrow(key);
+                self.give(value);
+            }
             ExprKind::Index(x, i) => {
                 self.borrow(x);
                 match i.range() {

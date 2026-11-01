@@ -273,6 +273,66 @@ De même, un appel ne peut pas recevoir la même variable en `var` et en argumen
 Pour changer chaque élément d'une liste, dis-le dans la boucle : `for s in var scores { s := s * 10 }`.
 `for s in move scores` prend les éléments un par un, et la liste est consommée.
 
+## Arbres et graphes
+
+Une valeur a un seul propriétaire : un nœud ne peut donc pas appartenir à la fois à son parent et à
+son enfant, et deux valeurs ne peuvent pas pointer l'une vers l'autre. Écrire `parent: Node?` dans
+une struct donne à chaque nœud sa propre *copie* de son parent, ce qu'on veut rarement.
+
+Pour relier des valeurs, garde-les toutes dans une seule List et écris les liens comme des numéros :
+la position d'un nœud dans la List est son identité.
+
+```kova
+struct Node {
+    name: String
+    parent: Int?
+    children: List<Int>
+}
+
+struct Tree {
+    nodes: List<Node>
+
+    fn add(var self, name: String, parent: Int?) -> Int {
+        let id: Int := self.nodes.length
+        self.nodes.add(Node { name := name.clone, parent := parent, children := [] })
+        if parent != none {
+            self.nodes[parent].children.add(id)
+        }
+        return id
+    }
+
+    fn path(self, id: Int) -> String {
+        return match self.nodes[id].parent {
+            none => self.nodes[id].name.clone
+            p => "{self.path(p)}/{self.nodes[id].name}"
+        }
+    }
+}
+
+fn main {
+    var tree: Tree := Tree { nodes := [] }
+    let root: Int := tree.add("root", none)
+    let arm: Int := tree.add("arm", root)
+    let hand: Int := tree.add("hand", arm)
+    print(tree.path(hand))
+}
+```
+
+```text
+root/arm/hand
+```
+
+Pourquoi ça marche bien :
+
+- **Les liens vont dans tous les sens**, cycles compris : un numéro ne possède rien.
+- **Les nœuds sont côte à côte en mémoire**, ce qui est rapide à parcourir.
+- **Sauvegarder est simple** : les numéros passent en JSON tels quels, pas des pointeurs.
+
+Ce dont tu t'occupes toi-même : un numéro reste valable tant que son nœud reste à sa place. Pour
+retirer un nœud, marque-le comme libre ou détache ses liens plutôt que de décaler la List. Pour un
+graphe dont les nœuds ont des noms, utilise de la même façon une `Map<String, List<String>>`, avec
+les noms comme liens.
+
 ## Pourquoi ce choix
 
 La possession de Kova est le modèle que Swift et Hylo appellent *mutable value semantics* : une

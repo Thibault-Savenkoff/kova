@@ -1,0 +1,32 @@
+// expect: ["a" := [1, 2], "b" := [3]]
+// expect: ["a" := 3, "b" := 1, "c" := 1]
+// expect: ["x" := C { n := 5, tags := ["t"] }]
+// expect: 7
+// expect: 4
+// expect: 7
+
+struct C {
+    n: Int
+    tags: List<String>
+}
+
+fn main {
+    var groups: Map<String, List<Int>> := []
+    groups["a", else []].add(1)
+    groups["a", else []].add(2)
+    groups["b", else []].add(3)
+    print(groups)
+    var counts: Map<String, Int> := []
+    for w in "a b a c a".words {
+        counts[w, else 0] += 1
+    }
+    print(counts)
+    var cs: Map<String, C> := []
+    cs["x", else C { n := 0, tags := [] }].n := 5
+    cs["x", else C { n := 0, tags := [] }].tags.add("t")
+    print(cs)
+    let n: Int := counts["zz", else 7]
+    print(n)
+    print(counts.length)
+    print(counts["zz"])
+}

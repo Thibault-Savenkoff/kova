@@ -1,0 +1,5 @@
+// error: `m` is declared with let
+fn main {
+    let m: Map<String, Int> := []
+    print(m["a", else 1])
+}

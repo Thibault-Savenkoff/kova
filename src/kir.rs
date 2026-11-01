@@ -1736,7 +1736,7 @@ impl<'a> Translator<'a> {
                                 failed(t, st, vec![Piece::Text(".".into()), Piece::Value(key, Show::String)], p);
                             });
                             // The same name twice: the last one is kept.
-                            let place = t.entry(v[0], &[key], &Type::String, value);
+                            let place = t.entry(v[0], &[key], &Type::String, value, None);
                             let old = t.read(&place);
                             t.free_value(&old, value);
                             t.write(&place, &x);
@@ -2347,7 +2347,7 @@ impl<'a> Translator<'a> {
                 self.each_element(from, &elem, |t, _, x| {
                     let n = scalars(k).len();
                     let copy = t.clone_value(&x[n..], value);
-                    let place = t.entry(list, &x[..n], k, value);
+                    let place = t.entry(list, &x[..n], k, value, None);
                     let old = t.read(&place);
                     t.free_value(&old, value);
                     t.write(&place, &copy);
@@ -2798,8 +2798,12 @@ impl<'a> Translator<'a> {
                         Step::At(i) if matches!(ty, Type::Map(..)) => {
                             let Type::Map(k, v) = ty.clone() else { unreachable!() };
                             let map = self.read(&place)[0];
-                            let key = self.expr(i);
-                            (self.entry(map, &key, &k, &v), *v)
+                            let (given, default) = match &i.kind {
+                                ExprKind::KeyElse(key, value) => (&**key, Some(&**value)),
+                                _ => (i, None),
+                            };
+                            let key = self.expr(given);
+                            (self.entry(map, &key, &k, &v, default), *v)
                         }
                         Step::At(i) => self.element_place(place, &ty, i),
                     };
@@ -2824,6 +2828,14 @@ impl<'a> Translator<'a> {
                 let (p, t) = self.place(receiver);
                 let i = field_index(&t, &name.text);
                 (self.member(p, &t, i).0, ty)
+            }
+            ExprKind::Index(x, i) if matches!(i.kind, ExprKind::KeyElse(..)) => {
+                let ExprKind::KeyElse(key, value) = &i.kind else { unreachable!() };
+                let Type::Map(k, v) = self.ty(x) else { unreachable!() };
+                let (p, _) = self.place(x);
+                let map = self.read(&p)[0];
+                let key = self.expr(key);
+                (self.entry(map, &key, &k, &v, Some(value)), ty)
             }
             ExprKind::Index(x, i) if !matches!(self.ty(x), Type::Map(..)) && i.range().is_none() => {
                 let (p, t) = self.place(x);
@@ -2960,8 +2972,9 @@ impl<'a> Translator<'a> {
     }
 
     /// Where the value of `key` lives in the Map `map`: added at the end if missing
-    /// (with a copy of the key; its value's slots hold 0, so freeing them does nothing).
-    fn entry(&mut self, map: Local, key: &[Local], k: &Type, v: &Type) -> Place {
+    /// (with a copy of the key; its value's slots hold 0, so freeing them does nothing, unless
+    /// `default` gives them a value).
+    fn entry(&mut self, map: Local, key: &[Local], k: &Type, v: &Type, default: Option<&Expr>) -> Place {
         let i = self.find(map, key, k);
         let (zero, missing) = (self.constant(0), self.int_local());
         self.emit(Inst::Binary(missing, Op::Lt, i, zero, NOWHERE));
@@ -2971,6 +2984,12 @@ impl<'a> Translator<'a> {
         self.emit(Inst::ListGrow(i, map));
         for (s, &l) in copy.iter().enumerate() {
             self.emit(Inst::ListStore(map, i, s, l));
+        }
+        if let Some(value) = default {
+            let value = self.owned(value);
+            for (s, &l) in value.iter().enumerate() {
+                self.emit(Inst::ListStore(map, i, scalars(k).len() + s, l));
+            }
         }
         self.go(End::Jump(done), done);
         Place::Element { list: map, index: i, start: scalars(k).len(), kinds: scalars(v) }
@@ -5368,7 +5387,7 @@ impl<'a> Translator<'a> {
         let part = match &m.subject.kind {
             ExprKind::Field(..) => true,
             ExprKind::Method { receiver, name, args } => args.is_empty() && self.ty(receiver).is_field(&name.text),
-            ExprKind::Index(x, i) => !matches!(self.ty(x), Type::Map(..)) && i.range().is_none(),
+            ExprKind::Index(x, i) => (!matches!(self.ty(x), Type::Map(..)) || matches!(i.kind, ExprKind::KeyElse(..))) && i.range().is_none(),
             _ => false,
         };
         let borrowed = part || place_root(&m.subject, &self.info.types).is_some();
@@ -5609,7 +5628,7 @@ impl<'a> Translator<'a> {
                 self.emit(Inst::ListNew(l, scalars(&pair(k, v)).len()));
                 for (key, value) in pairs {
                     let (key, value) = (self.owned(key), self.owned(value));
-                    let place = self.entry(l, &key, k, v);
+                    let place = self.entry(l, &key, k, v, None);
                     let old = self.read(&place);
                     self.free_value(&old, v);
                     self.write(&place, &value);
@@ -5632,7 +5651,7 @@ impl<'a> Translator<'a> {
                 self.track(&[l], &ty);
                 vec![l]
             }
-            ExprKind::Index(x, i) if matches!(self.ty(x), Type::Map(..)) => {
+            ExprKind::Index(x, i) if matches!(self.ty(x), Type::Map(..)) && !matches!(i.kind, ExprKind::KeyElse(..)) => {
                 let Type::Map(k, v) = self.ty(x) else { unreachable!() };
                 let map = self.expr1(x);
                 let key = self.expr(i);
@@ -5643,6 +5662,7 @@ impl<'a> Translator<'a> {
                 let (p, _) = self.place(e);
                 self.read(&p)
             }
+            ExprKind::KeyElse(..) => unreachable!("read through `place`, refused elsewhere"),
             ExprKind::Result => self.result.clone().expect("`result` checked by the type checker").0,
             ExprKind::Tuple(elems) => {
                 let v: Slots = elems.iter().flat_map(|x| self.owned(x)).collect();
@@ -6442,7 +6462,7 @@ impl<'a> Translator<'a> {
                 let key = self.int_local();
                 self.emit(Inst::Str(key, StrOp::ToLower, vec![given]));
                 self.track(&[key], &Type::String);
-                let place = self.entry(v[1], &[key], &Type::String, &Type::String);
+                let place = self.entry(v[1], &[key], &Type::String, &Type::String, None);
                 let old = self.read(&place);
                 self.free_value(&old, &Type::String);
                 self.write(&place, &value);
@@ -6456,7 +6476,7 @@ impl<'a> Translator<'a> {
                 match name.text.as_str() {
                     "header(…) is(…)" => {
                         let (key, value) = (self.expr(&args[0]), self.kept(&args[1]));
-                        let place = self.entry(v[2], &key, &Type::String, &Type::String);
+                        let place = self.entry(v[2], &key, &Type::String, &Type::String, None);
                         let old = self.read(&place);
                         self.free_value(&old, &Type::String);
                         self.write(&place, &value);
@@ -7013,7 +7033,7 @@ pub fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(k, names);
             names_in(v, names);
         }),
-        ExprKind::Index(x, i) => {
+        ExprKind::Index(x, i) | ExprKind::KeyElse(x, i) => {
             names_in(x, names);
             names_in(i, names);
         }

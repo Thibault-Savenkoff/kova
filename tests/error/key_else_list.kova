@@ -1,0 +1,5 @@
+// error: `[key, else value]` is for a Map, not for `List`
+fn main {
+    var l: List<Int> := [1]
+    l[0, else 1] := 2
+}

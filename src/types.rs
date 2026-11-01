@@ -1184,7 +1184,7 @@ pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     match &e.kind {
         ExprKind::Var(n) => Some((n, e.span)),
         // `ages["Rex"]` is not a place: reading it gives a copy (a Map has no slot per key).
-        ExprKind::Index(x, i) if matches!(types[x.id], Type::Map(..)) || i.range().is_some() => None,
+        ExprKind::Index(x, i) if (matches!(types[x.id], Type::Map(..)) && !matches!(i.kind, ExprKind::KeyElse(..))) || i.range().is_some() => None,
         ExprKind::Field(x, _) | ExprKind::Index(x, _) => place_root(x, types),
         ExprKind::Method { receiver, name, args } if args.is_empty() && types[receiver.id].is_field(&name.text) => place_root(receiver, types),
         _ => None,
@@ -2235,7 +2235,7 @@ pub fn changes_in(e: &Expr, name: &str) -> bool {
         ExprKind::Unary(_, a) | ExprKind::Try(a) | ExprKind::Is(a, _) | ExprKind::Outcome { value: a, .. } | ExprKind::Field(a, _) => {
             changes_in(a, name)
         }
-        ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => changes_in(a, name) || changes_in(b, name),
+        ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) | ExprKind::KeyElse(a, b) => changes_in(a, name) || changes_in(b, name),
         ExprKind::Tuple(es) | ExprKind::List(es) | ExprKind::SetLit(es) => any(es),
         ExprKind::Apply(f, args) => changes_in(f, name) || any(args),
         ExprKind::MapLit(pairs) => pairs.iter().any(|(k, v)| changes_in(k, name) || changes_in(v, name)),
@@ -3757,6 +3757,12 @@ impl Checker<'_> {
                         // `ages["Rex"] := 3`: adds the key or replaces its value; only as a whole.
                         Step::At(i) if matches!(ty, Type::Map(..)) => {
                             let Type::Map(key, value) = ty else { unreachable!() };
+                            if let ExprKind::KeyElse(given, default) = &i.kind {
+                                self.expect(given, &key);
+                                self.expect(default, &value);
+                                ty = *value;
+                                continue;
+                            }
                             self.expect(i, &key);
                             if k + 1 < fields.len() {
                                 self.diags.push(Diag::new(*span, t!("map_entry_part")).help(t!("map_entry_part_help")));
@@ -5240,6 +5246,19 @@ impl Checker<'_> {
             }
             ExprKind::Index(x, i) => {
                 let t = self.expr(x);
+                // `groups[k, else []]`: the value itself, added if missing.
+                if let ExprKind::KeyElse(key, value) = &i.kind {
+                    let Type::Map(k, v) = t else {
+                        if t != Type::Error {
+                            self.error(i.span, t!("key_else_not_map", type = t.text()));
+                        }
+                        return Type::Error;
+                    };
+                    self.expect(key, &k);
+                    self.expect(value, &v);
+                    self.changes(x, t!("assign_target"));
+                    return *v;
+                }
                 // `ages["Rex"]`: an `Int?`, `none` if the key is not there.
                 if let Type::Map(k, v) = t {
                     self.expect(i, &k);
@@ -5273,6 +5292,11 @@ impl Checker<'_> {
                         Type::Error
                     }
                 }
+            }
+            // Only a Map reads it, above; `l[0, else 1] := 2` comes here.
+            ExprKind::KeyElse(..) => {
+                self.error(e.span, t!("key_else_not_map", type = "List"));
+                Type::Error
             }
             ExprKind::StructLit { .. } if self.literal_completed(e).is_some() => {
                 let c = self.literal_completed(e).unwrap();

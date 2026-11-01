@@ -2242,7 +2242,13 @@ impl Parser<'_> {
             // `scores[i]`: the `[` on the same line (otherwise it starts a list on the next one).
             if self.is_sym("[") && !self.src[e.span.end..self.token().span.start].contains('\n') {
                 self.advance();
-                let index = self.inner_expr()?;
+                let mut index = self.inner_expr()?;
+                if self.is_sym(",") && self.kind_at(1) == Kind::Keyword("else") {
+                    self.advance();
+                    self.advance();
+                    let value = self.inner_expr()?;
+                    index = self.expr(index.span.to(value.span), ExprKind::KeyElse(Box::new(index), Box::new(value)));
+                }
                 let end = self.expect("]")?;
                 e = self.expr(e.span.to(end), ExprKind::Index(Box::new(e), Box::new(index)));
                 continue;

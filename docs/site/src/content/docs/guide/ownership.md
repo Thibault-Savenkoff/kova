@@ -269,6 +269,65 @@ Likewise, one call cannot receive the same variable as `var` and as a plain argu
 To change each element of a list, say so in the loop: `for s in var scores { s := s * 10 }`.
 `for s in move scores` takes the elements one by one, and the list is used up.
 
+## Trees and graphs
+
+A value has one owner, so a node cannot be held by both its parent and its child, and two values
+cannot point at each other. Writing `parent: Node?` in a struct gives each node its own *copy* of
+its parent, which is rarely what you want.
+
+The way to link values is to keep them all in one List and write the links as numbers: a node's
+position in the List is its identity.
+
+```kova
+struct Node {
+    name: String
+    parent: Int?
+    children: List<Int>
+}
+
+struct Tree {
+    nodes: List<Node>
+
+    fn add(var self, name: String, parent: Int?) -> Int {
+        let id: Int := self.nodes.length
+        self.nodes.add(Node { name := name.clone, parent := parent, children := [] })
+        if parent != none {
+            self.nodes[parent].children.add(id)
+        }
+        return id
+    }
+
+    fn path(self, id: Int) -> String {
+        return match self.nodes[id].parent {
+            none => self.nodes[id].name.clone
+            p => "{self.path(p)}/{self.nodes[id].name}"
+        }
+    }
+}
+
+fn main {
+    var tree: Tree := Tree { nodes := [] }
+    let root: Int := tree.add("root", none)
+    let arm: Int := tree.add("arm", root)
+    let hand: Int := tree.add("hand", arm)
+    print(tree.path(hand))
+}
+```
+
+```text
+root/arm/hand
+```
+
+Why it works well:
+
+- **Links can go in every direction**, cycles included: a number owns nothing.
+- **The nodes sit side by side in memory**, which is fast to walk through.
+- **Saving is easy**: numbers go into JSON as they are; pointers would not.
+
+What you take care of yourself: a number stays valid only while its node stays in place. To remove
+a node, mark it as free or detach its links rather than shifting the List. For a graph whose nodes
+have names, use a `Map<String, List<String>>` the same way, with names as links.
+
 ## Why this design
 
 Kova's ownership is the model Swift and Hylo call *mutable value semantics*: a value behaves as if
