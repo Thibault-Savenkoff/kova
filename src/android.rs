@@ -24,7 +24,8 @@ pub fn abi(arm: bool) -> &'static str {
 /// The `.apk` of a program named `title`: one library per processor (Android's name, its bytes).
 pub fn apk(title: &str, libraries: &[(&str, Vec<u8>)]) -> Result<Vec<u8>, String> {
     let manifest = manifest(&format!("dev.kova.app.{}", package_word(title)), title);
-    let mut files: Vec<(String, &[u8])> = vec![("AndroidManifest.xml".to_string(), &manifest)];
+    let code = include_bytes!("../runtime/android/classes.dex");
+    let mut files: Vec<(String, &[u8])> = vec![("AndroidManifest.xml".to_string(), &manifest), ("classes.dex".to_string(), code)];
     for (abi, library) in libraries {
         files.push((format!("lib/{abi}/libkova.so"), library));
     }
@@ -52,18 +53,17 @@ use Value::{Bool, Number, Text};
 struct Element<'a>(&'a str, Vec<(&'a str, Value<'a>)>, Vec<Element<'a>>);
 
 /// The attributes of the `android:` namespace, with the numbers Android knows them by.
-const ATTRIBUTES: [(&str, u32); 11] = [
+const ATTRIBUTES: [(&str, u32); 10] = [
     ("label", 0x0101_0001),
     ("name", 0x0101_0003),
-    ("hasCode", 0x0101_000c),
     ("exported", 0x0101_0010),
     ("configChanges", 0x0101_001f),
-    ("value", 0x0101_0024),
     ("minSdkVersion", 0x0101_020c),
     ("versionCode", 0x0101_021b),
     ("versionName", 0x0101_021c),
     ("targetSdkVersion", 0x0101_0270),
     ("extractNativeLibs", 0x0101_04ea),
+    ("usesCleartextTraffic", 0x0101_04ec),
 ];
 
 const NAMESPACE: &str = "http://schemas.android.com/apk/res/android";
@@ -80,18 +80,18 @@ fn manifest(package: &str, title: &str) -> Vec<u8> {
             Element("uses-permission", vec![("name", Text("android.permission.INTERNET"))], vec![]),
             Element(
                 "application",
-                vec![("label", Text(title)), ("hasCode", Bool(false)), ("extractNativeLibs", Bool(false))],
+                // Plain `http://` stays allowed, as on every other system.
+                vec![("label", Text(title)), ("extractNativeLibs", Bool(false)), ("usesCleartextTraffic", Bool(true))],
                 vec![Element(
                     "activity",
                     vec![
                         ("label", Text(title)),
-                        ("name", Text("android.app.NativeActivity")),
+                        ("name", Text("dev.kova.Main")),
                         ("exported", Bool(true)),
                         // Turning the phone does not restart the program.
                         ("configChanges", Number(0x4000_3fff)),
                     ],
                     vec![
-                        Element("meta-data", vec![("name", Text("android.app.lib_name")), ("value", Text("kova"))], vec![]),
                         Element("intent-filter", vec![], vec![action("android.intent.action.MAIN"), category("android.intent.category.LAUNCHER")]),
                     ],
                 )],

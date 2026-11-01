@@ -425,7 +425,7 @@ fn elf_file(main: &[u8], runtime: &[u8], arm: bool, export: Option<&str>) -> Res
     let stubs = align(at, 4);
     let stub = |f: &str| stubs + stub_size * r.imports.iter().position(|g| g == f).unwrap() as u64;
     // `dlopen` (src/openssl.rs) is in `libc.so.6` since glibc 2.34, in `libdl.so.2` before.
-    let libraries: &[&str] = if shared { &["libc.so", "libdl.so", "liblog.so", "libandroid.so", "libkova.so"] } else { &["libc.so.6", "libdl.so.2"] };
+    let libraries: &[&str] = if shared { &["libc.so", "libdl.so", "liblog.so", "libkova.so"] } else { &["libc.so.6", "libdl.so.2"] };
     let mut strings = vec![0];
     let mut library_names = vec![];
     for l in libraries {

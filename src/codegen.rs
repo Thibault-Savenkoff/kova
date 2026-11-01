@@ -231,8 +231,8 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
         Target::WindowsArm => crate::link::pe(&object, runtime, true, &icon_images(p)),
         Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
         Target::MacIntel => crate::link::macho(&object, runtime, name, false),
-        Target::AndroidArm => crate::link::library(&object, runtime, true, "ANativeActivity_onCreate"),
-        Target::AndroidIntel => crate::link::library(&object, runtime, false, "ANativeActivity_onCreate"),
+        Target::AndroidArm => crate::link::library(&object, runtime, true, "Java_dev_kova_Main_call"),
+        Target::AndroidIntel => crate::link::library(&object, runtime, false, "Java_dev_kova_Main_call"),
         Target::Web | Target::Android => unreachable!("made by `build`"),
     };
     exe.map_err(|e| t!("codegen_failed", error = e))

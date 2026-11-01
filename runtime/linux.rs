@@ -21,7 +21,7 @@ pub const SLASH: char = '/';
 #[path = "android.rs"]
 mod android;
 #[cfg(android)]
-pub use android::local_at;
+pub use android::{fetch, local_at, sound, ui_areas, ui_dialog, ui_show, var};
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn call(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
@@ -237,9 +237,6 @@ pub fn system_language() -> Option<String> {
     None
 }
 
-#[cfg(android)]
-pub use android::var;
-
 #[cfg(not(android))]
 pub fn var(name: &str) -> Option<String> {
     ENVIRONMENT.get().iter().find_map(|&e| {
@@ -250,6 +247,9 @@ pub fn var(name: &str) -> Option<String> {
 }
 
 pub fn exit(code: i32) -> ! {
+    #[cfg(android)]
+    android::exit(code);
+    #[cfg(not(android))]
     unsafe { call(EXIT_GROUP, code as usize, 0, 0, 0, 0, 0) };
     unreachable!()
 }
@@ -257,7 +257,7 @@ pub fn exit(code: i32) -> ! {
 pub fn write(fd: usize, mut b: &[u8]) {
     #[cfg(android)]
     if fd <= 2 {
-        return android::log(b);
+        return android::print(b);
     }
     while !b.is_empty() {
         match unsafe { call(WRITE, fd, b.as_ptr() as usize, b.len(), 0, 0, 0) } {
@@ -270,6 +270,10 @@ pub fn write(fd: usize, mut b: &[u8]) {
 
 /// What was read (0 at the end, or after an error).
 pub fn read(fd: usize, b: &mut [u8]) -> usize {
+    #[cfg(android)]
+    if fd == 0 {
+        return android::read_input(b);
+    }
     loop {
         match unsafe { call(READ, fd, b.as_mut_ptr() as usize, b.len(), 0, 0, 0) } {
             n if n == -EINTR => {}
@@ -1128,6 +1132,7 @@ mod dl {
 /// widgets only take the new texts, so a field being typed into keeps its cursor. The button
 /// clicked, a field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is
 /// closed (or when GTK is missing or there is no display).
+#[cfg(not(android))]
 pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     // The library (0 = not looked for yet, 1 = missing), the window, what happened (`WAITING`:
     // nothing yet, -1: the window closed), the text of the field that changed.
@@ -1404,6 +1409,7 @@ static GTK_WINDOW: Global<usize> = Global::new(0);
 
 /// `ui.window` then `ui.screen`: x, y, width, height. A program never knows its place on Wayland,
 /// nor what the panels take from the screen.
+#[cfg(not(android))]
 pub fn ui_areas() -> Option<[i32; 8]> {
     let w = *GTK_WINDOW.get() as P;
     if w.is_null() {
@@ -1834,6 +1840,7 @@ fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
 
 /// `ui.dialog`. GTK's dialogs answer later: its loop runs until they do. None if the person gave
 /// up, and on a GTK older than 4.10.
+#[cfg(not(android))]
 pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
     use core::mem::transmute as t;
     static REPLY: Global<Option<Option<String>>> = Global::new(None);
@@ -1904,6 +1911,7 @@ pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
 }
 
 /// `sound.play`: PulseAudio's simple library, which PipeWire answers too.
+#[cfg(not(android))]
 pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
     use core::mem::transmute as t;
     let Some(pulse) = library("libpulse-simple.so.0") else { return false };

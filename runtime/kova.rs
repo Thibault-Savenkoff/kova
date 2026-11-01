@@ -6,6 +6,7 @@
 // Its texts come from `locales/*.kova`, written as data by `kova build` (src/codegen.rs, `runtime_texts`).
 
 #![no_std]
+#![cfg_attr(android, allow(dead_code, unused_imports))]
 
 extern crate alloc;
 
@@ -39,6 +40,8 @@ mod shared;
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(target_family = "wasm", path = "web.rs")]
 mod sys;
+#[cfg(any(target_family = "wasm", android))]
+mod view;
 
 use alloc::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use alloc::boxed::Box;
@@ -1846,9 +1849,9 @@ pub extern "C" fn kova_web(url: i64, method: i64, body: i64, follow: i64, header
         follow: follow != 0,
         ms: http::milliseconds(f64::from_bits(seconds as u64)),
     };
-    #[cfg(target_family = "wasm")]
+    #[cfg(any(target_family = "wasm", android))]
     let Some(asked) = sys::fetch(&r) else { return 0 };
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(not(any(target_family = "wasm", android)))]
     let asked = http::exchange(&mut network(), &r);
     match asked {
         Err(f) => -(f.number() + 1),
