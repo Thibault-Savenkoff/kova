@@ -1178,6 +1178,10 @@ impl Parser<'_> {
                     Ok(f) => methods.push(f),
                     Err(()) => self.skip_statement(),
                 },
+                Kind::Eof => {
+                    self.diags.push(Diag::new(self.token().span, t!("struct_unclosed", name = name.text)));
+                    return Err(());
+                }
                 _ => {
                     self.diags.push(Diag::new(self.token().span, t!("extend_item", found = self.describe())));
                     self.skip_statement();

@@ -1,0 +1,7 @@
+// error: `extend` holds methods
+extend Float {
+    fn twice -> Float := self * 2.0
+]
+
+fn main {
+}
