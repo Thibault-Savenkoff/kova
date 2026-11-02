@@ -115,6 +115,12 @@ fn kova() {
         }
         exit(1);
     };
+    // Warnings: only `kova build` prints them (`kova run` is for trying; the editor shows them).
+    if matches!(command, Some(Command::Build { .. })) {
+        for d in warnings(&info) {
+            eprintln!("{}", diag::render_as(&d, &sources, &t!("warning_prefix")));
+        }
+    }
     let files: Vec<String> = sources.files.iter().map(|(path, _)| path.clone()).collect();
 
     // A translation file: `kova run` checks it, it is not a program.
@@ -390,6 +396,12 @@ fn fmt(files: &[&str]) -> i32 {
 /// it on text that isn't saved yet (the files it imports are read from the disk).
 /// `Some(info)` once the types are checked, even with errors: the editor still shows them.
 /// Also picks the language of the messages: the `header`'s, otherwise the system's.
+/// What is not wrong but useless: a local name never used (PLAN Part 4 "Unused names").
+pub fn warnings(info: &types::Info) -> Vec<diag::Diag> {
+    let unused = info.unused.iter();
+    unused.map(|(span, name)| diag::Diag::new(*span, t!("unused_name", name = name)).help(t!("unused_name_help"))).collect()
+}
+
 fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>, diag::Sources) {
     let read = || load(path, source);
     let (mut file, mut nb_exprs, mut diags, mut sources) = read();

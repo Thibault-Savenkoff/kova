@@ -37,6 +37,26 @@ is not allowed where a value is expected.
 Prefer `let`: a value that cannot change is one less thing to follow when reading the code. The
 compiler refuses to change a `let`, and says to declare it with `var` if that was meant.
 
+### Names never used
+
+A name declared and never used afterwards is often a mistake: a value computed for nothing, or the
+wrong name used further down. The editor greys it out, and `kova build` warns, then builds all the
+same:
+
+```console
+warning: `i` is never used
+ --> app.kova:2:9
+  |
+2 |     for i in 0..3 {
+  |         ^
+  = help: remove it, or write `_` in its place if the value must still be computed
+```
+
+`_` says "no name here, on purpose": `for _ in 0..3`, `let _: Int := list.remove(0)`, `.Rect(w, _) =>`. A
+name that starts with `_` (`_spare`) is not warned about either. Changing a `var` counts as using
+it. Parameters are never warned about: a function or a block often has to take what it is given.
+`kova run` says nothing, so trying something out stays quiet.
+
 ### Constants
 
 A `let` at the top of a file is a constant, for a value that has one meaning in the whole program.

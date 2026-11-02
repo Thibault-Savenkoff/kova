@@ -443,13 +443,17 @@ fn static_executable() {
 }
 
 /// `header { name := "Sum Tool" }`: `kova build` names the executable so, next to the file.
+/// It also warns about a name never used, and builds all the same; `kova run` stays quiet.
 fn named_program() {
     let dir = std::env::temp_dir().join(format!("kova-named-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("sum.kova");
-    std::fs::write(&source, "header {\n    name := \"Sum Tool\"\n}\n\nfn main {\n    print(1 + 2)\n}\n").unwrap();
+    std::fs::write(&source, "header {\n    name := \"Sum Tool\"\n}\n\nfn main {\n    let spare: Int := 4\n    print(1 + 2)\n}\n").unwrap();
     let out = kova(LANG).arg("build").arg(&source).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stderr).starts_with("warning: `spare` is never used\n --> "), "{}", text(&out.stderr));
+    let run = kova(LANG).arg("run").arg(&source).output().unwrap();
+    assert_eq!((text(&run.stdout), text(&run.stderr)), ("3\n".to_string(), String::new()));
     let exe = dir.join(format!("Sum Tool{EXE}"));
     let ran = Command::new(&exe).output().unwrap();
     let _ = std::fs::remove_dir_all(&dir);

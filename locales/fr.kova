@@ -6,6 +6,9 @@ lang fr {
     // ---- Shared ----
     error_prefix := "erreur: "
     help_prefix := "aide : "
+    warning_prefix := "attention : "
+    unused_name := "`{name}` n'est jamais utilisé"
+    unused_name_help := "supprime-le, ou écris `_` à sa place si la valeur doit quand même être calculée"
     word_or := "ou"
     found_newline := "une fin de ligne"
     found_eof := "la fin du fichier"

@@ -109,6 +109,11 @@ pub fn line_col(source: &str, pos: usize) -> (usize, usize) {
 ///    = help: ...
 /// ```
 pub fn render(d: &Diag, sources: &Sources) -> String {
+    render_as(d, sources, &t!("error_prefix"))
+}
+
+/// The same with `warning: ` in front.
+pub fn render_as(d: &Diag, sources: &Sources, prefix: &str) -> String {
     let k = sources.file_of(d.span.start);
     let (file, start) = (&sources.files[k].0, sources.files[k].1);
     let source = sources.file_text(k);
@@ -123,7 +128,7 @@ pub fn render(d: &Diag, sources: &Sources) -> String {
         .clamp(1, rest.max(1));
     let margin = " ".repeat(line.to_string().len());
 
-    let mut s = format!("{}{}\n{margin}--> {file}:{line}:{col}\n", t!("error_prefix"), d.message);
+    let mut s = format!("{prefix}{}\n{margin}--> {file}:{line}:{col}\n", d.message);
     s += &format!("{margin} |\n{line} | {line_text}\n");
     s += &format!("{margin} | {}{}\n", " ".repeat(col - 1), "^".repeat(width));
     if let Some(help) = &d.help {

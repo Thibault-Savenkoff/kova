@@ -39,6 +39,25 @@ Préfère `let` : une valeur qui ne peut pas changer, c'est une chose de moins �
 code. Le compilateur refuse de changer un `let`, et propose de le déclarer avec `var` si c'était
 voulu.
 
+### Les noms jamais utilisés
+
+Un nom déclaré puis jamais utilisé est souvent une erreur : une valeur calculée pour rien, ou le
+mauvais nom employé plus bas. L'éditeur le grise, et `kova build` prévient, puis compile quand même :
+
+```console
+attention : `i` n'est jamais utilisé
+ --> app.kova:2:9
+  |
+2 |     for i in 0..3 {
+  |         ^
+  = aide : supprime-le, ou écris `_` à sa place si la valeur doit quand même être calculée
+```
+
+`_` dit « pas de nom ici, exprès » : `for _ in 0..3`, `let _: Int := list.remove(0)`, `.Rect(w, _) =>`.
+Un nom qui commence par `_` (`_reserve`) ne déclenche pas non plus d'avertissement. Changer un `var`
+compte comme l'utiliser. Les paramètres ne sont jamais signalés : une fonction ou un bloc doit
+souvent prendre ce qu'on lui donne. `kova run` ne dit rien, pour que les essais restent calmes.
+
 ### Les constantes
 
 Un `let` en haut d'un fichier est une constante, pour une valeur qui a un seul sens dans tout le

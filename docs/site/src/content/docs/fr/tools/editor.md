@@ -29,7 +29,7 @@ réglage `kova.path` le chemin de l'exécutable. Après avoir installé un nouve
 | Fonction | Comment |
 | --- | --- |
 | Couleurs et extraits | pour chaque fichier `.kova` |
-| Erreurs pendant la frappe | soulignées, avec le message et l'aide de Kova |
+| Erreurs pendant la frappe | soulignées, avec le message et l'aide de Kova ; [noms jamais utilisés](/fr/guide/values/#les-noms-jamais-utilisés) grisés |
 | Complétion | après un `.`, après `Type.` et `module.`, dans `Type { … }`, après `import`, pour les parties d'un appel |
 | Types au survol | survole un nom pour voir son type et sa déclaration |
 | Aller à la définition, renommer | `F12`, `F2`, à travers les fichiers importés |

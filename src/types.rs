@@ -959,6 +959,8 @@ pub struct Info {
     /// For the editor: each name met (variable, function, type, field, method), where it is
     /// written, where it is declared, and what hovering it shows.
     pub seen: Vec<Seen>,
+    /// The local names never used, with their name (shown as warnings).
+    pub unused: Vec<(Span, String)>,
     /// For the editor: the variables declared without their type written anywhere
     /// (`for score in scores`, `Circle(r) =>`), shown in grey after their name.
     pub hints: Vec<(Span, Type)>,
@@ -1277,6 +1279,8 @@ struct Checker<'a> {
     places: HashMap<String, (Span, String)>,
     spans: Vec<Span>,
     seen: Vec<Seen>,
+    /// The local names declared (`let`, `var`, `for`, a case's fields), for `Info::unused`.
+    locals: Vec<(Span, String)>,
     hints: Vec<(Span, Type)>,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
@@ -1365,6 +1369,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         places: places(f),
         spans: vec![Span::new(0, 0); nb_exprs],
         seen: vec![],
+        locals: vec![],
         hints: vec![],
         matches: vec![],
         guards: HashMap::new(),
@@ -1891,6 +1896,11 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let (defaults, follows, type_args) = (c.defaults, c.follows, c.type_args);
     let boxes = c.boxes;
     let (spans, seen, hints, matches, invoked, lent, assign_ops) = (c.spans, c.seen, c.hints, c.matches, c.invoked, c.lent, c.assign_ops);
+    // A local name of the main file never written again after its declaration (PLAN Part 4
+    // "Unused names"). Writing to it counts as a use.
+    let used: std::collections::HashSet<usize> = seen.iter().filter(|s| s.span != s.decl).map(|s| s.decl.start).collect();
+    let main_end = src.find(crate::diag::SEPARATOR).unwrap_or(src.len());
+    let unused = c.locals.into_iter().filter(|(span, _)| span.start < main_end && !used.contains(&span.start)).collect();
     let info = Info {
         types: c.types,
         moves,
@@ -1906,6 +1916,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         methods,
         spans,
         seen,
+        unused,
         hints,
         matches,
         guards: c.guards,
@@ -3343,6 +3354,12 @@ impl Checker<'_> {
             return;
         }
         self.mention_variable(&name.text, &ty, name.span, name.span);
+        if matches!(kind, VarKind::Let | VarKind::Var | VarKind::Counter | VarKind::Element | VarKind::Matched)
+            && !name.text.starts_with('_')
+            && !name.text.contains(' ')
+        {
+            self.locals.push((name.span, name.text.clone()));
+        }
         if matches!(kind, VarKind::Element | VarKind::Matched) {
             self.hints.push((name.span, ty.clone()));
         }
@@ -3792,7 +3809,9 @@ impl Checker<'_> {
                     self.unknown(name.span, t!("variable_unknown", name = n), &n);
                     return Type::Error;
                 };
-                let (mut ty, kind) = (var.ty.clone(), var.kind);
+                let (mut ty, kind, decl) = (var.ty.clone(), var.kind, var.span);
+                // Written to counts as used (`Info::unused`), and rename finds it.
+                self.mention_variable(n, &ty, name.span, decl);
                 self.may_change(n, name.span, kind);
                 for (k, step) in fields.iter().enumerate() {
                     ty = match step {

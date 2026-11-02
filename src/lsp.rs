@@ -178,8 +178,22 @@ fn offset(src: &str, p: Position) -> usize {
 
 /// An error in an imported file is shown on the `import` line that brings it in
 /// (or on the first line), with the place where it really is.
+/// Then the warnings (only on a program without errors: an error hides uses), greyed out.
 fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
-    let (_, _, diags, sources) = analyze(&file_path(uri), src);
+    let (_, info, diags, sources) = analyze(&file_path(uri), src);
+    let warnings = match &info {
+        Some(info) if diags.is_empty() => crate::warnings(info),
+        _ => vec![],
+    };
+    let warned = warnings.iter().map(|d| Diagnostic {
+        range: Range::new(position(src, d.span.start), position(src, d.span.end)),
+        severity: Some(DiagnosticSeverity::WARNING),
+        source: Some("kova".into()),
+        message: format!("{} — {}{}", d.message, t!("help_prefix"), d.help.as_deref().unwrap_or("")),
+        tags: Some(vec![DiagnosticTag::UNNECESSARY]),
+        ..Default::default()
+    });
+    let warned: Vec<Diagnostic> = warned.collect();
     diags
         .into_iter()
         .map(|d| {
@@ -206,6 +220,7 @@ fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
                 ..Default::default()
             }
         })
+        .chain(warned)
         .collect()
 }
 
@@ -1551,6 +1566,16 @@ mod tests {
         let found = errors(&uri, "fn main {\n    let d := Date.today.plus_days(1)\n}\n");
         assert_eq!(found.len(), 1);
         assert!(!found[0].message.contains('\n') && found[0].message.contains(" — "), "{}", found[0].message);
+    }
+
+    #[test]
+    fn unused_names() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let src = "fn main {\n    let a: Int := 1\n    var b: Int := 2\n    b := 3\n    for i in 0..2 {\n        print(a)\n    }\n    for _ in 0..2 {}\n    let _c: Int := 4\n    for (x, y) in [(1, 2)] {\n        print(x)\n    }\n}\n";
+        let found: Vec<(u32, u32)> = errors(&uri, src).iter().map(|d| (d.range.start.line, d.range.start.character)).collect();
+        // `i` and `y`: `b` is written to, `_`, `_c` are meant to be unused.
+        assert_eq!(found, [(4, 8), (9, 12)]);
+        assert!(errors(&uri, "fn main {\n    let a: Int := \"x\"\n}\n").iter().all(|d| d.severity == Some(DiagnosticSeverity::ERROR)));
     }
 
     #[test]

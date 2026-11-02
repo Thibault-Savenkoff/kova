@@ -28,7 +28,7 @@ that the editor starts the new server.
 | Feature | How |
 | --- | --- |
 | Colors and snippets | for every `.kova` file |
-| Errors while you type | underlined, with Kova's message and help |
+| Errors while you type | underlined, with Kova's message and help; [names never used](/guide/values/#names-never-used) greyed out |
 | Completion | after a `.`, after `Type.` and `module.`, inside `Type { … }`, after `import`, for the parts of a call |
 | Types on hover | hover a name to see its type and its declaration |
 | Go to definition, rename | `F12`, `F2`, across imported files |
