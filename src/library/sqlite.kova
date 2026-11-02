@@ -13,9 +13,7 @@ enum Error : Equal, Display {
     // SQLite's own message: `no such table: notes`.
     fn to_string(self) -> String {
         return match self {
-            .Failed(m) => m.clone
-            .Constraint(m) => m.clone
-            .Busy(m) => m.clone
+            .Failed(m), .Constraint(m), .Busy(m) => m.clone
         }
     }
 }

@@ -1,4 +1,4 @@
-// Grouped cases do not take fields yet.
+// A name of grouped cases must be in each of them.
 enum Shape {
     Circle(radius: Float)
     Square(side: Float)
@@ -7,11 +7,10 @@ fn main {
     let s := Shape.Circle(1.0)
     match s {
         .Circle(r), .Square => print(1)
-        _ => print(2)
     }
     match s {
         .Circle, .Square(x) => print(3)
     }
 }
-// error: cases grouped with `,` cannot take fields yet
-// error: cases grouped with `,` cannot take fields yet
+// error: `r` must be named in each case of the group, and `Square` has none
+// error: `x` must be named in each case of the group, and `Circle` has none

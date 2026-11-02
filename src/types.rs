@@ -1181,6 +1181,16 @@ pub fn method_name(ty: &str, name: &str) -> String {
 
 /// The variable at the root of a place: `rex` in `rex.dog.name` or in `t.0`;
 /// `None` for a computed value (`make_dog.name`).
+/// The names a pattern declares, with their types: `(a, _)` on `(Int, String)` → `a: Int`.
+fn names_of(p: &Pattern, t: &Type, out: &mut Vec<(String, Type, Span)>) {
+    match (p, t) {
+        (Pattern::Name(n), _) => out.push((n.text.clone(), t.clone(), n.span)),
+        (Pattern::Tuple(ps, _), Type::Tuple(ts)) if ps.len() == ts.len() => ps.iter().zip(ts).for_each(|(p, t)| names_of(p, t, out)),
+        (Pattern::Tuple(ps, _), _) => ps.iter().for_each(|p| names_of(p, &Type::Error, out)),
+        _ => {}
+    }
+}
+
 /// `let n: Node := self.nodes[id]` (PLAN Part 4 "A local borrow"): a `let` of a part of a variable
 /// (a field, a List's element) that is no copy lends it to `n` until the end of the block,
 /// instead of moving it out (refused). The variable cannot change meanwhile (`ownership.rs`).
@@ -6049,8 +6059,10 @@ impl Checker<'_> {
                 }
                 (None, None) => any = Some(span),
                 (Some((name, binds)), d) => {
-                    // `Saturday, Sunday =>`: the others, without fields (the parser refused them).
-                    for other in &arm.also {
+                    // `Saturday, Sunday =>`, `.Failed(m), .Busy(m) =>`: the others, and the types of
+                    // the fields they name.
+                    let mut others: Vec<(&Name, Vec<(String, Type, Span)>)> = vec![];
+                    for (other, other_binds) in &arm.also {
                         let shown = &self.src[other.span.start..other.span.end];
                         let wrong = if optional { other.text != "none" } else { outcome && !matches!(other.text.as_str(), "ok" | "err") };
                         match d.as_ref().map(|d| (d.variant(&other.text), d)) {
@@ -6058,13 +6070,23 @@ impl Checker<'_> {
                                 let text = if optional { t!("optional_cases", type = d.name) } else { t!("result_cases", type = t.text()) };
                                 self.error(other.span, text);
                             }
-                            Some((Some((i, _)), d)) => {
+                            Some((Some((i, fields)), d)) => {
                                 if !optional && !outcome {
                                     self.mention(&method_name(&d.name, &other.text), other.span);
                                 }
                                 if let Some(first) = seen.insert(i, other.span) {
                                     let (line, _) = line_col(self.src, first.start);
                                     self.error(other.span, t!("case_twice", name = shown, line = line));
+                                }
+                                if !other_binds.is_empty() && other_binds.len() != fields.len() {
+                                    let names: Vec<String> = fields.iter().map(|(n, _)| format!("`{n}`")).collect();
+                                    self.error(other.span, t!("case_fields", name = other.text, count = fields.len(), fields = names.join(", "), given = other_binds.len()));
+                                } else {
+                                    let mut named = vec![];
+                                    for (p, (_, t)) in other_binds.iter().zip(fields) {
+                                        names_of(p, t, &mut named);
+                                    }
+                                    others.push((other, named));
                                 }
                             }
                             Some((None, d)) => {
@@ -6133,9 +6155,33 @@ impl Checker<'_> {
                         self.scopes.last_mut().unwrap().insert(root.to_string(), lent);
                     }
                     let kind = if m.mode == Mode::Var { VarKind::Var } else { VarKind::Matched };
+                    let mut named = vec![];
                     for (i, p) in binds.iter().enumerate() {
                         let ty = fields.get(i).cloned().unwrap_or(Type::Error);
+                        names_of(p, &ty, &mut named);
                         self.bind(p, &ty, kind);
+                    }
+                    // Every case of a group names the same names, of the same types.
+                    if m.mode == Mode::Var && arm.also.iter().any(|(_, b)| !b.is_empty()) {
+                        self.error(span, t!("grouped_var"));
+                    }
+                    let mut union: Vec<(String, Type)> = vec![];
+                    for (n, t, _) in std::iter::once(&named).chain(others.iter().map(|(_, b)| b)).flatten() {
+                        if !union.iter().any(|(u, _)| u == n) {
+                            union.push((n.clone(), t.clone()));
+                        }
+                    }
+                    let first_case = (name.to_string(), span);
+                    for (case, (text, at)) in others.iter().map(|(n, b)| (b, (n.text.clone(), n.span))).chain([(&named, first_case)]) {
+                        for (n, t) in &union {
+                            match case.iter().find(|(c, ..)| c == n) {
+                                None => self.error(at, t!("grouped_name_missing", name = n, case = text)),
+                                Some((_, ct, _)) if ct != t && *ct != Type::Error && *t != Type::Error => {
+                                    self.error(at, t!("grouped_name_types", name = n, a = t.text(), b = ct.text(), case = text));
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }

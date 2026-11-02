@@ -167,6 +167,37 @@ fn main {
 weekend
 ```
 
+Cases with fields can share a line too, when each names the same names, of the same type: the case
+found gives its fields to them.
+
+```kova
+enum Shape {
+    Circle(radius: Float)
+    Square(side: Float)
+    Rect(width: Float, height: Float)
+}
+
+fn widest(s: Shape) -> Float {
+    return match s {
+        .Circle(x), .Square(x) => x
+        .Rect(w, h) => if w > h { w } else { h }
+    }
+}
+
+fn main {
+    print(widest(Shape.Square(3.0)))
+    print(widest(Shape.Rect(1.0, 4.0)))
+}
+```
+
+```text
+3.0
+4.0
+```
+
+`.Circle(x), .Rect(x, _)` works as well: what counts is the names, not where the fields are. A name
+missing from one case (`.Circle(x), .Point`) is refused, since `x` would have no value there.
+
 ## `match` gives a value
 
 Like `if`, `match` gives the value of the case taken, as in `area` above. A case may also run a

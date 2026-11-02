@@ -1,0 +1,30 @@
+// error: `m` must be named in each case of the group, and `Lost` has none
+// error: `m` is `String` in one case and `Int` in `Busy`: a name of grouped cases has one type
+// error: `match var` cannot group cases that name fields: write one case per variant
+// error: `Busy` has 2 field(s) (`message`, `seconds`), 1 given
+
+enum Error {
+    Failed(message: String)
+    Busy(message: String, seconds: Int)
+    Lost
+}
+
+fn main {
+    var e: Error := Error.Lost
+    match e {
+        .Failed(m), .Lost => print(m)
+        .Busy => print("busy")
+    }
+    match e {
+        .Failed(m), .Busy(_, m) => print("x")
+        .Lost => print("lost")
+    }
+    match var e {
+        .Failed(m), .Busy(m, _) => print(m)
+        .Lost => print("lost")
+    }
+    match e {
+        .Failed(m), .Busy(m) => print(m)
+        .Lost => print("lost")
+    }
+}

@@ -194,8 +194,9 @@ pub struct Match {
 #[derive(Clone)]
 pub struct Arm {
     pub case: Case,
-    /// `Saturday, Sunday =>`: the other variants of the arm, without fields (PLAN Part 4, "Grouped cases").
-    pub also: Vec<Name>,
+    /// `Saturday, Sunday =>`: the other variants of the arm (PLAN Part 4, "Grouped cases"), with
+    /// what receives their fields: `.Failed(m), .Busy(m) =>` names the same `m` in each.
+    pub also: Vec<(Name, Vec<Pattern>)>,
     pub body: Block,
 }
 

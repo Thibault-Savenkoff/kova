@@ -2158,21 +2158,21 @@ impl Parser<'_> {
             while self.is_sym(",") {
                 self.advance();
                 let name = self.case_name()?;
+                let mut binds = vec![];
                 if self.is_sym("(") {
                     let open = self.advance().span;
-                    while !self.is_sym(")") && self.kind() != Kind::Eof {
-                        self.advance();
+                    while !self.is_sym(")") {
+                        binds.push(self.pattern()?);
+                        if !self.is_sym(")") {
+                            self.expect(",")?;
+                        }
                     }
-                    let close = self.expect(")")?;
-                    self.diags.push(Diag::new(open.to(close), t!("grouped_fields")).help(t!("grouped_fields_help")));
+                    let close = self.advance().span;
+                    if binds.is_empty() {
+                        self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
+                    }
                 }
-                also.push(name);
-            }
-            if let Case::Variant { name, binds } = &case
-                && !also.is_empty()
-                && !binds.is_empty()
-            {
-                self.diags.push(Diag::new(name.span, t!("grouped_fields")).help(t!("grouped_fields_help")));
+                also.push((name, binds));
             }
         }
         let arrow = self.expect("=>")?;

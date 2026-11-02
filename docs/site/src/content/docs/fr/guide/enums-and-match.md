@@ -170,6 +170,37 @@ fn main {
 weekend
 ```
 
+Des cas avec champs peuvent aussi partager une ligne, quand chacun nomme les mêmes noms, du même
+type : le cas trouvé leur donne ses champs.
+
+```kova
+enum Shape {
+    Circle(radius: Float)
+    Square(side: Float)
+    Rect(width: Float, height: Float)
+}
+
+fn widest(s: Shape) -> Float {
+    return match s {
+        .Circle(x), .Square(x) => x
+        .Rect(w, h) => if w > h { w } else { h }
+    }
+}
+
+fn main {
+    print(widest(Shape.Square(3.0)))
+    print(widest(Shape.Rect(1.0, 4.0)))
+}
+```
+
+```text
+3.0
+4.0
+```
+
+`.Circle(x), .Rect(x, _)` marche aussi : ce qui compte, ce sont les noms, pas la place des champs.
+Un nom absent d'un cas (`.Circle(x), .Point`) est refusé, puisque `x` n'y aurait pas de valeur.
+
 ## `match` donne une valeur
 
 Comme `if`, `match` donne la valeur du cas pris, comme dans `area` plus haut. Un cas peut aussi

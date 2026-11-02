@@ -1,0 +1,54 @@
+// expect: 2.0
+// expect: 3.0
+// expect: 4.0
+// expect: no table
+// expect: busy
+// expect: owned f
+// expect: owned b
+// expect: lost
+
+enum Shape {
+    Circle(r: Float)
+    Square(side: Float)
+    Rect(w: Float, h: Float)
+    Point
+}
+
+enum Error {
+    Failed(message: String)
+    Busy(message: String, seconds: Int)
+    Lost
+}
+
+fn size(s: Shape) -> Float {
+    return match s {
+        .Circle(x), .Square(x) => x
+        .Rect(w, _) => w
+        .Point => 0.0
+    }
+}
+
+fn text(e: Error) -> String {
+    return match e {
+        .Failed(m), .Busy(m, _) => m.clone
+        .Lost => "lost"
+    }
+}
+
+fn made(k: Int) -> Error {
+    return if k = 0 { Error.Failed("f") } else if k = 1 { Error.Busy("b", 3) } else { Error.Lost }
+}
+
+fn main {
+    print(size(Shape.Circle(2.0)))
+    print(size(Shape.Square(3.0)))
+    print(size(Shape.Rect(4.0, 1.0)))
+    print(text(Error.Failed("no table")))
+    print(text(Error.Busy("busy", 5)))
+    for k in 0..3 {
+        match made(k) {
+            .Failed(m), .Busy(m, _) => print("owned {m}")
+            .Lost => print("lost")
+        }
+    }
+}

@@ -5502,7 +5502,7 @@ impl<'a> Translator<'a> {
                     let d = view.as_ref().expect("an enum, an optional or a result");
                     // `Saturday, Sunday =>`: the variants are different, so at most one test gives 1.
                     let mut test = None;
-                    for name in std::iter::once(name).chain(arm.also.iter().map(|n| n.text.as_str())) {
+                    for name in std::iter::once(name).chain(arm.also.iter().map(|(n, _)| n.text.as_str())) {
                         let (number, is) = (self.constant(d.variant(name).unwrap().0 as i64), self.int_local());
                         self.emit(Inst::Binary(is, Op::Eq, v[0], number, NOWHERE));
                         test = Some(match test {
@@ -5520,6 +5520,38 @@ impl<'a> Translator<'a> {
                 Some(_) if view.is_none() => {
                     let Case::Bind(p) = &arm.case else { unreachable!("a tuple's case") };
                     self.bind(p, &v, &ty);
+                }
+                // `.Failed(m), .Busy(m) =>`: the case found gives its fields to the same names.
+                Some((name, binds)) if !binds.is_empty() && !arm.also.is_empty() => {
+                    let d = view.as_ref().expect("an enum, an optional or a result");
+                    let group: Vec<(&str, Vec<&Pattern>)> =
+                        std::iter::once((name, binds)).chain(arm.also.iter().map(|(n, b)| (n.text.as_str(), b.iter().collect()))).collect();
+                    let (join, last) = (self.new_block(), group.len() - 1);
+                    let mut common: Option<Vars> = None;
+                    for (k, (name, binds)) in group.into_iter().enumerate() {
+                        let (yes, no) = (self.new_block(), self.new_block());
+                        if k < last {
+                            let (number, is) = (self.constant(d.variant(name).unwrap().0 as i64), self.int_local());
+                            self.emit(Inst::Binary(is, Op::Eq, v[0], number, NOWHERE));
+                            self.go(End::Branch(is, yes, no), yes);
+                        } else {
+                            self.go(End::Jump(yes), yes);
+                        }
+                        self.names.push(Scope { borrowed, vars: HashMap::new() });
+                        self.variant_binds(d, name, &binds, &v, borrowed);
+                        let got = self.names.pop().unwrap().vars;
+                        if common.is_none() {
+                            let made: Vars = got.iter().map(|(n, (_, t))| (n.clone(), (self.new_slots(t), t.clone()))).collect();
+                            common = Some(made);
+                        }
+                        for (n, (slots, _)) in got {
+                            let to = common.as_ref().unwrap()[&n].0.clone();
+                            self.copy(&to, &slots);
+                        }
+                        self.go(End::Jump(join), no);
+                    }
+                    self.go(End::Unreachable, join);
+                    self.names.last_mut().unwrap().vars.extend(common.unwrap_or_default());
                 }
                 Some((name, binds)) if !binds.is_empty() => {
                     let d = view.as_ref().expect("an enum, an optional or a result");
@@ -5564,6 +5596,24 @@ impl<'a> Translator<'a> {
             self.go(End::Jump(after), next);
         }
         self.go(End::Unreachable, after);
+    }
+
+    /// The fields of variant `name` of `v`, given to the names of `binds` (`match` without `var`).
+    fn variant_binds(&mut self, d: &crate::types::EnumDef, name: &str, binds: &[&Pattern], v: &[Local], borrowed: bool) {
+        let (i, fields) = d.variant(name).unwrap();
+        let mut at = variant_slice(d, i).0;
+        for (p, (_, t)) in binds.iter().zip(fields) {
+            let n = scalars(&laid_out(&d.name, t)).len();
+            let mut slots = v[at..at + n].to_vec();
+            if let Type::Box(_) = laid_out(&d.name, t) {
+                slots = self.unbox(v[at], t);
+                if !borrowed {
+                    self.emit(Inst::ListFree(v[at]));
+                }
+            }
+            self.bind(p, &slots, t);
+            at += n;
+        }
     }
 
     /// 1 if the value `v` (of type `ty`) has every value written in `p`; `None` if `p` has none.

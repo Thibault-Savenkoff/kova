@@ -458,8 +458,6 @@ lang en {
     lang_check_ok := "  complete compared with {others}"
 
     // ---- Enums and `match` (J4) ----
-    grouped_fields := "cases grouped with `,` cannot take fields yet"
-    grouped_fields_help := "write one case per variant to use its fields, or leave the fields out: `.Circle, .Square =>`"
     empty_parens_variant := "a variant without fields is written without `()`: `{name}`"
     variant_exists := "the variant `{name}` already exists (line {line})"
     not_enum := "`{type}` is not an enum: it has no variant `{name}`"
@@ -482,6 +480,9 @@ lang en {
     match_frozen := "`{name}` is being matched: it cannot change or be moved inside its `match`"
     matched_immutable := "`{name}` is a field of the value matched: it cannot change"
     matched_immutable_help := "to change the value through `{name}`, write `match var` before a variable: `match var shape \{ … \}`"
+    grouped_name_missing := "`{name}` must be named in each case of the group, and `{case}` has none"
+    grouped_name_types := "`{name}` is `{a}` in one case and `{b}` in `{case}`: a name of grouped cases has one type"
+    grouped_var := "`match var` cannot group cases that name fields: write one case per variant"
     case_twice := "the case `{name}` is already handled (line {line})"
     case_after_any := "this case is never reached: `_` (line {line}) already handles every other case"
     case_any_useless := "`_` handles nothing: every variant of `{type}` already has its case"
