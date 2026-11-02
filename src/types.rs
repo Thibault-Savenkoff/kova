@@ -961,6 +961,8 @@ pub struct Info {
     pub seen: Vec<Seen>,
     /// The local names never used, with their name (shown as warnings).
     pub unused: Vec<(Span, String)>,
+    /// The `var`s that never change (shown as warnings: `let` says more).
+    pub fixed: Vec<(Span, String)>,
     /// For the editor: the variables declared without their type written anywhere
     /// (`for score in scores`, `Circle(r) =>`), shown in grey after their name.
     pub hints: Vec<(Span, Type)>,
@@ -1281,6 +1283,9 @@ struct Checker<'a> {
     seen: Vec<Seen>,
     /// The local names declared (`let`, `var`, `for`, a case's fields), for `Info::unused`.
     locals: Vec<(Span, String)>,
+    /// The `var x` among them, and the declarations of the variables changed somewhere.
+    vars: Vec<(Span, String)>,
+    changed: std::collections::HashSet<usize>,
     hints: Vec<(Span, Type)>,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
@@ -1370,6 +1375,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         spans: vec![Span::new(0, 0); nb_exprs],
         seen: vec![],
         locals: vec![],
+        vars: vec![],
+        changed: Default::default(),
         hints: vec![],
         matches: vec![],
         guards: HashMap::new(),
@@ -1900,7 +1907,10 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     // "Unused names"). Writing to it counts as a use.
     let used: std::collections::HashSet<usize> = seen.iter().filter(|s| s.span != s.decl).map(|s| s.decl.start).collect();
     let main_end = src.find(crate::diag::SEPARATOR).unwrap_or(src.len());
-    let unused = c.locals.into_iter().filter(|(span, _)| span.start < main_end && !used.contains(&span.start)).collect();
+    let unused: Vec<(Span, String)> = c.locals.into_iter().filter(|(span, _)| span.start < main_end && !used.contains(&span.start)).collect();
+    let fixed = (c.vars.into_iter())
+        .filter(|(span, _)| span.start < main_end && !c.changed.contains(&span.start) && !unused.iter().any(|(u, _)| u == span))
+        .collect();
     let info = Info {
         types: c.types,
         moves,
@@ -1917,6 +1927,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         spans,
         seen,
         unused,
+        fixed,
         hints,
         matches,
         guards: c.guards,
@@ -3359,6 +3370,13 @@ impl Checker<'_> {
             && !name.text.contains(' ')
         {
             self.locals.push((name.span, name.text.clone()));
+            // `var x := …`, not a `match var` case's field nor `if var x := m[k]`.
+            // ponytail: `var (a, b) := …` is never told it could be `let`.
+            let before = self.src[..name.span.start].trim_end();
+            let words: Vec<&str> = before.rsplit(|c: char| c.is_whitespace()).take(2).collect();
+            if kind == VarKind::Var && words.first() == Some(&"var") && !matches!(words.get(1), Some(&"if" | &"while")) {
+                self.vars.push((name.span, name.text.clone()));
+            }
         }
         if matches!(kind, VarKind::Element | VarKind::Matched) {
             self.hints.push((name.span, ty.clone()));
@@ -3859,6 +3877,9 @@ impl Checker<'_> {
 
     /// `n` (a variable of this kind) is assigned or given to a `var self` method.
     fn may_change(&mut self, n: &str, span: Span, kind: VarKind) {
+        if let Some(v) = self.lookup(n) {
+            self.changed.insert(v.span.start);
+        }
         match kind {
             VarKind::Var | VarKind::Receiver(Mode::Var) => {}
             VarKind::Let => self.diags.push(

@@ -37,7 +37,8 @@ s'écrire : `==` n'existe pas, et `:=` n'est pas permis là où une valeur est a
 
 Préfère `let` : une valeur qui ne peut pas changer, c'est une chose de moins à suivre en lisant le
 code. Le compilateur refuse de changer un `let`, et propose de le déclarer avec `var` si c'était
-voulu.
+voulu. Dans l'autre sens, un `var` qui ne change jamais reçoit un avertissement (dans l'éditeur et
+de `kova build`) qui dit qu'il peut être un `let`.
 
 ### Les noms jamais utilisés
 

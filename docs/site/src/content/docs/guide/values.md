@@ -35,7 +35,9 @@ is not allowed where a value is expected.
 `+=`, `-=`, `*=` and `/=` change a `var` in place: `age += 1` is `age := age + 1`.
 
 Prefer `let`: a value that cannot change is one less thing to follow when reading the code. The
-compiler refuses to change a `let`, and says to declare it with `var` if that was meant.
+compiler refuses to change a `let`, and says to declare it with `var` if that was meant. The other
+way round, a `var` that never changes gets a warning (in the editor and from `kova build`) saying it
+can be a `let`.
 
 ### Names never used
 

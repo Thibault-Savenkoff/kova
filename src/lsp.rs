@@ -185,12 +185,14 @@ fn errors(uri: &Uri, src: &str) -> Vec<Diagnostic> {
         Some(info) if diags.is_empty() => crate::warnings(info),
         _ => vec![],
     };
+    let unused = |d: &diag::Diag| info.as_ref().is_some_and(|i| i.unused.iter().any(|(s, _)| *s == d.span));
     let warned = warnings.iter().map(|d| Diagnostic {
         range: Range::new(position(src, d.span.start), position(src, d.span.end)),
         severity: Some(DiagnosticSeverity::WARNING),
         source: Some("kova".into()),
         message: format!("{} — {}{}", d.message, t!("help_prefix"), d.help.as_deref().unwrap_or("")),
-        tags: Some(vec![DiagnosticTag::UNNECESSARY]),
+        // Greyed out when never used; a `var` that could be `let` is only underlined.
+        tags: unused(d).then(|| vec![DiagnosticTag::UNNECESSARY]),
         ..Default::default()
     });
     let warned: Vec<Diagnostic> = warned.collect();
@@ -1571,10 +1573,10 @@ mod tests {
     #[test]
     fn unused_names() {
         let uri = file_uri("/none/main.kova").unwrap();
-        let src = "fn main {\n    let a: Int := 1\n    var b: Int := 2\n    b := 3\n    for i in 0..2 {\n        print(a)\n    }\n    for _ in 0..2 {}\n    let _c: Int := 4\n    for (x, y) in [(1, 2)] {\n        print(x)\n    }\n}\n";
+        let src = "fn main {\n    let a: Int := 1\n    var b: Int := 2\n    b := 3\n    for i in 0..2 {\n        print(a)\n    }\n    for _ in 0..2 {}\n    let _c: Int := 4\n    for (x, y) in [(1, 2)] {\n        print(x)\n    }\n    var d: Int := 5\n    print(d)\n}\n";
         let found: Vec<(u32, u32)> = errors(&uri, src).iter().map(|d| (d.range.start.line, d.range.start.character)).collect();
-        // `i` and `y`: `b` is written to, `_`, `_c` are meant to be unused.
-        assert_eq!(found, [(4, 8), (9, 12)]);
+        // `i` and `y`: `b` is written to, `_`, `_c` are meant to be unused; `d` could be a `let`.
+        assert_eq!(found, [(4, 8), (9, 12), (12, 8)]);
         assert!(errors(&uri, "fn main {\n    let a: Int := \"x\"\n}\n").iter().all(|d| d.severity == Some(DiagnosticSeverity::ERROR)));
     }
 

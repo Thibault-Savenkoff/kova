@@ -399,7 +399,11 @@ fn fmt(files: &[&str]) -> i32 {
 /// What is not wrong but useless: a local name never used (PLAN Part 4 "Unused names").
 pub fn warnings(info: &types::Info) -> Vec<diag::Diag> {
     let unused = info.unused.iter();
-    unused.map(|(span, name)| diag::Diag::new(*span, t!("unused_name", name = name)).help(t!("unused_name_help"))).collect()
+    let unused = unused.map(|(span, name)| diag::Diag::new(*span, t!("unused_name", name = name)).help(t!("unused_name_help")));
+    let fixed = info.fixed.iter().map(|(span, name)| diag::Diag::new(*span, t!("never_changes", name = name)).help(t!("never_changes_help")));
+    let mut all: Vec<diag::Diag> = unused.chain(fixed).collect();
+    all.sort_by_key(|d| d.span.start);
+    all
 }
 
 fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>, diag::Sources) {

@@ -9,6 +9,8 @@ lang fr {
     warning_prefix := "attention : "
     unused_name := "`{name}` n'est jamais utilisé"
     unused_name_help := "supprime-le, ou écris `_` à sa place si la valeur doit quand même être calculée"
+    never_changes := "`{name}` est un `var` qui ne change jamais"
+    never_changes_help := "déclare-le avec `let` : qui lit le code sait alors qu'il reste le même"
     word_or := "ou"
     found_newline := "une fin de ligne"
     found_eof := "la fin du fichier"
