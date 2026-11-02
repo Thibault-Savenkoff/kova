@@ -1453,6 +1453,17 @@ pub extern "C" fn kova_listen(port: i64, everyone: i64, folder: i64, log: i64) -
     alloc::boxed::Box::into_raw(alloc::boxed::Box::new(http::Server::<sys::Net>::new(l, log == 0))) as i64
 }
 
+/// The end of `serve` (src/kir.rs `StrOp::Unlisten`): every worker has left.
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_unlisten(server: i64) -> i64 {
+    let server = unsafe { alloc::boxed::Box::from_raw(server as *mut http::Server<sys::Net>) };
+    server.close(&mut sys::Net);
+    // After `serve`, Ctrl+C stops the program again, and a next `serve` starts afresh.
+    sys::release_stop();
+    STOPPING.store(false, SeqCst);
+    0
+}
+
 /// A question being answered: its connection, then who asked, its method and its URL if it is
 /// written when answered.
 type Asked = (Socket, Option<([u8; 4], String, String)>);

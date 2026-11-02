@@ -38,7 +38,8 @@ struct Heap {
     broken: std::cell::Cell<bool>,
     nothing: (usize, Vec<i64>),
     /// `serve`'s sockets: a listener's number is its place here, a connection's too.
-    listeners: Vec<crate::http::Server<crate::web::System>>,
+    /// `None` once its `serve` ended.
+    listeners: Vec<Option<crate::http::Server<crate::web::System>>>,
     /// Each question being answered: its connection, then who asked, its method and its URL if
     /// it is written when answered.
     links: Vec<Option<(std::net::TcpStream, Option<([u8; 4], String, String)>)>>,
@@ -968,7 +969,8 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             match u16::try_from(locals[a[0]]).ok().filter(|&p| p > 0).and_then(|p| crate::web::System.listen(p, everyone).map(|l| (p, l))) {
                                 None => -1,
                                 Some((port, l)) => {
-                                    heap.listeners.push(crate::http::Server::new(l, log == 0));
+                                    crate::web::catch_stop(false);
+                                    heap.listeners.push(Some(crate::http::Server::new(l, log == 0)));
                                     let title = match locals[a[2]] {
                                         0 => t!("serving", port = port),
                                         f => t!("serving_files", folder = crate::http::shown_folder(heap.get(f)), port = port),
@@ -986,8 +988,11 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::Accept => {
                             out.flush().unwrap();
-                            let server = &mut heap.listeners[locals[a[0]] as usize];
-                            let (link, q, from) = crate::http::next_question(&mut crate::web::System, server).expect("`kova run` never stops a server");
+                            let server = heap.listeners[locals[a[0]] as usize].as_mut().expect("a server not stopped");
+                            // Ctrl+C: 0, and the loop of `serve` ends.
+                            match crate::http::next_question(&mut crate::web::System, server) {
+                            None => 0,
+                            Some((link, q, from)) => {
                             let asked = server.logs.then(|| (from, q.method.clone(), q.url.clone()));
                             heap.links.push(Some((link, asked)));
                             let conn = heap.links.len() as i64 - 1;
@@ -1001,6 +1006,15 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                             let data = heap.byte_list(q.data);
                             let slots = vec![heap.make(q.method), heap.make(q.url), headers, heap.make(q.body), 0, 0, data, conn];
                             heap.add(Object::List { width: 8, length: 1, slots, index: 0, small: None })
+                            }
+                            }
+                        }
+                        StrOp::Unlisten => {
+                            if let Some(server) = heap.listeners[locals[a[0]] as usize].take() {
+                                server.close(&mut crate::web::System);
+                            }
+                            crate::web::catch_stop(true);
+                            0
                         }
                         StrOp::Reply => {
                             let slots = heap.list(locals[a[2]]).2.clone();

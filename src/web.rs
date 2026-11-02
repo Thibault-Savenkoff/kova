@@ -8,6 +8,48 @@ use crate::http::{Fail, Network, Serve};
 
 pub struct System;
 
+/// Like runtime/kova.rs `STOPPING`, for the interpreter (`kova debug`, or `kova run` without a
+/// runtime): Ctrl+C stops `serve`, a second one the program (130).
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn stop_asked() {
+    if STOPPING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        std::process::exit(130);
+    }
+}
+
+/// Like the runtime's `sys::catch_stop`: SIGINT and SIGTERM, or Windows' console events; with
+/// `release`, `sys::release_stop` (the end of `serve`).
+pub fn catch_stop(release: bool) {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn signal(signal: i32, handler: usize) -> usize;
+        }
+        extern "C" fn on_stop(_: i32) {
+            stop_asked();
+        }
+        for s in [2, 15] {
+            unsafe { signal(s, if release { 0 } else { on_stop as *const () as usize }) };
+        }
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetConsoleCtrlHandler(handler: usize, add: i32) -> i32;
+        }
+        extern "system" fn on_stop(_: u32) -> i32 {
+            stop_asked();
+            1
+        }
+        unsafe { SetConsoleCtrlHandler(on_stop as *const () as usize, (!release) as i32) };
+    }
+    if release {
+        STOPPING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// What `kova run` connects with: the system, encrypted by SChannel on Windows, OpenSSL on Linux,
 /// Network.framework on macOS.
 #[cfg(windows)]
@@ -198,11 +240,15 @@ impl Serve for System {
 
     fn ready(&mut self, listener: &TcpListener, links: &[TcpStream]) -> Vec<bool> {
         let mut fds: Vec<Poll> = links.iter().map(raw).chain([raw(listener)]).map(|fd| Poll { fd, events: READ, revents: 0 }).collect();
-        if unsafe { poll(fds.as_mut_ptr(), fds.len() as _, -1) } <= 0 {
+        if unsafe { poll(fds.as_mut_ptr(), fds.len() as _, 250) } <= 0 {
             return vec![false; fds.len()];
         }
         // Whatever it says (data, closed, failed), `receive` tells which.
         fds.iter().map(|p| p.revents != 0).collect()
+    }
+
+    fn stopping(&mut self) -> bool {
+        STOPPING.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 

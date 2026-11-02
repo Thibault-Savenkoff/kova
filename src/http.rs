@@ -667,6 +667,14 @@ impl<S: Serve> Server<S> {
     pub fn new(listener: S::Listener, logs: bool) -> Self {
         Server { listener, links: Vec::new(), got: Vec::new(), from: Vec::new(), logs }
     }
+
+    /// The server stopped: its port is free again, the connections not asking yet are closed.
+    pub fn close(self, net: &mut S) {
+        for link in self.links {
+            net.close(link);
+        }
+        net.stop(self.listener);
+    }
 }
 
 /// A question received: a `Request` in Kova (its headers' names in small letters).

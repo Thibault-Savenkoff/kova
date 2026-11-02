@@ -1126,10 +1126,10 @@ pub fn catch_stop() {
         crate::stop_asked();
     }
     #[cfg(target_arch = "x86_64")]
-    let (flags, back) = (0x0400_0000, kova_sigreturn as usize);
+    let (flags, back) = (0x0400_0000, kova_sigreturn as *const () as usize);
     #[cfg(target_arch = "aarch64")]
     let (flags, back) = (0, 0);
-    let action = [on_stop as usize, flags, back, 0];
+    let action = [on_stop as *const () as usize, flags, back, 0];
     for signal in [2, 15] {
         unsafe { call(signals::SIGACTION, signal, action.as_ptr() as usize, 0, 8, 0, 0) };
     }
@@ -1142,6 +1142,15 @@ unsafe extern "C" {
 }
 #[cfg(android)]
 pub fn catch_stop() {}
+
+/// SIG_DFL again.
+pub fn release_stop() {
+    #[cfg(not(android))]
+    for signal in [2, 15] {
+        let plain = [0usize; 4];
+        unsafe { call(signals::SIGACTION, signal, plain.as_ptr() as usize, 0, 8, 0, 0) };
+    }
+}
 
 /// Android keeps its own handlers.
 #[cfg(android)]

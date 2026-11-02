@@ -186,12 +186,17 @@ pub fn exit(code: i32) -> ! {
 
 /// Ctrl+C, Ctrl+Break, the console closed: `crate::stop_asked`. Windows runs this on a thread of
 /// its own.
+extern "system" fn on_stop(_: u32) -> i32 {
+    crate::stop_asked();
+    1
+}
+
 pub fn catch_stop() {
-    extern "system" fn on_stop(_: u32) -> i32 {
-        crate::stop_asked();
-        1
-    }
-    unsafe { SetConsoleCtrlHandler(on_stop as usize, 1) };
+    unsafe { SetConsoleCtrlHandler(on_stop as *const () as usize, 1) };
+}
+
+pub fn release_stop() {
+    unsafe { SetConsoleCtrlHandler(on_stop as *const () as usize, 0) };
 }
 
 /// The handle of stdin (0), stdout (1) or stderr (2).

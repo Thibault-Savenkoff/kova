@@ -149,6 +149,8 @@ pub fn thread_id() -> i64 {
 
 pub fn catch_stop() {}
 
+pub fn release_stop() {}
+
 /// In nanoseconds since 1970.
 pub fn now() -> u64 {
     unsafe { (time() * 1e6) as u64 }

@@ -125,7 +125,14 @@ pub fn catch_stop() {
         crate::stop_asked();
     }
     for signal in [2, 15] {
-        unsafe { c::signal(signal, on_stop as usize) };
+        unsafe { c::signal(signal, on_stop as *const () as usize) };
+    }
+}
+
+/// SIG_DFL again.
+pub fn release_stop() {
+    for signal in [2, 15] {
+        unsafe { c::signal(signal, 0) };
     }
 }
 

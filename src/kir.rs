@@ -404,6 +404,8 @@ pub enum StrOp {
     Cores,
     /// `threads.id`: the system's number of the running thread.
     ThreadId,
+    /// The end of `serve`: its port is free again.
+    Unlisten,
     /// `data.deflate`, `data.inflate`, `data.crc32`: the second argument says which (`shared::PACKINGS`).
     Pack,
     /// `http::net_raw`, `http::net_bytes`.
@@ -1395,6 +1397,8 @@ impl<'a> Translator<'a> {
             (Some(n), Some(block)) if self.several_threads() => self.workers(listener, n, block),
             _ => self.answer_loop(listener, block, &given, folder),
         }
+        let done = self.int_local();
+        self.emit(Inst::Str(done, StrOp::Unlisten, vec![listener]));
         vec![]
     }
 

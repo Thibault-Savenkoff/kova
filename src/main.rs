@@ -320,11 +320,11 @@ mod windows_job {
         fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> *mut c_void;
         fn SetInformationJobObject(job: *mut c_void, class: i32, info: *const c_void, size: u32) -> i32;
         fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
-        fn SetConsoleCtrlHandler(handler: *const c_void, add: i32) -> i32;
+        fn SetConsoleCtrlHandler(handler: usize, add: i32) -> i32;
     }
 
     pub fn ignore_ctrl_c() {
-        unsafe { SetConsoleCtrlHandler(std::ptr::null(), 1) };
+        unsafe { SetConsoleCtrlHandler(0, 1) };
     }
 
     /// JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
