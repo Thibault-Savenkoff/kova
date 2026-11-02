@@ -1304,7 +1304,7 @@ fn in_expr(e: &Expr, cursor: usize, vars: &mut Vec<(String, String)>) {
 fn pattern_names(p: &Pattern, ty: Option<&TypeAst>, vars: &mut Vec<(String, String)>) {
     match (p, ty) {
         (Pattern::Name(n), _) => vars.push((n.text.clone(), ty.map_or(String::new(), TypeAst::text))),
-        (Pattern::Ignore(_), _) => {}
+        (Pattern::Ignore(_) | Pattern::Value(_), _) => {}
         (Pattern::Tuple(ps, _), Some(TypeAst::Tuple(ts))) if ps.len() == ts.len() => {
             for (p, t) in ps.iter().zip(ts) {
                 pattern_names(p, Some(t), vars);

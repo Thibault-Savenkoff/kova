@@ -21,6 +21,11 @@ programme qui utilise `threads` tourne en code natif, dans `kova run` et `kova t
 
 Le bloc travaille sur ses propres copies de ce qu'il lit et ne peut pas changer ce qui l'entoure.
 
+## threads.id
+
+`threads.id -> Int` est un numéro du fil qui tourne, donné par le système : deux fils qui tournent en
+même temps n'ont jamais le même. Un numéro peut revenir pour un fil lancé après la fin d'un autre.
+
 ## threads.Task
 
 | Méthode | Fait |

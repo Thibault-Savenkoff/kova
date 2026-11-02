@@ -84,8 +84,8 @@ server then writes the addresses they can use.
 
 `web.serve(8080) workers(8) { … }` answers up to 8 questions at the same time, each on its own
 thread, so a slow answer keeps no one else waiting. The block may read the values around it but
-not change them ([why](/guide/concurrency/#why-it-is-safe)). `kova run` still answers one at a
-time: only the built program uses threads.
+not change them ([why](/guide/concurrency/#why-it-is-safe)). `kova run` uses the threads too;
+`kova debug` answers one question at a time.
 
 Without `workers`, the server still reads every connection at once and gives the block whichever
 question is complete first, so a browser's spare connection that says nothing blocks no one.

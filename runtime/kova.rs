@@ -1986,6 +1986,11 @@ pub extern "C" fn kova_cores() -> i64 {
     sys::cores()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn kova_thread_id() -> i64 {
+    sys::thread_id()
+}
+
 /// `sleep(seconds)`, a Float's bits: what `print` left is shown first; 0 or less waits nothing.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_sleep(bits: i64) -> i64 {

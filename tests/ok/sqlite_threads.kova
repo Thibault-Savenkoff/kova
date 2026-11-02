@@ -1,0 +1,46 @@
+// expect: 8 threads, 400 lines, 0 mixed up
+// expect: err(a database in memory lives in the thread that opened it: use a file to share it between threads)
+
+import sqlite
+import threads
+import files
+
+// Each thread inserts its lines and reads each one back through `last_id`: with one connection
+// for all, `last_id` could be another thread's line.
+fn main {
+    let path: String := "sqlite_threads_test.db"
+    if files.exists(path) {
+        files.remove(path)?
+    }
+    let db: sqlite.Database := sqlite.open(path)?
+    db.script("CREATE TABLE lines (id INTEGER PRIMARY KEY, who TEXT)")?
+    var tasks: List<threads.Task<Int>> := []
+    for k in 0..8 {
+        tasks.add(threads.spawn {
+            var mixed: Int := 0
+            for i in 0..50 {
+                let who: String := "thread {k} line {i}"
+                match db.run("INSERT INTO lines (who) VALUES (?)") with([.Text(who.clone)]) {
+                    err(e) => print("insert: {e}")
+                    ok => {}
+                }
+                let back: List<sqlite.Row> := db.query("SELECT who FROM lines WHERE id = ?") with([.Int(db.last_id)]) else []
+                if back.is_empty || (back[0].text("who") else "") != who {
+                    mixed += 1
+                }
+            }
+            mixed
+        })
+    }
+    var mixed: Int := 0
+    for t in move tasks {
+        mixed += t.wait
+    }
+    let count: Int := db.query("SELECT COUNT(*) AS n FROM lines")? [0].int("n") else 0
+    print("8 threads, {count} lines, {mixed} mixed up")
+    let memory: sqlite.Database := sqlite.open(":memory:")?
+    print(threads.spawn { memory.query("SELECT 1 AS one") }.wait)
+    db.close
+    memory.close
+    files.remove(path)?
+}

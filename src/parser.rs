@@ -559,6 +559,31 @@ impl Parser<'_> {
         Ok(Pattern::Tuple(patterns, open.to(close)))
     }
 
+    /// `("GET", n)` in a `match` case: a tuple whose parts are names, `_`, tuples or values.
+    fn case_tuple(&mut self) -> R<Pattern> {
+        let open = self.expect("(")?;
+        let mut patterns = vec![];
+        loop {
+            patterns.push(if self.is_sym("(") {
+                self.case_tuple()?
+            } else if matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str) || self.is_sym("-") {
+                let range = LEVELS.iter().position(|(ops, _)| ops[0].0 == "..").unwrap();
+                Pattern::Value(self.level(range)?)
+            } else {
+                self.pattern()?
+            });
+            if !self.is_sym(",") {
+                break;
+            }
+            self.advance();
+        }
+        let close = self.expect(")")?;
+        if patterns.len() < 2 {
+            return self.error(open.to(close), t!("tuple_too_small"));
+        }
+        Ok(Pattern::Tuple(patterns, open.to(close)))
+    }
+
     /// `x`, `t.0`, `rex.age`, `l[i]` or `(a, b)` left of `:=`: re-reads the expression already parsed.
     fn target(&mut self, e: Expr) -> R<Target> {
         let span = e.span;
@@ -2106,7 +2131,9 @@ impl Parser<'_> {
                 values.push(self.level(range)?);
             }
             Case::Values(values)
-        } else if matches!(self.kind(), Kind::Ident) || self.is_sym("(") {
+        } else if self.is_sym("(") {
+            Case::Bind(self.case_tuple()?)
+        } else if matches!(self.kind(), Kind::Ident) {
             Case::Bind(self.pattern()?)
         } else {
             let name = self.case_name()?;

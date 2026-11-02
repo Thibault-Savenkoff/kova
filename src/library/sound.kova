@@ -5,12 +5,20 @@ import files
 
 public:
 
-enum Error : Equal {
+enum Error : Equal, Display {
     NotFound(path: String)
     // Not an uncompressed WAV.
     NotSound
     // No sound card, or no sound server on Linux.
     NoDevice
+
+    fn to_string(self) -> String {
+        return match self {
+            .NotFound(p) => "no sound file at {p}"
+            .NotSound => "not an uncompressed WAV sound"
+            .NoDevice => "no sound card or sound server"
+        }
+    }
 }
 
 // Plays a WAV file, and comes back when it is over: in a `threads.spawn`, the program goes on meanwhile.

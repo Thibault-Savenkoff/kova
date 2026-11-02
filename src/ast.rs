@@ -414,6 +414,28 @@ pub enum Pattern {
     Tuple(Vec<Pattern>, Span),
     /// `_`: the value is ignored.
     Ignore(Span),
+    /// `"GET"`, `2`, `1..=5` inside a tuple of a `match` case: `("GET", n) =>` (PLAN Part 4,
+    /// "Tuples in `match`").
+    Value(Expr),
+}
+
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Name(n) => n.span,
+            Pattern::Tuple(_, s) | Pattern::Ignore(s) => *s,
+            Pattern::Value(e) => e.span,
+        }
+    }
+
+    /// Whether every value fits: no value written inside.
+    pub fn takes_all(&self) -> bool {
+        match self {
+            Pattern::Value(_) => false,
+            Pattern::Tuple(ps, _) => ps.iter().all(Pattern::takes_all),
+            _ => true,
+        }
+    }
 }
 
 /// What receives a value in `:=`: `x`, `t.0`, `rex.age`, `(a, b)`.

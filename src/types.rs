@@ -571,6 +571,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("system.run(…) args(…)", "fn system.run(program: String) args(words: List<String>) -> system.Finished or system.RunError"),
         ("system.clock", "fn system.clock -> Float"),
         ("system.cores", "fn system.cores -> Int"),
+        ("threads.id", "fn threads.id -> Int"),
         ("system.sleep", "fn system.sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
         ("secure.random", "fn secure.random(from..to) -> Int"),
@@ -1499,6 +1500,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("system.clock".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("system.cores".into(), Signature::new(None, vec![], Type::Int));
+    c.functions.insert("threads.id".into(), Signature::new(None, vec![], Type::Int));
     // What src/library/net.kova is written with.
     let read = |ts: Vec<Type>| ts.into_iter().map(|t| (Mode::Read, t)).collect::<Vec<_>>();
     let bytes = Type::List(Box::new(Type::Int));
@@ -3274,6 +3276,9 @@ impl Checker<'_> {
                 t if !self.has(&t, "Display") => {
                     let code = &self.src[e.span.start..e.span.end];
                     let help = match &t {
+                        // A module's type is not the program's to change: it is extended.
+                        Type::Struct(d) if d.name.contains('.') => t!("interp_display_extend_help", name = d.name),
+                        Type::Enum(d) if d.name.contains('.') => t!("interp_display_extend_help", name = d.name),
                         Type::Struct(d) => t!("interp_display_help", name = d.name, kind = "struct"),
                         Type::Enum(d) => t!("interp_display_help", name = d.name, kind = "enum"),
                         Type::Param(p) => t!("param_display_help", type = p.name),
@@ -3325,6 +3330,8 @@ impl Checker<'_> {
         match (p, ty) {
             (Pattern::Name(n), _) => self.declare(n, ty.clone(), kind),
             (Pattern::Ignore(_), _) => {}
+            // Checked by `case_values`, the only place where a value may be.
+            (Pattern::Value(_), _) => {}
             (Pattern::Tuple(ps, _), Type::Tuple(ts)) if ps.len() == ts.len() => {
                 for (p, t) in ps.iter().zip(ts) {
                     self.bind(p, t, kind);
@@ -4900,10 +4907,8 @@ impl Checker<'_> {
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
             Stmt::Declare { mutable, pattern, ty: None, value } => {
-                let (span, name) = match pattern {
-                    Pattern::Name(n) => (n.span, n.text.clone()),
-                    Pattern::Tuple(_, s) | Pattern::Ignore(s) => (*s, self.src[s.start..s.end].to_string()),
-                };
+                let span = pattern.span();
+                let name = self.src[span.start..span.end].to_string();
                 // The value's type is known: the help writes it (`let before: Date := …`), and
                 // the rest of the program is checked with it. Kova still never writes it for you.
                 let mark = self.diags.len();
@@ -5403,7 +5408,16 @@ impl Checker<'_> {
                     Type::Optional(t) | Type::Result(t, _) => *t,
                     Type::Error => Type::Error,
                     t => {
-                        self.error(x.span, t!("else_not_optional", type = t.text()));
+                        let mut d = Diag::new(x.span, t!("else_not_optional", type = t.text()));
+                        // `args[1] else "x"`: `l[i]` stops the program when there is no element `i`.
+                        if let ExprKind::Index(list, i) = &x.kind
+                            && matches!(self.types.get(list.id), Some(Type::List(_)))
+                            && i.range().is_none()
+                        {
+                            let (l, i) = (&self.src[list.span.start..list.span.end], &self.src[i.span.start..i.span.end]);
+                            d = d.help(t!("else_index_help", list = l, index = i, type = t.text()));
+                        }
+                        self.diags.push(d);
                         Type::Error
                     }
                 };
@@ -5968,10 +5982,18 @@ impl Checker<'_> {
         if matches!(t, Type::Int | Type::Char | Type::String) {
             return self.match_values(m, &t, expected, value);
         }
+        if matches!(t, Type::Tuple(_)) {
+            return self.match_tuple(m, &t, expected, value);
+        }
         for arm in &m.arms {
             if let Case::Values(vs) = &arm.case {
                 let span = vs[0].span.to(vs[vs.len() - 1].span);
                 self.error(span, t!("case_value_on", type = t.text()));
+            }
+            if let Case::Bind(p) = &arm.case
+                && !p.takes_all()
+            {
+                self.error(p.span(), t!("case_value_on", type = t.text()));
             }
         }
         let optional = matches!(t, Type::Optional(_));
@@ -5991,8 +6013,8 @@ impl Checker<'_> {
         for arm in &m.arms {
             let span = match &arm.case {
                 Case::Variant { name, .. } => name.span,
-                Case::Bind(Pattern::Name(n)) => n.span,
-                Case::Bind(Pattern::Tuple(_, s) | Pattern::Ignore(s)) | Case::Any(s) => *s,
+                Case::Bind(p) => p.span(),
+                Case::Any(s) => *s,
                 Case::Values(vs) => vs[0].span,
             };
             let shown = self.src[span.start..span.end].to_string();
@@ -6091,10 +6113,7 @@ impl Checker<'_> {
                         && let Some((root, _)) = place_root(map_read(&m.subject, &self.types).unwrap_or(&m.subject), &self.types)
                         && let Some(v) = self.lookup(root)
                     {
-                        let at = match first {
-                            Pattern::Name(n) => n.span,
-                            Pattern::Tuple(_, s) | Pattern::Ignore(s) => *s,
-                        };
+                        let at = first.span();
                         let lent = Variable { ty: v.ty.clone(), kind: VarKind::Lent(at, true), span: v.span };
                         self.scopes.last_mut().unwrap().insert(root.to_string(), lent);
                     }
@@ -6151,6 +6170,87 @@ impl Checker<'_> {
         result.unwrap_or(Type::Error)
     }
 
+    /// `match (q.method, n) { ("GET", 2) => …, (m, _) => … }`: each case is a tuple of values,
+    /// names and `_`, tried in order; one taking every value (or `_`) ends it.
+    fn match_tuple(&mut self, m: &Match, t: &Type, expected: Option<&Type>, value: bool) -> Type {
+        let mut any: Option<Span> = None;
+        let mut result: Option<Type> = None;
+        for arm in &m.arms {
+            let span = match &arm.case {
+                Case::Variant { name, .. } => name.span,
+                Case::Bind(p) => p.span(),
+                Case::Any(s) => *s,
+                Case::Values(vs) => vs[0].span,
+            };
+            if let Some(a) = any {
+                let (line, _) = line_col(self.src, a.start);
+                self.error(span, t!("case_after_any", line = line));
+            }
+            self.scopes.push(HashMap::new());
+            match &arm.case {
+                Case::Any(_) => any = Some(span),
+                Case::Bind(p @ Pattern::Tuple(..)) => {
+                    self.case_values(p, t);
+                    if p.takes_all() {
+                        any = Some(span);
+                    }
+                    let kind = if m.mode == Mode::Var { VarKind::Var } else { VarKind::Matched };
+                    self.bind(p, t, kind);
+                }
+                _ => self.error(span, t!("case_not_tuple", type = t.text())),
+            }
+            if value {
+                let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
+                if result.is_none() && ty != Type::Error {
+                    result = Some(ty);
+                }
+            } else {
+                self.block(&arm.body, vec![]);
+            }
+            self.scopes.pop();
+        }
+        if any.is_none() {
+            self.diags.push(Diag::new(m.subject.span, t!("match_needs_any", type = t.text())).help(t!("case_tuple_help")));
+        }
+        result.unwrap_or(Type::Error)
+    }
+
+    /// Checks the values written in a tuple case against the parts' types; `bind` skips them.
+    fn case_values(&mut self, p: &Pattern, t: &Type) {
+        match (p, t) {
+            (Pattern::Tuple(ps, _), Type::Tuple(ts)) if ps.len() == ts.len() => {
+                for (p, t) in ps.iter().zip(ts) {
+                    self.case_values(p, t);
+                }
+            }
+            (Pattern::Value(v), Type::Int | Type::Char | Type::String) => {
+                let literal = match &v.kind {
+                    ExprKind::Binary(BinOp::Range | BinOp::RangeInclusive, a, b) => {
+                        self.expect(a, t);
+                        self.expect(b, t);
+                        if *t == Type::String {
+                            self.error(v.span, t!("case_range_text"));
+                            return;
+                        }
+                        number_written(a).is_some() && number_written(b).is_some()
+                    }
+                    ExprKind::Str(_) => {
+                        self.expect(v, t);
+                        true
+                    }
+                    _ => {
+                        self.expect(v, t);
+                        number_written(v).is_some()
+                    }
+                };
+                if !literal {
+                    self.error(v.span, t!("case_literal"));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// `match n { 0 => …, 1, 2 => …, _ => … }` on an `Int`, a `Char` or a `String`: each case
     /// is a value written out, once; `_` ends it, since no list could hold every value.
     fn match_values(&mut self, m: &Match, t: &Type, expected: Option<&Type>, value: bool) -> Type {
@@ -6163,8 +6263,8 @@ impl Checker<'_> {
         for arm in &m.arms {
             let span = match &arm.case {
                 Case::Variant { name, .. } => name.span,
-                Case::Bind(Pattern::Name(n)) => n.span,
-                Case::Bind(Pattern::Tuple(_, s) | Pattern::Ignore(s)) | Case::Any(s) => *s,
+                Case::Bind(p) => p.span(),
+                Case::Any(s) => *s,
                 Case::Values(vs) => vs[0].span,
             };
             if let Some(a) = any {

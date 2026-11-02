@@ -24,9 +24,9 @@ package `libsqlite3-0` or `sqlite-libs`.
 | `db.query(statement) with(values) -> List<sqlite.Row> or sqlite.Error` | runs one statement and gives all its lines. |
 | `db.each(statement) { row: sqlite.Row => … }` | gives each line to the block as it comes, keeping none in memory: for tables too large to load. Gives `Nothing or sqlite.Error`. `db.each(statement) with(values) { … }` fills the `?`. |
 | `db.script(statements)` | runs several statements separated by `;`, none with values. Gives `Nothing or sqlite.Error`. |
-| `db.last_id -> Int` | the number given to the last line inserted. |
-| `db.changes -> Int` | how many lines the last `INSERT`, `UPDATE` or `DELETE` touched. |
-| `db.close` | closes the database. |
+| `db.last_id -> Int` | the number given to the last line this thread inserted. |
+| `db.changes -> Int` | how many lines the last `INSERT`, `UPDATE` or `DELETE` of this thread touched. |
+| `db.close` | closes the database, in every thread. |
 | `row.text(name) -> String?` | the column of that name. `none` if it is absent, `NULL` or of another type. |
 | `row.int(name) -> Int?` | the same for an integer. |
 | `row.float(name) -> Float?` | the same for a number; an integer reads as a `Float` too. |
@@ -102,8 +102,29 @@ If a step fails, run `db.script("ROLLBACK")` to undo what came before it.
 `sqlite.Error` has three cases, each with SQLite's message:
 
 - `Constraint(message)`: a rule of the table refused the change (`UNIQUE`, `NOT NULL`, a foreign key).
-- `Busy(message)`: another connection holds the file. Try again a little later.
+- `Busy(message)`: another connection held the file for more than 5 seconds. Try again a little later.
 - `Failed(message)`: anything else, such as a mistake in the statement.
 
 `run`, `query` and `each` take one statement: given more, they run nothing and give `Failed`. Use
 `script` for several.
+
+A `sqlite.Error` shows as SQLite's message: `"{e}"` gives `no such table: notes`.
+
+## Several threads
+
+A `sqlite.Database` can be used by several [threads](/guide/concurrency/) at once, a
+[server's `workers`](/library/web-server/#several-questions-at-once) too. Each thread gets a
+connection of its own to the same file, opened the first time it uses the database, so what one
+thread does never mixes with another's: `db.last_id` after an `INSERT` is that thread's line, and a
+`BEGIN`…`COMMIT` holds only that thread's statements.
+
+Two connections cannot write the file at the same moment: the second waits for the first, up to 5
+seconds, then gets `Busy`. Two things help when many threads write:
+
+- Start a transaction that will write with `BEGIN IMMEDIATE` rather than `BEGIN`: it waits for the
+  file at the start, instead of failing with `Busy` in the middle.
+- Run `db.script("PRAGMA journal_mode=WAL")` once: threads can then read while another writes. It
+  is kept in the file, and adds two files next to it (`-wal` and `-shm`).
+
+A `":memory:"` database exists in its connection only, so it stays in the thread that opened it:
+another thread gets `Failed`. Use a file to share a database between threads.

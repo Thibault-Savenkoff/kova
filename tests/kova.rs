@@ -1373,6 +1373,90 @@ fn server_workers() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// A real program kept as a test (PLAN Part 4 "The proof: a server"): `tests/web/notes.kova`, a
+/// JSON API over SQLite answered by 4 threads. 24 notes added at once must each get their own
+/// number back, and the journal thread must have written every change before the end.
+#[test]
+fn notes_server() {
+    let _alone = one_server();
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    let ask = |port: u16, method: &str, path: &str, body: &str| -> (u32, String) {
+        for _ in 0..400 {
+            if let Ok(mut link) = TcpStream::connect(("127.0.0.1", port)) {
+                link.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+                link.write_all(format!("{method} {path} HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}", body.len()).as_bytes()).unwrap();
+                let mut got = vec![];
+                let _ = link.read_to_end(&mut got);
+                let got = String::from_utf8_lossy(&got).into_owned();
+                let status = got.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                return (status, got.split("\r\n\r\n").nth(1).unwrap_or("").to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("no server on port {port}");
+    };
+    let dir = std::env::temp_dir().join(format!("kova-notes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join(format!("notes{EXE}"));
+    let out = kova(LANG).arg("build").arg("tests/web/notes.kova").arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let port = free_port();
+    let child = program(&exe, LANG).arg(port.to_string()).arg(dir.join("notes.db")).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let mut failures = vec![];
+    let check = |failures: &mut Vec<String>, got: (u32, String), want: (u32, &str)| {
+        if got.0 != want.0 || got.1 != want.1 {
+            failures.push(format!("{got:?} instead of {want:?}"));
+        }
+    };
+    check(&mut failures, ask(port, "POST", "/notes", r#"{"title": "Milk", "text": "2 bottles"}"#), (201, r#"{"id":1,"title":"Milk","text":"2 bottles"}"#));
+    check(&mut failures, ask(port, "POST", "/notes", r#"{"title": " ", "text": "x"}"#), (400, "a note needs a title"));
+    check(&mut failures, ask(port, "POST", "/notes", r#"{"title": 3}"#), (400, r#"bad note: WrongKind("title")"#));
+    let adders: Vec<_> = (0..24).map(|k| std::thread::spawn(move || (k, ask(port, "POST", "/notes", &format!(r#"{{"title": "n{k}", "text": "t"}}"#))))).collect();
+    let mut ids = vec![];
+    for a in adders {
+        let (k, (status, body)) = a.join().unwrap();
+        // The answer holds the number SQLite gave this thread's line, and that line is this note.
+        let id: Option<u32> = body.strip_prefix(r#"{"id":"#).and_then(|b| b.split(',').next()?.parse().ok());
+        match id {
+            Some(id) if status == 201 && body.ends_with(&format!(r#""title":"n{k}","text":"t"}}"#)) => {
+                let (_, back) = ask(port, "GET", &format!("/notes/{id}"), "");
+                if !back.contains(&format!(r#""title":"n{k}""#)) {
+                    failures.push(format!("note {id} of n{k} reads {back}"));
+                }
+                ids.push(id);
+            }
+            _ => failures.push(format!("n{k}: {status} {body}")),
+        }
+    }
+    ids.sort();
+    if ids != (2..26).collect::<Vec<_>>() {
+        failures.push(format!("numbers {ids:?}"));
+    }
+    check(&mut failures, ask(port, "GET", "/notes/99", ""), (404, "404 Not Found"));
+    check(&mut failures, ask(port, "GET", "/notes/abc", ""), (400, "400 Bad Request"));
+    check(&mut failures, ask(port, "DELETE", "/notes/2", ""), (204, ""));
+    check(&mut failures, ask(port, "DELETE", "/notes/2", ""), (404, "404 Not Found"));
+    check(&mut failures, ask(port, "PUT", "/notes", ""), (405, "405 Method Not Allowed"));
+    let (_, all) = ask(port, "GET", "/notes", "");
+    if all.matches(r#""id":"#).count() != 24 {
+        failures.push(format!("the list: {all}"));
+    }
+    let (_, stats) = ask(port, "GET", "/stats", "");
+    if !stats.ends_with(r#""notes":24}"#) {
+        failures.push(format!("stats: {stats}"));
+    }
+    ask(port, "GET", "/stop", "");
+    let end = child.wait_with_output().unwrap();
+    // 25 notes added, 1 removed.
+    if text(&end.stdout) != "journal lines: 26\n" || end.status.code() != Some(0) {
+        failures.push(format!("ended with {:?}: {}{}", end.status, text(&end.stdout), text(&end.stderr)));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
+}
+
 /// `l.map workers(4) { … }` (PLAN Part 4 "Several things at once"), built: four elements that
 /// each sleep a second take about one second, and come back in order.
 #[test]

@@ -104,6 +104,41 @@ A `match` must cover every value: without `_`, a `match` on an `Int` is refused,
 that overlap (`1..=9` and `5`) are refused too, since the second one could never be reached.
 `match` really shines with [enums](/guide/enums-and-match/), where the compiler knows every case.
 
+### Several values at once
+
+To decide on two values together, `match` a tuple of them. Each case is a tuple too, whose parts
+are values, ranges, `_`, or names that receive the part:
+
+```kova
+fn route(method: String, parts: List<String>) -> String {
+    return match (method, parts.length) {
+        ("GET", 2) => "the list"
+        ("GET", 3) => "note {parts[2]}"
+        ("POST", 2) => "a new note"
+        (m, 2..=3) => "{m} is not allowed here"
+        (_, n) => "no page with {n} parts"
+    }
+}
+
+fn main {
+    print(route("GET", "/notes".split("/")))
+    print(route("GET", "/notes/7".split("/")))
+    print(route("DELETE", "/notes".split("/")))
+    print(route("GET", "/a/b/c".split("/")))
+}
+```
+
+```text
+the list
+note 7
+DELETE is not allowed here
+no page with 4 parts
+```
+
+The cases are tried in order, and the first that fits wins. The last one must take every value:
+`_`, or a tuple of names and `_` like `(_, n)`. Each part of the `match` is a copy, so `method`
+is still there after it.
+
 ## `while`
 
 `while` repeats as long as its condition is `true`:

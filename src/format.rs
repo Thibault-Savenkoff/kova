@@ -59,12 +59,16 @@ fn list_cuts(tokens: &[&Token], k: usize) -> Option<Vec<usize>> {
     if !list {
         return None;
     }
-    let (mut depth, mut cuts) = (0, vec![tokens[k].span.end]);
-    for t in &tokens[k..] {
+    // `angle`: inside a type's `<…>` (`Map<Int, Pointer>`), whose commas are no cuts.
+    let (mut depth, mut angle, mut cuts) = (0, 0, vec![tokens[k].span.end]);
+    for (i, t) in tokens[k..].iter().enumerate() {
+        let after_type = i > 0 && tokens[k + i - 1].kind == Kind::Type && tokens[k + i - 1].span.end == t.span.start;
         match t.kind {
             Kind::Sym("(" | "[" | "{") => depth += 1,
             Kind::Sym(")" | "]" | "}") => depth -= 1,
-            Kind::Sym(",") if depth == 1 => cuts.push(t.span.end),
+            Kind::Sym("<") if after_type || angle > 0 => angle += 1,
+            Kind::Sym(">") if angle > 0 => angle -= 1,
+            Kind::Sym(",") if depth == 1 && angle == 0 => cuts.push(t.span.end),
             _ => {}
         }
         if depth == 0 {
@@ -297,6 +301,9 @@ mod tests {
         assert_eq!(format(&cut).as_deref(), Some(&*cut), "cutting again changes nothing");
         let plain = format!("fn main {{\n    print(\"{}\")\n}}\n", "x".repeat(120));
         assert_eq!(format(&plain).as_deref(), Some(&*plain), "one element: nothing to cut");
+        let typed = format!("fn main {{\n    f(\"{}\", Shared<Map<Int, Pointer>>.new([]), a < b, c > d)\n}}\n", "x".repeat(60));
+        let cut = format(&typed).unwrap();
+        assert!(cut.contains("    Shared<Map<Int, Pointer>>.new([]),\n") && cut.contains("    a < b,\n"), "{cut}");
     }
 
     #[test]

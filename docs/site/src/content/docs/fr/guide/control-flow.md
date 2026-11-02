@@ -106,6 +106,41 @@ cas qui se recouvrent (`1..=9` et `5`) aussi, puisque le second ne pourrait jama
 `match` brille vraiment avec les [enums](/fr/guide/enums-and-match/), dont le compilateur connaît
 chaque cas.
 
+### Plusieurs valeurs à la fois
+
+Pour décider sur deux valeurs ensemble, fais un `match` sur un tuple. Chaque cas est aussi un tuple,
+dont les parties sont des valeurs, des intervalles, `_`, ou des noms qui reçoivent la partie :
+
+```kova
+fn route(method: String, parts: List<String>) -> String {
+    return match (method, parts.length) {
+        ("GET", 2) => "la liste"
+        ("GET", 3) => "la note {parts[2]}"
+        ("POST", 2) => "une nouvelle note"
+        (m, 2..=3) => "{m} n'est pas permis ici"
+        (_, n) => "pas de page en {n} parties"
+    }
+}
+
+fn main {
+    print(route("GET", "/notes".split("/")))
+    print(route("GET", "/notes/7".split("/")))
+    print(route("DELETE", "/notes".split("/")))
+    print(route("GET", "/a/b/c".split("/")))
+}
+```
+
+```text
+la liste
+la note 7
+DELETE n'est pas permis ici
+pas de page en 4 parties
+```
+
+Les cas sont essayés dans l'ordre, et le premier qui convient gagne. Le dernier doit prendre toutes
+les valeurs : `_`, ou un tuple de noms et de `_` comme `(_, n)`. Chaque partie du `match` est une
+copie, donc `method` est toujours là après.
+
 ## `while`
 
 `while` répète tant que sa condition est `true` :

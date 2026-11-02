@@ -52,6 +52,7 @@ unsafe extern "system" {
     fn FindClose(h: Handle) -> i32;
     fn GetSystemTimePreciseAsFileTime(t: *mut u64);
     fn GetActiveProcessorCount(group: u16) -> u32;
+    fn GetCurrentThreadId() -> u32;
     fn FileTimeToLocalFileTime(utc: *const u64, local: *mut u64) -> i32;
     fn Sleep(ms: u32);
     fn GetCurrentProcessId() -> u32;
@@ -222,6 +223,10 @@ pub fn is_terminal(fd: usize) -> bool {
 pub fn cores() -> i64 {
     // ALL_PROCESSOR_GROUPS.
     (unsafe { GetActiveProcessorCount(0xffff) } as i64).max(1)
+}
+
+pub fn thread_id() -> i64 {
+    unsafe { GetCurrentThreadId() as i64 }
 }
 
 pub fn now() -> u64 {

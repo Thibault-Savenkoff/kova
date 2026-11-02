@@ -6,13 +6,13 @@
 // expect: 3.0
 // expect: [0, 255, 7]
 // expect: true
-// expect: err(sqlite.Error.Failed("no such table: missing"))
+// expect: err(no such table: missing)
 // expect: 0
 // expect: 4
 // expect: Ada
 // expect: Linus
 // expect: Linus
-// expect: err(sqlite.Error.Failed("several statements: use db.script, which runs them all"))
+// expect: err(several statements: use db.script, which runs them all)
 // expect: 2
 
 import sqlite

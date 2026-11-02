@@ -4,7 +4,7 @@
 // expect: ping from 127.0.0.1
 // expect: true
 // expect: true
-// expect: err(net.Error.Refused("127.0.0.1"))
+// expect: err(127.0.0.1 refused the connection)
 // expect: true
 
 import net

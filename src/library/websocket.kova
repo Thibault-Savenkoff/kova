@@ -4,12 +4,21 @@ import net
 
 public:
 
-enum Error {
+enum Error : Display {
     BadAddress(address: String)
     // The other end did not agree to speak WebSocket.
     Refused(reason: String)
     Network(error: net.Error)
     BadFrame
+
+    fn to_string(self) -> String {
+        return match self {
+            .BadAddress(a) => "not a WebSocket address: {a}"
+            .Refused(r) => "WebSocket refused: {r}"
+            .Network(e) => e.to_string
+            .BadFrame => "the other end sent a frame that is not WebSocket"
+        }
+    }
 }
 
 enum Message {

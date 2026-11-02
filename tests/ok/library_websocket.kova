@@ -2,7 +2,7 @@
 // expect: Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 // expect: websocket.Message.Text("echo: hello")
 // expect: 70000
-// expect: err(websocket.Error.BadAddress("http://nowhere"))
+// expect: err(not a WebSocket address: http://nowhere)
 
 import net
 import threads

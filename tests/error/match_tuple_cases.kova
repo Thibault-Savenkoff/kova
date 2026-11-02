@@ -1,0 +1,27 @@
+// error: a `match` on `(Int, String)` must end with `_ => …`: no list of cases holds every value
+// error: this case is never reached: `_` (line 14) already handles every other case
+// error: different types: `Int` expected, `String` given
+// error: a case of a `match` on `(Int, String)` is a tuple: `("GET", n) =>`, or `_`
+// error: a value is a case only on an `Int`, a `Char` or a `String`, not on `(Int, Int)?`
+
+fn main {
+    let t: (Int, String) := (3, "a")
+    match t {
+        (3, s) => print(s)
+    }
+    match t {
+        (3, s) => print(s)
+        _ => print("x")
+        (a, b) => print(b)
+    }
+    match t {
+        ("a", s) => print(s)
+        .Red => print("r")
+        _ => print("x")
+    }
+    let o: (Int, Int)? := none
+    match o {
+        none => print("none")
+        (1, b) => print(b)
+    }
+}

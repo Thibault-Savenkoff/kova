@@ -21,6 +21,12 @@ import threads
 
 The block works on its own copies of what it reads and cannot change what is around it.
 
+## threads.id
+
+`threads.id -> Int` is a number of the running thread, given by the system: two threads running
+at the same time never have the same one. A number may come back for a thread started after another
+one ended.
+
 ## threads.Task
 
 | Method | Does |

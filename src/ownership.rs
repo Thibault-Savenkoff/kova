@@ -256,7 +256,11 @@ impl Owner<'_> {
     /// during them unless it is copied (the KIR copies it first). On a computed value, they own them.
     fn match_(&mut self, m: &Match, value: bool) {
         let mark = self.pending.len();
-        self.borrow(&m.subject);
+        match &m.subject.kind {
+            // `match (q.method, n)`: each part is only read (the KIR copies it).
+            ExprKind::Tuple(parts) => parts.iter().for_each(|p| self.borrow(p)),
+            _ => self.borrow(&m.subject),
+        }
         // `match var`: a case that names nothing may change it (`none => self.left := …`); the
         // others cannot even reach it (the checker lends it to them).
         if m.mode == Mode::Var {
@@ -278,7 +282,9 @@ impl Owner<'_> {
         for arm in &m.arms {
             self.state = start.clone();
             self.scopes.push(HashMap::new());
-            if let (Some((name, binds)), Some(d)) = (arm.case.variant(), &d) {
+            if let (Case::Bind(p), Type::Tuple(_)) = (&arm.case, &ty) {
+                self.bind(p, &ty, root.is_some());
+            } else if let (Some((name, binds)), Some(d)) = (arm.case.variant(), &d) {
                 let (_, fields) = d.variant(name).expect("variant checked by the type checker");
                 for (p, (_, t)) in binds.into_iter().zip(fields) {
                     self.bind(p, t, root.is_some());
@@ -298,7 +304,7 @@ impl Owner<'_> {
     fn bind(&mut self, p: &Pattern, ty: &Type, borrowed: bool) {
         match (p, ty) {
             (Pattern::Name(n), _) => self.declare(&n.text, borrowed),
-            (Pattern::Ignore(_), _) => {}
+            (Pattern::Ignore(_) | Pattern::Value(_), _) => {}
             (Pattern::Tuple(ps, _), Type::Tuple(ts)) => {
                 for (p, t) in ps.iter().zip(ts) {
                     self.bind(p, t, borrowed);

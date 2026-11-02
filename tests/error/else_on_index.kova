@@ -1,0 +1,7 @@
+// error: `else` gives a value when an optional or a result has none, and `String` always has one
+import system
+
+fn main {
+    let path: String := system.args[1] else "notes.db"
+    print(path)
+}

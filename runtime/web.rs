@@ -143,6 +143,10 @@ pub fn cores() -> i64 {
     1
 }
 
+pub fn thread_id() -> i64 {
+    1
+}
+
 /// In nanoseconds since 1970.
 pub fn now() -> u64 {
     unsafe { (time() * 1e6) as u64 }

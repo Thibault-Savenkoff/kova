@@ -1,0 +1,146 @@
+// The server that tests/kova.rs (`notes_server`) asks, a real program kept as a test (PLAN Part 4,
+// "The proof: a server"): a JSON API over SQLite answered by 4 threads, a thread writing every
+// change into a journal table, and a counter shared by all.
+
+import web
+import sqlite
+import threads
+import system
+
+struct Note {
+    id: Int
+    title: String
+    text: String
+}
+
+struct NewNote {
+    title: String
+    text: String
+}
+
+struct Stats {
+    questions: Int
+    notes: Int
+}
+
+fn note_of(row: sqlite.Row) -> Note {
+    return Note {
+        id := row.int("id") else 0
+        title := row.text("title") else ""
+        text := row.text("text") else ""
+    }
+}
+
+fn all_notes(db: sqlite.Database) -> web.Answer {
+    match db.query("SELECT id, title, text FROM notes ORDER BY id") {
+        err(e) => return web.Answer.text("{e}").status(500)
+        ok(rows) => return web.Answer.json(rows.map { r: sqlite.Row => note_of(r) })
+    }
+}
+
+fn one_note(db: sqlite.Database, id: Int) -> web.Answer {
+    match db.query("SELECT id, title, text FROM notes WHERE id = ?") with([.Int(id)]) {
+        err(e) => return web.Answer.text("{e}").status(500)
+        ok(rows) => {
+            if rows.is_empty {
+                return web.Answer.status(404)
+            }
+            return web.Answer.json(note_of(rows[0]))
+        }
+    }
+}
+
+fn add_note(db: sqlite.Database, body: String, journal: threads.Channel<String>) -> web.Answer {
+    match NewNote.from_json(body) {
+        err(e) => return web.Answer.text("bad note: {e}").status(400)
+        ok(n) => {
+            if n.title.trim.is_empty {
+                return web.Answer.text("a note needs a title").status(400)
+            }
+            match db.run("INSERT INTO notes (title, text) VALUES (?, ?)") with([
+                .Text(n.title.clone),
+                .Text(n.text.clone)
+            ]) {
+                err(e) => return web.Answer.text("{e}").status(500)
+                ok => {
+                    let id: Int := db.last_id
+                    journal.send("added {id}")
+                    return web.Answer.json(Note {
+                        id,
+                        title := n.title.clone,
+                        text := n.text.clone
+                    }).status(201)
+                }
+            }
+        }
+    }
+}
+
+fn remove_note(db: sqlite.Database, id: Int, journal: threads.Channel<String>) -> web.Answer {
+    match db.run("DELETE FROM notes WHERE id = ?") with([.Int(id)]) {
+        err(e) => return web.Answer.text("{e}").status(500)
+        ok => {
+            if db.changes = 0 {
+                return web.Answer.status(404)
+            }
+            journal.send("removed {id}")
+            return web.Answer.status(204)
+        }
+    }
+}
+
+fn main {
+    let port: Int := (system.args.get(0) else "").to_int else 8080
+    let path: String := system.args.get(1) else "notes.db"
+    let db: sqlite.Database := sqlite.open(path)?
+    db.script("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL); CREATE TABLE IF NOT EXISTS journal (at TEXT, what TEXT)")?
+    let journal: threads.Channel<String> := threads.Channel<String>.new
+    let asked: threads.Shared<Int> := threads.Shared<Int>.new(0)
+    let done: threads.Channel<Int> := threads.Channel<Int>.new
+    threads.spawn {
+        var written: Int := 0
+        for what in journal {
+            match db.run("INSERT INTO journal (at, what) VALUES (?, ?)") with([
+                .Text("{system.clock}"),
+                .Text(what)
+            ]) {
+                err(e) => print("journal: {e}")
+                ok => written += 1
+            }
+        }
+        done.send(written)
+    }
+    web.serve(port) workers(4) log(web.Log.Off) { q: web.Request =>
+        asked.change { n: var Int => n += 1 }
+        let parts: List<String> := q.path.split("/")
+        match (q.method, parts.length) {
+            ("GET", 2) => match parts[1] {
+                "notes" => all_notes(db)
+                "stats" => {
+                    let count: Int := match db.query("SELECT COUNT(*) AS n FROM notes") {
+                        ok(rows) => rows[0].int("n") else 0
+                        err(e) => -1
+                    }
+                    web.Answer.json(Stats { questions := asked.read, notes := count })
+                }
+                "stop" => {
+                    journal.close
+                    print("journal lines: {done.receive else 0}")
+                    system.exit(0)
+                    web.Answer.status(500)
+                }
+                _ => web.Answer.status(404)
+            }
+            ("GET", 3) => match parts[2].to_int {
+                none => web.Answer.status(400)
+                id => one_note(db, id)
+            }
+            ("POST", 2) => add_note(db, q.body, journal)
+            ("DELETE", 3) => match parts[2].to_int {
+                none => web.Answer.status(400)
+                id => remove_note(db, id, journal)
+            }
+            _ => web.Answer.status(405)
+        }
+    }
+}

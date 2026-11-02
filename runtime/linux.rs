@@ -79,6 +79,7 @@ mod numbers {
     pub const EXIT: usize = 60;
     pub const FUTEX: usize = 202;
     pub const SCHED_GETAFFINITY: usize = 204;
+    pub const GETTID: usize = 186;
     pub const O_DIRECTORY: usize = 0o200000;
 }
 
@@ -123,6 +124,7 @@ mod numbers {
     pub const EXIT: usize = 93;
     pub const FUTEX: usize = 98;
     pub const SCHED_GETAFFINITY: usize = 123;
+    pub const GETTID: usize = 178;
     pub const O_DIRECTORY: usize = 0o40000;
 }
 
@@ -292,6 +294,11 @@ pub fn cores() -> i64 {
     let mut mask = [0u64; 128];
     let got = unsafe { call(SCHED_GETAFFINITY, 0, 1024, mask.as_mut_ptr() as usize, 0, 0, 0) };
     if (got as isize) <= 0 { 1 } else { mask.iter().map(|m| m.count_ones() as i64).sum::<i64>().max(1) }
+}
+
+/// The system's number of the running thread.
+pub fn thread_id() -> i64 {
+    unsafe { call(GETTID, 0, 0, 0, 0, 0, 0) as i64 }
 }
 
 /// The nanoseconds since 1970 (UTC).

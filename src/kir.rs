@@ -402,6 +402,8 @@ pub enum StrOp {
     /// `c.is_letter`, `c.to_upper`…: `shared::char_test`.
     CharTest,
     Cores,
+    /// `threads.id`: the system's number of the running thread.
+    ThreadId,
     /// `data.deflate`, `data.inflate`, `data.crc32`: the second argument says which (`shared::PACKINGS`).
     Pack,
     /// `http::net_raw`, `http::net_bytes`.
@@ -1372,9 +1374,10 @@ impl<'a> Translator<'a> {
     /// `serve(port) { q: Request => … }` (PLAN Part 4 "The web server"): listens, then answers each
     /// question with the block, one after the other, until the program stops (`exit`). Without a
     /// block, `serve_files(folder) at(port)`: each answer is `Answer.file(folder + q.path)`. With
-    /// `everyone`, the other computers can ask too (`serve_network`). With `workers`, built, `n`
-    /// threads answer (`workers`); `kova run` still answers one question at a time: the same
-    /// answers, since the block cannot change what is around it (`ownership.rs` `workers`).
+    /// `everyone`, the other computers can ask too (`serve_network`). With `workers`, `n` threads
+    /// answer (`workers`), natively; the interpreter (`kova debug`) answers one question at a
+    /// time: the same answers, since the block cannot change what is around it (`ownership.rs`
+    /// `workers`).
     #[allow(clippy::too_many_arguments)]
     fn serve(&mut self, port: Local, log: Local, everyone: bool, block: Option<&Expr>, folder: Option<Local>, workers: Option<Local>, loc: Loc) -> Slots {
         if let Some(n) = workers {
@@ -2764,8 +2767,8 @@ impl<'a> Translator<'a> {
                 self.names.last_mut().unwrap().vars.insert(n.text.clone(), (slots.to_vec(), ty.clone()));
             }
             // Nobody receives this part: freed at once (unless it is only borrowed).
-            Pattern::Ignore(_) if !self.names.last().unwrap().borrowed => self.free_value(slots, ty),
-            Pattern::Ignore(_) => {}
+            Pattern::Ignore(_) | Pattern::Value(_) if !self.names.last().unwrap().borrowed => self.free_value(slots, ty),
+            Pattern::Ignore(_) | Pattern::Value(_) => {}
             Pattern::Tuple(ps, _) => {
                 for (i, p) in ps.iter().enumerate() {
                     let (start, n) = slice_of(ty, i);
@@ -5434,6 +5437,10 @@ impl<'a> Translator<'a> {
             } else {
                 v
             }
+        } else if let ExprKind::Tuple(parts) = &m.subject.kind {
+            // `match (q.method, n)`: copies of the parts, which stay where they are.
+            // ponytail: a String part is copied; lend it if a program shows the cost.
+            parts.iter().flat_map(|p| self.kept(p)).collect()
         } else {
             let v = self.expr(&m.subject);
             self.untrack(&v);
@@ -5470,8 +5477,13 @@ impl<'a> Translator<'a> {
                     self.free_temps(mark);
                     self.go(End::Branch(test.unwrap(), body, next), body);
                 }
+                // `("GET", n) =>`: every value written must be there.
+                (Case::Bind(p), _) if view.is_none() && !p.takes_all() => {
+                    let test = self.tuple_test(p, &v, &ty, m.subject.span).expect("a value inside");
+                    self.go(End::Branch(test, body, next), body);
+                }
                 // The last arm takes what is left: the type checker made sure nothing else is.
-                (_, Some((name, _))) if k + 1 < m.arms.len() => {
+                (_, Some((name, _))) if k + 1 < m.arms.len() && view.is_some() => {
                     let d = view.as_ref().expect("an enum, an optional or a result");
                     // `Saturday, Sunday =>`: the variants are different, so at most one test gives 1.
                     let mut test = None;
@@ -5490,6 +5502,10 @@ impl<'a> Translator<'a> {
             self.names.push(Scope { borrowed, vars: HashMap::new() });
             let marks = self.writes.len();
             match arm.case.variant() {
+                Some(_) if view.is_none() => {
+                    let Case::Bind(p) = &arm.case else { unreachable!("a tuple's case") };
+                    self.bind(p, &v, &ty);
+                }
                 Some((name, binds)) if !binds.is_empty() => {
                     let d = view.as_ref().expect("an enum, an optional or a result");
                     let (i, fields) = d.variant(name).unwrap();
@@ -5533,6 +5549,43 @@ impl<'a> Translator<'a> {
             self.go(End::Jump(after), next);
         }
         self.go(End::Unreachable, after);
+    }
+
+    /// 1 if the value `v` (of type `ty`) has every value written in `p`; `None` if `p` has none.
+    fn tuple_test(&mut self, p: &Pattern, v: &[Local], ty: &Type, at: Span) -> Option<Local> {
+        match p {
+            Pattern::Tuple(ps, _) => {
+                let mut test = None;
+                for (i, p) in ps.iter().enumerate() {
+                    let (start, n) = slice_of(ty, i);
+                    if let Some(is) = self.tuple_test(p, &v[start..start + n], &element(ty, i), at) {
+                        test = Some(match test {
+                            None => is,
+                            Some(t) => self.op(Op::Times, t, is),
+                        });
+                    }
+                }
+                test
+            }
+            Pattern::Value(x) => {
+                let mark = self.temps.len();
+                let is = match &x.kind {
+                    ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), a, b) => {
+                        let (lo, hi) = (self.expr1(a), self.expr1(b));
+                        let above = self.op(Op::Ge, v[0], lo);
+                        let below = self.op(if *op == BinOp::Range { Op::Lt } else { Op::Le }, v[0], hi);
+                        self.op(Op::Times, above, below)
+                    }
+                    _ => {
+                        let x = self.expr(x);
+                        self.equal(v, &x, ty, at)
+                    }
+                };
+                self.free_temps(mark);
+                Some(is)
+            }
+            _ => None,
+        }
     }
 
     /// An expression whose value fits in a single slot (Int, Bool…).
@@ -5833,6 +5886,11 @@ impl<'a> Translator<'a> {
                 if name.text == "system.cores" {
                     let n = self.int_local();
                     self.emit(Inst::Str(n, StrOp::Cores, vec![]));
+                    return vec![n];
+                }
+                if name.text == "threads.id" {
+                    let n = self.int_local();
+                    self.emit(Inst::Str(n, StrOp::ThreadId, vec![]));
                     return vec![n];
                 }
                 if name.text == "system.clock" {

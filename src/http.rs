@@ -784,6 +784,11 @@ pub fn answer_bytes(status: i64, headers: &[(&str, &str)], body: &[u8]) -> Vec<u
     for (name, value) in headers.iter().filter(|(n, _)| !OWN.iter().any(|o| n.eq_ignore_ascii_case(o))) {
         out += &format!("{name}: {value}\r\n");
     }
+    // `204 No Content` and `304 Not Modified` have no body at all: a client would read it as the
+    // start of the next answer.
+    if status == 204 || status == 304 {
+        return (out + "connection: close\r\n\r\n").into_bytes();
+    }
     out += &format!("content-length: {}\r\nconnection: close\r\n\r\n", body.len());
     [out.as_bytes(), body].concat()
 }
@@ -1088,6 +1093,7 @@ mod tests {
     fn answers_written() {
         let a = answer_bytes(404, &[("content-type", "text/plain"), ("Content-Length", "9")], b"no");
         assert_eq!(a, b"HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno");
+        assert_eq!(answer_bytes(204, &[], b"204 No Content"), b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n");
         assert!(answer_bytes(200, &[("x", "a\r\nb")], b"").starts_with(b"HTTP/1.1 500 Internal Server Error\r\n"));
         assert!(answer_bytes(42, &[], b"").starts_with(b"HTTP/1.1 500"));
         assert_eq!(status_text(299), "299");

@@ -86,8 +86,7 @@ l'autoriser) ; le serveur écrit alors les adresses qu'ils peuvent utiliser.
 `web.serve(8080) workers(8) { … }` répond à 8 questions au plus en même temps, chacune sur son
 propre fil d'exécution, donc une réponse lente ne fait attendre personne d'autre. Le bloc peut lire
 les valeurs autour de lui mais pas les changer ([pourquoi](/fr/guide/concurrency/#pourquoi-cest-sûr)).
-`kova run` répond toujours à une seule à la fois : seul le programme compilé utilise des fils
-d'exécution.
+`kova run` utilise aussi les fils ; `kova debug` répond à une question à la fois.
 
 Sans `workers`, le serveur lit quand même toutes les connexions à la fois et donne au bloc la
 question qui est complète la première, donc la connexion de réserve d'un navigateur qui ne dit rien

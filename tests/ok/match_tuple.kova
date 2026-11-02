@@ -1,0 +1,37 @@
+// expect: all notes
+// expect: note 7
+// expect: add
+// expect: PUT y?
+// expect: too long: 4
+// expect: GET
+// expect: three a
+// expect: deep
+
+fn route(method: String, parts: List<String>) -> String {
+    return match (method, parts.length, parts.get(1) else "") {
+        ("GET", 2, "notes") => "all notes"
+        ("GET", 3, "notes") => "note {parts[2]}"
+        ("POST", 2, _) => "add"
+        (m, 1..=3, p) => "{m} {p}?"
+        (_, n, _) => "too long: {n}"
+    }
+}
+
+fn main {
+    let m: String := "GET"
+    print(route(m, ["", "notes"]))
+    print(route("GET", ["", "notes", "7"]))
+    print(route("POST", ["", "x"]))
+    print(route("PUT", ["", "y"]))
+    print(route("PUT", ["", "y", "z", "w"]))
+    print(m)
+    let t: (Int, String) := (3, "a")
+    match t {
+        (3, s) => print("three {s}")
+        (_, s) => print(s)
+    }
+    match ('x', (1, "deep")) {
+        ('x', (1, w)) => print(w)
+        _ => print("no")
+    }
+}

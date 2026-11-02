@@ -25,9 +25,9 @@ installe le paquet `libsqlite3-0` ou `sqlite-libs`.
 | `db.query(statement) with(values) -> List<sqlite.Row> or sqlite.Error` | exécute une instruction et donne toutes ses lignes. |
 | `db.each(statement) { row: sqlite.Row => … }` | donne chaque ligne au bloc dès qu'elle arrive, sans en garder en mémoire : pour les tables trop grosses à charger. Donne `Nothing or sqlite.Error`. `db.each(statement) with(values) { … }` remplit les `?`. |
 | `db.script(statements)` | exécute plusieurs instructions séparées par `;`, sans valeurs. Donne `Nothing or sqlite.Error`. |
-| `db.last_id -> Int` | le numéro donné à la dernière ligne insérée. |
-| `db.changes -> Int` | combien de lignes le dernier `INSERT`, `UPDATE` ou `DELETE` a touchées. |
-| `db.close` | ferme la base. |
+| `db.last_id -> Int` | le numéro donné à la dernière ligne insérée par ce fil. |
+| `db.changes -> Int` | combien de lignes le dernier `INSERT`, `UPDATE` ou `DELETE` de ce fil a touchées. |
+| `db.close` | ferme la base, dans tous les fils. |
 | `row.text(name) -> String?` | la colonne de ce nom. `none` si elle est absente, `NULL` ou d'un autre type. |
 | `row.int(name) -> Int?` | la même chose pour un entier. |
 | `row.float(name) -> Float?` | la même chose pour un nombre ; un entier se lit aussi comme un `Float`. |
@@ -103,8 +103,29 @@ Si une étape échoue, lance `db.script("ROLLBACK")` pour annuler ce qui précè
 `sqlite.Error` a trois cas, chacun avec le message de SQLite :
 
 - `Constraint(message)` : une règle de la table a refusé le changement (`UNIQUE`, `NOT NULL`, une clé étrangère).
-- `Busy(message)` : une autre connexion tient le fichier. Réessaie un peu plus tard.
+- `Busy(message)` : une autre connexion a tenu le fichier plus de 5 secondes. Réessaie un peu plus tard.
 - `Failed(message)` : tout le reste, comme une erreur dans l'instruction.
 
 `run`, `query` et `each` prennent une seule instruction : s'il y en a plus, rien n'est exécuté et ils
 donnent `Failed`. Utilise `script` pour plusieurs.
+
+Une `sqlite.Error` s'affiche comme le message de SQLite : `"{e}"` donne `no such table: notes`.
+
+## Plusieurs fils
+
+Une `sqlite.Database` peut servir à plusieurs [fils](/fr/guide/concurrency/) à la fois, aux
+[`workers` d'un serveur](/fr/library/web-server/#plusieurs-questions-à-la-fois) aussi. Chaque fil
+reçoit sa propre connexion au même fichier, ouverte la première fois qu'il utilise la base : ce que
+fait un fil ne se mélange donc jamais avec ce que fait un autre. `db.last_id` après un `INSERT` est la
+ligne de ce fil, et un `BEGIN`…`COMMIT` ne contient que les instructions de ce fil.
+
+Deux connexions ne peuvent pas écrire le fichier au même moment : la deuxième attend la première,
+jusqu'à 5 secondes, puis reçoit `Busy`. Deux choses aident quand beaucoup de fils écrivent :
+
+- Commence une transaction qui va écrire par `BEGIN IMMEDIATE` plutôt que `BEGIN` : elle attend le
+  fichier au début, au lieu d'échouer avec `Busy` au milieu.
+- Lance une fois `db.script("PRAGMA journal_mode=WAL")` : les fils peuvent alors lire pendant qu'un
+  autre écrit. C'est gardé dans le fichier, et ça ajoute deux fichiers à côté (`-wal` et `-shm`).
+
+Une base `":memory:"` n'existe que dans sa connexion, donc elle reste dans le fil qui l'a ouverte :
+un autre fil reçoit `Failed`. Utilise un fichier pour partager une base entre fils.

@@ -155,6 +155,10 @@ pub fn cores() -> i64 {
     unsafe { c::sysconf(58) }.max(1)
 }
 
+pub fn thread_id() -> i64 {
+    unsafe { c::pthread_self() as i64 }
+}
+
 pub fn now() -> u64 {
     let mut t = [0; 2];
     unsafe { c::clock_gettime(0, &mut t) }; // CLOCK_REALTIME

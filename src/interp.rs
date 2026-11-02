@@ -91,6 +91,14 @@ impl Threads {
 }
 
 /// Whose turn it is.
+/// `threads.id`: a number of its own for each thread (`kova debug` runs threads of its own).
+fn thread_id() -> i64 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static NEXT: AtomicI64 = AtomicI64::new(1);
+    thread_local!(static ID: i64 = NEXT.fetch_add(1, Ordering::Relaxed));
+    ID.with(|id| *id)
+}
+
 static TURN: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
 
 fn site(packed: i64, col: i64) -> Loc {
@@ -1106,6 +1114,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         }
                         StrOp::CharTest => crate::shared::char_test(locals[a[0]], locals[a[1]]),
                         StrOp::Cores => std::thread::available_parallelism().map_or(1, |n| n.get() as i64),
+                        StrOp::ThreadId => thread_id(),
                         StrOp::Pack => {
                             let bytes = heap.bytes(locals[a[0]]);
                             match locals[a[1]] {

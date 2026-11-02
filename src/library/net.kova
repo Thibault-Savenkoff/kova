@@ -4,7 +4,7 @@ import net
 
 public:
 
-enum Error : Equal {
+enum Error : Equal, Display {
     NoHost(host: String)
     Refused(host: String)
     TimedOut(host: String)
@@ -12,6 +12,18 @@ enum Error : Equal {
     BadCertificate(host: String)
     PortTaken(port: Int)
     Closed
+
+    fn to_string(self) -> String {
+        return match self {
+            .NoHost(h) => "no host named {h}"
+            .Refused(h) => "{h} refused the connection"
+            .TimedOut(h) => "{h} did not answer in time"
+            .Cut(h) => "the connection to {h} was cut"
+            .BadCertificate(h) => "{h} has a certificate that cannot be trusted"
+            .PortTaken(p) => "port {p} is already taken"
+            .Closed => "the connection is closed"
+        }
+    }
 }
 
 // A TCP connection.

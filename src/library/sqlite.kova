@@ -1,13 +1,23 @@
 // `import sqlite`: a database in one file, through the SQLite the system already has.
+import threads
 
 public:
 
-enum Error : Equal {
+enum Error : Equal, Display {
     Failed(message: String)
     // A rule of the table refused the change: `UNIQUE`, `NOT NULL`, a foreign key.
     Constraint(message: String)
     // Another connection holds the file.
     Busy(message: String)
+
+    // SQLite's own message: `no such table: notes`.
+    fn to_string(self) -> String {
+        return match self {
+            .Failed(m) => m.clone
+            .Constraint(m) => m.clone
+            .Busy(m) => m.clone
+        }
+    }
 }
 
 // A value of a column, or one given to a `?` of a statement.
@@ -65,9 +75,18 @@ public:
     }
 }
 
+// A database. Each thread that uses it gets a connection of its own to the same file, opened the
+// first time it asks: so `last_id`, `changes` and a `BEGIN`…`COMMIT` of one thread never mix with
+// another's.
 struct Database {
 private:
-    handle: Pointer
+    path: String
+    // The thread that opened it, and its connection.
+    owner: Int
+    first: Pointer
+    // The connections of the other threads, by `threads.id`.
+    // ponytail: a thread that ends leaves its connection open until `close`.
+    others: threads.Shared<Map<Int, Pointer>>
 
 public:
     // Runs one statement that gives no lines: `INSERT`, `UPDATE`, `CREATE TABLE`…
@@ -92,30 +111,52 @@ public:
 
     // Runs several statements separated by `;`, none with values.
     fn script(self, statements: String) -> Nothing or Error {
-        return self.checked(lib.exec(self.handle, statements, none, none, none))
+        let db: Pointer := self.link?
+        return checked(db, lib.exec(db, statements, none, none, none))
     }
 
-    // The number SQLite gave to the last line inserted.
+    // The number SQLite gave to the last line this thread inserted.
     fn last_id(self) -> Int {
-        return lib.last_id(self.handle)
+        return match self.link {
+            ok(db) => lib.last_id(db)
+            err(e) => 0
+        }
     }
 
-    // How many lines the last `INSERT`, `UPDATE` or `DELETE` touched.
+    // How many lines the last `INSERT`, `UPDATE` or `DELETE` of this thread touched.
     fn changes(self) -> Int {
-        return lib.changes(self.handle)
+        return match self.link {
+            ok(db) => lib.changes(db)
+            err(e) => 0
+        }
     }
 
+    // Closes every connection: no thread may use the database after.
     fn close(self) {
-        lib.close(self.handle)
+        for _, db in self.others.read {
+            lib.close(db)
+        }
+        lib.close(self.first)
     }
 
 private:
-    fn checked(self, code: Int) -> Nothing or Error {
-        if code = 0 || code = 100 || code = 101 {
-            return ok
+    // This thread's connection.
+    fn link(self) -> Pointer or Error {
+        let me: Int := threads.id
+        if me = self.owner {
+            return ok(self.first)
         }
-        let message: String := lib.message(self.handle)
-        return err(if code = 19 { Error.Constraint(message) } else if code = 5 || code = 6 { Error.Busy(message) } else { Error.Failed(message) })
+        let known: Pointer? := self.others.change { links: var Map<Int, Pointer> => links[me] }
+        if known != none {
+            return ok(known)
+        }
+        // A database in memory is one connection's: another one would be a new, empty database.
+        if self.path = ":memory:" || self.path = "" {
+            return err(Error.Failed("a database in memory lives in the thread that opened it: use a file to share it between threads"))
+        }
+        let made: Pointer := connect(self.path)?
+        self.others.change { links: var Map<Int, Pointer> => links[me] := made }
+        return ok(made)
     }
 
     fn lines(self, statement: String, values: List<Value>) -> List<Row> or Error {
@@ -124,66 +165,33 @@ private:
         return ok(rows)
     }
 
-    // A statement that is not alone would otherwise lose what follows it, silently.
-    fn alone(self, statement: String, made: Pointer) -> Nothing or Error {
-        let rest: String := statement.to_bytes[lib.statement_text(made).to_bytes.length..statement.to_bytes.length].to_text else ""
-        if rest.trim.is_empty {
-            return ok
-        }
-        var next: Pointer? := none
-        let code: Int := lib.prepare(self.handle, rest, -1, var next, none)
-        if next != none {
-            lib.finalize(next)
-        }
-        if code = 0 && next = none {
-            return ok
-        }
-        return err(Error.Failed("several statements: use db.script, which runs them all"))
-    }
-
     fn walk(self, statement: String, values: List<Value>, visit: {Row}) -> Nothing or Error {
+        let db: Pointer := self.link?
         var made: Pointer? := none
-        self.checked(lib.prepare(self.handle, statement, -1, var made, none))?
+        checked(db, lib.prepare(db, statement, -1, var made, none))?
         if made = none {
             return ok
         }
-        let done: Nothing or Error := self.stepped(statement, made, values, visit)
+        let done: Nothing or Error := stepped(db, statement, made, values, visit)
         lib.finalize(made)
         return done
-    }
-
-    fn stepped(
-        self,
-        text: String,
-        statement: Pointer,
-        values: List<Value>,
-        visit: {Row}
-    ) -> Nothing or Error {
-        self.alone(text, statement)?
-        for i, value in values {
-            self.checked(bound(statement, i + 1, value))?
-        }
-        var names: List<String> := []
-        for i in 0..lib.column_count(statement) {
-            names.add(lib.column_name(statement, i))
-        }
-        while true {
-            let code: Int := lib.step(statement)
-            if code != 100 {
-                return self.checked(code)
-            }
-            var cells: List<Value> := []
-            for i in 0..names.length {
-                cells.add(cell(statement, i))
-            }
-            visit(Row { names := names.clone, values := cells })
-        }
-        return ok
     }
 }
 
 // Opens a database file, made if missing. `":memory:"` is one that lives until `close`.
 fn open(path: String) -> Database or Error {
+    let first: Pointer := connect(path)?
+    return ok(Database {
+        path := path.clone,
+        owner := threads.id,
+        first,
+        others := threads.Shared<Map<Int, Pointer>>.new([])
+    })
+}
+
+private:
+
+fn connect(path: String) -> Pointer or Error {
     var made: Pointer? := none
     let code: Int := lib.open(path, var made)
     if made = none {
@@ -194,10 +202,64 @@ fn open(path: String) -> Database or Error {
         lib.close(made)
         return err(Error.Failed(message))
     }
-    return ok(Database { handle := made })
+    // Another connection writing: wait for it up to 5 seconds before giving `Busy`.
+    lib.wait_busy(made, 5000)
+    return ok(made)
 }
 
-private:
+fn checked(db: Pointer, code: Int) -> Nothing or Error {
+    if code = 0 || code = 100 || code = 101 {
+        return ok
+    }
+    let message: String := lib.message(db)
+    return err(if code = 19 { Error.Constraint(message) } else if code = 5 || code = 6 { Error.Busy(message) } else { Error.Failed(message) })
+}
+
+// A statement that is not alone would otherwise lose what follows it, silently.
+fn alone(db: Pointer, statement: String, made: Pointer) -> Nothing or Error {
+    let rest: String := statement.to_bytes[lib.statement_text(made).to_bytes.length..statement.to_bytes.length].to_text else ""
+    if rest.trim.is_empty {
+        return ok
+    }
+    var next: Pointer? := none
+    let code: Int := lib.prepare(db, rest, -1, var next, none)
+    if next != none {
+        lib.finalize(next)
+    }
+    if code = 0 && next = none {
+        return ok
+    }
+    return err(Error.Failed("several statements: use db.script, which runs them all"))
+}
+
+fn stepped(
+    db: Pointer,
+    text: String,
+    statement: Pointer,
+    values: List<Value>,
+    visit: {Row}
+) -> Nothing or Error {
+    alone(db, text, statement)?
+    for i, value in values {
+        checked(db, bound(statement, i + 1, value))?
+    }
+    var names: List<String> := []
+    for i in 0..lib.column_count(statement) {
+        names.add(lib.column_name(statement, i))
+    }
+    while true {
+        let code: Int := lib.step(statement)
+        if code != 100 {
+            return checked(db, code)
+        }
+        var cells: List<Value> := []
+        for i in 0..names.length {
+            cells.add(cell(statement, i))
+        }
+        visit(Row { names := names.clone, values := cells })
+    }
+    return ok
+}
 
 // SQLite's `SQLITE_TRANSIENT`: it takes its own copy of what it is given.
 let copies: Int := -1
@@ -205,6 +267,7 @@ let copies: Int := -1
 extern lib from "sqlite3" windows "winsqlite3" {
     fn open(path: String, db: var Pointer?) -> Int32 from "sqlite3_open"
     fn close(db: Pointer) -> Int32 from "sqlite3_close"
+    fn wait_busy(db: Pointer, milliseconds: Int32) -> Int32 from "sqlite3_busy_timeout"
     fn message(db: Pointer) -> String from "sqlite3_errmsg"
     fn exec(
         db: Pointer,
