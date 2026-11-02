@@ -448,6 +448,8 @@ fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<dia
         // Ownership only on a well-typed program: it relies on the types.
         diags = if d.is_empty() { ownership::check(&file, &mut info, source) } else { d };
         diags.sort_by_key(|d| d.span.start);
+        // A `_ =>` read twice (`Parser::nest`) would say its errors twice.
+        diags.dedup_by(|a, b| a.span == b.span && a.message == b.message);
         return (file, Some(info), diags, sources);
     }
     diags.sort_by_key(|d| d.span.start);

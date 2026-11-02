@@ -1,0 +1,79 @@
+// expect: lost
+// expect: late by 5
+// expect: got 20
+// expect: zero
+// expect: other
+// expect: lost
+// expect: other
+// expect: small 3
+// expect: 42
+// expect: circle 2.0
+
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+enum Shape {
+    Circle(r: Float)
+    Square(side: Float)
+}
+
+enum Drawing {
+    Plain(shape: Shape)
+    Empty
+}
+
+fn fetch(k: Int) -> Int or Problem {
+    if k = 0 {
+        return err(.Lost)
+    }
+    if k = 1 {
+        return err(.Late(5))
+    }
+    return ok(k * 10)
+}
+
+fn main {
+    // A case inside a case, as a statement.
+    for k in 0..3 {
+        match fetch(k) {
+            ok(v) => print("got {v}")
+            err(.Lost) => print("lost")
+            err(.Late(m)) => print("late by {m}")
+        }
+    }
+    // As a value, with a value inside and the rest named.
+    let zero: Int or Problem := ok(0)
+    let said: String := match zero {
+        ok(0) => "zero"
+        ok(v) => "got {v}"
+        err(.Lost) => "lost"
+        err(e) => "other {e = .Lost}"
+    }
+    print(said)
+    // The outer `_` covers the other cases inside too.
+    let all: List<Int or Problem> := [err(.Late(3)), err(.Lost), ok(7)]
+    for r in all {
+        match r {
+            err(.Lost) => print("lost")
+            _ => print("other")
+        }
+    }
+    // A name as the last case of values.
+    match 3 {
+        0 => print("none")
+        n => print("small {n}")
+    }
+    match 42 {
+        0 => print("none")
+        _ => print(42)
+    }
+    // A variant inside a variant of the program's own enums.
+    let d: Drawing := .Plain(.Circle(2.0))
+    match d {
+        .Plain(.Circle(r)) => print("circle {r}")
+        .Plain(.Square(s)) => print("square {s}")
+        .Empty => print("empty")
+    }
+}

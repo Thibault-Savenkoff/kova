@@ -231,6 +231,77 @@ hello
 bye
 ```
 
+## Des cas dans les cas
+
+Un cas peut contenir un autre cas là où va une valeur : `err(.Lost)`, c'est « une erreur, et cette
+erreur est `Lost` ». Ça évite un `match` dans un `match` :
+
+```kova
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+fn fetch(k: Int) -> Int or Problem {
+    if k = 0 {
+        return err(.Lost)
+    }
+    if k = 1 {
+        return err(.Late(5))
+    }
+    return ok(k * 10)
+}
+
+fn main {
+    for k in 0..4 {
+        match fetch(k) {
+            ok(20) => print("vingt")
+            ok(v) => print("reçu {v}")
+            err(.Lost) => print("perdu")
+            err(.Late(m)) => print("en retard de {m}")
+        }
+    }
+}
+```
+
+```text
+perdu
+en retard de 5
+vingt
+reçu 30
+```
+
+Les cas d'un même variant sont vérifiés ensemble : chaque cas à l'intérieur doit donc être traité
+lui aussi. Un `err(e) =>` plus bas prend les autres et nomme l'erreur entière ; un `_ =>` final les
+prend aussi :
+
+```kova
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+fn main {
+    let r: Int or Problem := err(.Late(3))
+    match r {
+        ok(v) => print(v)
+        err(.Lost) => print("perdu")
+    }
+}
+```
+
+```txt
+erreur: cas de `Problem` non traités : `.Late`
+  --> main.kova:10:9
+   |
+10 |         err(.Lost) => print("perdu")
+   |         ^^^
+   = aide : ajoute-les, ou termine par `_ => …` pour tous les autres
+```
+
+Un cas à l'intérieur contient une seule valeur : `err(.Lost)` et `.Plain(.Circle(r))` marchent,
+`.Rect(0.0, h)` non (fais le `match` sur le champ).
+
 ## Des enums qui se contiennent
 
 Un cas peut contenir une valeur de sa propre enum. C'est ainsi qu'on écrit des arbres et des

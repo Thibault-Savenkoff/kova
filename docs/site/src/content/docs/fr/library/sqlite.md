@@ -119,13 +119,16 @@ reçoit sa propre connexion au même fichier, ouverte la première fois qu'il ut
 fait un fil ne se mélange donc jamais avec ce que fait un autre. `db.last_id` après un `INSERT` est la
 ligne de ce fil, et un `BEGIN`…`COMMIT` ne contient que les instructions de ce fil.
 
-Deux connexions ne peuvent pas écrire le fichier au même moment : la deuxième attend la première,
-jusqu'à 5 secondes, puis reçoit `Busy`. Deux choses aident quand beaucoup de fils écrivent :
+Un fichier est ouvert en mode WAL (`journal_mode = WAL`, `synchronous = NORMAL`), comme le
+conseillent Rails et Django : les fils lisent pendant qu'un autre écrit, et un changement n'attend
+pas le disque à chaque fois. Tant que la base est ouverte, deux fichiers sont posés à côté (`-wal` et
+`-shm`) ; ils partent à la fermeture. Si la machine elle-même s'arrête (pas le programme), les tout
+derniers changements peuvent être perdus, jamais le fichier.
 
-- Commence une transaction qui va écrire par `BEGIN IMMEDIATE` plutôt que `BEGIN` : elle attend le
-  fichier au début, au lieu d'échouer avec `Busy` au milieu.
-- Lance une fois `db.script("PRAGMA journal_mode=WAL")` : les fils peuvent alors lire pendant qu'un
-  autre écrit. C'est gardé dans le fichier, et ça ajoute deux fichiers à côté (`-wal` et `-shm`).
+Deux connexions ne peuvent toujours pas écrire au même moment : la deuxième attend la première,
+jusqu'à 5 secondes, puis reçoit `Busy`. Une transaction qui va écrire se commence plutôt par
+`BEGIN IMMEDIATE` que par `BEGIN` : elle attend le fichier au début, au lieu d'échouer avec `Busy` au
+milieu.
 
 Une base `":memory:"` n'existe que dans sa connexion, donc elle reste dans le fil qui l'a ouverte :
 un autre fil reçoit `Failed`. Utilise un fichier pour partager une base entre fils.

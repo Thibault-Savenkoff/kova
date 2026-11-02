@@ -6258,7 +6258,10 @@ impl Checker<'_> {
                 }
             };
             let todo = if any.is_some() { vec![] } else { (0..d.variants().len()).filter(|i| !seen.contains_key(i)).map(written).collect() };
-            self.matches.push((m.subject.span.to(m.close), todo));
+            // ponytail: a `match` written by `Parser::nest` (its close is no `}`) gets no quick fix.
+            if &self.src[m.close.start..m.close.end] == "}" {
+                self.matches.push((m.subject.span.to(m.close), todo));
+            }
         }
         if let Some(d) = &d
             && any.is_none()
@@ -6383,8 +6386,15 @@ impl Checker<'_> {
                 let (line, _) = line_col(self.src, a.start);
                 self.error(span, t!("case_after_any", line = line));
             }
+            let mut named = None;
             match &arm.case {
                 Case::Any(_) => any = Some(span),
+                // `n =>`: every other value, named (PLAN Part 4 "Cases inside cases").
+                // A name already visible is the classic slip of comparing with it: refused below.
+                Case::Bind(p) if p.takes_all() && !matches!(p, Pattern::Name(n) if self.lookup(&n.text).is_some()) => {
+                    any = Some(span);
+                    named = Some(p);
+                }
                 Case::Values(vs) => {
                     for v in vs {
                         let shown = self.src[v.span.start..v.span.end].to_string();
@@ -6441,6 +6451,9 @@ impl Checker<'_> {
                 }
             }
             self.scopes.push(HashMap::new());
+            if let Some(p) = named {
+                self.bind(p, t, VarKind::Matched);
+            }
             if value {
                 let ty = self.block_value(&arm.body, expected.or(result.as_ref()));
                 if result.is_none() && ty != Type::Error {

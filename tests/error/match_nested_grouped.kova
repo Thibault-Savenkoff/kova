@@ -1,0 +1,14 @@
+// error: a case inside a case cannot be grouped with others
+
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+fn main {
+    let r: Int or Problem := err(.Lost)
+    match r {
+        err(.Lost), ok(v) => print("x")
+        _ => print("other")
+    }
+}

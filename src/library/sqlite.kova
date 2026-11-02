@@ -202,6 +202,14 @@ fn connect(path: String) -> Pointer or Error {
     }
     // Another connection writing: wait for it up to 5 seconds before giving `Busy`.
     lib.wait_busy(made, 5000)
+    // A file is used in WAL mode, as Rails and Django advise: readers never stop a writer, and
+    // a change waits for the disk only at checkpoints (`NORMAL`: the last changes may be lost
+    // if the machine itself stops, never the file). Without it, 8 threads writing at once
+    // got `Busy` now and then under load. A database that cannot (read-only, `:memory:`) keeps
+    // its mode.
+    if path != ":memory:" && path != "" {
+        let _: Int := lib.exec(made, "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL", none, none, none)
+    }
     return ok(made)
 }
 

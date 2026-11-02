@@ -106,6 +106,28 @@ cas qui se recouvrent (`1..=9` et `5`) aussi, puisque le second ne pourrait jama
 `match` brille vraiment avec les [enums](/fr/guide/enums-and-match/), dont le compilateur connaît
 chaque cas.
 
+Le dernier cas peut être un nouveau nom au lieu de `_` : il prend toutes les autres valeurs et les
+nomme.
+
+```kova
+fn main {
+    for n in [0, 7] {
+        match n {
+            0 => print("zéro")
+            other => print("{other} n'est pas zéro")
+        }
+    }
+}
+```
+
+```text
+zéro
+7 n'est pas zéro
+```
+
+Un nom qui existe déjà y est refusé : `limit =>` ressemblerait à « égal à `limit` », ce qu'il n'est
+pas. Compare plutôt avec `if n = limit`.
+
 ### Plusieurs valeurs à la fois
 
 Pour décider sur deux valeurs ensemble, fais un `match` sur un tuple. Chaque cas est aussi un tuple,

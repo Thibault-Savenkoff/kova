@@ -1,0 +1,16 @@
+// error: cases of `Problem` not handled: `.Late`
+
+enum Problem {
+    Lost
+    Late(minutes: Int)
+    Gone
+}
+
+fn main {
+    let r: Int or Problem := err(.Lost)
+    match r {
+        ok(v) => print(v)
+        err(.Lost) => print("lost")
+        err(.Gone) => print("gone")
+    }
+}

@@ -118,13 +118,14 @@ connection of its own to the same file, opened the first time it uses the databa
 thread does never mixes with another's: `db.last_id` after an `INSERT` is that thread's line, and a
 `BEGIN`…`COMMIT` holds only that thread's statements.
 
-Two connections cannot write the file at the same moment: the second waits for the first, up to 5
-seconds, then gets `Busy`. Two things help when many threads write:
+A file is opened in WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`), as Rails and Django
+advise: threads read while another writes, and a change does not wait for the disk each time. While
+the database is open, two files sit next to it (`-wal` and `-shm`); they go when it closes. If the
+machine itself stops (not the program), the very last changes may be lost, never the file.
 
-- Start a transaction that will write with `BEGIN IMMEDIATE` rather than `BEGIN`: it waits for the
-  file at the start, instead of failing with `Busy` in the middle.
-- Run `db.script("PRAGMA journal_mode=WAL")` once: threads can then read while another writes. It
-  is kept in the file, and adds two files next to it (`-wal` and `-shm`).
+Two connections still cannot write at the same moment: the second waits for the first, up to 5
+seconds, then gets `Busy`. A transaction that will write is better started with `BEGIN IMMEDIATE`
+than `BEGIN`: it waits for the file at the start, instead of failing with `Busy` in the middle.
 
 A `":memory:"` database exists in its connection only, so it stays in the thread that opened it:
 another thread gets `Failed`. Use a file to share a database between threads.

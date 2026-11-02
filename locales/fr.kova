@@ -492,6 +492,8 @@ lang fr {
     grouped_name_missing := "`{name}` doit être nommé dans chaque cas du groupe, et `{case}` n'en a pas"
     grouped_name_types := "`{name}` est `{a}` dans un cas et `{b}` dans `{case}` : un nom de cas groupés a un seul type"
     grouped_var := "`match var` ne peut pas grouper des cas qui nomment des champs : écris un cas par variante"
+    nested_grouped := "un cas dans un cas ne peut pas être groupé avec d'autres"
+    nested_grouped_help := "écris chaque cas sur sa propre ligne"
     case_twice := "le cas `{name}` est déjà traité (ligne {line})"
     case_after_any := "ce cas n'est jamais atteint : `_` (ligne {line}) traite déjà tous les autres"
     case_any_useless := "`_` ne traite rien : chaque variante de `{type}` a déjà son cas"

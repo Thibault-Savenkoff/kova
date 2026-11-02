@@ -104,6 +104,27 @@ A `match` must cover every value: without `_`, a `match` on an `Int` is refused,
 that overlap (`1..=9` and `5`) are refused too, since the second one could never be reached.
 `match` really shines with [enums](/guide/enums-and-match/), where the compiler knows every case.
 
+The last case may be a new name instead of `_`: it takes every other value and names it.
+
+```kova
+fn main {
+    for n in [0, 7] {
+        match n {
+            0 => print("zero")
+            other => print("{other} is not zero")
+        }
+    }
+}
+```
+
+```text
+zero
+7 is not zero
+```
+
+A name that already exists is refused there: `limit =>` would look like "equal to `limit`", which
+it is not. Compare with `if n = limit` instead.
+
 ### Several values at once
 
 To decide on two values together, `match` a tuple of them. Each case is a tuple too, whose parts

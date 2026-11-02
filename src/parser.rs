@@ -2010,13 +2010,86 @@ impl Parser<'_> {
                 self.diags.push(Diag::new(span, t!("block_unclosed")));
                 break Err(());
             }
+            let at = self.pos;
             match self.arm() {
-                Ok(a) => arms.push(a),
+                Ok((arm, inner)) => arms.push((arm, inner, at)),
                 Err(()) => self.skip_statement(),
             }
         };
         self.no_literal = saved;
+        let arms = self.nest(arms, mode);
         Ok(Match { mode, subject, arms, close: close?, found: false })
+    }
+
+    /// `err(.Lost) => a`, `err(.Late(m)) => b`, `err(e) => c` become one arm `err(x) => match x
+    /// { .Lost => a, .Late(m) => b, e => c }`, where the first of them is (PLAN Part 4 "Cases
+    /// inside cases"). The inner `match` reports its missing cases on that first arm.
+    fn nest(&mut self, arms: Vec<(Arm, Option<Case>, usize)>, mode: Mode) -> Vec<Arm> {
+        // The `_ =>` of the outer match covers the other cases inside too: it is read once more
+        // from its tokens (new expression numbers) for each group without its own `_`.
+        let any = arms.iter().find(|(a, ..)| matches!(a.case, Case::Any(_))).map(|(.., at)| *at);
+        // `err(e)` after an `err(.Lost)`: `e` names the value for every case of the group, and its
+        // arm becomes the inner `_`.
+        let mut nested: HashSet<String> = HashSet::new();
+        let mut names: HashMap<String, Name> = HashMap::new();
+        for (arm, inner, _) in &arms {
+            if let Case::Variant { name, binds } = &arm.case {
+                if inner.is_some() {
+                    nested.insert(name.text.clone());
+                } else if let [Pattern::Name(n)] = &binds[..]
+                    && nested.contains(&name.text)
+                {
+                    names.entry(name.text.clone()).or_insert_with(|| n.clone());
+                }
+            }
+        }
+        let mut out: Vec<Arm> = vec![];
+        let mut groups: HashMap<String, usize> = HashMap::new();
+        for (arm, inner, _) in arms {
+            let Case::Variant { name, binds } = &arm.case else {
+                out.push(arm);
+                continue;
+            };
+            let inner = match inner {
+                Some(c) => c,
+                None if arm.also.is_empty() && binds.len() == 1 && groups.contains_key(&name.text) => Case::Any(binds[0].span()),
+                None => {
+                    out.push(arm);
+                    continue;
+                }
+            };
+            let name = name.clone();
+            let inner = Arm { case: inner, also: vec![], body: arm.body };
+            if let Some(&k) = groups.get(&name.text)
+                && let Some(Stmt::Match(m)) = out[k].body.stmts.first_mut()
+            {
+                m.arms.push(inner);
+                continue;
+            }
+            let hidden = names.get(&name.text).cloned().unwrap_or(Name { text: format!("… nested {}", name.span.start), span: name.span });
+            let subject = self.expr(name.span, ExprKind::Var(hidden.text.clone()));
+            let open = inner.body.open;
+            let m = Match { mode, subject, arms: vec![inner], close: name.span, found: false };
+            groups.insert(name.text.clone(), out.len());
+            let body = Block { open, stmts: vec![Stmt::Match(m)], close: name.span };
+            out.push(Arm { case: Case::Variant { name, binds: vec![Pattern::Name(hidden)] }, also: vec![], body });
+        }
+        if let Some(at) = any {
+            for &k in groups.values() {
+                let Some(Stmt::Match(m)) = out[k].body.stmts.first() else { continue };
+                if m.arms.iter().any(|a| matches!(a.case, Case::Any(_))) {
+                    continue;
+                }
+                let (pos, diags) = (self.pos, self.diags.len());
+                self.pos = at;
+                let again = self.arm();
+                (self.pos, _) = (pos, self.diags.truncate(diags));
+                if let (Ok((arm, _)), Some(Stmt::Match(m))) = (again, out[k].body.stmts.first_mut()) {
+                    m.arms.push(arm);
+                }
+            }
+        }
+        out
     }
 
     fn select_starts(&self) -> bool {
@@ -2116,7 +2189,46 @@ impl Parser<'_> {
         Ok(name)
     }
 
-    fn arm(&mut self) -> R<Arm> {
+    /// Can a case start here, other than a name: `.Lost`, `none`, `0`, `-1`, `"yes"`?
+    fn nested_case_starts(&self) -> bool {
+        self.is_sym(".") || self.is_sym("-") || self.is_keyword("none") || matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str)
+    }
+
+    /// One arm, and the case written inside its variant when there is one: `err(.Lost) =>` gives
+    /// `err` with no field, and `.Lost` (PLAN Part 4 "Cases inside cases").
+    fn arm(&mut self) -> R<(Arm, Option<Case>)> {
+        let (case, nested) = self.case()?;
+        let mut also = vec![];
+        if matches!(case, Case::Variant { .. }) {
+            while self.is_sym(",") {
+                let comma = self.advance().span;
+                let name = self.case_name()?;
+                let mut binds = vec![];
+                if self.is_sym("(") {
+                    let open = self.advance().span;
+                    while !self.is_sym(")") {
+                        binds.push(self.pattern()?);
+                        if !self.is_sym(")") {
+                            self.expect(",")?;
+                        }
+                    }
+                    let close = self.advance().span;
+                    if binds.is_empty() {
+                        self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
+                    }
+                }
+                if nested.is_some() {
+                    self.diags.push(Diag::new(comma.to(name.span), t!("nested_grouped")).help(t!("nested_grouped_help")));
+                }
+                also.push((name, binds));
+            }
+        }
+        let arm = self.arm_body(case, also)?;
+        Ok((arm, nested))
+    }
+
+    fn case(&mut self) -> R<(Case, Option<Case>)> {
+        let mut nested = None;
         let case = if self.kind() == Kind::Ident && self.text(self.token().span) == "_" {
             Case::Any(self.advance().span)
         } else if self.is_keyword("none") {
@@ -2140,6 +2252,12 @@ impl Parser<'_> {
             let mut binds = vec![];
             if self.is_sym("(") {
                 let open = self.advance().span;
+                if self.nested_case_starts() {
+                    // ponytail: only a variant of one field holds a case (`err(.Lost)`), never `.Rect(0.0, h)`.
+                    nested = Some(self.case()?.0);
+                    self.expect(")")?;
+                    return Ok((Case::Variant { name, binds }, nested));
+                }
                 while !self.is_sym(")") {
                     binds.push(self.pattern()?);
                     if !self.is_sym(")") {
@@ -2153,28 +2271,10 @@ impl Parser<'_> {
             }
             Case::Variant { name, binds }
         };
-        let mut also = vec![];
-        if matches!(case, Case::Variant { .. }) {
-            while self.is_sym(",") {
-                self.advance();
-                let name = self.case_name()?;
-                let mut binds = vec![];
-                if self.is_sym("(") {
-                    let open = self.advance().span;
-                    while !self.is_sym(")") {
-                        binds.push(self.pattern()?);
-                        if !self.is_sym(")") {
-                            self.expect(",")?;
-                        }
-                    }
-                    let close = self.advance().span;
-                    if binds.is_empty() {
-                        self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
-                    }
-                }
-                also.push((name, binds));
-            }
-        }
+        Ok((case, nested))
+    }
+
+    fn arm_body(&mut self, case: Case, also: Vec<(Name, Vec<Pattern>)>) -> R<Arm> {
         let arrow = self.expect("=>")?;
         self.skip_newlines();
         let body = if self.is_sym("{") {

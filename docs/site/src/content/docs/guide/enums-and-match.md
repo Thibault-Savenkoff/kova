@@ -228,6 +228,76 @@ hello
 bye
 ```
 
+## Cases inside cases
+
+A case may hold another case where a value goes: `err(.Lost)` is "an error, and that error is
+`Lost`". It saves a `match` inside a `match`:
+
+```kova
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+fn fetch(k: Int) -> Int or Problem {
+    if k = 0 {
+        return err(.Lost)
+    }
+    if k = 1 {
+        return err(.Late(5))
+    }
+    return ok(k * 10)
+}
+
+fn main {
+    for k in 0..4 {
+        match fetch(k) {
+            ok(20) => print("twenty")
+            ok(v) => print("got {v}")
+            err(.Lost) => print("lost")
+            err(.Late(m)) => print("late by {m}")
+        }
+    }
+}
+```
+
+```text
+lost
+late by 5
+twenty
+got 30
+```
+
+The cases of one variant are checked together, so every case inside must be handled too. A later
+`err(e) =>` takes the others and names the whole error; a final `_ =>` takes them as well:
+
+```kova
+enum Problem {
+    Lost
+    Late(minutes: Int)
+}
+
+fn main {
+    let r: Int or Problem := err(.Late(3))
+    match r {
+        ok(v) => print(v)
+        err(.Lost) => print("lost")
+    }
+}
+```
+
+```txt
+error: cases of `Problem` not handled: `.Late`
+  --> main.kova:10:9
+   |
+10 |         err(.Lost) => print("lost")
+   |         ^^^
+   = help: add them, or end with `_ => …` for all the others
+```
+
+A case inside holds one value: `err(.Lost)` and `.Plain(.Circle(r))` work, `.Rect(0.0, h)` does not
+(match on the field instead).
+
 ## Enums that hold themselves
 
 A case may hold a value of its own enum. This is how trees and expressions are written:

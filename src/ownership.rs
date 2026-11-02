@@ -290,7 +290,8 @@ impl Owner<'_> {
         for arm in &m.arms {
             self.state = start.clone();
             self.scopes.push(HashMap::new());
-            if let (Case::Bind(p), Type::Tuple(_)) = (&arm.case, &ty) {
+            // A tuple's case, or `n =>` on values.
+            if let (Case::Bind(p), true) = (&arm.case, matches!(ty, Type::Tuple(_)) || d.is_none()) {
                 self.bind(p, &ty, root.is_some());
             } else if let (Some((name, binds)), Some(d)) = (arm.case.variant(), &d) {
                 let (_, fields) = d.variant(name).expect("variant checked by the type checker");
