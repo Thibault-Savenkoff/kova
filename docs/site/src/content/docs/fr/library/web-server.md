@@ -127,6 +127,10 @@ fn main {
 Un deuxième Ctrl+C n'attend pas : le programme s'arrête tout de suite, avec le code de sortie 130.
 `system.exit(0)` dans un cas arrête tout le programme immédiatement, sans revenir de `serve`.
 
+Une fois que `serve` a rendu la main, son port est libre : un `web.serve` plus loin peut le
+reprendre, et un Ctrl+C après ça arrête le programme comme d'habitude. `kova run`, `kova build`
+et `kova debug` se comportent pareil.
+
 ## Ce que Kova gère lui-même
 
 - Une question qu'il ne peut pas lire reçoit `400`, des en-têtes trop longs `431`, un corps de plus

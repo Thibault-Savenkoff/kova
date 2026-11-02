@@ -1374,9 +1374,8 @@ fn server_workers() {
 }
 
 /// Ctrl+C (PLAN Part 4 "A server that stops"): the question being answered is finished, then
-/// `serve` comes back and the program goes on. Unix only: a program cannot send another one
-/// Ctrl+C on Windows without sharing its console.
-#[cfg(unix)]
+/// `serve` comes back and the program goes on. On Windows the child gets its own process group
+/// and Ctrl+Break, the one event a program may send another that shares its console.
 #[test]
 fn server_stops() {
     let _alone = one_server();
@@ -1397,15 +1396,40 @@ fn server_stops() {
     let out = kova(LANG).arg("build").arg("tests/web/workers.kova").arg("-o").arg(&exe).output().unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     let port = free_port();
-    let child = program(&exe, LANG).arg(port.to_string()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    let mut run = program(&exe, LANG);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut run, 0x200); // CREATE_NEW_PROCESS_GROUP
+    let mut child = run.arg(port.to_string()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
     assert_eq!(ask(port, "/ada"), "hello 36");
     let slow = std::thread::spawn(move || ask(port, "/slow"));
     std::thread::sleep(std::time::Duration::from_millis(300));
-    Command::new("kill").arg("-INT").arg(child.id().to_string()).status().unwrap();
+    if !interrupt(&child) {
+        // ponytail: no console to share (some CI runners), so nothing to test here.
+        eprintln!("server_stops: skipped, no console to send Ctrl+Break through");
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&exe);
+        return;
+    }
     let end = child.wait_with_output().unwrap();
     let _ = std::fs::remove_file(&exe);
     assert_eq!(slow.join().unwrap(), "slow");
     assert_eq!((text(&end.stdout), end.status.code()), ("stopped\n".to_string(), Some(0)), "{}", text(&end.stderr));
+}
+
+/// Ctrl+C for a child: SIGINT on Unix, Ctrl+Break to its process group on Windows. False if
+/// Windows refused (the test has no console).
+fn interrupt(child: &std::process::Child) -> bool {
+    #[cfg(unix)]
+    return Command::new("kill").arg("-INT").arg(child.id().to_string()).status().unwrap().success();
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GenerateConsoleCtrlEvent(event: u32, group: u32) -> i32;
+        }
+        unsafe { GenerateConsoleCtrlEvent(1, child.id()) != 0 }
+    }
 }
 
 /// A real program kept as a test (PLAN Part 4 "The proof: a server"): `tests/web/notes.kova`, a

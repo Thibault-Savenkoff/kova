@@ -124,6 +124,10 @@ fn main {
 A second Ctrl+C does not wait: the program stops at once, with the exit code 130. `system.exit(0)`
 inside a case stops the whole program right away, without coming back from `serve`.
 
+Once `serve` has come back, its port is free: a later `web.serve` may take it again, and a
+Ctrl+C after that stops the program the usual way. `kova run`, `kova build` and `kova debug`
+behave the same.
+
 ## What Kova handles itself
 
 - A question it cannot read gets `400`, headers too long `431`, a body past 16 MB `413`, a body
