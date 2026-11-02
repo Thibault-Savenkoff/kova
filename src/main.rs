@@ -117,7 +117,7 @@ fn kova() {
     };
     // Warnings: only `kova build` prints them (`kova run` is for trying; the editor shows them).
     if matches!(command, Some(Command::Build { .. })) {
-        for d in warnings(&info) {
+        for (d, _) in warnings(&info, &tree, &sources) {
             eprintln!("{}", diag::render_as(&d, &sources, &t!("warning_prefix")));
         }
     }
@@ -396,14 +396,40 @@ fn fmt(files: &[&str]) -> i32 {
 /// it on text that isn't saved yet (the files it imports are read from the disk).
 /// `Some(info)` once the types are checked, even with errors: the editor still shows them.
 /// Also picks the language of the messages: the `header`'s, otherwise the system's.
-/// What is not wrong but useless: a local name never used (PLAN Part 4 "Unused names").
-pub fn warnings(info: &types::Info) -> Vec<diag::Diag> {
-    let unused = info.unused.iter();
-    let unused = unused.map(|(span, name)| diag::Diag::new(*span, t!("unused_name", name = name)).help(t!("unused_name_help")));
-    let fixed = info.fixed.iter().map(|(span, name)| diag::Diag::new(*span, t!("never_changes", name = name)).help(t!("never_changes_help")));
-    let mut all: Vec<diag::Diag> = unused.chain(fixed).collect();
-    all.sort_by_key(|d| d.span.start);
+/// What is not wrong but useless (PLAN Part 4 "Unused names"); `true`: greyed out in the editor.
+pub fn warnings(info: &types::Info, tree: &ast::File, sources: &diag::Sources) -> Vec<(diag::Diag, bool)> {
+    let warn = |list: &[(diag::Span, String)], key: &str, help: &str, grey: bool| -> Vec<(diag::Diag, bool)> {
+        list.iter().map(|(span, name)| (diag::Diag::new(*span, locale::text(key, &[("name", name as &dyn std::fmt::Display)])).help(locale::text(help, &[])), grey)).collect()
+    };
+    let mut all = warn(&info.unused, "unused_name", "unused_name_help", true);
+    all.extend(warn(&info.idle, "unused_function", "unused_function_help", true));
+    all.extend(warn(&info.fixed, "never_changes", "never_changes_help", false));
+    all.extend(warn(&unused_imports(tree, sources), "unused_import", "unused_import_help", true));
+    all.sort_by_key(|(d, _)| d.span.start);
     all
+}
+
+/// The `import`s of the main file whose name is never written there before a `.`. An imported
+/// file of the program holding an `extend` is kept: its methods are used without its name.
+fn unused_imports(tree: &ast::File, sources: &diag::Sources) -> Vec<(diag::Span, String)> {
+    let main = sources.file_text(0);
+    // On the text, not the tokens: `"{system.args[0]}"` uses `system` inside a text. A comment
+    // naming it hides the warning, never makes a wrong one.
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let named = |alias: &str| {
+        let wanted = format!("{alias}.");
+        main.match_indices(&wanted).any(|(at, _)| !main[..at].ends_with(word))
+    };
+    let extends = |module: &str| {
+        let file = format!("{}.kova", module.replace('.', "/"));
+        (sources.files.iter().enumerate().skip(1))
+            .filter(|(_, (path, _))| path.replace('\\', "/").ends_with(&file))
+            .any(|(k, _)| sources.file_text(k).lines().any(|l| l.starts_with("extend ")))
+    };
+    (tree.imports.iter())
+        .filter(|i| i.alias.span.end <= main.len() && !named(&i.alias.text) && !extends(&i.module.text))
+        .map(|i| (i.alias.span, i.alias.text.clone()))
+        .collect()
 }
 
 fn analyze(path: &str, source: &str) -> (ast::File, Option<types::Info>, Vec<diag::Diag>, diag::Sources) {

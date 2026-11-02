@@ -59,6 +59,9 @@ name that starts with `_` (`_spare`) is not warned about either. Changing a `var
 it. Parameters are never warned about: a function or a block often has to take what it is given.
 `kova run` says nothing, so trying something out stays quiet.
 
+The same goes for a function of the program never called (a file without `fn main` is a module:
+its functions are for the files importing it) and for an `import` whose name is never written.
+
 ### Constants
 
 A `let` at the top of a file is a constant, for a value that has one meaning in the whole program.

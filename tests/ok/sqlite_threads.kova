@@ -4,14 +4,13 @@
 import sqlite
 import threads
 import files
+import secure
 
 // Each thread inserts its lines and reads each one back through `last_id`: with one connection
 // for all, `last_id` could be another thread's line.
 fn main {
-    let path: String := "sqlite_threads_test.db"
-    if files.exists(path) {
-        files.remove(path)?
-    }
+    // Its own file: the test runner runs this program in run and in build at the same time.
+    let path: String := "sqlite_threads_{secure.token(8)}.db"
     let db: sqlite.Database := sqlite.open(path)?
     db.script("CREATE TABLE lines (id INTEGER PRIMARY KEY, who TEXT)")?
     var tasks: List<threads.Task<Int>> := []

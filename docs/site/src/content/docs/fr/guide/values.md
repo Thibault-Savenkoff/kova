@@ -59,6 +59,9 @@ Un nom qui commence par `_` (`_reserve`) ne déclenche pas non plus d'avertissem
 compte comme l'utiliser. Les paramètres ne sont jamais signalés : une fonction ou un bloc doit
 souvent prendre ce qu'on lui donne. `kova run` ne dit rien, pour que les essais restent calmes.
 
+Pareil pour une fonction du programme jamais appelée (un fichier sans `fn main` est un module : ses
+fonctions servent aux fichiers qui l'importent) et pour un `import` dont le nom n'est jamais écrit.
+
 ### Les constantes
 
 Un `let` en haut d'un fichier est une constante, pour une valeur qui a un seul sens dans tout le

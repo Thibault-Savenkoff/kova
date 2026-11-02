@@ -961,6 +961,8 @@ pub struct Info {
     pub seen: Vec<Seen>,
     /// The local names never used, with their name (shown as warnings).
     pub unused: Vec<(Span, String)>,
+    /// The functions never called.
+    pub idle: Vec<(Span, String)>,
     /// The `var`s that never change (shown as warnings: `let` says more).
     pub fixed: Vec<(Span, String)>,
     /// For the editor: the variables declared without their type written anywhere
@@ -1908,6 +1910,14 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     let used: std::collections::HashSet<usize> = seen.iter().filter(|s| s.span != s.decl).map(|s| s.decl.start).collect();
     let main_end = src.find(crate::diag::SEPARATOR).unwrap_or(src.len());
     let unused: Vec<(Span, String)> = c.locals.into_iter().filter(|(span, _)| span.start < main_end && !used.contains(&span.start)).collect();
+    // A function of the main file nothing calls or names (`main` is called by the system). Only
+    // in a program: a module opened alone is called from the files importing it.
+    let program = f.functions.iter().any(|g| g.name.text == "main" && g.name.span.start < main_end);
+    let idle = (f.functions.iter())
+        .filter(|g| program && g.name.span.start < main_end && g.name.text != "main" && !g.name.text.starts_with('_'))
+        .filter(|g| !used.contains(&g.name.span.start))
+        .map(|g| (g.name.span, g.name.text.clone()))
+        .collect();
     let fixed = (c.vars.into_iter())
         .filter(|(span, _)| span.start < main_end && !c.changed.contains(&span.start) && !unused.iter().any(|(u, _)| u == span))
         .collect();
@@ -1927,6 +1937,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         spans,
         seen,
         unused,
+        idle,
         fixed,
         hints,
         matches,
