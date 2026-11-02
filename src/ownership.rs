@@ -61,6 +61,9 @@ struct Owner<'a> {
     /// The variables frozen by an open `for` loop or `match` (they are `pending` too), with the
     /// key of the message saying why.
     looped: Vec<(usize, &'static str)>,
+    /// `let n := t.nodes[0]`: the variables lent to a `let` until the end of its block (`pending`
+    /// meanwhile), with the name and line of the `let`.
+    lent: Vec<(usize, String, usize)>,
     info: &'a mut Info,
     scopes: Vec<HashMap<String, Var>>,
     next_id: usize,
@@ -114,6 +117,7 @@ pub fn check<'a>(f: &'a File, info: &'a mut Info, src: &'a str) -> Vec<Diag> {
         ensures: vec![],
         pending: vec![],
         looped: vec![],
+        lent: vec![],
         info,
         scopes: vec![],
         next_id: 0,
@@ -201,17 +205,19 @@ impl Owner<'_> {
     }
 
     fn block(&mut self, b: &Block) {
-        let base = self.scopes.len();
+        let (base, mark, lent) = (self.scopes.len(), self.pending.len(), self.lent.len());
         self.scopes.push(HashMap::new());
         for s in &b.stmts {
             self.stmt(s);
         }
         self.scopes.truncate(base);
+        self.pending.truncate(mark);
+        self.lent.truncate(lent);
     }
 
     /// A block whose last line is a value (`if` expression): that value is given.
     fn block_value(&mut self, b: &Block) {
-        let base = self.scopes.len();
+        let (base, mark, lent) = (self.scopes.len(), self.pending.len(), self.lent.len());
         self.scopes.push(HashMap::new());
         let (last, before) = b.stmts.split_last().expect("block checked by the type checker");
         for s in before {
@@ -224,6 +230,8 @@ impl Owner<'_> {
             leaving => self.stmt(leaving),
         }
         self.scopes.truncate(base);
+        self.pending.truncate(mark);
+        self.lent.truncate(lent);
     }
 
     fn if_value(&mut self, cond: &Expr, then: &Block, otherwise: &Block) {
@@ -370,6 +378,18 @@ impl Owner<'_> {
 
     fn stmt(&mut self, s: &Stmt) {
         let mark = self.pending.len();
+        // `let n := t.nodes[0]`: `t` stays read (`pending`) until the end of the block.
+        if let Some((name, value)) = crate::types::lends(s, self.info) {
+            self.borrow(value);
+            self.pending.truncate(mark);
+            let (root, _) = place_root(value, &self.info.types).expect("a part of a variable");
+            let id = self.lookup(root).id;
+            self.pending.push(id);
+            let (line, _) = line_col(self.src, name.span.start);
+            self.lent.push((id, name.text.clone(), line));
+            self.declare(&name.text, true);
+            return;
+        }
         self.stmt_kind(s);
         self.pending.truncate(mark);
     }
@@ -778,6 +798,9 @@ impl Owner<'_> {
     /// The message for a `pending` variable: `msg`, or "walked by a `for` loop" (or matched) if it is.
     fn busy(&self, name: &str, msg: String) -> String {
         let id = self.lookup(name).id;
+        if let Some((_, to, line)) = self.lent.iter().rev().find(|(v, ..)| *v == id) {
+            return t!("let_frozen", name = name, to = to, line = line);
+        }
         match self.looped.iter().rev().find(|(v, _)| *v == id) {
             Some((_, key)) => crate::locale::text(key, &[("name", &name)]),
             None => msg,

@@ -240,6 +240,57 @@ error: `l[0]` is an element of a List: it cannot be moved out
 The same holds inside a value: a field or an element is part of its owner, and is read, changed or
 copied where it is, never moved out alone.
 
+### A name for a part
+
+`let` gives a name to a field or an element without copying it: the name **borrows** it, where it
+is.
+
+```kova
+struct Node {
+    name: String
+    kids: List<Int>
+}
+
+fn main {
+    let nodes: List<Node> := [Node { name := "root", kids := [1] }, Node { name := "leaf", kids := [] }]
+    let root: Node := nodes[0]
+    print("{root.name} has {root.kids.length} kid")
+}
+```
+
+```text
+root has 1 kid
+```
+
+Like any borrow, `root` stays in its block, and while it lives, `nodes` cannot change: the element
+`root` reads must stay where it is.
+
+```kova
+struct Node {
+    name: String
+}
+
+fn main {
+    var nodes: List<Node> := [Node { name := "root" }]
+    let root: Node := nodes[0]
+    nodes.add(Node { name := "leaf" })
+    print(root.name)
+}
+```
+
+```txt
+error: `nodes` is lent to `root` (line 7) until the end of its block: it cannot change or be moved meanwhile; put `root` in a smaller block, or take a copy with `.clone`
+ --> main.kova:8:5
+  |
+8 |     nodes.add(Node { name := "leaf" })
+  |     ^^^^^
+```
+
+Put the `let` in a smaller block (`if`, a loop's body…) so that it ends before the change, or take
+your own copy with `let root: Node := nodes[0].clone`. `var root: Node := nodes[0]` needs that copy
+too, since a `var` is changed and so must be its own. A part that is a copy (`Int`, `Float`, a
+`copy struct`) is simply copied, and lends nothing.
+
 ## Changing a value someone is reading
 
 Because each value has one owner and the markers are visible, Kova can also refuse a change while

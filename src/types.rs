@@ -1181,6 +1181,21 @@ pub fn method_name(ty: &str, name: &str) -> String {
 
 /// The variable at the root of a place: `rex` in `rex.dog.name` or in `t.0`;
 /// `None` for a computed value (`make_dog.name`).
+/// `let n: Node := self.nodes[id]` (PLAN Part 4 "A local borrow"): a `let` of a part of a variable
+/// (a field, a List's element) that is no copy lends it to `n` until the end of the block,
+/// instead of moving it out (refused). The variable cannot change meanwhile (`ownership.rs`).
+pub fn lends<'s>(s: &'s Stmt, info: &Info) -> Option<(&'s Name, &'s Expr)> {
+    let Stmt::Declare { mutable: false, pattern: Pattern::Name(n), value, .. } = s else { return None };
+    let part = match &value.kind {
+        ExprKind::Field(..) => true,
+        ExprKind::Method { receiver, name, args } => args.is_empty() && info.types[receiver.id].is_field(&name.text),
+        ExprKind::Index(list, i) => matches!(info.types[list.id], Type::List(_)) && i.range().is_none(),
+        _ => false,
+    };
+    let given = info.wraps[value.id] || info.boxes[value.id].is_some();
+    (part && !given && !is_copy(&info.types[value.id]) && place_root(value, &info.types).is_some()).then_some((n, value))
+}
+
 pub fn place_root<'e>(e: &'e Expr, types: &[Type]) -> Option<(&'e str, Span)> {
     match &e.kind {
         ExprKind::Var(n) => Some((n, e.span)),

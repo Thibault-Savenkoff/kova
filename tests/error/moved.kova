@@ -15,7 +15,7 @@ fn main {
     print(c)
 
     let t: (String, Int) := ("t", 1)
-    let u: String := t.0
+    var u: String := t.0
 
     let e: String := "e"
     for i in 1..=3 {

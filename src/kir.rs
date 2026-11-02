@@ -3146,6 +3146,21 @@ impl<'a> Translator<'a> {
                 self.names.push(Scope { borrowed: true, vars: back.into_iter().collect() });
                 self.names.push(Scope::default());
             }
+            // `let n := t.nodes[0]`: `n` reads the element where it is, and frees nothing.
+            if let Some((name, value)) = crate::types::lends(s, self.info) {
+                if self.watching {
+                    self.line(s);
+                }
+                let mark = self.temps.len();
+                let (p, ty) = self.place(value);
+                let v = self.read(&p);
+                let slots = self.new_slots(&ty);
+                self.copy(&slots, &v);
+                self.free_temps(mark);
+                self.names.push(Scope { borrowed: true, vars: HashMap::from([(name.text.clone(), (slots, ty))]) });
+                self.names.push(Scope::default());
+                continue;
+            }
             self.stmt(s);
             if let Stmt::If { cond, .. } = s
                 && let Some(names) = self.info.guards.get(&cond.id)

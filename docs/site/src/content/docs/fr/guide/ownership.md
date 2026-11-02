@@ -244,6 +244,56 @@ peut alors donner ses parties.
 C'est pareil à l'intérieur d'une valeur : un champ ou un élément fait partie de son propriétaire,
 et se lit, se change ou se copie sur place, jamais déplacé seul.
 
+### Un nom pour une partie
+
+`let` donne un nom à un champ ou à un élément sans le copier : le nom l'**emprunte**, là où il est.
+
+```kova
+struct Node {
+    name: String
+    kids: List<Int>
+}
+
+fn main {
+    let nodes: List<Node> := [Node { name := "racine", kids := [1] }, Node { name := "feuille", kids := [] }]
+    let root: Node := nodes[0]
+    print("{root.name} a {root.kids.length} enfant")
+}
+```
+
+```text
+racine a 1 enfant
+```
+
+Comme tout emprunt, `root` reste dans son bloc, et tant qu'il vit, `nodes` ne peut pas changer :
+l'élément que `root` lit doit rester où il est.
+
+```kova
+struct Node {
+    name: String
+}
+
+fn main {
+    var nodes: List<Node> := [Node { name := "root" }]
+    let root: Node := nodes[0]
+    nodes.add(Node { name := "leaf" })
+    print(root.name)
+}
+```
+
+```txt
+erreur: `nodes` est prêté à `root` (ligne 7) jusqu'à la fin de son bloc : il ne peut ni changer ni être déplacé entre-temps ; mets `root` dans un bloc plus petit, ou prends une copie avec `.clone`
+ --> main.kova:8:5
+  |
+8 |     nodes.add(Node { name := "leaf" })
+  |     ^^^^^
+```
+
+Mets le `let` dans un bloc plus petit (un `if`, le corps d'une boucle…) pour qu'il finisse avant le
+changement, ou prends ta propre copie avec `let root: Node := nodes[0].clone`. `var root: Node :=
+nodes[0]` a aussi besoin de cette copie, puisqu'une `var` est changée et doit donc être à elle. Une
+partie qui est une copie (`Int`, `Float`, une `copy struct`) est simplement copiée, et ne prête rien.
+
 ## Changer une valeur que quelqu'un lit
 
 Comme chaque valeur a un seul propriétaire et que les marqueurs sont visibles, Kova peut aussi

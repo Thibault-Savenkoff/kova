@@ -436,6 +436,7 @@ lang en {
     index_move_help := "give a copy with `{place}.clone`, or take it out with `{list}.remove({index})`"
     read_then_changed := "`{name}` is still read by this expression: it cannot be changed in it"
     loop_frozen := "`{name}` is walked by a `for` loop: it cannot change or be moved inside it"
+    let_frozen := "`{name}` is lent to `{to}` (line {line}) until the end of its block: it cannot change or be moved meanwhile; put `{to}` in a smaller block, or take a copy with `.clone`"
     for_var_list := "`for x in var` changes the elements of a List, not of a {type}"
     for_var_temporary := "`for x in var` changes the List: it must be a variable (or one of its fields)"
     lent_to_loop := "`{name}` is lent to the `for` loop of line {line}: inside it, it is used through its element only"

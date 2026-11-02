@@ -40,7 +40,7 @@ struct Scene {
     }
 
     fn position(self, id: Int) -> (Float, Float) {
-        let n: Node := self.nodes[id].clone
+        let n: Node := self.nodes[id]
         return match n.parent {
             none => (n.x, n.y)
             p => {
@@ -51,7 +51,7 @@ struct Scene {
     }
 
     fn path(self, id: Int) -> String {
-        let n: Node := self.nodes[id].clone
+        let n: Node := self.nodes[id]
         return match n.parent {
             none => n.name.clone
             p => "{self.path(p)}/{n.name}"
