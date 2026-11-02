@@ -31,8 +31,8 @@ fn main {
 }
 ```
 
-`web.serve(8080)` answers each question with what its [block](/guide/blocks/) gives, until the
-program stops (`system.exit(0)` in a case stops it). Open `http://localhost:8080/` in a browser to see it.
+`web.serve(8080)` answers each question with what its [block](/guide/blocks/) gives, until you
+press Ctrl+C ([Stopping](#stopping)). Open `http://localhost:8080/` in a browser to see it.
 
 When it starts, the server writes where to open it, then a line for each question it answers, on
 the error output:
@@ -99,6 +99,30 @@ question is complete first, so a browser's spare connection that says nothing bl
 | `web.serve(8080) log(web.Log.Off) { … }` | nothing |
 
 `log(…)` also goes after `serve_files(…) at(…)`, and before or after `workers(…)`.
+
+## Stopping
+
+Ctrl+C, or the system asking the program to stop (`kill`, `systemctl stop`, `docker stop`), stops
+the server cleanly: it takes no new question, finishes the ones it is answering, then `web.serve`
+comes back and the program goes on after it. That is the place to finish what must not be lost:
+
+```kova
+import web
+import sqlite
+
+fn main {
+    let db: sqlite.Database := sqlite.open("site.db")?
+    web.serve(8080) workers(4) { q: web.Request =>
+        web.Answer.text("hello")
+    }
+    // Ctrl+C was pressed: every answer is sent.
+    db.close
+    print("bye")
+}
+```
+
+A second Ctrl+C does not wait: the program stops at once, with the exit code 130. `system.exit(0)`
+inside a case stops the whole program right away, without coming back from `serve`.
 
 ## What Kova handles itself
 

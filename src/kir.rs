@@ -1399,14 +1399,16 @@ impl<'a> Translator<'a> {
     }
 
     /// Answers each question that `listener` receives with the block (or the folder's file),
-    /// forever.
+    /// until the program is asked to stop (Ctrl+C): `Accept` then gives 0.
     fn answer_loop(&mut self, listener: Local, block: Option<&Expr>, given: &Option<Slots>, folder: Option<Local>) {
         let zero = self.constant(0);
         let (request, answer) = (crate::types::request(), crate::types::answer());
         let head = self.new_block();
         self.go(End::Jump(head), head);
-        let got = self.int_local();
+        let (got, stopped, (after, on)) = (self.int_local(), self.int_local(), (self.new_block(), self.new_block()));
         self.emit(Inst::Str(got, StrOp::Accept, vec![listener]));
+        self.emit(Inst::Binary(stopped, Op::Eq, got, zero, NOWHERE));
+        self.go(End::Branch(stopped, after, on), on);
         let q = self.load(got, zero, &request);
         let link = self.node(got, zero, 7);
         self.emit(Inst::ListFree(got));
@@ -1426,7 +1428,6 @@ impl<'a> Translator<'a> {
         self.emit(Inst::Str(done, StrOp::Reply, vec![link, a[0], a[1], a[2], a[3], a[4]]));
         self.free_value(&a, &answer);
         self.free_value(&q, &request);
-        let after = self.new_block();
         self.go(End::Jump(head), after);
     }
 
@@ -1448,6 +1449,7 @@ impl<'a> Translator<'a> {
         let (zero, l) = (t.constant(0), t.int_local());
         t.emit(Inst::ListLoad(l, inner_env, zero, 0));
         let mut k = 1;
+        let mut owns = vec![];
         for (name, _, ty) in &held {
             let v = t.new_slots(ty);
             for &x in &v {
@@ -1455,9 +1457,14 @@ impl<'a> Translator<'a> {
                 k += 1;
             }
             let own = t.clone_value(&v, ty);
-            t.names[0].vars.insert(name.clone(), (own, ty.clone()));
+            t.names[0].vars.insert(name.clone(), (own.clone(), ty.clone()));
+            owns.push((own, ty.clone()));
         }
         t.answer_loop(l, Some(block), &None, None);
+        // Stopped (Ctrl+C): this thread's copies go.
+        for (own, ty) in owns {
+            t.free_value(&own, &ty);
+        }
         t.finish(End::Return(vec![]));
         let name = format!("workers in {}", t.owner.trim_start_matches("block in "));
         let f = t.function(name, 1, vec![]);
@@ -1465,6 +1472,7 @@ impl<'a> Translator<'a> {
         let (fun, done) = (self.int_local(), self.int_local());
         self.emit(Inst::FuncRef(fun, num));
         self.emit(Inst::Str(done, StrOp::Workers, vec![n, fun, env]));
+        self.emit(Inst::ListFree(env));
     }
 
     /// The JSON text of a value (PLAN Part 4 "JSON"): a new String, not tracked.

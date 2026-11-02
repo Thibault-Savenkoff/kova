@@ -119,6 +119,16 @@ pub fn exit(code: i32) -> ! {
     unsafe { c::exit(code) }
 }
 
+/// Ctrl+C (SIGINT) and the system's request to stop (SIGTERM): `crate::stop_asked`.
+pub fn catch_stop() {
+    extern "C" fn on_stop(_: i32) {
+        crate::stop_asked();
+    }
+    for signal in [2, 15] {
+        unsafe { c::signal(signal, on_stop as usize) };
+    }
+}
+
 fn write_all(fd: i32, mut b: &[u8]) -> bool {
     while !b.is_empty() {
         match unsafe { c::write(fd, b.as_ptr(), b.len()) } {
@@ -413,13 +423,17 @@ impl Serve for Net {
         found
     }
 
-    /// `poll` without a time limit, as runtime/linux.rs: `struct pollfd`, POLLIN.
+    /// `poll` for a quarter of a second at most, as runtime/linux.rs: `struct pollfd`, POLLIN.
     fn ready(&mut self, listener: &i32, links: &[i32]) -> Vec<bool> {
         let mut fds: Vec<[i32; 2]> = links.iter().chain([listener]).map(|&fd| [fd, 1]).collect();
-        if unsafe { c::poll(fds.as_mut_ptr(), fds.len() as u32, -1) } <= 0 {
+        if unsafe { c::poll(fds.as_mut_ptr(), fds.len() as u32, 250) } <= 0 {
             return alloc::vec![false; fds.len()];
         }
         fds.iter().map(|p| p[1] >> 16 != 0).collect()
+    }
+
+    fn stopping(&mut self) -> bool {
+        crate::STOPPING.load(core::sync::atomic::Ordering::Acquire)
     }
 }
 

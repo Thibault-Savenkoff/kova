@@ -1373,6 +1373,41 @@ fn server_workers() {
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
+/// Ctrl+C (PLAN Part 4 "A server that stops"): the question being answered is finished, then
+/// `serve` comes back and the program goes on. Unix only: a program cannot send another one
+/// Ctrl+C on Windows without sharing its console.
+#[cfg(unix)]
+#[test]
+fn server_stops() {
+    let _alone = one_server();
+    use std::io::{Read, Write};
+    let ask = |port: u16, path: &str| -> String {
+        for _ in 0..400 {
+            if let Ok(mut link) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                link.write_all(format!("GET {path} HTTP/1.1\r\n\r\n").as_bytes()).unwrap();
+                let mut got = vec![];
+                let _ = link.read_to_end(&mut got);
+                return String::from_utf8_lossy(&got).split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("no server on port {port}");
+    };
+    let exe = std::env::temp_dir().join(format!("kova-stops-{}{EXE}", std::process::id()));
+    let out = kova(LANG).arg("build").arg("tests/web/workers.kova").arg("-o").arg(&exe).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let port = free_port();
+    let child = program(&exe, LANG).arg(port.to_string()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    assert_eq!(ask(port, "/ada"), "hello 36");
+    let slow = std::thread::spawn(move || ask(port, "/slow"));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    Command::new("kill").arg("-INT").arg(child.id().to_string()).status().unwrap();
+    let end = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_file(&exe);
+    assert_eq!(slow.join().unwrap(), "slow");
+    assert_eq!((text(&end.stdout), end.status.code()), ("stopped\n".to_string(), Some(0)), "{}", text(&end.stderr));
+}
+
 /// A real program kept as a test (PLAN Part 4 "The proof: a server"): `tests/web/notes.kova`, a
 /// JSON API over SQLite answered by 4 threads. 24 notes added at once must each get their own
 /// number back, and the journal thread must have written every change before the end.
@@ -1447,10 +1482,23 @@ fn notes_server() {
     if !stats.ends_with(r#""notes":24}"#) {
         failures.push(format!("stats: {stats}"));
     }
+    // Ctrl+C where a program can send it, which `serve` answers by coming back; `/stop` elsewhere.
+    #[cfg(unix)]
+    {
+        let slow = std::thread::spawn(move || ask(port, "POST", "/notes", r#"{"title": "last", "text": "t"}"#));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        Command::new("kill").arg("-INT").arg(child.id().to_string()).status().unwrap();
+        check(&mut failures, slow.join().unwrap(), (201, r#"{"id":26,"title":"last","text":"t"}"#));
+    }
+    #[cfg(not(unix))]
     ask(port, "GET", "/stop", "");
     let end = child.wait_with_output().unwrap();
-    // 25 notes added, 1 removed.
-    if text(&end.stdout) != "journal lines: 26\n" || end.status.code() != Some(0) {
+    #[cfg(not(unix))]
+    let lines = 26;
+    // The last note was answered, though asked as the program was told to stop.
+    #[cfg(unix)]
+    let lines = 27;
+    if text(&end.stdout) != format!("journal lines: {lines}\n") || end.status.code() != Some(0) {
         failures.push(format!("ended with {:?}: {}{}", end.status, text(&end.stdout), text(&end.stderr)));
     }
     let _ = std::fs::remove_dir_all(&dir);

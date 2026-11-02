@@ -32,8 +32,8 @@ fn main {
 ```
 
 `web.serve(8080)` répond à chaque question avec ce que donne son [bloc](/fr/guide/blocks/), jusqu'à
-ce que le programme s'arrête (`system.exit(0)` dans un cas l'arrête). Ouvre `http://localhost:8080/` dans
-un navigateur pour le voir.
+ce que tu appuies sur Ctrl+C ([S'arrêter](#sarrêter)). Ouvre `http://localhost:8080/` dans un
+navigateur pour le voir.
 
 Au démarrage, le serveur écrit où l'ouvrir, puis une ligne pour chaque question à laquelle il
 répond, sur la sortie d'erreur :
@@ -101,6 +101,31 @@ ne bloque personne.
 | `web.serve(8080) log(web.Log.Off) { … }` | rien |
 
 `log(…)` va aussi après `serve_files(…) at(…)`, et avant ou après `workers(…)`.
+
+## S'arrêter
+
+Ctrl+C, ou le système qui demande au programme de s'arrêter (`kill`, `systemctl stop`,
+`docker stop`), arrête le serveur proprement : il ne prend plus de nouvelle question, finit celles
+auxquelles il répond, puis `web.serve` rend la main et le programme continue après. C'est l'endroit
+pour finir ce qui ne doit pas être perdu :
+
+```kova
+import web
+import sqlite
+
+fn main {
+    let db: sqlite.Database := sqlite.open("site.db")?
+    web.serve(8080) workers(4) { q: web.Request =>
+        web.Answer.text("bonjour")
+    }
+    // Ctrl+C a été pressé : toutes les réponses sont parties.
+    db.close
+    print("au revoir")
+}
+```
+
+Un deuxième Ctrl+C n'attend pas : le programme s'arrête tout de suite, avec le code de sortie 130.
+`system.exit(0)` dans un cas arrête tout le programme immédiatement, sans revenir de `serve`.
 
 ## Ce que Kova gère lui-même
 

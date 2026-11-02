@@ -381,6 +381,11 @@ pub trait Serve: Network {
     /// Waits until `links` or the listener can be read (`poll`): one flag per link, then the
     /// listener's. All false if the wait was cut short.
     fn ready(&mut self, listener: &Self::Listener, links: &[Self::Link]) -> Vec<bool>;
+    /// Ctrl+C or the system asked the program to stop (PLAN Part 4 "A server that stops"): the
+    /// server takes no more questions. `ready` waits a quarter of a second at most, to see it.
+    fn stopping(&mut self) -> bool {
+        false
+    }
     /// This computer's IPv4 addresses, each with its interface's name ("" if the system does not
     /// say).
     fn addresses(&mut self) -> Vec<(String, [u8; 4])>;
@@ -677,10 +682,14 @@ pub struct Question {
 }
 
 /// Waits for the next question that can be read, from whichever connection sends it first. The
-/// others are answered here (400, 413…) and closed: the program never sees them.
-pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link, Question, [u8; 4]) {
+/// others are answered here (400, 413…) and closed: the program never sees them. `None` once the
+/// program is asked to stop.
+pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> Option<(S::Link, Question, [u8; 4])> {
     let mut buffer = alloc::vec![0u8; 16384];
     loop {
+        if net.stopping() {
+            return None;
+        }
         let ready = net.ready(&server.listener, &server.links);
         // From the end, so that removing one leaves the others' numbers as they were.
         for i in (0..server.links.len()).rev().filter(|&i| ready[i]) {
@@ -698,7 +707,7 @@ pub fn next_question<S: Serve>(net: &mut S, server: &mut Server<S>) -> (S::Link,
             server.got.remove(i);
             let from = server.from.remove(i);
             match parsed {
-                Ok(Some(q)) => return (link, q, from),
+                Ok(Some(q)) => return Some((link, q, from)),
                 Err(Some(status)) => {
                     let text = status_text(status);
                     let _ = net.send(&mut link, &answer_bytes(status, &[("content-type", "text/plain; charset=utf-8")], text.as_bytes()));

@@ -30,6 +30,7 @@ unsafe extern "system" {
     fn SetConsoleOutputCP(page: u32) -> i32;
     fn SetConsoleCP(page: u32) -> i32;
     fn ExitProcess(code: u32) -> !;
+    fn SetConsoleCtrlHandler(handler: usize, add: i32) -> i32;
     fn GetCommandLineW() -> *const u16;
     fn GetEnvironmentVariableW(name: *const u16, b: *mut u16, n: u32) -> u32;
     fn GetLastError() -> u32;
@@ -181,6 +182,16 @@ pub fn var(name: &str) -> Option<String> {
 
 pub fn exit(code: i32) -> ! {
     unsafe { ExitProcess(code as u32) }
+}
+
+/// Ctrl+C, Ctrl+Break, the console closed: `crate::stop_asked`. Windows runs this on a thread of
+/// its own.
+pub fn catch_stop() {
+    extern "system" fn on_stop(_: u32) -> i32 {
+        crate::stop_asked();
+        1
+    }
+    unsafe { SetConsoleCtrlHandler(on_stop as usize, 1) };
 }
 
 /// The handle of stdin (0), stdout (1) or stderr (2).
@@ -530,13 +541,17 @@ impl Serve for Net {
         found
     }
 
-    /// `WSAPoll` without a time limit, POLLRDNORM (it refuses POLLIN's other half).
+    /// `WSAPoll` for a quarter of a second at most, POLLRDNORM (it refuses POLLIN's other half).
     fn ready(&mut self, listener: &usize, links: &[usize]) -> Vec<bool> {
         let mut fds: Vec<Poll> = links.iter().chain([listener]).map(|&fd| Poll { fd, events: 0x100, revents: 0 }).collect();
-        if unsafe { WSAPoll(fds.as_mut_ptr(), fds.len() as u32, -1) } <= 0 {
+        if unsafe { WSAPoll(fds.as_mut_ptr(), fds.len() as u32, 250) } <= 0 {
             return alloc::vec![false; fds.len()];
         }
         fds.iter().map(|p| p.revents != 0).collect()
+    }
+
+    fn stopping(&mut self) -> bool {
+        crate::STOPPING.load(core::sync::atomic::Ordering::Acquire)
     }
 }
 

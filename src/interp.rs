@@ -987,7 +987,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         StrOp::Accept => {
                             out.flush().unwrap();
                             let server = &mut heap.listeners[locals[a[0]] as usize];
-                            let (link, q, from) = crate::http::next_question(&mut crate::web::System, server);
+                            let (link, q, from) = crate::http::next_question(&mut crate::web::System, server).expect("`kova run` never stops a server");
                             let asked = server.logs.then(|| (from, q.method.clone(), q.url.clone()));
                             heap.links.push(Some((link, asked)));
                             let conn = heap.links.len() as i64 - 1;

@@ -1,5 +1,6 @@
 // The server that tests/kova.rs (`server_workers`) asks: 4 threads answer once built. `/slow`
-// takes a second, `/stop` ends it; the others look into a Map read by every thread.
+// takes a second, `/stop` ends it; the others look into a Map read by every thread. After Ctrl+C
+// (test `server_stops`), `serve` comes back once `/slow` is answered.
 
 import web
 import system
@@ -27,4 +28,5 @@ fn main {
             }
         }
     }
+    print("stopped")
 }

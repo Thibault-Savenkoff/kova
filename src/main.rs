@@ -300,6 +300,9 @@ fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, giv
         let child = command.spawn();
         let status = child.ok().map(|mut c| {
             windows_job::tie(&c);
+            // Ctrl+C reaches both: the program decides what it does (a server stops cleanly),
+            // and `kova` waits for it instead of ending it with the job.
+            windows_job::ignore_ctrl_c();
             c.wait()
         });
         let _ = std::fs::remove_dir_all(&dir);
@@ -317,6 +320,11 @@ mod windows_job {
         fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> *mut c_void;
         fn SetInformationJobObject(job: *mut c_void, class: i32, info: *const c_void, size: u32) -> i32;
         fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+        fn SetConsoleCtrlHandler(handler: *const c_void, add: i32) -> i32;
+    }
+
+    pub fn ignore_ctrl_c() {
+        unsafe { SetConsoleCtrlHandler(std::ptr::null(), 1) };
     }
 
     /// JOBOBJECT_EXTENDED_LIMIT_INFORMATION.

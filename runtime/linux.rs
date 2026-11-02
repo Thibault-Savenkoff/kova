@@ -561,11 +561,16 @@ impl Serve for Net {
     /// `ppoll` (arm64 has no `poll`), without a time limit: `struct pollfd`, POLLIN.
     fn ready(&mut self, listener: &usize, links: &[usize]) -> Vec<bool> {
         let mut fds: Vec<[i32; 2]> = links.iter().chain([listener]).map(|&fd| [fd as i32, 1]).collect();
-        if unsafe { call(PPOLL, fds.as_mut_ptr() as usize, fds.len(), 0, 0, 8, 0) } <= 0 {
+        let quarter = [0i64, 250_000_000];
+        if unsafe { call(PPOLL, fds.as_mut_ptr() as usize, fds.len(), quarter.as_ptr() as usize, 0, 8, 0) } <= 0 {
             return alloc::vec![false; fds.len()];
         }
         // `revents` is the upper half of the second number.
         fds.iter().map(|p| p[1] >> 16 != 0).collect()
+    }
+
+    fn stopping(&mut self) -> bool {
+        crate::STOPPING.load(Acquire)
     }
 }
 
@@ -1112,6 +1117,31 @@ fn watch_stack() {
         unsafe { call(signals::SIGALTSTACK, stack.as_ptr() as usize, 0, 0, 0, 0, 0) };
     }
 }
+
+/// Ctrl+C (SIGINT) and the system's request to stop (SIGTERM): `crate::stop_asked`, which
+/// returns, through `kova_sigreturn` on x86-64 (arm64's Linux has its own way back).
+#[cfg(not(android))]
+pub fn catch_stop() {
+    unsafe extern "C" fn on_stop(_: i32) {
+        crate::stop_asked();
+    }
+    #[cfg(target_arch = "x86_64")]
+    let (flags, back) = (0x0400_0000, kova_sigreturn as usize);
+    #[cfg(target_arch = "aarch64")]
+    let (flags, back) = (0, 0);
+    let action = [on_stop as usize, flags, back, 0];
+    for signal in [2, 15] {
+        unsafe { call(signals::SIGACTION, signal, action.as_ptr() as usize, 0, 8, 0, 0) };
+    }
+}
+#[cfg(all(not(android), target_arch = "x86_64"))]
+core::arch::global_asm!(".globl kova_sigreturn", "kova_sigreturn:", "mov eax, 15", "syscall");
+#[cfg(all(not(android), target_arch = "x86_64"))]
+unsafe extern "C" {
+    fn kova_sigreturn();
+}
+#[cfg(android)]
+pub fn catch_stop() {}
 
 /// Android keeps its own handlers.
 #[cfg(android)]

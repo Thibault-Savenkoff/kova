@@ -124,8 +124,7 @@ fn main {
                     web.Answer.json(Stats { questions := asked.read, notes := count })
                 }
                 "stop" => {
-                    journal.close
-                    print("journal lines: {done.receive else 0}")
+                    finish(journal, done)
                     system.exit(0)
                     web.Answer.status(500)
                 }
@@ -143,4 +142,12 @@ fn main {
             _ => web.Answer.status(405)
         }
     }
+    // Ctrl+C: the questions being answered are finished, then `serve` comes back here.
+    finish(journal, done)
+}
+
+// The journal thread writes what is left, then says how much it wrote.
+fn finish(journal: threads.Channel<String>, done: threads.Channel<Int>) {
+    journal.close
+    print("journal lines: {done.receive else 0}")
 }

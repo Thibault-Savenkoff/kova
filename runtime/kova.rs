@@ -1435,6 +1435,7 @@ type Socket = usize;
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_listen(port: i64, everyone: i64, folder: i64, log: i64) -> i64 {
     use http::Serve;
+    sys::catch_stop();
     let everyone = everyone != 0;
     let Some((port, l)) = u16::try_from(port).ok().filter(|&p| p > 0).and_then(|p| sys::Net.listen(p, everyone).map(|l| (p, l))) else {
         return -1;
@@ -1462,11 +1463,14 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
     // With `workers(…)`, the thread that has it reads every connection until one question is
     // whole, then lets the next one read (the others are answering, or wait here).
     static READING: Locked<()> = Locked::new(());
-    let (link, q, from, logs) = READING.with(|_| {
+    let Some((link, q, from, logs)) = READING.with(|_| {
         let server = unsafe { &mut *(server as *mut http::Server<sys::Net>) };
-        let (link, q, from) = http::next_question(&mut sys::Net, server);
-        (link, q, from, server.logs)
-    });
+        let (link, q, from) = http::next_question(&mut sys::Net, server)?;
+        Some((link, q, from, server.logs))
+    }) else {
+        // Asked to stop: the loop of `serve` ends (src/kir.rs `answer_loop`).
+        return 0;
+    };
     let asked: Asked = (link, logs.then(|| (from, q.method.clone(), q.url.clone())));
     let link = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(asked));
     let length = q.headers.len();
@@ -1477,20 +1481,42 @@ pub extern "C" fn kova_accept(server: i64) -> i64 {
 }
 
 /// `serve(…) workers(n)` (src/kir.rs `StrOp::Workers`): `worker(env)` on `n` threads, this one
-/// included. A worker never returns: an `exit` or an error on any thread stops the program.
+/// included, until the program is asked to stop (`STOPPING`); then waits for each to finish the
+/// question it answers.
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_workers(n: i64, worker: i64, env: i64) -> i64 {
-    let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
-    // A thread the system cannot start (no memory left): the others answer. They never end.
-    for _ in 1..n {
-        THREADS.fetch_add(1, SeqCst);
-        if sys::spawn(worker, env).is_none() {
-            THREADS.fetch_sub(1, SeqCst);
-            break;
-        }
+    let job = (worker, env);
+    extern "C" fn member(job: i64) {
+        let &(worker, env) = unsafe { &*(job as *const (i64, i64)) };
+        let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
+        worker(env);
+        thread_ended();
     }
+    // A thread the system cannot start (no memory left): the others answer.
+    let start = |_| {
+        THREADS.fetch_add(1, SeqCst);
+        let thread = sys::spawn(member, &job as *const _ as i64);
+        if thread.is_none() {
+            THREADS.fetch_sub(1, SeqCst);
+        }
+        thread
+    };
+    let threads: Vec<sys::Thread> = (1..n).map_while(start).collect();
+    let worker: extern "C" fn(i64) = unsafe { core::mem::transmute(worker as usize) };
     worker(env);
+    threads.into_iter().for_each(sys::join);
     0
+}
+
+/// Set by Ctrl+C or the system's request to stop, once a server listens (`sys::catch_stop`).
+pub static STOPPING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Ctrl+C: the server finishes its questions, then `serve` returns. A second Ctrl+C does not
+/// wait: the program stops at once, with the code of an interrupted program.
+pub fn stop_asked() {
+    if STOPPING.swap(true, SeqCst) {
+        sys::exit(130);
+    }
 }
 
 /// `l.map workers(n) { … }`, `l.each workers(n) { … }` (src/kir.rs `StrOp::Parallel`):
