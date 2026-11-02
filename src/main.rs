@@ -411,7 +411,7 @@ pub fn warnings(info: &types::Info, tree: &ast::File, sources: &diag::Sources) -
 
 /// The `import`s of the main file whose name is never written there before a `.`. An imported
 /// file of the program holding an `extend` is kept: its methods are used without its name.
-fn unused_imports(tree: &ast::File, sources: &diag::Sources) -> Vec<(diag::Span, String)> {
+pub fn unused_imports(tree: &ast::File, sources: &diag::Sources) -> Vec<(diag::Span, String)> {
     let main = sources.file_text(0);
     // On the text, not the tokens: `"{system.args[0]}"` uses `system` inside a text. A comment
     // naming it hides the warning, never makes a wrong one.

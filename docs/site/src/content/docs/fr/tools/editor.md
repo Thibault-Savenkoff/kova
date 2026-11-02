@@ -33,7 +33,7 @@ réglage `kova.path` le chemin de l'exécutable. Après avoir installé un nouve
 | Complétion | après un `.`, après `Type.` et `module.`, dans `Type { … }`, après `import`, pour les parties d'un appel |
 | Types au survol | survole un nom pour voir son type et sa déclaration |
 | Aller à la définition, renommer | `F12`, `F2`, à travers les fichiers importés |
-| Correction rapide | ajoute les cas qui manquent à un `match` |
+| Correction rapide | ajoute les cas qui manquent à un `match` ; sur un avertissement, écrit `_`, change `var` en `let` ou supprime l'`import` |
 | Mise en page à l'enregistrement | `kova fmt`, ou la commande **Format Document** |
 | Tests | un ▶ dans la marge de chaque `test`, les résultats dans la vue Testing |
 | Boutons | ▶ lancer, 🔨 compiler et lancer, 🧪 tester, 🐞 déboguer, en haut de l'éditeur |

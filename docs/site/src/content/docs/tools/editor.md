@@ -32,7 +32,7 @@ that the editor starts the new server.
 | Completion | after a `.`, after `Type.` and `module.`, inside `Type { … }`, after `import`, for the parts of a call |
 | Types on hover | hover a name to see its type and its declaration |
 | Go to definition, rename | `F12`, `F2`, across imported files |
-| Quick fix | adds the cases a `match` is missing |
+| Quick fix | adds the cases a `match` is missing; on a warning, writes `_`, turns `var` into `let` or removes the `import` |
 | Format on save | `kova fmt`, or the **Format Document** command |
 | Tests | a ▶ in the margin of each `test`, results in the Testing view |
 | Buttons | ▶ run, 🔨 build and run, 🧪 test, 🐞 debug, at the top of the editor |

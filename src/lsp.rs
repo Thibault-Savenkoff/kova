@@ -80,7 +80,8 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                     "textDocument/codeAction" => {
                         let p: CodeActionParams = serde_json::from_value(req.params)?;
                         let uri = &p.text_document.uri;
-                        Response::new_ok(req.id, docs.get(uri).map(|src| add_cases(uri, src, p.range)))
+                        let actions = docs.get(uri).map(|src| [add_cases(uri, src, p.range), warning_fixes(uri, src, p.range)].concat());
+                        Response::new_ok(req.id, actions)
                     }
                     "textDocument/rename" => {
                         let p: RenameParams = serde_json::from_value(req.params)?;
@@ -403,6 +404,40 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
         is_preferred: Some(true),
         ..Default::default()
     })]
+}
+
+/// The light bulb on a warning (PLAN Part 4 "Unused names"): `_` for a name never used, `let`
+/// for a `var` that never changes, no line for an `import` never used.
+fn warning_fixes(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
+    let (from, to) = (offset(src, range.start), offset(src, range.end));
+    let (tree, info, diags, sources) = analyze(&file_path(uri), src);
+    let Some(info) = info.filter(|_| diags.is_empty()) else { return vec![] };
+    let near = |s: &Span| s.end <= src.len() && s.start <= to && from <= s.end;
+    let action = |title: String, (a, b): (usize, usize), text: &str| {
+        let edit = TextEdit::new(Range::new(position(src, a), position(src, b)), text.to_string());
+        CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::QUICKFIX),
+            edit: Some(WorkspaceEdit { changes: Some(HashMap::from([(uri.clone(), vec![edit])])), ..Default::default() }),
+            is_preferred: Some(true),
+            ..Default::default()
+        })
+    };
+    let mut fixes = vec![];
+    for (s, name) in info.unused.iter().filter(|(s, _)| near(s)) {
+        fixes.push(action(t!("action_underscore", name = name), (s.start, s.end), "_"));
+    }
+    for (s, name) in info.fixed.iter().filter(|(s, _)| near(s)) {
+        if let Some(before) = src[..s.start].trim_end().strip_suffix("var") {
+            fixes.push(action(t!("action_let", name = name), (before.len(), before.len() + 3), "let"));
+        }
+    }
+    for (s, _) in crate::unused_imports(&tree, &sources).iter().filter(|(s, _)| near(s)) {
+        let line = src[..s.start].rfind('\n').map_or(0, |i| i + 1);
+        let end = src[s.end..].find('\n').map_or(src.len(), |i| s.end + i + 1);
+        fixes.push(action(t!("action_remove_import"), (line, end), ""));
+    }
+    fixes
 }
 
 /// The whole text laid out by `kova fmt`, as one change; none if it is already, or doesn't read.
@@ -1723,6 +1758,27 @@ mod tests {
         // In the body of a case: not a case.
         let src = SHAPES.replace("D => {}", "D => {\n        \n        }");
         assert!(match_cases("/none/main.kova", &src, src.find("{\n        \n").unwrap() + 10).is_none());
+    }
+
+    #[test]
+    fn warning_quick_fixes() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let src = "import files\n\nfn main {\n    var a: Int := 1\n    for i in 0..a {\n        print(1)\n    }\n}\n";
+        let fixed = |line: u32| {
+            let actions = warning_fixes(&uri, src, Range::new(Position::new(line, 9), Position::new(line, 9)));
+            let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
+            let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
+            let (at, end) = (offset(src, edit.range.start), offset(src, edit.range.end));
+            format!("{}{}{}", &src[..at], edit.new_text, &src[end..])
+        };
+        // Each fix leaves a program that reads, with one warning less.
+        for (line, now) in [(0, "fn main {"), (3, "    let a: Int := 1"), (4, "    for _ in 0..a {")] {
+            let text = fixed(line);
+            assert!(text.contains(now), "{text}");
+            let (tree, info, diags, sources) = analyze("/none/main.kova", &text);
+            assert!(diags.is_empty());
+            assert_eq!(crate::warnings(&info.unwrap(), &tree, &sources).len(), 2, "{text}");
+        }
     }
 
     #[test]
