@@ -120,7 +120,7 @@ thread does never mixes with another's: `db.last_id` after an `INSERT` is that t
 
 A file is opened in WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`), as Rails and Django
 advise: threads read while another writes, and a change does not wait for the disk each time. While
-the database is open, two files sit next to it (`-wal` and `-shm`); they go when it closes. If the
+the database is open, two files sit next to it (`-wal` and `-shm`); they go when it closes (macOS keeps them, as for its own apps). If the
 machine itself stops (not the program), the very last changes may be lost, never the file.
 
 Two connections still cannot write at the same moment: the second waits for the first, up to 5

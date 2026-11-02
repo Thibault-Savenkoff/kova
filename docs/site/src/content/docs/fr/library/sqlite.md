@@ -122,7 +122,7 @@ ligne de ce fil, et un `BEGIN`…`COMMIT` ne contient que les instructions de ce
 Un fichier est ouvert en mode WAL (`journal_mode = WAL`, `synchronous = NORMAL`), comme le
 conseillent Rails et Django : les fils lisent pendant qu'un autre écrit, et un changement n'attend
 pas le disque à chaque fois. Tant que la base est ouverte, deux fichiers sont posés à côté (`-wal` et
-`-shm`) ; ils partent à la fermeture. Si la machine elle-même s'arrête (pas le programme), les tout
+`-shm`) ; ils partent à la fermeture (macOS les garde, comme pour ses propres applications). Si la machine elle-même s'arrête (pas le programme), les tout
 derniers changements peuvent être perdus, jamais le fichier.
 
 Deux connexions ne peuvent toujours pas écrire au même moment : la deuxième attend la première,

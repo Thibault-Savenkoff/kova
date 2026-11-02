@@ -1,6 +1,5 @@
 // expect: 8 threads, 400 lines, 0 mixed up
 // expect: err(a database in memory lives in the thread that opened it: use a file to share it between threads)
-// expect: false
 
 import sqlite
 import threads
@@ -43,6 +42,10 @@ fn main {
     db.close
     memory.close
     files.remove(path)?
-    // WAL mode's two files go when the last connection closes.
-    print(files.exists("{path}-wal") || files.exists("{path}-shm"))
+    // WAL mode's two files: gone at the last close, except on macOS, whose SQLite keeps them.
+    for side in ["{path}-wal", "{path}-shm"] {
+        if files.exists(side) {
+            files.remove(side)?
+        }
+    }
 }
