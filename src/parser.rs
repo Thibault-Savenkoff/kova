@@ -566,7 +566,7 @@ impl Parser<'_> {
         loop {
             patterns.push(if self.is_sym("(") {
                 self.case_tuple()?
-            } else if matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str) || self.is_sym("-") {
+            } else if matches!(self.kind(), Kind::Int(_) | Kind::Big | Kind::Char(_) | Kind::Str) || self.is_sym("-") || self.is_sym(".") {
                 let range = LEVELS.iter().position(|(ops, _)| ops[0].0 == "..").unwrap();
                 Pattern::Value(self.level(range)?)
             } else {
@@ -2031,15 +2031,15 @@ impl Parser<'_> {
         // `err(e)` after an `err(.Lost)`: `e` names the value for every case of the group, and its
         // arm becomes the inner `_`.
         let mut nested: HashSet<String> = HashSet::new();
-        let mut names: HashMap<String, Name> = HashMap::new();
+        let mut names: HashMap<String, Vec<Option<Name>>> = HashMap::new();
+        let plain = |binds: &[Pattern]| binds.iter().all(|b| matches!(b, Pattern::Name(_) | Pattern::Ignore(_)));
         for (arm, inner, _) in &arms {
             if let Case::Variant { name, binds } = &arm.case {
                 if inner.is_some() {
                     nested.insert(name.text.clone());
-                } else if let [Pattern::Name(n)] = &binds[..]
-                    && nested.contains(&name.text)
-                {
-                    names.entry(name.text.clone()).or_insert_with(|| n.clone());
+                } else if binds.len() == 1 && plain(binds) && nested.contains(&name.text) {
+                    let given = binds.iter().map(|b| if let Pattern::Name(n) = b { Some(n.clone()) } else { None }).collect();
+                    names.entry(name.text.clone()).or_insert(given);
                 }
             }
         }
@@ -2052,13 +2052,18 @@ impl Parser<'_> {
             };
             let inner = match inner {
                 Some(c) => c,
-                None if arm.also.is_empty() && binds.len() == 1 && groups.contains_key(&name.text) => Case::Any(binds[0].span()),
+                None if arm.also.is_empty() && binds.len() == 1 && plain(binds) && groups.contains_key(&name.text) => Case::Any(binds[0].span()),
+                // `.Pair(l, n)` after a `.Pair(.Red, n)`: the inner tuple's last case.
+                None if arm.also.is_empty() && binds.len() > 1 && plain(binds) && groups.contains_key(&name.text) => {
+                    let span = binds[0].span().to(binds[binds.len() - 1].span());
+                    Case::Bind(Pattern::Tuple(binds.clone(), span))
+                }
                 None => {
                     out.push(arm);
                     continue;
                 }
             };
-            let name = name.clone();
+            let (name, count) = (name.clone(), binds.len());
             let inner = Arm { case: inner, also: vec![], body: arm.body };
             if let Some(&k) = groups.get(&name.text)
                 && let Some(Stmt::Match(m)) = out[k].body.stmts.first_mut()
@@ -2066,13 +2071,17 @@ impl Parser<'_> {
                 m.arms.push(inner);
                 continue;
             }
-            let hidden = names.get(&name.text).cloned().unwrap_or(Name { text: format!("… nested {}", name.span.start), span: name.span });
-            let subject = self.expr(name.span, ExprKind::Var(hidden.text.clone()));
+            let given = names.get(&name.text).cloned().unwrap_or_default();
+            let hidden: Vec<Name> = (0..count)
+                .map(|i| given.get(i).cloned().flatten().unwrap_or(Name { text: format!("… nested {} {i}", name.span.start), span: name.span }))
+                .collect();
+            let mut parts: Vec<Expr> = hidden.iter().map(|h| self.expr(name.span, ExprKind::Var(h.text.clone()))).collect();
+            let subject = if parts.len() == 1 { parts.remove(0) } else { self.expr(name.span, ExprKind::Tuple(parts)) };
             let open = inner.body.open;
             let m = Match { mode, subject, arms: vec![inner], close: name.span, found: false };
             groups.insert(name.text.clone(), out.len());
             let body = Block { open, stmts: vec![Stmt::Match(m)], close: name.span };
-            out.push(Arm { case: Case::Variant { name, binds: vec![Pattern::Name(hidden)] }, also: vec![], body });
+            out.push(Arm { case: Case::Variant { name, binds: hidden.into_iter().map(Pattern::Name).collect() }, also: vec![], body });
         }
         if let Some(at) = any {
             for &k in groups.values() {
@@ -2252,14 +2261,26 @@ impl Parser<'_> {
             let mut binds = vec![];
             if self.is_sym("(") {
                 let open = self.advance().span;
-                if self.nested_case_starts() {
-                    // ponytail: only a variant of one field holds a case (`err(.Lost)`), never `.Rect(0.0, h)`.
-                    nested = Some(self.case()?.0);
-                    self.expect(")")?;
-                    return Ok((Case::Variant { name, binds }, nested));
-                }
+                // Each field: a name, `_`, or a case (`.Lost`, `none`, `0`, `1..=5`).
+                let mut cases: Vec<Option<Case>> = vec![];
                 while !self.is_sym(")") {
-                    binds.push(self.pattern()?);
+                    if self.is_sym(".") || self.is_keyword("none") {
+                        let (c, deeper) = self.case()?;
+                        if deeper.is_some() {
+                            // ponytail: two levels (`ok(.Pair(.Red, n))`) are not read.
+                            self.diags.push(Diag::new(name.span, t!("nested_deeper")));
+                        }
+                        binds.push(Pattern::Ignore(name.span));
+                        cases.push(Some(c));
+                    } else if self.nested_case_starts() {
+                        let range = LEVELS.iter().position(|(ops, _)| ops[0].0 == "..").unwrap();
+                        let value = self.level(range)?;
+                        binds.push(Pattern::Ignore(value.span));
+                        cases.push(Some(Case::Values(vec![value])));
+                    } else {
+                        binds.push(self.pattern()?);
+                        cases.push(None);
+                    }
                     if !self.is_sym(")") {
                         self.expect(",")?;
                     }
@@ -2267,6 +2288,33 @@ impl Parser<'_> {
                 let close = self.advance().span;
                 if binds.is_empty() {
                     self.diags.push(Diag::new(open.to(close), t!("empty_parens_variant", name = name.text)));
+                }
+                if cases.iter().any(Option::is_some) {
+                    nested = Some(if let [Some(c)] = &mut cases[..] {
+                        std::mem::replace(c, Case::Any(close))
+                    } else {
+                        // Several fields: the inner `match` is on all of them, as a tuple.
+                        let parts = (cases.into_iter().zip(std::mem::take(&mut binds)))
+                            .map(|(c, b)| match c {
+                                None => b,
+                                Some(Case::Values(mut v)) => Pattern::Value(v.remove(0)),
+                                Some(Case::Variant { name: n, binds: inner }) if inner.is_empty() && n.text != "none" => {
+                                    let ty = Name { text: String::new(), span: n.span };
+                                    Pattern::Value(self.expr(n.span, ExprKind::Variant { ty, types: vec![], name: n, args: vec![] }))
+                                }
+                                Some(other) => {
+                                    let at = match &other {
+                                        Case::Variant { name, .. } => name.span,
+                                        _ => close,
+                                    };
+                                    self.diags.push(Diag::new(at, t!("nested_fields")).help(t!("nested_fields_help")));
+                                    b
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        binds = parts.iter().map(|p| Pattern::Ignore(p.span())).collect();
+                        Case::Bind(Pattern::Tuple(parts, open.to(close)))
+                    });
                 }
             }
             Case::Variant { name, binds }

@@ -295,8 +295,49 @@ error: cases of `Problem` not handled: `.Late`
    = help: add them, or end with `_ => …` for all the others
 ```
 
-A case inside holds one value: `err(.Lost)` and `.Plain(.Circle(r))` work, `.Rect(0.0, h)` does not
-(match on the field instead).
+A variant of several fields takes values and variants without fields among its names, and so does a
+tuple:
+
+```kova
+enum Light {
+    Red
+    Green
+}
+
+enum Event {
+    Pair(light: Light, n: Int)
+    Quit
+}
+
+fn main {
+    let events: List<Event> := [.Pair(.Red, 1), .Pair(.Red, 3), .Pair(.Green, 2), .Quit]
+    for e in events {
+        match e {
+            .Pair(.Red, 1) => print("red one")
+            .Pair(.Red, n) => print("red {n}")
+            .Pair(_, n) => print("green {n}")
+            .Quit => print("quit")
+        }
+    }
+    match (Light.Green, 2) {
+        (.Red, _) => print("red")
+        (.Green, k) => print("green {k}")
+        _ => print("never")
+    }
+}
+```
+
+```text
+red one
+red 3
+green 2
+quit
+green 2
+```
+
+Kova reads one level: `err(.Lost)` and `.Plain(.Circle(r))` work, `ok(.Pair(.Red, n))` does not. With
+several fields, a case inside is a value or a variant without fields (`.Pair(.Late(m), 1)` is
+refused: name the field and `match` on it).
 
 ## Enums that hold themselves
 

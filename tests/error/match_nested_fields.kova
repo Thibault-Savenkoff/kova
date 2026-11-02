@@ -1,0 +1,18 @@
+// error: with several fields, a case inside may only be a value or a variant without fields
+
+enum Problem {
+    Late(minutes: Int)
+}
+
+enum Event {
+    Pair(p: Problem, n: Int)
+    Quit
+}
+
+fn main {
+    let e: Event := .Quit
+    match e {
+        .Pair(.Late(m), 1) => print(m)
+        _ => print("other")
+    }
+}

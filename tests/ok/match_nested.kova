@@ -8,6 +8,13 @@
 // expect: small 3
 // expect: 42
 // expect: circle 2.0
+// expect: red one
+// expect: other light 2 true
+// expect: red 3
+// expect: empty hi
+// expect: long of 9
+// expect: quit
+// expect: green 2
 
 enum Problem {
     Lost
@@ -17,6 +24,17 @@ enum Problem {
 enum Shape {
     Circle(r: Float)
     Square(side: Float)
+}
+
+enum Light {
+    Red
+    Green
+}
+
+enum Event {
+    Pair(light: Light, n: Int)
+    Text(s: String, size: Int)
+    Quit
 }
 
 enum Drawing {
@@ -75,5 +93,30 @@ fn main {
         .Plain(.Circle(r)) => print("circle {r}")
         .Plain(.Square(s)) => print("square {s}")
         .Empty => print("empty")
+    }
+    // Several fields: values and variants without fields, the others named.
+    let events: List<Event> := [
+        .Pair(.Red, 1),
+        .Pair(.Green, 2),
+        .Pair(.Red, 3),
+        .Text("hi", 0),
+        .Text("long", 9),
+        .Quit
+    ]
+    for e in events {
+        match e {
+            .Pair(.Red, 1) => print("red one")
+            .Pair(.Red, n) => print("red {n}")
+            .Pair(l, n) => print("other light {n} {l = .Green}")
+            .Text(s, 0) => print("empty {s}")
+            .Text(s, size) => print("{s} of {size}")
+            .Quit => print("quit")
+        }
+    }
+    // A variant without fields inside a tuple.
+    match (Light.Green, 2) {
+        (.Red, _) => print("red")
+        (.Green, k) => print("green {k}")
+        _ => print("other")
     }
 }

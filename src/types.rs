@@ -6362,6 +6362,14 @@ impl Checker<'_> {
                     self.error(v.span, t!("case_literal"));
                 }
             }
+            // `(.Red, 1) =>`: a variant without fields is a value too.
+            (Pattern::Value(v), Type::Enum(_)) if matches!(&v.kind, ExprKind::Variant { args, .. } if args.is_empty()) => {
+                self.expect(v, t);
+            }
+            (Pattern::Value(v), Type::Error) => {
+                self.expr(v);
+            }
+            (Pattern::Value(v), _) => self.error(v.span, t!("case_value_on", type = t.text())),
             _ => {}
         }
     }

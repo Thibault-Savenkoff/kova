@@ -299,8 +299,49 @@ erreur: cas de `Problem` non traités : `.Late`
    = aide : ajoute-les, ou termine par `_ => …` pour tous les autres
 ```
 
-Un cas à l'intérieur contient une seule valeur : `err(.Lost)` et `.Plain(.Circle(r))` marchent,
-`.Rect(0.0, h)` non (fais le `match` sur le champ).
+Un variant à plusieurs champs accepte des valeurs et des variants sans champs parmi ses noms, un
+tuple aussi :
+
+```kova
+enum Light {
+    Red
+    Green
+}
+
+enum Event {
+    Pair(light: Light, n: Int)
+    Quit
+}
+
+fn main {
+    let events: List<Event> := [.Pair(.Red, 1), .Pair(.Red, 3), .Pair(.Green, 2), .Quit]
+    for e in events {
+        match e {
+            .Pair(.Red, 1) => print("rouge un")
+            .Pair(.Red, n) => print("rouge {n}")
+            .Pair(_, n) => print("vert {n}")
+            .Quit => print("fin")
+        }
+    }
+    match (Light.Green, 2) {
+        (.Red, _) => print("rouge")
+        (.Green, k) => print("vert {k}")
+        _ => print("jamais")
+    }
+}
+```
+
+```text
+rouge un
+rouge 3
+vert 2
+fin
+vert 2
+```
+
+Kova lit un niveau : `err(.Lost)` et `.Plain(.Circle(r))` marchent, `ok(.Pair(.Red, n))` non. Avec
+plusieurs champs, un cas à l'intérieur est une valeur ou un variant sans champs
+(`.Pair(.Late(m), 1)` est refusé : nomme le champ et fais un `match` dessus).
 
 ## Des enums qui se contiennent
 
