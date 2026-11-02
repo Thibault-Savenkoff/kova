@@ -1662,10 +1662,12 @@ fn mac_menus(kit: &Kit, menus: &[crate::shared::UiMenu]) {
     top("Edit", edit);
     for m in menus {
         let sub = new_menu(&m.title);
-        for (label, event) in &m.items {
+        for (label, event, key) in &m.items {
             let e = match event {
                 Some(n) => {
-                    let e = entry(label, "clicked:", "");
+                    // ⌘ and the key; a capital adds ⇧.
+                    let key = key.strip_prefix("shift+").map_or(key.clone(), |k| k.to_ascii_uppercase());
+                    let e = entry(label, "clicked:", &key);
                     (kit.send_two)(e, kit.sel("setTarget:"), kit.target);
                     (kit.send_id)(e, kit.sel("setTag:"), *n as i64);
                     e

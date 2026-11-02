@@ -493,20 +493,35 @@ function kovaPage() {
         textures.forEach(t => gl.deleteTexture(t));
     }
 
+    // The menus' shortcuts, "o" or "shift+s" → event: Ctrl, or ⌘ on a Mac, and the key.
+    let shortcuts = {};
+    if (web) document.addEventListener("keydown", e => {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+        const k = shortcuts[(e.shiftKey ? "shift+" : "") + e.key.toLowerCase()];
+        if (k === undefined) return;
+        e.preventDefault();
+        hear(k);
+    });
+
     function menus(list) {
         const bar = document.getElementById("kova-menus");
         bar.replaceChildren();
+        shortcuts = {};
         for (const menu of list) {
             const box = bar.appendChild(document.createElement("details"));
             box.appendChild(document.createElement("summary")).textContent = menu.title;
             const items = box.appendChild(document.createElement("div"));
-            for (const [label, k] of menu.items) {
+            for (const [label, k, key] of menu.items) {
                 if (k === null) {
                     items.appendChild(document.createElement("hr"));
                     continue;
                 }
                 const item = items.appendChild(document.createElement("button"));
                 item.textContent = label;
+                if (key) {
+                    shortcuts[key] = k;
+                    item.title = (/Mac/.test(navigator.platform) ? "⌘" : "Ctrl+") + key.replace("shift+", "Shift+").toUpperCase();
+                }
                 item.onclick = () => {
                     box.open = false;
                     hear(k);

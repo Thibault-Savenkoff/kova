@@ -957,8 +957,9 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
         let win = WIN.get().as_ref().expect("made before the window");
         let id = w & 0xffff;
         match message {
-            // WM_COMMAND from a button (BN_CLICKED = 0): its number + 1 is its id.
-            0x0111 if w >> 16 == 0 && id > 0 && id < FIELD => {
+            // WM_COMMAND from a button (BN_CLICKED = 0), a menu (0) or a shortcut (1, with no
+            // control): its number + 1 is its id.
+            0x0111 if (w >> 16 == 0 || (w >> 16 == 1 && l == 0)) && id > 0 && id < FIELD => {
                 *CLICKED.get() = id as i64 - 1;
                 // A message sent by another program is handled inside `GetMessageW`, which then
                 // waits for a posted one: WM_NULL, posted to the thread (the window may be gone), wakes it.
@@ -1222,6 +1223,11 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
         while *CLICKED.get() == WAITING && WIN_HEARD.get().is_empty() {
             if (win.message)(m.as_mut_ptr(), 0, 0, 0) <= 0 {
                 *CLICKED.get() = -1;
+            }
+            // A menu's shortcut becomes its WM_COMMAND (high word 1), in place of the key.
+            let keys = *WIN_KEYS.get();
+            if keys != 0 && WIN_ACCELERATE.get()(*WIN_WINDOW.get(), keys, m.as_ptr()) != 0 {
+                continue;
             }
             (win.translate)(m.as_ptr());
             (win.dispatch)(m.as_ptr());
@@ -1763,6 +1769,13 @@ fn win_common() {
     }
 }
 
+/// The menus' shortcuts (an accelerator table, 0 if none) and `TranslateAcceleratorW`.
+static WIN_KEYS: Global<Handle> = Global::new(0);
+static WIN_ACCELERATE: Global<extern "system" fn(Handle, Handle, *const u64) -> i32> = Global::new(no_accelerator);
+extern "system" fn no_accelerator(_: Handle, _: Handle, _: *const u64) -> i32 {
+    0
+}
+
 /// The window's menu bar. An item's id is its event's number + 1, as a button's, so its WM_COMMAND
 /// is a click.
 fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
@@ -1776,16 +1789,35 @@ fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
         let set: extern "system" fn(Handle, Handle) -> i32 = t(f("SetMenu"));
         let draw: extern "system" fn(Handle) -> i32 = t(f("DrawMenuBar"));
         let bar = new_bar();
+        // `ACCEL`: FVIRTKEY | FCONTROL (| FSHIFT), the key's code (its capital or digit), the id.
+        let mut keys: Vec<[u16; 3]> = Vec::new();
         for m in menus {
             let popup = new_popup();
-            for (label, event) in &m.items {
+            for (label, event, key) in &m.items {
                 match event {
-                    Some(n) => append(popup, 0, n + 1, wide(label).as_ptr()),
+                    Some(n) => {
+                        let (shift, k) = key.strip_prefix("shift+").map_or((false, key.as_str()), |k| (true, k));
+                        let label = match k.bytes().next() {
+                            Some(c) => {
+                                keys.push([if shift { 0xd } else { 0x9 }, c.to_ascii_uppercase() as u16, *n as u16 + 1]);
+                                alloc::format!("{label}\tCtrl+{}{}", if shift { "Shift+" } else { "" }, k.to_ascii_uppercase())
+                            }
+                            None => label.clone(),
+                        };
+                        append(popup, 0, n + 1, wide(&label).as_ptr())
+                    }
                     None => append(popup, 0x800, 0, null()), // MF_SEPARATOR
                 };
             }
             append(bar, 0x10, popup as usize, wide(&m.title).as_ptr()); // MF_POPUP
         }
+        let old = *WIN_KEYS.get();
+        if old != 0 {
+            t::<_, extern "system" fn(Handle) -> i32>(f("DestroyAcceleratorTable"))(old);
+        }
+        *WIN_ACCELERATE.get() = t(f("TranslateAcceleratorW"));
+        let table: extern "system" fn(*const [u16; 3], i32) -> Handle = t(f("CreateAcceleratorTableW"));
+        *WIN_KEYS.get() = if keys.is_empty() { 0 } else { table(keys.as_ptr(), keys.len() as i32) };
         set(window, if menus.is_empty() { 0 } else { bar });
         draw(window);
     }

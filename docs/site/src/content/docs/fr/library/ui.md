@@ -46,7 +46,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `vue.every(ms: Int, event: E) -> ui.View` | envoie `event` toutes les `ms` millisecondes, sur n'importe quelle vue. |
 | `vue.menus(all: List<ui.Menu>) -> ui.View` | la barre de menus de la fenêtre ; sur la vue entière, la plus extérieure. |
 | `ui.menu(title, items: List<ui.Item>) -> ui.Menu` | un menu de la barre. |
-| `ui.item(label, event: E) -> ui.Item`, `ui.separator` | une ligne de menu, qui envoie `event` ; une ligne qui sépare. |
+| `ui.item(label, event: E) key(shortcut := "") -> ui.Item`, `ui.separator` | une ligne de menu, qui envoie `event` ; une ligne qui sépare. `key("o")` l'envoie aussi sur Ctrl+O (⌘O sur Mac), `key("shift+s")` sur Ctrl+Maj+S ; une lettre ou un chiffre. `q`, `x`, `c`, `v` et `a` seuls sont au système (quitter, couper, copier, coller, tout sélectionner) : refusés. |
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | n'importe quelle couleur, chaque composante allant de 0 à 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | des couleurs toutes prêtes. |
 

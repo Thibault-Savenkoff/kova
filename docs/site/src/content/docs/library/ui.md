@@ -46,7 +46,7 @@ lists what `ui` has.
 | `view.every(ms: Int, event: E) -> ui.View` | sends `event` every `ms` milliseconds, on any view. |
 | `view.menus(all: List<ui.Menu>) -> ui.View` | the window's menu bar; on the whole view, the outermost one. |
 | `ui.menu(title, items: List<ui.Item>) -> ui.Menu` | one menu of the bar. |
-| `ui.item(label, event: E) -> ui.Item`, `ui.separator` | a line of a menu, which sends `event`; a line that separates. |
+| `ui.item(label, event: E) key(shortcut := "") -> ui.Item`, `ui.separator` | a line of a menu, which sends `event`; a line that separates. `key("o")` also sends it on Ctrl+O (⌘O on a Mac), `key("shift+s")` on Ctrl+Shift+S; a letter or a digit. `q`, `x`, `c`, `v` and `a` alone are the system's (quit, cut, copy, paste, select all), refused. |
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | any color, each part from 0 to 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | ready-made colors. |
 

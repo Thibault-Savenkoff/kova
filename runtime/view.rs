@@ -20,10 +20,12 @@ pub fn message(title: &str, view: &UiNode, menus: &[UiMenu], width: i32, height:
         o.push_str("{\"title\":");
         quoted(o, &m.title);
         o.push_str(",\"items\":");
-        list(o, &m.items, |o, (label, k)| {
+        list(o, &m.items, |o, (label, k, key)| {
             o.push('[');
             quoted(o, label);
-            o.push_str(&format!(",{}]", or_null(*k)));
+            o.push_str(&format!(",{},", or_null(*k)));
+            quoted(o, key);
+            o.push(']');
         });
         o.push('}');
     });

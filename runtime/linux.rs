@@ -1946,16 +1946,39 @@ fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
         let add_action: extern "C" fn(P, P) = t(g.get("g_action_map_add_action"));
         let insert: extern "C" fn(P, *const u8, P) = t(g.get("gtk_widget_insert_action_group"));
         let bar_of: extern "C" fn(P) -> P = t(g.get("gtk_popover_menu_bar_new_from_model"));
+        let new_item: extern "C" fn(*const u8, *const u8) -> P = t(g.get("g_menu_item_new"));
+        let set_attribute: extern "C" fn(P, *const u8, P) = t(g.get("g_menu_item_set_attribute_value"));
+        let variant: extern "C" fn(*const u8) -> P = t(g.get("g_variant_new_string"));
+        let append_item: extern "C" fn(P, P) = t(g.get("g_menu_append_item"));
+        let new_shortcut: extern "C" fn(P, P) -> P = t(g.get("gtk_shortcut_new"));
+        let trigger: extern "C" fn(*const u8) -> P = t(g.get("gtk_shortcut_trigger_parse_string"));
+        let named: extern "C" fn(*const u8) -> P = t(g.get("gtk_named_action_new"));
+        let add_shortcut: extern "C" fn(P, P) = t(g.get("gtk_shortcut_controller_add_shortcut"));
         let (bar, group) = (new_menu(), new_group());
+        // Shortcuts heard anywhere in the window, until the bar goes with the view.
+        let keys: P = t::<_, extern "C" fn() -> P>(g.get("gtk_shortcut_controller_new"))();
+        t::<_, extern "C" fn(P, i32)>(g.get("gtk_shortcut_controller_set_scope"))(keys, 2);
         for m in menus {
             let (sub, mut part) = (new_menu(), new_menu());
-            for (label, event) in &m.items {
+            for (label, event, key) in &m.items {
                 match event {
                     Some(n) => {
                         let action = new_action(c_string(&format!("i{n}")).as_ptr(), null_mut());
                         (g.connect)(action, c"activate".as_ptr() as *const u8, g.values[4], *n as P, null_mut(), 0);
                         add_action(group, action);
-                        append(part, c_string(label).as_ptr(), c_string(&format!("kova.i{n}")).as_ptr());
+                        let name = c_string(&format!("kova.i{n}"));
+                        if key.is_empty() {
+                            append(part, c_string(label).as_ptr(), name.as_ptr());
+                        } else {
+                            let accel = c_string(&match key.strip_prefix("shift+") {
+                                Some(k) => format!("<Control><Shift>{k}"),
+                                None => format!("<Control>{key}"),
+                            });
+                            let item = new_item(c_string(label).as_ptr(), name.as_ptr());
+                            set_attribute(item, c"accel".as_ptr() as *const u8, variant(accel.as_ptr()));
+                            append_item(part, item);
+                            add_shortcut(keys, new_shortcut(trigger(accel.as_ptr()), named(name.as_ptr())));
+                        }
                     }
                     None => {
                         section(sub, null(), part);
@@ -1967,7 +1990,9 @@ fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
             submenu(bar, c_string(&m.title).as_ptr(), sub);
         }
         insert(window, c"kova".as_ptr() as *const u8, group);
-        bar_of(bar)
+        let widget = bar_of(bar);
+        t::<_, extern "C" fn(P, P)>(g.get("gtk_widget_add_controller"))(widget, keys);
+        widget
     }
 }
 

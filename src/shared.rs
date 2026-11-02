@@ -921,15 +921,15 @@ pub struct UiTable {
     pub number: usize,
 }
 
-/// A menu of the window: its title, and its items with the number of their event; `None` a line
-/// between two groups.
+/// A menu of the window: its title, and its items with the number of their event (`None` a line
+/// between two groups) and their shortcut (`""`, `"o"`, `"shift+s"`).
 #[derive(Clone, PartialEq, Debug)]
 pub struct UiMenu {
     pub title: String,
-    pub items: Vec<(String, Option<usize>)>,
+    pub items: Vec<(String, Option<usize>, String)>,
 }
 
-/// A view's text gives its menus first: `Y12:File\n\t3 Open\n`, then the rest of the view.
+/// A view's text gives its menus first: `Y12:File\n\t3/o Open\n`, then the rest of the view.
 pub fn ui_menus(text: &str) -> (Vec<UiMenu>, &str) {
     let Some(after) = text.strip_prefix('Y') else { return (Vec::new(), text) };
     let Some((size, rest)) = after.split_once(':') else { return (Vec::new(), text) };
@@ -939,10 +939,11 @@ pub fn ui_menus(text: &str) -> (Vec<UiMenu>, &str) {
     for line in body.lines() {
         match (line.strip_prefix('\t'), menus.last_mut()) {
             (None, _) => menus.push(UiMenu { title: line.into(), items: Vec::new() }),
-            (Some("-"), Some(m)) => m.items.push((String::new(), None)),
+            (Some("-"), Some(m)) => m.items.push((String::new(), None, String::new())),
             (Some(item), Some(m)) => {
                 let (number, label) = item.split_once(' ').unwrap_or((item, ""));
-                m.items.push((label.into(), number.parse().ok()));
+                let (number, key) = number.split_once('/').unwrap_or((number, ""));
+                m.items.push((label.into(), number.parse().ok(), key.into()));
             }
             _ => {}
         }
@@ -1454,7 +1455,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
 /// `column(text "0 clics", button "Go")`: what `KOVA_UI_SCRIPT` prints instead of a window.
 pub fn ui_describe(text: &str) -> String {
     let (menus, text) = ui_menus(text);
-    let named = |m: &UiMenu| format!("{}({})", m.title, m.items.iter().map(|i| i.0.as_str()).collect::<Vec<_>>().join(", "));
+    let named = |m: &UiMenu| format!("{}({})", m.title, m.items.iter().map(|i| if i.2.is_empty() { i.0.clone() } else { format!("{} [{}]", i.0, i.2) }).collect::<Vec<_>>().join(", "));
     let menus: String = menus.iter().map(|m| format!("menu {} ", named(m))).collect();
     fn write(node: &UiNode, out: &mut String) {
         let group = |name: &str, parts: &[UiNode], out: &mut String| {

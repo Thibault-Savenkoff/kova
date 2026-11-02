@@ -110,7 +110,8 @@ public:
                 match i.event {
                     none => body := body + "\t-\n"
                     e => {
-                        body := body + "\t{events.length} {one_line(i.label)}\n"
+                        let key: String := if i.key = "" { "" } else { "/{i.key}" }
+                        body := body + "\t{events.length}{key} {one_line(i.label)}\n"
                         events.add(e.clone)
                     }
                 }
@@ -124,6 +125,7 @@ struct Item {
 private:
     label: String
     event: EVENT?
+    key: String
 }
 
 struct Menu {
@@ -136,12 +138,24 @@ fn menu(title: String, items: List<Item>) -> Menu {
     return Menu { title := title.clone, items := items.clone }
 }
 
-fn item(label: String, event: EVENT) -> Item {
-    return Item { label := label.clone, event := event.clone }
+// `key("o")`: Ctrl+O, or ⌘O on a Mac; `key("shift+s")` adds Shift.
+fn item(label: String, event: EVENT) key(shortcut: String := "") -> Item
+    require shortcut = "" || shortcut_ok(shortcut) else "a shortcut is a letter or a digit, maybe after shift+: \"o\", \"shift+s\""
+    require !(["q", "x", "c", "v", "a"].contains(shortcut.to_lower)) else "the system keeps {shortcut} for quit, cut, copy, paste and select all"
+{
+    return Item { label := label.clone, event := event.clone, key := shortcut.to_lower }
 }
 
 fn separator -> Item {
-    return Item { label := "", event := none }
+    return Item { label := "", event := none, key := "" }
+}
+
+fn shortcut_ok(s: String) -> Bool {
+    var k: String := s.to_lower
+    if k.starts_with("shift+") {
+        k := k[6..k.length]
+    }
+    return k.length = 1 && "abcdefghijklmnopqrstuvwxyz0123456789".contains(k)
 }
 
 // What the person picked, `none` if they gave up. Called from `update`, these wait for the answer.

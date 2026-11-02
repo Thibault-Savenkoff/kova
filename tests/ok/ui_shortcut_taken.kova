@@ -1,0 +1,20 @@
+// A menu shortcut the system already keeps is refused.
+import ui
+
+enum Event {
+    Copy
+}
+
+fn view(n: Int) -> ui.View {
+    return ui.text("{n}").menus([ui.menu("Edit", [ui.item("Copy", Event.Copy) key("c")])])
+}
+
+fn update(n: var Int, e: Event) {
+    n += 1
+}
+
+fn main {
+    ui.run("Shortcut", 0, view, update)
+}
+// code: 101
+// stderr: error: the system keeps c for quit, cut, copy, paste and select all

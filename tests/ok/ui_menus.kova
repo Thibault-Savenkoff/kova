@@ -7,15 +7,15 @@
 // stdin: 3
 // stdin: yes
 // stdin:
-// expect: [Menus] menu File(Open, Save, , Quit) column(button "0  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
-// expect: [Menus] menu File(Open, Save, , Quit) column(button "1  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open [o], Save [shift+s], , Quit) column(button "0  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open [o], Save [shift+s], , Quit) column(button "1  false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: (open file "Open")
-// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 /tmp/a.txt false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open [o], Save [shift+s], , Quit) column(button "1 /tmp/a.txt false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: (save file "Save")
-// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 not saved false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open [o], Save [shift+s], , Quit) column(button "1 not saved false", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: (confirm "Quit")
 // expect: (message "Bye")
-// expect: [Menus] menu File(Open, Save, , Quit) column(button "1 not saved true", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
+// expect: [Menus] menu File(Open [o], Save [shift+s], , Quit) column(button "1 not saved true", canvas 50x50 image(1 2 0 0 "logo.png") image(3 4 5 6 "logo.png"))
 // expect: (close)
 import ui
 
@@ -42,8 +42,8 @@ fn view(app: App) -> ui.View {
         ui.menu(
             "File",
             [
-                ui.item("Open", Event.Open),
-                ui.item("Save", Event.Save),
+                ui.item("Open", Event.Open) key("o"),
+                ui.item("Save", Event.Save) key("Shift+S"),
                 ui.separator,
                 ui.item("Quit", Event.Quit)
             ]
