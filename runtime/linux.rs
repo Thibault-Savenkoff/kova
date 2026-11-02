@@ -1977,7 +1977,16 @@ fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
                             let item = new_item(c_string(label).as_ptr(), name.as_ptr());
                             set_attribute(item, c"accel".as_ptr() as *const u8, variant(accel.as_ptr()));
                             append_item(part, item);
-                            add_shortcut(keys, new_shortcut(trigger(accel.as_ptr()), named(name.as_ptr())));
+                            // A digit also from the keypad.
+                            let last = key.chars().last().unwrap_or('a');
+                            let heard = match last.is_ascii_digit() {
+                                true => {
+                                    let accel = core::str::from_utf8(&accel[..accel.len() - 1]).unwrap_or("");
+                                    c_string(&format!("{accel}|{}KP_{last}", &accel[..accel.len() - 1]))
+                                }
+                                false => accel.clone(),
+                            };
+                            add_shortcut(keys, new_shortcut(trigger(heard.as_ptr()), named(name.as_ptr())));
                         }
                     }
                     None => {

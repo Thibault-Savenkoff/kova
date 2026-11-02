@@ -1800,6 +1800,10 @@ fn win_menus(window: Handle, menus: &[crate::shared::UiMenu]) {
                         let label = match k.bytes().next() {
                             Some(c) => {
                                 keys.push([if shift { 0xd } else { 0x9 }, c.to_ascii_uppercase() as u16, *n as u16 + 1]);
+                                if c.is_ascii_digit() {
+                                    // The keypad's digit: VK_NUMPAD0 + digit.
+                                    keys.push([if shift { 0xd } else { 0x9 }, 0x60 + (c - b'0') as u16, *n as u16 + 1]);
+                                }
                                 alloc::format!("{label}\tCtrl+{}{}", if shift { "Shift+" } else { "" }, k.to_ascii_uppercase())
                             }
                             None => label.clone(),
