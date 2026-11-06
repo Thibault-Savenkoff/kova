@@ -70,8 +70,21 @@ fn libm_source() -> PathBuf {
         std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".cargo"))
     });
     let registry = home.expect("no home directory").join("registry").join("src");
-    let found = std::fs::read_dir(&registry).into_iter().flatten().flatten().map(|d| d.path().join("libm-0.2.16").join("src").join("lib.rs")).find(|p| p.is_file());
-    found.unwrap_or_else(|| panic!("`libm` 0.2.16 not found in {}", registry.display()))
+    found_crate("libm-0.2.16", &registry)
+}
+
+fn found_crate(name: &str, registry: &Path) -> PathBuf {
+    let found = std::fs::read_dir(registry).into_iter().flatten().flatten().map(|d| d.path().join(name).join("src").join("lib.rs")).find(|p| p.is_file());
+    found.unwrap_or_else(|| panic!("`{name}` not found in {}", registry.display()))
+}
+
+/// The MP3 decoder (`nanomp3`, no_std, no dependency without `wide`), compiled as `libm` is.
+fn mp3_sources() -> (PathBuf, PathBuf) {
+    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".cargo"))
+    });
+    let registry = home.expect("no home directory").join("registry").join("src");
+    (found_crate("nanomp3-core-0.2.0", &registry), found_crate("nanomp3-0.2.0", &registry))
 }
 
 fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, android: bool) {
@@ -95,6 +108,21 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     assert!(status.success(), "`libm` does not compile for {triple}");
     // For a page, a whole module: src/wasm.rs adds the program to it.
     let web = triple.starts_with("wasm");
+    let (core_source, mp3_source) = mp3_sources();
+    let core = out.join(format!("libnanomp3_core-{triple}-{android}.rlib"));
+    let mp3 = out.join(format!("libnanomp3-{triple}-{android}.rlib"));
+    for (name, source, features, path, extern_core) in [("nanomp3_core", &core_source, &["layer12"][..], &core, false), ("nanomp3", &mp3_source, &["alloc", "layer12"][..], &mp3, true)] {
+        let mut command = Command::new(rustc);
+        command.args(["--edition", "2021", "--crate-type", "rlib", "--crate-name", name, "--cap-lints", "allow", "--target", triple]).args(codegen).args(model);
+        for f in features {
+            command.args(["--cfg", &format!("feature=\"{f}\"")]);
+        }
+        if extern_core {
+            command.arg("--extern").arg(format!("nanomp3_core={}", core.display()));
+        }
+        let status = command.arg("-o").arg(path).arg(source).status().expect("the Rust compiler");
+        assert!(status.success(), "`{name}` does not compile for {triple}");
+    }
     let status = Command::new(rustc)
         .args(["--edition", "2024", "--crate-type", if web { "cdylib" } else { "staticlib" }, "--crate-name", "kova_runtime", "--target", triple])
         .args(codegen)
@@ -102,6 +130,10 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         .args(model)
         .arg("--extern")
         .arg(format!("libm={}", rlib.display()))
+        .arg("--extern")
+        .arg(format!("nanomp3={}", mp3.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", out.display()))
         .arg("-o")
         .arg(lib)
         .arg("runtime/kova.rs")

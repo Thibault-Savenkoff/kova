@@ -1,5 +1,5 @@
 // expect: err(no sound file at no such file.wav)
-// expect: err(not an uncompressed WAV sound)
+// expect: err(not a WAV or MP3 sound)
 // expect: [82, 73, 70, 70, 40, 0, 0, 0, 87, 65, 86, 69]
 // expect: 48
 // expect: [255, 127, 1, 128]

@@ -1,6 +1,6 @@
 ---
 title: sound
-description: Playing WAV sounds.
+description: Playing WAV and MP3 sounds.
 sidebar:
   order: 25
 ---
@@ -11,12 +11,12 @@ import sound
 
 | Function | What it does |
 | --- | --- |
-| `sound.play(path: String) -> Nothing or sound.Error` | plays a WAV file, and comes back when it is over. |
-| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | plays a WAV held in memory. |
+| `sound.play(path: String) -> Nothing or sound.Error` | plays a WAV or MP3 file, and comes back when it is over. |
+| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | plays a WAV or an MP3 held in memory. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | makes a WAV of one channel from its samples, each from `-1.0` to `1.0`; `rate` is how many per second, 44100 if left out. |
 
-`sound.Error` is `NotFound(path)`, `NotSound` (not an uncompressed WAV: whole numbers of 8, 16, 24 or 32 bits, or 32-bit floats) or `NoDevice` (no sound card,
-or no sound server on Linux). Only uncompressed WAV plays for now; MP3 and Ogg do not.
+`sound.Error` is `NotFound(path)`, `NotSound` (neither an MP3 nor an uncompressed WAV: whole numbers of 8, 16, 24 or 32 bits, or 32-bit floats) or `NoDevice` (no sound card,
+or no sound server on Linux). Uncompressed WAV and MP3 play; Ogg does not yet. An MP3 is decoded by Kova itself, on every system, then played as a WAV.
 
 Kova uses what the system has: PulseAudio or PipeWire on Linux, `PlaySound` on Windows, `NSSound` on
 a Mac. Nothing needs installing, except on a Linux without a sound server (package

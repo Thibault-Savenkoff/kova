@@ -2326,7 +2326,13 @@ pub extern "C" fn kova_ui_show(title: i64, view: i64, width: i64, height: i64) -
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_sound(data: i64) -> i64 {
-    let data = bytes_of(data);
+    let mut data = bytes_of(data);
+    if shared::wav(&data).is_none() {
+        match shared::mp3_as_wav(&data) {
+            Some(decoded) => data = decoded.into(),
+            None => return 1,
+        }
+    }
     match shared::wav(&data) {
         None => 1,
         Some(wav) if sys::sound(&data, &wav) => 0,

@@ -65,7 +65,7 @@ Everything here comes with Kova, with nothing else to install unless noted.
 | **Web** | `import web`: HTTP(S) client and server; `import websocket`, `import net` (TCP/UDP) |
 | **Concurrency** | `import threads`: tasks, channels, shared state, `select`; `l.map workers(8) { … }` |
 | **Data** | JSON, CSV, TOML, XML, regular expressions, zip, compression; SQLite through the system's library |
-| **Everyday** | files, paths, dates, command-line arguments, big integers, secure random, encryption, sound (WAV) |
+| **Everyday** | files, paths, dates, command-line arguments, big integers, secure random, encryption, sound (WAV, MP3) |
 | **C libraries** | `extern`: call any C function, with structs and callbacks |
 | **Packages** | `import json from "github.com/ada/kova-json" version "1.2.0"`, locked by `kova.lock`; `kova search` finds them, no server involved |
 | **Targets** | Linux, Windows and Mac (x86-64 and arm64), the browser (WebAssembly, one `.html`), Android (a signed `.apk`), all from any machine |

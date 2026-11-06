@@ -1172,6 +1172,38 @@ pub fn wav(data: &[u8]) -> Option<Wav<'_>> {
     None
 }
 
+/// An MP3 as the WAV file it decodes to (16 bits), what `sound.play` hands to the system. `None` if
+/// it is not an MP3, or holds no sound.
+#[allow(dead_code)]
+pub fn mp3_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    let sound = nanomp3::decode_all::<i16>(data);
+    let channels: u16 = match sound.channels? {
+        nanomp3::Channels::Mono => 1,
+        _ => 2,
+    };
+    if sound.samples.is_empty() || sound.sample_rate == 0 {
+        return None;
+    }
+    let size = sound.samples.len() as u32 * 2;
+    let mut out = Vec::with_capacity(44 + size as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + size).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&sound.sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sound.sample_rate * channels as u32 * 2).to_le_bytes());
+    out.extend_from_slice(&(channels * 2).to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&size.to_le_bytes());
+    for sample in &sound.samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
+    Some(out)
+}
+
 pub fn ui_act_name(act: i64) -> &'static str {
     match act {
         0 => "no frame",
@@ -1572,6 +1604,19 @@ mod tests {
         assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
         assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
         assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
+    }
+
+    #[test]
+    fn mp3_becomes_wav() {
+        let tone = include_bytes!("../tests/data/tone.mp3");
+        let made = mp3_as_wav(tone).expect("an MP3");
+        let wav = wav(&made).expect("a WAV");
+        assert_eq!((wav.channels, wav.rate, wav.bits), (1, 22050, 16));
+        // 0.3 s, give or take the encoder's frames.
+        assert!((6000..8000).contains(&(wav.samples.len() / 2)), "{}", wav.samples.len() / 2);
+        assert!(wav.samples.iter().any(|&b| b != 0), "silence");
+        assert!(mp3_as_wav(b"not a sound at all, just text").is_none());
+        assert!(mp3_as_wav(&made).is_none(), "a WAV is not an MP3");
     }
 
     #[test]

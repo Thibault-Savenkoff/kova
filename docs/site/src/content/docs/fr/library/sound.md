@@ -1,6 +1,6 @@
 ---
 title: sound
-description: Jouer des sons WAV.
+description: Jouer des sons WAV et MP3.
 sidebar:
   order: 25
 ---
@@ -11,13 +11,12 @@ import sound
 
 | Fonction | Ce qu'elle fait |
 | --- | --- |
-| `sound.play(path: String) -> Nothing or sound.Error` | joue un fichier WAV, et revient quand il est fini. |
-| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | joue un WAV gardé en mémoire. |
+| `sound.play(path: String) -> Nothing or sound.Error` | joue un fichier WAV ou MP3, et revient quand il est fini. |
+| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | joue un WAV ou un MP3 gardé en mémoire. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | fabrique un WAV d'un canal à partir de ses échantillons, chacun de `-1.0` à `1.0` ; `rate` dit combien par seconde, 44100 s'il est omis. |
 
-`sound.Error` vaut `NotFound(path)`, `NotSound` (pas un WAV non compressé : nombres entiers de 8, 16, 24 ou 32 bits, ou flottants de 32 bits) ou `NoDevice` (pas de carte
-son, ou pas de serveur de son sous Linux). Seul le WAV non compressé se joue pour l'instant, pas le
-MP3 ni l'Ogg.
+`sound.Error` vaut `NotFound(path)`, `NotSound` (ni un MP3, ni un WAV non compressé : nombres entiers de 8, 16, 24 ou 32 bits, ou flottants de 32 bits) ou `NoDevice` (pas de carte
+son, ou pas de serveur de son sous Linux). Le WAV non compressé et le MP3 se jouent, pas encore l'Ogg. Un MP3 est décodé par Kova lui-même, sur tous les systèmes, puis joué comme un WAV.
 
 Kova utilise ce que le système a : PulseAudio ou PipeWire sous Linux, `PlaySound` sous Windows,
 `NSSound` sur Mac. Rien à installer, sauf sur un Linux sans serveur de son (paquet `libpulse0` ou
