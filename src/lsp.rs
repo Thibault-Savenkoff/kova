@@ -485,6 +485,7 @@ fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
     let mut items = (import_files(path, src, cursor))
         .or_else(|| starts_case(src, cursor).then(|| match_cases(path, src, cursor)).flatten())
         .or_else(|| next_parts(path, src, cursor))
+        .or_else(|| nested_cases(path, src, cursor))
         .or_else(|| members(path, src, cursor))
         .or_else(|| literal_fields(path, src, cursor))
         .or_else(|| match_cases(path, src, cursor))
@@ -778,8 +779,83 @@ fn match_cases(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionIte
             .map(|c| CompletionItem {
                 label: c.to_string(),
                 kind: Some(CompletionItemKind::ENUM_MEMBER),
-                insert_text: Some(format!("{c} => ")),
+                insert_text: Some(case_snippet(c)),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
                 ..Default::default()
+            })
+            .collect(),
+    )
+}
+
+/// `err(error) => ` is offered as `err(${1:error}) => `: the cursor goes between the parentheses,
+/// the names to replace selected. `$` and `}` are escaped for the snippet.
+fn case_snippet(case: &str) -> String {
+    let escaped = |t: &str| t.replace('\\', "\\\\").replace('$', "\\$").replace('}', "\\}");
+    match case.split_once('(') {
+        Some((name, rest)) => format!("{}(${{1:{}}}) => ", escaped(name), escaped(rest.strip_suffix(')').unwrap_or(rest))),
+        None => format!("{} => ", escaped(case)),
+    }
+}
+
+/// `err(.` or `.Plain(.Circle(`: inside the parentheses of a case, the variants of the value held
+/// there (`sound.Error` in `err(…)` of a `sound.Error` result). `None` anywhere else.
+fn nested_cases(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let word = src[..cursor].trim_end_matches(is_word).len();
+    let dotted = src[..word].ends_with('.');
+    let line_start = src[..cursor].rfind('\n').map_or(0, |n| n + 1);
+    let head = src[line_start..word - dotted as usize].trim_start();
+    if head.contains("=>") || !head.contains('(') {
+        return None;
+    }
+    // `err(.Plain(`: each open parenthesis with the word before it and the argument we are in.
+    let mut path_in: Vec<(String, usize)> = vec![];
+    let mut last = String::new();
+    for c in head.chars() {
+        match c {
+            '(' => path_in.push((core::mem::take(&mut last), 0)),
+            ',' => path_in.last_mut()?.1 += 1,
+            ')' => {
+                path_in.pop()?;
+            }
+            c if is_word(c) => last.push(c),
+            _ => last.clear(),
+        }
+    }
+    if path_in.is_empty() {
+        return None;
+    }
+    // The line becomes a plain case, so the `match` reads whatever was being typed.
+    let line_end = src[cursor..].find('\n').map_or(src.len(), |n| cursor + n);
+    let cut = format!("{}_ => 0{}", &src[..line_start], &src[line_end..]);
+    let (_, info, _) = info(path, &cut)?;
+    let (span, _) = info.matches.iter().filter(|(s, _)| s.start <= line_start && line_start < s.end).min_by_key(|(s, _)| s.end - s.start)?;
+    let tokens = lex(&cut).0;
+    let brace = tokens.iter().find(|t| t.kind == Kind::Sym("{") && t.span.start > span.start)?.span.start;
+    let subject_end = tokens.iter().take_while(|t| t.span.end <= brace).last()?.span.end;
+    let subject_start = tokens.iter().find(|t| t.span.start >= span.start && t.kind != Kind::Keyword("match"))?.span.start;
+    let id = (0..info.spans.len()).filter(|&i| info.spans[i].end == subject_end && info.spans[i].start >= subject_start).min_by_key(|&i| info.spans[i].start)?;
+    let mut ty = info.types[id].clone();
+    for (name, at) in &path_in {
+        let view = types::enum_view(&ty)?;
+        let (_, fields) = view.variants().iter().find(|(n, _)| n == name.trim_start_matches('.'))?;
+        ty = fields.get(*at)?.1.clone();
+    }
+    let view = types::enum_view(&ty)?;
+    let plain = !matches!(ty, types::Type::Enum(_));
+    Some(
+        view.variants()
+            .iter()
+            .map(|(name, fields)| {
+                let shown = if plain || dotted { name.clone() } else { format!(".{name}") };
+                let names: Vec<&str> = fields.iter().map(|(f, _)| f.as_str()).collect();
+                CompletionItem {
+                    label: shown.clone(),
+                    kind: Some(CompletionItemKind::ENUM_MEMBER),
+                    detail: Some(format!("{}.{name}", ty.text())),
+                    insert_text: Some(if names.is_empty() { shown } else { format!("{shown}(${{1:{}}})", names.join(", ")) }),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                }
             })
             .collect(),
     )
@@ -1536,6 +1612,23 @@ mod tests {
     }
 
     #[test]
+    fn completion_inside_a_case() {
+        let at = |src: &str| {
+            let at = src.find('|').unwrap();
+            completion("/tmp/kova-nested.kova", &src.replace('|', ""), at)
+        };
+        let src = "import sound\n\nfn main {\n    match sound.play(\"x\") {\n        ok => print(\"fini\")\n        err(.|)\n    }\n}\n";
+        let items = at(src);
+        let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["NotFound", "NotSound", "NoDevice"]);
+        assert_eq!(items[0].insert_text.as_deref(), Some("NotFound(${1:path})"));
+        // The case itself, offered with the cursor between the parentheses.
+        let cases = at("import sound\n\nfn main {\n    match sound.play(\"x\") {\n        |\n    }\n}\n");
+        let err = cases.iter().find(|i| i.label == "err(error)").expect("err");
+        assert_eq!(err.insert_text.as_deref(), Some("err(${1:error}) => "));
+    }
+
+    #[test]
     fn completion_of_added_methods() {
         let labels = |src: &str| {
             let at = src.find('|').unwrap();
@@ -1821,7 +1914,7 @@ mod tests {
         let src = SHAPES.replace("D => {}\n", "D => {}\n        C");
         let items = match_cases("/none/main.kova", &src, src.find("        C").unwrap() + 9).unwrap();
         let shown: Vec<(&str, &str)> = items.iter().map(|i| (i.label.as_str(), i.insert_text.as_deref().unwrap())).collect();
-        assert_eq!(shown, [(".C(radius)", ".C(radius) => "), (".E", ".E => ")]);
+        assert_eq!(shown, [(".C(radius)", ".C(${1:radius}) => "), (".E", ".E => ")]);
         // After the dot, which stays.
         let src = SHAPES.replace("D => {}\n", "D => {}\n        .\n");
         let at = src.find("        .\n").unwrap() + 9;

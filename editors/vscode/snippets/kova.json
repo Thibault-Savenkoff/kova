@@ -1,48 +1,48 @@
 {
   "fonction": {
     "prefix": "fn",
-    "body": ["fn ${1:nom}(${2:param}: ${3:Type}) -> ${4:Type} {", "\t$0", "}"],
-    "description": "Fonction"
+    "body": ["fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Type} {", "\t$0", "}"],
+    "description": "Function"
   },
   "fonction sans résultat": {
     "prefix": "fnv",
-    "body": ["fn ${1:nom}(${2:param}: ${3:Type}) {", "\t$0", "}"],
-    "description": "Fonction qui ne renvoie rien"
+    "body": ["fn ${1:name}(${2:param}: ${3:Type}) {", "\t$0", "}"],
+    "description": "Function that returns nothing"
   },
   "main": {
     "prefix": "main",
     "body": ["fn main {", "\t$0", "}"],
-    "description": "Point d'entrée du programme"
+    "description": "Entry point of the program"
   },
   "struct": {
     "prefix": "struct",
-    "body": ["struct ${1:Nom} {", "\t${2:champ}: ${3:Type}", "$0", "}"],
-    "description": "Structure"
+    "body": ["struct ${1:Name} {", "\t${2:field}: ${3:Type}", "$0", "}"],
+    "description": "Struct"
   },
   "struct avec sections": {
     "prefix": "structp",
-    "body": ["struct ${1:Nom} {", "private:", "\t${2:champ}: ${3:Type}", "public:", "\tfn ${4:methode}(self) {", "\t\t$0", "\t}", "}"],
-    "description": "Structure avec champs privés et méthodes publiques"
+    "body": ["struct ${1:Name} {", "private:", "\t${2:field}: ${3:Type}", "public:", "\tfn ${4:method}(self) {", "\t\t$0", "\t}", "}"],
+    "description": "Struct with private fields and public methods"
   },
   "enum": {
     "prefix": "enum",
-    "body": ["enum ${1:Nom} {", "\t${2:Cas1},", "\t${3:Cas2},", "}"],
-    "description": "Énumération"
+    "body": ["enum ${1:Name} {", "\t${2:Case1}", "\t${3:Case2}", "}"],
+    "description": "Enum"
   },
   "interface": {
     "prefix": "interface",
-    "body": ["interface ${1:Nom} {", "\tfn ${2:methode}(self) -> ${3:Type}", "}"],
+    "body": ["interface ${1:Name} {", "\tfn ${2:method}(self) -> ${3:Type}", "}"],
     "description": "Interface"
   },
   "let": {
     "prefix": "let",
-    "body": ["let ${1:nom}: ${2:Type} := ${0}"],
-    "description": "Variable figée"
+    "body": ["let ${1:name}: ${2:Type} := ${0}"],
+    "description": "Fixed variable"
   },
   "var": {
     "prefix": "var",
-    "body": ["var ${1:nom}: ${2:Type} := ${0}"],
-    "description": "Variable modifiable"
+    "body": ["var ${1:name}: ${2:Type} := ${0}"],
+    "description": "Variable that can change"
   },
   "if": {
     "prefix": "if",
@@ -52,62 +52,62 @@
   "if else": {
     "prefix": "ife",
     "body": ["if ${1:condition} {", "\t$2", "} else {", "\t$0", "}"],
-    "description": "Condition avec sinon"
+    "description": "Condition with else"
   },
   "while": {
     "prefix": "while",
     "body": ["while ${1:condition} {", "\t$0", "}"],
-    "description": "Boucle tant que"
+    "description": "While loop"
   },
   "for": {
     "prefix": "for",
-    "body": ["for ${1:element} in ${2:liste} {", "\t$0", "}"],
-    "description": "Boucle sur une liste ou un intervalle"
+    "body": ["for ${1:item} in ${2:list} {", "\t$0", "}"],
+    "description": "Loop over a list or a range"
   },
   "match": {
     "prefix": "match",
-    "body": ["match ${1:valeur} {", "\t.${2:Cas} => ${3:resultat},", "\t$0", "}"],
-    "description": "Choix selon le cas"
+    "body": ["match ${1:value} {", "\t.${2:Case} => ${3:result}", "\t$0", "}"],
+    "description": "Choice by case"
   },
   "require": {
     "prefix": "require",
     "body": ["require ${1:condition} else \"${2:message}\""],
-    "description": "Contrat vérifié à l'entrée de la fonction"
+    "description": "Contract checked on entry to the function"
   },
   "ensure": {
     "prefix": "ensure",
     "body": ["ensure ${1:condition} else \"${2:message}\""],
-    "description": "Contrat vérifié à la sortie (result = valeur renvoyée)"
+    "description": "Contract checked on exit (result = the returned value)"
   },
   "mode build": {
     "prefix": "mode",
     "body": ["mode ${1|build,run|} else ${2|skip,\"message\",return value|}"],
-    "description": "Sous la signature : ce que fait l'appel dans l'autre mode (kova run / kova build)"
+    "description": "Under the signature: what the call does in the other mode (kova run / kova build)"
   },
   "check": {
     "prefix": "check",
     "body": ["check ${1:condition} else \"${2:message}\""],
-    "description": "Vérification à cet endroit du code"
+    "description": "Check at this point of the code"
   },
   "test": {
     "prefix": "test",
     "body": ["test \"${1:description}\" {", "\tcheck ${0}", "}"],
-    "description": "Test lancé par `kova test`"
+    "description": "Test run by `kova test`"
   },
   "header": {
     "prefix": "header",
     "body": ["header {", "\tmode := ${1|run,build|}", "\tlock := ${2|false,true|}", "}"],
-    "description": "Mode par défaut de `kova fichier.kova`"
+    "description": "Default mode of `kova file.kova`"
   },
   "print": {
     "prefix": "print",
     "body": ["print(\"${1}\")"],
-    "description": "Afficher (avec retour à la ligne)"
+    "description": "Print (with a line break)"
   },
   "return": {
     "prefix": "return",
     "body": ["return ${0}"],
-    "description": "Renvoyer une valeur"
+    "description": "Return a value"
   },
   "threads.select": {
     "prefix": "select",
