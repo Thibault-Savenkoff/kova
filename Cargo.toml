@@ -28,6 +28,7 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"]
 nanomp3 = { version = "0.2.0", default-features = false, features = ["alloc", "layer12"] }
 nanoaudio-flac = "0.1.2"
 nanoaudio-core = "0.1.1"
+safe_arch = { version = "1.2.0", default-features = false, features = ["bytemuck"] }
 
 [build-dependencies]
 # Keeping only the runtime's objects an executable can reach (build.rs).

@@ -560,6 +560,7 @@ dependencies = [
  "object",
  "p256",
  "resvg",
+ "safe_arch",
  "serde_json",
  "target-lexicon",
  "tiny-skia",

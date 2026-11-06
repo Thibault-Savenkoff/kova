@@ -2766,6 +2766,15 @@ pub extern "C" fn __CxxFrameHandler3() -> i32 {
     1
 }
 
+/// A 128-bit division, which the FLAC decoder's seeking uses (never called: Kova does not seek) and
+/// Windows' Rust library does not carry.
+// ponytail: aborts if ever called; write a real one if a Kova sound ever seeks.
+#[cfg(target_os = "windows")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __udivti3() -> ! {
+    exit(101)
+}
+
 /// Microsoft's compiler wants it as soon as a program uses Floats.
 #[cfg(target_env = "msvc")]
 #[unsafe(no_mangle)]
