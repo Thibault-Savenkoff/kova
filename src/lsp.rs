@@ -638,7 +638,10 @@ fn statics(path: &str, src: &str, chain: &str) -> Option<Vec<CompletionItem>> {
         for t in types::MODULE_TYPES.iter().filter(|t| t.starts_with(&prefix)) {
             items.push(item(&t[prefix.len()..], CompletionItemKind::STRUCT, t.to_string()));
         }
-        return Some(items);
+        // A module partly written in Kova (`src/library`) goes on with its own names.
+        if types::bundled(&name).is_none() {
+            return Some(items);
+        }
     }
     if parts.len() == 1 && module.is_some() {
         // Its own names: `geometry.distance`, not the methods `geometry.Point.length`.
@@ -1488,6 +1491,17 @@ mod tests {
         let files: Vec<_> = items.iter().filter(|i| i.label == "files").collect();
         assert_eq!(files.len(), 1);
         assert!(files[0].additional_text_edits.is_none());
+    }
+
+    #[test]
+    fn completion_of_a_bundled_module() {
+        let src = "import sound\n\nfn main {\n    sound.\n}\n";
+        let items = completion("/tmp/kova-bundled.kova", src, src.find("sound.").unwrap() + 6);
+        let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+        for wanted in ["play", "play_bytes", "wav(…) rate(…)", "Error"] {
+            assert!(labels.contains(&wanted), "{wanted} in {labels:?}");
+        }
+        assert!(!labels.contains(&"raw"), "{labels:?}");
     }
 
     #[test]
