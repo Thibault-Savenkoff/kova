@@ -1153,6 +1153,19 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
         command: Some(Command::new(String::new(), "type".into(), Some(vec![serde_json::json!({ "text": " " })]))),
         ..Default::default()
     });
+    // Modules: the ones imported (under their alias), then the others, which add their `import`
+    // after the last one written.
+    let line_of = |at: usize| src[..at.min(src.len())].matches('\n').count() as u32;
+    let line = file.imports.iter().map(|i| line_of(i.module.span.end) + 1).max().unwrap_or(0);
+    let module = |label: &str| CompletionItem { label: label.into(), kind: Some(CompletionItemKind::MODULE), detail: Some(t!("module_detail")), ..Default::default() };
+    for i in &file.imports {
+        items.push(module(&i.alias.text));
+    }
+    for m in types::MODULES.iter().filter(|m| !file.imports.iter().any(|i| i.module.text == **m)) {
+        let at = Position::new(line, 0);
+        let edit = TextEdit { range: Range::new(at, at), new_text: format!("import {m}\n") };
+        items.push(CompletionItem { additional_text_edits: Some(vec![edit]), ..module(m) });
+    }
     for f in &file.functions {
         items.push(CompletionItem {
             label: f.name.text.clone(),
@@ -1461,6 +1474,20 @@ mod tests {
         assert_eq!(names(&complete(src, after_if)), ["n", "a"]);
         // Functions are always offered.
         assert!(complete(src, here).iter().any(|i| i.label == "main"));
+    }
+
+    #[test]
+    fn completion_of_modules() {
+        // Not imported: offered, and picking it writes the `import` after the ones there.
+        let src = "import files\n\nfn main {\n    print(\n}\n";
+        let items = complete(src, src.find("print(").unwrap() + 6);
+        let sound = items.iter().find(|i| i.label == "sound").expect("sound");
+        let edit = &sound.additional_text_edits.as_ref().unwrap()[0];
+        assert_eq!((edit.range.start.line, edit.new_text.as_str()), (1, "import sound\n"));
+        // Imported: offered once, with no edit.
+        let files: Vec<_> = items.iter().filter(|i| i.label == "files").collect();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].additional_text_edits.is_none());
     }
 
     #[test]
