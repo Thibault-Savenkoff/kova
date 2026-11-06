@@ -108,7 +108,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     let web = triple.starts_with("wasm");
     // The decoders (no_std, in cargo's registry): each one is compiled as `libm` is, after the ones
     // it needs. (crate, folder, edition, features, crates it needs)
-    let decoders: [(&str, &str, &str, &[&str], &[&str]); 7] = [
+    let decoders: [(&str, &str, &str, &[&str], &[&str]); 8] = [
         ("nanomp3_core", "nanomp3-core-0.2.0", "2021", &["layer12"], &[]),
         ("nanomp3", "nanomp3-0.2.0", "2021", &["alloc", "layer12"], &["nanomp3_core"]),
         ("bytemuck", "bytemuck-1.25.2", "2018", &[], &[]),
@@ -116,6 +116,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         ("wide", "wide-1.7.1", "2024", &[], &["bytemuck", "safe_arch"]),
         ("nanoaudio_core", "nanoaudio-core-0.1.1", "2024", &[], &[]),
         ("nanoaudio_flac", "nanoaudio-flac-0.1.2", "2024", &[], &["nanoaudio_core", "wide"]),
+        ("opuscule", "opuscule-0.2.2", "2024", &["fixed-point"], &[]),
     ];
     let registry = registry_dir();
     let mut externs: Vec<(String, PathBuf)> = vec![];
@@ -151,6 +152,8 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         .arg(format!("libm={}", rlib.display()))
         .arg("--extern")
         .arg(format!("nanomp3={}", mp3.display()))
+        .arg("--extern")
+        .arg(format!("opuscule={}", externs.iter().find(|(n, _)| n == "opuscule").unwrap().1.display()))
         .arg("--extern")
         .arg(format!("nanoaudio_flac={}", flac.display()))
         .arg("--extern")

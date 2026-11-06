@@ -1198,7 +1198,58 @@ fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
 /// Any sound Kova decodes itself, as a WAV file: an MP3 or a FLAC. `None` for anything else.
 #[allow(dead_code)]
 pub fn sound_as_wav(data: &[u8]) -> Option<Vec<u8>> {
-    flac_as_wav(data).or_else(|| mp3_as_wav(data))
+    flac_as_wav(data).or_else(|| ogg_as_wav(data)).or_else(|| mp3_as_wav(data))
+}
+
+/// The packets of the first stream of an Ogg file, in order: pages of segments, a packet ends with a
+/// segment shorter than 255 bytes. `None` if it is not Ogg.
+#[allow(dead_code)]
+pub fn ogg_packets(data: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let (mut at, mut serial, mut packets, mut open): (usize, Option<[u8; 4]>, Vec<Vec<u8>>, Vec<u8>) = (0, None, Vec::new(), Vec::new());
+    while at + 27 <= data.len() {
+        if &data[at..at + 4] != b"OggS" {
+            return if packets.is_empty() { None } else { Some(packets) };
+        }
+        let this: [u8; 4] = data[at + 14..at + 18].try_into().ok()?;
+        let count = data[at + 26] as usize;
+        let table = data.get(at + 27..at + 27 + count)?;
+        let mut body = at + 27 + count;
+        for &length in table {
+            let part = data.get(body..body + length as usize)?;
+            body += length as usize;
+            if *serial.get_or_insert(this) == this {
+                open.extend_from_slice(part);
+                if length < 255 {
+                    packets.push(core::mem::take(&mut open));
+                }
+            }
+        }
+        at = body;
+    }
+    (!packets.is_empty()).then_some(packets)
+}
+
+/// An Ogg Opus file as a 16-bit WAV at 48 kHz (one or two channels).
+#[allow(dead_code)]
+pub fn ogg_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    let packets = ogg_packets(data)?;
+    let head = packets.first()?.strip_prefix(b"OpusHead")?;
+    let (channels, skip) = (*head.get(1)? as usize, u16::from_le_bytes([*head.get(2)?, *head.get(3)?]) as usize);
+    // Byte 10: the channel mapping, 0 = plain mono or stereo.
+    if !(1..=2).contains(&channels) || head.get(10) != Some(&0) {
+        return None;
+    }
+    let layout = if channels == 1 { opuscule::Channels::Mono } else { opuscule::Channels::Stereo };
+    let mut decoder = opuscule::Decoder::new(opuscule::SampleRate::Hz48000, layout);
+    // 120 ms at most per packet and channel.
+    let mut block = alloc::vec![0i16; 5760 * channels];
+    let mut samples: Vec<i16> = Vec::new();
+    for packet in packets.iter().skip(2) {
+        let Ok(count) = decoder.decode(Some(packet), &mut block, false) else { continue };
+        samples.extend_from_slice(&block[..count * channels]);
+    }
+    let samples = samples.get(skip * channels..)?;
+    (!samples.is_empty()).then(|| wav_file(samples, channels as u16, 48000))
 }
 
 /// A FLAC (8 to 32 bits, one or two channels) as a 16-bit WAV.
@@ -1669,6 +1720,19 @@ mod tests {
         assert!(wav.samples.iter().any(|&b| b != 0), "silence");
         assert!(flac_as_wav(b"fLaC but nothing else").is_none());
         assert!(sound_as_wav(include_bytes!("../tests/data/tone.mp3")).is_some());
+    }
+
+    #[test]
+    fn opus_becomes_wav() {
+        let tone = include_bytes!("../tests/data/tone.opus");
+        let made = ogg_as_wav(tone).expect("an Ogg Opus");
+        let wav = wav(&made).expect("a WAV");
+        assert_eq!((wav.channels, wav.rate, wav.bits), (1, 48000, 16));
+        // 0.3 s, give or take the encoder's frames.
+        assert!((13000..16000).contains(&(wav.samples.len() / 2)), "{}", wav.samples.len() / 2);
+        assert!(wav.samples.iter().any(|&b| b != 0), "silence");
+        assert!(ogg_as_wav(b"OggS but nothing else at all, not even a page header").is_none());
+        assert!(sound_as_wav(tone).is_some());
     }
 
     #[test]
