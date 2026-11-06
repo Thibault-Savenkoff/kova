@@ -78,13 +78,11 @@ fn found_crate(name: &str, registry: &Path) -> PathBuf {
     found.unwrap_or_else(|| panic!("`{name}` not found in {}", registry.display()))
 }
 
-/// The MP3 decoder (`nanomp3`, no_std, no dependency without `wide`), compiled as `libm` is.
-fn mp3_sources() -> (PathBuf, PathBuf) {
+fn registry_dir() -> PathBuf {
     let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).or_else(|| {
         std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".cargo"))
     });
-    let registry = home.expect("no home directory").join("registry").join("src");
-    (found_crate("nanomp3-core-0.2.0", &registry), found_crate("nanomp3-0.2.0", &registry))
+    home.expect("no home directory").join("registry").join("src")
 }
 
 fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, android: bool) {
@@ -108,21 +106,42 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     assert!(status.success(), "`libm` does not compile for {triple}");
     // For a page, a whole module: src/wasm.rs adds the program to it.
     let web = triple.starts_with("wasm");
-    let (core_source, mp3_source) = mp3_sources();
-    let core = out.join(format!("libnanomp3_core-{triple}-{android}.rlib"));
-    let mp3 = out.join(format!("libnanomp3-{triple}-{android}.rlib"));
-    for (name, source, features, path, extern_core) in [("nanomp3_core", &core_source, &["layer12"][..], &core, false), ("nanomp3", &mp3_source, &["alloc", "layer12"][..], &mp3, true)] {
+    // The decoders (no_std, in cargo's registry): each one is compiled as `libm` is, after the ones
+    // it needs. (crate, folder, edition, features, crates it needs)
+    let decoders: [(&str, &str, &str, &[&str], &[&str]); 7] = [
+        ("nanomp3_core", "nanomp3-core-0.2.0", "2021", &["layer12"], &[]),
+        ("nanomp3", "nanomp3-0.2.0", "2021", &["alloc", "layer12"], &["nanomp3_core"]),
+        ("bytemuck", "bytemuck-1.25.2", "2018", &[], &[]),
+        ("safe_arch", "safe_arch-1.2.0", "2024", &["bytemuck"], &["bytemuck"]),
+        ("wide", "wide-1.7.1", "2024", &[], &["bytemuck", "safe_arch"]),
+        ("nanoaudio_core", "nanoaudio-core-0.1.1", "2024", &[], &[]),
+        ("nanoaudio_flac", "nanoaudio-flac-0.1.2", "2024", &[], &["nanoaudio_core", "wide"]),
+    ];
+    let registry = registry_dir();
+    let mut externs: Vec<(String, PathBuf)> = vec![];
+    for (name, folder, edition, features, needs) in decoders {
+        let path = out.join(format!("lib{name}-{triple}-{android}.rlib"));
         let mut command = Command::new(rustc);
-        command.args(["--edition", "2021", "--crate-type", "rlib", "--crate-name", name, "--cap-lints", "allow", "--target", triple]).args(codegen).args(model);
+        command.args(["--edition", edition, "--crate-type", "rlib", "--crate-name", name, "--cap-lints", "allow", "--target", triple]).args(codegen).args(model);
         for f in features {
             command.args(["--cfg", &format!("feature=\"{f}\"")]);
         }
-        if extern_core {
-            command.arg("--extern").arg(format!("nanomp3_core={}", core.display()));
+        // `safe_arch` is only for the x86 processors.
+        let x86 = triple.starts_with("x86_64") || triple.starts_with("i686");
+        if name == "safe_arch" && !x86 {
+            continue;
         }
-        let status = command.arg("-o").arg(path).arg(source).status().expect("the Rust compiler");
+        command.arg("-L").arg(format!("dependency={}", out.display()));
+        for need in needs.iter().filter(|n| **n != "safe_arch" || x86) {
+            let found = externs.iter().find(|(n, _)| n == need).expect("built before");
+            command.arg("--extern").arg(format!("{}={}", found.0, found.1.display()));
+        }
+        let status = command.arg("-o").arg(&path).arg(found_crate(folder, &registry)).status().expect("the Rust compiler");
         assert!(status.success(), "`{name}` does not compile for {triple}");
+        externs.push((name.to_string(), path));
     }
+    let mp3 = externs.iter().find(|(n, _)| n == "nanomp3").unwrap().1.clone();
+    let flac = externs.iter().find(|(n, _)| n == "nanoaudio_flac").unwrap().1.clone();
     let status = Command::new(rustc)
         .args(["--edition", "2024", "--crate-type", if web { "cdylib" } else { "staticlib" }, "--crate-name", "kova_runtime", "--target", triple])
         .args(codegen)
@@ -132,6 +151,10 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         .arg(format!("libm={}", rlib.display()))
         .arg("--extern")
         .arg(format!("nanomp3={}", mp3.display()))
+        .arg("--extern")
+        .arg(format!("nanoaudio_flac={}", flac.display()))
+        .arg("--extern")
+        .arg(format!("nanoaudio_core={}", externs.iter().find(|(n, _)| n == "nanoaudio_core").unwrap().1.display()))
         .arg("-L")
         .arg(format!("dependency={}", out.display()))
         .arg("-o")

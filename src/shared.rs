@@ -1172,6 +1172,62 @@ pub fn wav(data: &[u8]) -> Option<Wav<'_>> {
     None
 }
 
+/// A 16-bit WAV file of `samples` (interleaved), what the decoders hand to the system.
+#[allow(dead_code)]
+fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
+    let size = samples.len() as u32 * 2;
+    let mut out = Vec::with_capacity(44 + size as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + size).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
+    out.extend_from_slice(&(channels * 2).to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&size.to_le_bytes());
+    for sample in samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
+    out
+}
+
+/// Any sound Kova decodes itself, as a WAV file: an MP3 or a FLAC. `None` for anything else.
+#[allow(dead_code)]
+pub fn sound_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    flac_as_wav(data).or_else(|| mp3_as_wav(data))
+}
+
+/// A FLAC (8 to 32 bits, one or two channels) as a 16-bit WAV.
+#[allow(dead_code)]
+pub fn flac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    use nanoaudio_core::codec::Decoder;
+    if !data.starts_with(b"fLaC") {
+        return None;
+    }
+    let mut decoder = alloc::boxed::Box::new(nanoaudio_flac::FlacDecoder::<i16, 8192, 2>::new());
+    let mut block = alloc::vec![0i16; decoder.minimum_output().max(8192 * 2)];
+    let (mut samples, mut at, mut finished) = (Vec::new(), 0, false);
+    loop {
+        let Ok(progress) = decoder.decode(&data[at..], &mut block) else { break };
+        if progress.consumed == 0 && progress.produced == 0 {
+            if finished {
+                break;
+            }
+            finished = true;
+            decoder.finish();
+            continue;
+        }
+        at += progress.consumed;
+        samples.extend_from_slice(&block[..progress.produced]);
+    }
+    let config = decoder.configuration()?;
+    (!samples.is_empty()).then(|| wav_file(&samples, config.channels as u16, config.sample_rate))
+}
+
 /// An MP3 as the WAV file it decodes to (16 bits), what `sound.play` hands to the system. `None` if
 /// it is not an MP3, or holds no sound.
 #[allow(dead_code)]
@@ -1184,23 +1240,7 @@ pub fn mp3_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     if sound.samples.is_empty() || sound.sample_rate == 0 {
         return None;
     }
-    let size = sound.samples.len() as u32 * 2;
-    let mut out = Vec::with_capacity(44 + size as usize);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + size).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&channels.to_le_bytes());
-    out.extend_from_slice(&sound.sample_rate.to_le_bytes());
-    out.extend_from_slice(&(sound.sample_rate * channels as u32 * 2).to_le_bytes());
-    out.extend_from_slice(&(channels * 2).to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&size.to_le_bytes());
-    for sample in &sound.samples {
-        out.extend_from_slice(&sample.to_le_bytes());
-    }
+    let out = wav_file(&sound.samples, channels, sound.sample_rate);
     Some(out)
 }
 
@@ -1617,6 +1657,18 @@ mod tests {
         assert!(wav.samples.iter().any(|&b| b != 0), "silence");
         assert!(mp3_as_wav(b"not a sound at all, just text").is_none());
         assert!(mp3_as_wav(&made).is_none(), "a WAV is not an MP3");
+    }
+
+    #[test]
+    fn flac_becomes_wav() {
+        let tone = include_bytes!("../tests/data/tone.flac");
+        let made = flac_as_wav(tone).expect("a FLAC");
+        let wav = wav(&made).expect("a WAV");
+        assert_eq!((wav.channels, wav.rate, wav.bits), (1, 22050, 16));
+        assert_eq!(wav.samples.len() / 2, 6615, "0.3 s");
+        assert!(wav.samples.iter().any(|&b| b != 0), "silence");
+        assert!(flac_as_wav(b"fLaC but nothing else").is_none());
+        assert!(sound_as_wav(include_bytes!("../tests/data/tone.mp3")).is_some());
     }
 
     #[test]

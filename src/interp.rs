@@ -1354,7 +1354,7 @@ fn execute(p: &Program, num: usize, args: &[i64], out: &mut dyn Write, files: &[
                         // `kova debug` has no sound, but says the same of what is not one.
                         StrOp::Sound => {
                             let data = heap.bytes(locals[a[0]]);
-                            if crate::shared::wav(&data).is_none() && crate::shared::mp3_as_wav(&data).is_none() { 1 } else { 2 }
+                            if crate::shared::wav(&data).is_none() && crate::shared::sound_as_wav(&data).is_none() { 1 } else { 2 }
                         }
                         StrOp::UiTyped => {
                             let t = heap.ui_typed.clone();

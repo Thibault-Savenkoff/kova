@@ -1,4 +1,4 @@
-// `import sound`: playing WAV and MP3 sounds, through what each system has (PulseAudio or PipeWire on Linux,
+// `import sound`: playing WAV, MP3 and FLAC sounds, through what each system has (PulseAudio or PipeWire on Linux,
 // `PlaySound` on Windows, `NSSound` on a Mac).
 import sound
 import files
@@ -7,7 +7,7 @@ public:
 
 enum Error : Equal, Display {
     NotFound(path: String)
-    // Neither an uncompressed WAV nor an MP3.
+    // Neither an uncompressed WAV, nor an MP3 or a FLAC.
     NotSound
     // No sound card, or no sound server on Linux.
     NoDevice
@@ -15,13 +15,13 @@ enum Error : Equal, Display {
     fn to_string(self) -> String {
         return match self {
             .NotFound(p) => "no sound file at {p}"
-            .NotSound => "not a WAV or MP3 sound"
+            .NotSound => "not a WAV, MP3 or FLAC sound"
             .NoDevice => "no sound card or sound server"
         }
     }
 }
 
-// Plays a WAV or MP3 file, and comes back when it is over: in a `threads.spawn`, the program goes on meanwhile.
+// Plays a WAV, MP3 or FLAC file, and comes back when it is over: in a `threads.spawn`, the program goes on meanwhile.
 fn play(path: String) -> Nothing or Error {
     let data: List<Int> := match files.read_bytes(path) {
         ok(d) => d
@@ -30,7 +30,7 @@ fn play(path: String) -> Nothing or Error {
     return play_bytes(data)
 }
 
-// The same for a WAV or MP3 held in memory: what `wav` makes, for instance.
+// The same for a WAV, MP3 or FLAC held in memory: what `wav` makes, for instance.
 fn play_bytes(data: List<Int>) -> Nothing or Error {
     return match sound.raw(data) {
         0 => ok

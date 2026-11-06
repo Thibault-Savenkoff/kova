@@ -26,6 +26,8 @@ zune-jpeg = { version = "0.5.9", default-features = false, features = ["std"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "png-format"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 nanomp3 = { version = "0.2.0", default-features = false, features = ["alloc", "layer12"] }
+nanoaudio-flac = "0.1.2"
+nanoaudio-core = "0.1.1"
 
 [build-dependencies]
 # Keeping only the runtime's objects an executable can reach (build.rs).
