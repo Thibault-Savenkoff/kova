@@ -491,7 +491,25 @@ fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
         .or_else(|| promised(path, src, cursor))
         .unwrap_or_else(|| complete(src, cursor));
     parts_snippets(&mut items);
+    call_snippets(&mut items);
     items
+}
+
+/// A function that takes arguments is offered with its parenthesis, `play($1)`: the cursor goes
+/// inside and the parameter bubble opens. One without arguments stays bare (`rex.sound`), and so
+/// does a method with only `self`.
+fn call_snippets(items: &mut [CompletionItem]) {
+    for item in items.iter_mut().filter(|i| i.insert_text.is_none() && i.kind == Some(CompletionItemKind::FUNCTION)) {
+        let Some((head, rest)) = item.detail.as_deref().and_then(|d| d.strip_prefix("fn ")).and_then(|d| d.split_once('(')) else { continue };
+        let params = rest.split(')').next().unwrap_or("");
+        let own = head.rsplit('.').next().unwrap_or(head);
+        if own != item.label || params.is_empty() || ["self", "var self", "move self"].contains(&params) {
+            continue;
+        }
+        item.insert_text = Some(format!("{}($1)", item.label));
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.command = Some(Command::new(String::new(), "editor.action.triggerParameterHints".into(), None));
+    }
 }
 
 /// A keyword message `put(…) at(…)` is offered as `put($1) at($2)`: the cursor goes to each argument.
@@ -1502,6 +1520,19 @@ mod tests {
             assert!(labels.contains(&wanted), "{wanted} in {labels:?}");
         }
         assert!(!labels.contains(&"raw"), "{labels:?}");
+    }
+
+    #[test]
+    fn completion_with_parentheses() {
+        let src = "import sound\n\nfn seven -> Int { return 7 }\n\nfn main {\n    sound.\n}\n";
+        let items = completion("/tmp/kova-parens.kova", src, src.find("sound.\n}").unwrap() + 6);
+        let text = |label: &str| items.iter().find(|i| i.label == label).and_then(|i| i.insert_text.clone());
+        assert_eq!(text("play").as_deref(), Some("play($1)"));
+        assert_eq!(text("Error"), None);
+        let bare = "fn seven -> Int { return 7 }\n\nfn main {\n    \n}\n";
+        let all = completion("/tmp/kova-parens.kova", bare, bare.find("    \n").unwrap() + 4);
+        assert_eq!(all.iter().find(|i| i.label == "seven").unwrap().insert_text, None);
+        assert_eq!(all.iter().find(|i| i.label == "print").unwrap().insert_text.as_deref(), Some("print($1)"));
     }
 
     #[test]
