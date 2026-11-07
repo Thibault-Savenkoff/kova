@@ -1538,6 +1538,12 @@ pub fn stop_asked() {
 #[unsafe(no_mangle)]
 pub extern "C" fn kova_parallel(n: i64, length: i64, worker: i64, env: i64) -> i64 {
     let worker: extern "C" fn(i64, i64) = unsafe { core::mem::transmute(worker as usize) };
+    // The results List (slot 1 of `env`) is shared: a List of bytes turns into words at the first
+    // value past 255, and a thread reading it meanwhile would see it empty. Done before any thread.
+    let results = list(env).words()[1];
+    if results != 0 {
+        list(results).words();
+    }
     let next = AtomicI64::new(0);
     let job = (worker, env, &next as *const AtomicI64 as i64);
     extern "C" fn member(job: i64) {

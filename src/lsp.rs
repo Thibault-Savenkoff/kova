@@ -490,6 +490,7 @@ fn completion(path: &str, src: &str, cursor: usize) -> Vec<CompletionItem> {
         .or_else(|| literal_fields(path, src, cursor))
         .or_else(|| match_cases(path, src, cursor))
         .or_else(|| promised(path, src, cursor))
+        .or_else(|| type_names(src, cursor))
         .unwrap_or_else(|| complete(src, cursor));
     parts_snippets(&mut items);
     call_snippets(&mut items);
@@ -573,6 +574,55 @@ fn next_parts(path: &str, src: &str, cursor: usize) -> Option<Vec<CompletionItem
                     ..Default::default()
                 });
             }
+        }
+    }
+    Some(items)
+}
+
+/// Where a type is written (`x: |`, `-> |`, `Int or |`, `List<|`, `struct Dog : |`): the types, not
+/// the functions and variables. Generic ones come with their `<>` and the cursor inside.
+fn type_names(src: &str, cursor: usize) -> Option<Vec<CompletionItem>> {
+    let before = src[..cursor].trim_end_matches(is_word).trim_end();
+    let line = before.rsplit('\n').next().unwrap_or("");
+    // `a := b` and `x ?: y` are not types; `:` alone and `->` are, and so is what follows `or`, `<`, `any`.
+    let typed = (before.ends_with(':') && !before.ends_with(":="))
+        || before.ends_with("->")
+        || before.ends_with('<')
+        || (line.ends_with(" or") && line.contains("->"))
+        || line.ends_with(" any")
+        || [": var", ": move"].iter().any(|w| line.ends_with(w));
+    if !typed || (before.ends_with('<') && !line.trim_end().trim_end_matches('<').ends_with(is_word)) {
+        return None;
+    }
+    let file = tree(src);
+    let item = |label: &str, kind, detail: &str, insert: Option<String>| CompletionItem {
+        label: label.into(),
+        kind: Some(kind),
+        detail: Some(detail.into()),
+        insert_text_format: insert.as_ref().map(|_| InsertTextFormat::SNIPPET),
+        insert_text: insert,
+        ..Default::default()
+    };
+    let mut items = vec![];
+    for name in ["Int", "Float", "Bool", "Char", "String", "BigInt", "Date", "DateTime", "Weekday", "Nothing"] {
+        items.push(item(name, CompletionItemKind::CLASS, "type", None));
+    }
+    items.push(item("List", CompletionItemKind::CLASS, "List<T>", Some("List<$1>".into())));
+    items.push(item("Set", CompletionItemKind::CLASS, "Set<T>", Some("Set<$1>".into())));
+    items.push(item("Map", CompletionItemKind::CLASS, "Map<K, V>", Some("Map<$1, $2>".into())));
+    for s in &file.structs {
+        let generic = !s.generics.is_empty();
+        let insert = generic.then(|| format!("{}<{}>", s.name.text, (1..=s.generics.len()).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ")));
+        let kind = if s.variants.is_some() { CompletionItemKind::ENUM } else { CompletionItemKind::STRUCT };
+        items.push(item(&s.name.text, kind, &written(s), insert));
+    }
+    for i in &file.interfaces {
+        items.push(item(&i.name.text, CompletionItemKind::INTERFACE, "interface", None));
+    }
+    for t in types::MODULE_TYPES {
+        let (module, name) = t.split_once('.').unwrap_or(("", t));
+        if let Some(i) = file.imports.iter().find(|i| i.module.text == module) {
+            items.push(item(&format!("{}.{name}", i.alias.text), CompletionItemKind::CLASS, "type", None));
         }
     }
     Some(items)
@@ -1280,6 +1330,9 @@ fn complete(src: &str, cursor: usize) -> Vec<CompletionItem> {
             ..Default::default()
         });
     }
+    for i in file.interfaces.iter().filter(|i| !i.builtin) {
+        items.push(CompletionItem { label: i.name.text.clone(), kind: Some(CompletionItemKind::INTERFACE), detail: Some("interface".into()), ..Default::default() });
+    }
     let inside = |b: &Block| b.open.start < cursor && cursor <= b.close.start;
     let bodies = file.functions.iter().map(|f| (None, &f.params[..], &f.body));
     let methods = (file.structs.iter())
@@ -1642,6 +1695,25 @@ mod tests {
         assert!(list.contains(&"total".to_string()), "{list:?}");
         let any = labels("extend List<T> {\n    fn second(self) -> T? := self.get(1)\n}\nfn main {\n    let l: List<Int> := [1]\n    l.|\n}\n");
         assert!(any.contains(&"second".to_string()), "{any:?}");
+    }
+
+    #[test]
+    fn completion_of_types() {
+        let at = |text: &str| {
+            let cursor = text.find('|').unwrap();
+            completion("/none/main.kova", &text.replace('|', ""), cursor).into_iter().map(|i| i.label).collect::<Vec<_>>()
+        };
+        let head = "import web\ninterface Pet {\n  fn name(self) -> String\n}\nstruct Box<T> {\n  v: T\n}\nenum Light { Red, Green }\n";
+        for place in ["fn f(x: |", "fn f -> |", "fn f -> Int or |", "fn f(x: List<|", "struct Dog : |", "fn f(x: any |"] {
+            let found = at(&format!("{head}{place}"));
+            for want in ["Int", "String", "List", "Map", "Box", "Light", "Pet", "web.Request"] {
+                assert!(found.contains(&want.to_string()), "{place}: {want} missing in {found:?}");
+            }
+            assert!(!found.contains(&"print".to_string()), "{place}");
+        }
+        // An expression is not a type position.
+        assert!(!at(&format!("{head}fn f(a: Bool, b: Bool) {{\n  let c: Bool := a or |")).contains(&"List".to_string()));
+        assert!(at(&format!("{head}fn main {{\n  let l: Pet := 1\n  |")).contains(&"Pet".to_string()));
     }
 
     #[test]

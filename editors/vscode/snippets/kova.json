@@ -113,5 +113,95 @@
     "prefix": "select",
     "body": ["threads.select {", "\t${1:value} from ${2:channel} => ${3:print(value)}", "\tafter(${4:1.0}) => ${5:print(\"nothing yet\")}", "\tclosed => ${6:break}", "}"],
     "description": "Wait for the first of several channels"
+  },
+  "struct with interface": {
+    "prefix": "structi",
+    "body": ["struct ${1:Name} : ${2:Interface} {", "\t${3:field}: ${4:Type}", "", "\tfn ${5:method}(self) {", "\t\t$0", "\t}", "}"],
+    "description": "Struct that follows an interface"
+  },
+  "extend": {
+    "prefix": "extend",
+    "body": ["extend ${1:String} {", "\tfn ${2:method}(self) -> ${3:Type} {", "\t\t$0", "\t}", "}"],
+    "description": "Add methods to an existing type"
+  },
+  "one-expression function": {
+    "prefix": "fns",
+    "body": ["fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Type} := ${0}"],
+    "description": "Function whose body is one expression"
+  },
+  "if with a value": {
+    "prefix": "ifx",
+    "body": ["if ${1:x} := ${2:optional} {", "\t$0", "}"],
+    "description": "Run when an optional holds a value"
+  },
+  "else": {
+    "prefix": "else",
+    "body": ["else {", "\t$0", "}"],
+    "description": "else branch"
+  },
+  "for with index": {
+    "prefix": "fori",
+    "body": ["for ${1:i}, ${2:x} in ${3:list} {", "\t$0", "}"],
+    "description": "Loop with the position of each element"
+  },
+  "for over a range": {
+    "prefix": "forr",
+    "body": ["for ${1:i} in ${2:0}..${3:10} {", "\t$0", "}"],
+    "description": "Loop over a range"
+  },
+  "each": {
+    "prefix": "each",
+    "body": ["${1:list}.each { ${2:x}: ${3:Int} =>", "\t$0", "}"],
+    "description": "Run a block for each element"
+  },
+  "map": {
+    "prefix": "map",
+    "body": ["${1:list}.map { ${2:x}: ${3:Int} => $0 }"],
+    "description": "Build a new list from a block"
+  },
+  "filter": {
+    "prefix": "filter",
+    "body": ["${1:list}.filter { ${2:x}: ${3:Int} => $0 }"],
+    "description": "Keep the elements a block accepts"
+  },
+  "match on a result": {
+    "prefix": "matchr",
+    "body": ["match ${1:call} {", "\tok => $2", "\terr(${3:e}) => ${0:print(e)}", "}"],
+    "description": "Handle both outcomes of a result"
+  },
+  "match on an optional": {
+    "prefix": "matcho",
+    "body": ["match ${1:value} {", "\tnone => $2", "\t${3:x} => ${0:print(x)}", "}"],
+    "description": "Handle an optional"
+  },
+  "web server": {
+    "prefix": "serve",
+    "body": ["web.serve(${1:8080}) { q: web.Request =>", "\tweb.Answer.text(${0:\"hello\"})", "}"],
+    "description": "Small web server"
+  },
+  "window": {
+    "prefix": "uirun",
+    "body": ["ui.run(\"${1:Title}\", ${2:State} { $3 }, view, update)"],
+    "description": "Open a native window"
+  },
+  "spawn": {
+    "prefix": "spawn",
+    "body": ["threads.spawn {", "\t$0", "}"],
+    "description": "Run a block in another thread"
+  },
+  "extern": {
+    "prefix": "extern",
+    "body": ["extern ${1:lib} from \"${2:name}\" {", "\tfn ${3:function}(${4:param}: ${5:Int32}) -> ${6:Int32}", "}"],
+    "description": "Call a system library"
+  },
+  "lang": {
+    "prefix": "lang",
+    "body": ["lang ${1:fr} {", "\t${2:key} := \"${3:text}\"", "}"],
+    "description": "Translation block"
+  },
+  "while let": {
+    "prefix": "whilex",
+    "body": ["while ${1:x} := ${2:optional} {", "\t$0", "}"],
+    "description": "Loop while an optional holds a value"
   }
 }
