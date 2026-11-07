@@ -1330,8 +1330,23 @@ pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     };
     let (mut samples, mut shape): (Vec<i16>, Option<(u16, u32)>) = (Vec::new(), None);
     let mut take = |sound: rusty_aac::DecodedAudio| {
-        shape.get_or_insert((sound.channels, sound.sample_rate));
-        samples.extend(sound.samples.iter().map(|s| (s * 32767.0 + if *s < 0.0 { -0.5 } else { 0.5 }) as i16));
+        let n = sound.channels as usize;
+        // More than two channels (FFmpeg's order: FL FR FC LFE BL BR [SL SR]) are mixed down to stereo
+        // the usual way: the centre and the rear speakers at 0.707, the LFE dropped, all scaled to not clip.
+        let mixed: Vec<f32> = if matches!(n, 1 | 2) {
+            sound.samples
+        } else if matches!(n, 3 | 6 | 8) {
+            let scale = 1.0 / (1.0 + 0.707 * match n { 3 => 1.0, 6 => 2.0, _ => 3.0 });
+            sound.samples.chunks_exact(n).flat_map(|f| {
+                let rear = |i: usize| f.get(i).copied().unwrap_or(0.0);
+                let side = |i: usize| if n == 8 { rear(i) } else { 0.0 };
+                [(f[0] + 0.707 * (f[2] + rear(4) + side(6))) * scale, (f[1] + 0.707 * (f[2] + rear(5) + side(7))) * scale]
+            }).collect()
+        } else {
+            return;
+        };
+        shape.get_or_insert((sound.channels.min(2), sound.sample_rate));
+        samples.extend(mixed.iter().map(|s| (s * 32767.0 + if *s < 0.0 { -0.5 } else { 0.5 }) as i16));
     };
     if data.get(4..8) == Some(b"ftyp") {
         let (setup, packets) = m4a_packets(data)?;
@@ -1357,7 +1372,7 @@ pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
         }
     }
     let (channels, rate) = shape?;
-    (!samples.is_empty() && channels <= 2).then(|| wav_file(&samples, channels, rate))
+    (!samples.is_empty()).then(|| wav_file(&samples, channels, rate))
 }
 
 /// The packets of the first stream of an Ogg file, in order: pages of segments, a packet ends with a
@@ -1870,6 +1885,11 @@ mod tests {
         assert!(m4a.samples.iter().any(|&b| b != 0), "silence");
         assert!(aac_as_wav(b"not a sound at all, just text").is_none());
         assert!(aac_as_wav(include_bytes!("../tests/data/tone.mp3")).is_none());
+        // 5.1 is mixed down to stereo.
+        let surround = aac_as_wav(include_bytes!("../tests/data/tone51.m4a")).expect("5.1");
+        let surround = wav(&surround).expect("a WAV");
+        assert_eq!((surround.channels, surround.rate), (2, 22050));
+        assert!(surround.samples.iter().any(|&b| b != 0), "silence");
     }
 
     #[test]
