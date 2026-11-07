@@ -2080,6 +2080,58 @@ pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
 /// `sound.play`: PulseAudio's simple library, which PipeWire answers too.
 #[cfg(not(android))]
 pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
+    pulse_sound(wav) || alsa_sound(wav)
+}
+
+/// Without PulseAudio or PipeWire (a minimal system), ALSA's own library.
+#[cfg(not(android))]
+fn alsa_sound(wav: &crate::shared::Wav) -> bool {
+    use core::mem::transmute as t;
+    let Some(alsa) = library("libasound.so.2") else { return false };
+    let f = |name: &str| symbol(alsa, name).unwrap_or(0);
+    // `snd_pcm_format_t`: U8 1, S16_LE 2, S32_LE 10, FLOAT_LE 14, S24_3LE 32.
+    let format: i32 = match wav.bits {
+        8 => 1,
+        16 => 2,
+        24 => 32,
+        _ if wav.float => 14,
+        _ => 10,
+    };
+    let frame = (wav.bits / 8 * wav.channels).max(1) as usize;
+    unsafe {
+        let open: extern "C" fn(*mut P, *const u8, i32, i32) -> i32 = t(f("snd_pcm_open"));
+        let set: extern "C" fn(P, i32, u32, u32, u32, i32, u32) -> i32 = t(f("snd_pcm_set_params"));
+        let write: extern "C" fn(P, *const u8, usize) -> isize = t(f("snd_pcm_writei"));
+        let recover: extern "C" fn(P, i32, i32) -> i32 = t(f("snd_pcm_recover"));
+        let drain: extern "C" fn(P) -> i32 = t(f("snd_pcm_drain"));
+        let close: extern "C" fn(P) -> i32 = t(f("snd_pcm_close"));
+        let mut pcm: P = null_mut();
+        // SND_PCM_STREAM_PLAYBACK = 0, blocking = 0.
+        if open(&mut pcm, c"default".as_ptr().cast(), 0, 0) < 0 {
+            return false;
+        }
+        // SND_PCM_ACCESS_RW_INTERLEAVED = 3; resample if needed; 0.5 s of latency.
+        let mut played = set(pcm, format, 3, wav.channels, wav.rate, 1, 500_000) >= 0;
+        let mut at = 0;
+        while played && at + frame <= wav.samples.len() {
+            let wrote = write(pcm, wav.samples[at..].as_ptr(), (wav.samples.len() - at) / frame);
+            if wrote < 0 {
+                // An underrun or a suspended card: try to go on.
+                played = recover(pcm, wrote as i32, 1) >= 0;
+            } else {
+                at += wrote as usize * frame;
+            }
+        }
+        if played {
+            drain(pcm);
+        }
+        close(pcm);
+        played
+    }
+}
+
+#[cfg(not(android))]
+fn pulse_sound(wav: &crate::shared::Wav) -> bool {
     use core::mem::transmute as t;
     let Some(pulse) = library("libpulse-simple.so.0") else { return false };
     let f = |name: &str| symbol(pulse, name).unwrap_or(0);
@@ -2096,14 +2148,11 @@ pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
     spec[4..8].copy_from_slice(&wav.rate.to_le_bytes());
     spec[8] = wav.channels as u8;
     // Past two channels, say which speaker each is (the default map is AIFF's order, not the WAV's):
-    // `pa_channel_map` = a count, then 32 positions. FL 1, FR 2, FC 3, RL 5, RR 6, LFE 7, SL 10, SR 11.
+    // `pa_channel_map` = a count, then 32 positions. By WAV mask bit: FL 1, FR 2, FC 3, LFE 7, BL 5, BR 6,
+    // FLC 8, FRC 9, BC 4, SL 10, SR 11, TC 12, TFL 13, TFC 15, TFR 14, TBL 16, TBC 18, TBR 17.
+    const POSITIONS: [i32; 18] = [1, 2, 3, 7, 5, 6, 8, 9, 4, 10, 11, 12, 13, 15, 14, 16, 18, 17];
     let mut map = [0u8; 4 + 32 * 4];
-    let speakers: &[i32] = match wav.channels {
-        3 => &[1, 2, 3],
-        6 => &[1, 2, 3, 7, 5, 6],
-        8 => &[1, 2, 3, 7, 5, 6, 10, 11],
-        _ => &[],
-    };
+    let speakers: Vec<i32> = crate::shared::speakers(wav.channels as usize).map_or(Vec::new(), |mask| (0..18).filter(|b| mask >> b & 1 == 1).map(|b| POSITIONS[b]).collect());
     map[0] = speakers.len() as u8;
     for (k, speaker) in speakers.iter().enumerate() {
         map[4 + 4 * k..8 + 4 * k].copy_from_slice(&speaker.to_le_bytes());

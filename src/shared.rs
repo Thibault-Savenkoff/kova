@@ -1178,12 +1178,7 @@ fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
     let size = samples.len() as u32 * 2;
     // Past two channels, WAVE_FORMAT_EXTENSIBLE says which speaker each one is (FFmpeg's order:
     // FL FR FC LFE BL BR SL SR is the same as Windows' own).
-    let mask: u32 = match channels {
-        3 => 0x7,
-        6 => 0x3F,
-        8 => 0x63F,
-        _ => 0,
-    };
+    let mask = speakers(channels as usize).unwrap_or(0);
     let mut out = Vec::with_capacity(68 + size as usize);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(if mask == 0 { 36 } else { 60 } + size).to_le_bytes());
@@ -1208,6 +1203,57 @@ fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
         out.extend_from_slice(&sample.to_le_bytes());
     }
     out
+}
+
+/// The speakers of a layout with this many channels, as WAVE_FORMAT_EXTENSIBLE's mask (channel `i` is the
+/// `i`th bit set): 3.0, 4.0, 5.0, 5.1, 6.1, 7.1 and 7.1.4. `None` for mono, stereo and what is not standard.
+#[allow(dead_code)]
+pub fn speakers(channels: usize) -> Option<u32> {
+    match channels {
+        3 => Some(0x7),
+        4 => Some(0x107),
+        5 => Some(0x37),
+        6 => Some(0x3F),
+        7 => Some(0x70F),
+        8 => Some(0x63F),
+        12 => Some(0x2D63F),
+        _ => None,
+    }
+}
+
+/// A 16-bit WAV with a surround layout as a stereo WAV, for a system that refuses more: every speaker that
+/// is not front left or right at 0.707 on its side (the centres on both), the LFE dropped, all scaled not
+/// to clip. `None` for anything else.
+#[allow(dead_code)]
+pub fn stereo_wav(wav: &Wav) -> Option<Vec<u8>> {
+    let n = wav.channels as usize;
+    let mask = speakers(n)?;
+    if wav.bits != 16 || wav.float {
+        return None;
+    }
+    // Per channel: its weight in (left, right). Bits: FL 0, FR 1, LFE 3, BL 4, BR 5, FLC 6, FRC 7, SL 9, SR 10,
+    // TFL 12, TFR 14, TBL 15, TBR 17 are on a side; the others are in the middle.
+    let weights: Vec<(f32, f32)> = (0..32).filter(|b| mask >> b & 1 == 1).map(|bit| match bit {
+        0 => (1.0, 0.0),
+        1 => (0.0, 1.0),
+        3 => (0.0, 0.0),
+        4 | 6 | 9 | 12 | 15 => (0.707, 0.0),
+        5 | 7 | 10 | 14 | 17 => (0.0, 0.707),
+        _ => (0.707, 0.707),
+    }).collect();
+    let scale = 1.0 / weights.iter().map(|w| w.0).sum::<f32>().max(weights.iter().map(|w| w.1).sum());
+    let mut out: Vec<i16> = Vec::new();
+    for frame in wav.samples.chunks_exact(2 * n) {
+        let (mut left, mut right) = (0.0, 0.0);
+        for (i, (l, r)) in weights.iter().enumerate() {
+            let sample = i16::from_le_bytes([frame[2 * i], frame[2 * i + 1]]) as f32;
+            left += sample * l;
+            right += sample * r;
+        }
+        out.push((left * scale) as i16);
+        out.push((right * scale) as i16);
+    }
+    Some(wav_file(&out, 2, wav.rate))
 }
 
 /// Any sound Kova decodes itself, as a WAV file. `None` for anything else.
@@ -1345,8 +1391,8 @@ pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     };
     let (mut samples, mut shape): (Vec<i16>, Option<(u16, u32)>) = (Vec::new(), None);
     let mut take = |sound: rusty_aac::DecodedAudio| {
-        // Mono, stereo, 3.0, 5.1 and 7.1 keep their speakers; other layouts are not told apart.
-        if !matches!(sound.channels, 1 | 2 | 3 | 6 | 8) {
+        // Mono, stereo and the standard layouts keep their speakers; other counts are not told apart.
+        if sound.channels > 2 && speakers(sound.channels as usize).is_none() {
             return;
         }
         let mixed = sound.samples;
@@ -1895,6 +1941,10 @@ mod tests {
         let surround = wav(&surround).expect("a WAV");
         assert_eq!((surround.channels, surround.rate), (6, 22050));
         assert!(surround.samples.iter().any(|&b| b != 0), "silence");
+        let stereo = stereo_wav(&surround).expect("stereo");
+        let stereo = wav(&stereo).expect("a WAV");
+        assert_eq!((stereo.channels, stereo.samples.len() * 3), (2, surround.samples.len()));
+        assert!(stereo.samples.iter().any(|&b| b != 0), "silence");
     }
 
     #[test]

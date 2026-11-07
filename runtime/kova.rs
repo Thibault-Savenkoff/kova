@@ -2336,6 +2336,11 @@ pub extern "C" fn kova_sound(data: i64) -> i64 {
     match shared::wav(&data) {
         None => 1,
         Some(wav) if sys::sound(&data, &wav) => 0,
+        // A system that refuses 3, 6 or 8 channels gets stereo.
+        Some(wav) => match shared::stereo_wav(&wav) {
+            Some(stereo) if shared::wav(&stereo).is_some_and(|w| sys::sound(&stereo, &w)) => 0,
+            _ => 2,
+        },
         _ => 2,
     }
 }
