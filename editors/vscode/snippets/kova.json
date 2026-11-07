@@ -1,12 +1,12 @@
 {
   "fonction": {
     "prefix": "fn",
-    "body": ["fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Type} {", "\t$0", "}"],
+    "body": ["fn ${1:name}(${2:param}: ${3|Int,Float,String,Bool,Char,List<Int>|}) -> ${4|Int,Float,String,Bool,Char,List<Int>|} {", "\t$0", "}"],
     "description": "Function"
   },
   "fonction sans résultat": {
     "prefix": "fnv",
-    "body": ["fn ${1:name}(${2:param}: ${3:Type}) {", "\t$0", "}"],
+    "body": ["fn ${1:name}(${2:param}: ${3|Int,Float,String,Bool,Char,List<Int>|}) {", "\t$0", "}"],
     "description": "Function that returns nothing"
   },
   "main": {
@@ -16,12 +16,12 @@
   },
   "struct": {
     "prefix": "struct",
-    "body": ["struct ${1:Name} {", "\t${2:field}: ${3:Type}", "$0", "}"],
+    "body": ["struct ${1:Name} {", "\t${2:field}: ${3|Int,Float,String,Bool,Char,List<Int>|}", "$0", "}"],
     "description": "Struct"
   },
   "struct avec sections": {
     "prefix": "structp",
-    "body": ["struct ${1:Name} {", "private:", "\t${2:field}: ${3:Type}", "public:", "\tfn ${4:method}(self) {", "\t\t$0", "\t}", "}"],
+    "body": ["struct ${1:Name} {", "private:", "\t${2:field}: ${3|Int,Float,String,Bool,Char,List<Int>|}", "public:", "\tfn ${4:method}(self) {", "\t\t$0", "\t}", "}"],
     "description": "Struct with private fields and public methods"
   },
   "enum": {
@@ -31,17 +31,17 @@
   },
   "interface": {
     "prefix": "interface",
-    "body": ["interface ${1:Name} {", "\tfn ${2:method}(self) -> ${3:Type}", "}"],
+    "body": ["interface ${1:Name} {", "\tfn ${2:method}(self) -> ${3|Int,Float,String,Bool,Char,List<Int>|}", "}"],
     "description": "Interface"
   },
   "let": {
     "prefix": "let",
-    "body": ["let ${1:name}: ${2:Type} := ${0}"],
+    "body": ["let ${1:name}: ${2|Int,Float,String,Bool,Char,List<Int>|} := ${0}"],
     "description": "Fixed variable"
   },
   "var": {
     "prefix": "var",
-    "body": ["var ${1:name}: ${2:Type} := ${0}"],
+    "body": ["var ${1:name}: ${2|Int,Float,String,Bool,Char,List<Int>|} := ${0}"],
     "description": "Variable that can change"
   },
   "if": {
@@ -116,17 +116,17 @@
   },
   "struct with interface": {
     "prefix": "structi",
-    "body": ["struct ${1:Name} : ${2:Interface} {", "\t${3:field}: ${4:Type}", "", "\tfn ${5:method}(self) {", "\t\t$0", "\t}", "}"],
+    "body": ["struct ${1:Name} : ${2:Interface} {", "\t${3:field}: ${4|Int,Float,String,Bool,Char,List<Int>|}", "", "\tfn ${5:method}(self) {", "\t\t$0", "\t}", "}"],
     "description": "Struct that follows an interface"
   },
   "extend": {
     "prefix": "extend",
-    "body": ["extend ${1:String} {", "\tfn ${2:method}(self) -> ${3:Type} {", "\t\t$0", "\t}", "}"],
+    "body": ["extend ${1:String} {", "\tfn ${2:method}(self) -> ${3|Int,Float,String,Bool,Char,List<Int>|} {", "\t\t$0", "\t}", "}"],
     "description": "Add methods to an existing type"
   },
   "one-expression function": {
     "prefix": "fns",
-    "body": ["fn ${1:name}(${2:param}: ${3:Type}) -> ${4:Type} := ${0}"],
+    "body": ["fn ${1:name}(${2:param}: ${3|Int,Float,String,Bool,Char,List<Int>|}) -> ${4|Int,Float,String,Bool,Char,List<Int>|} := ${0}"],
     "description": "Function whose body is one expression"
   },
   "if with a value": {
