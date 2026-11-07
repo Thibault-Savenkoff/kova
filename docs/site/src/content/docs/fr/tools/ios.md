@@ -34,8 +34,10 @@ le programme affiche.
 | `import ui` | de vraies vues UIKit : textes, boutons, champs, interrupteurs, curseurs, choix, images, listes |
 | une colonne ou une ligne de fenêtre | une vue en pile, avec ses marges et ses styles |
 
-Pas encore là : `ui.canvas`, `ui.gpu`, les menus, les dialogues et le son. Un canvas affiche une
-ligne de texte à sa place.
+Une fenêtre défile quand elle dépasse l'écran, `ui.canvas` dessine avec Core Graphics et entend les
+touchers, les dialogues sont des alertes et le son passe par `AVAudioPlayer`.
+
+Pas encore là : `ui.gpu` et les menus.
 
 ## Essayer un programme sans le doigt
 

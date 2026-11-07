@@ -5,8 +5,9 @@
 // second thread, started once the app has a window. `show` (the program's thread) hands the view
 // to the main thread with `dispatch_sync_f`, which draws it, then sleeps until a tap, a keystroke
 // or a clock puts an event in `HEARD`. What is drawn: texts, buttons, fields, check boxes, sliders,
-// choices, images, lists (as rows of buttons), columns and rows with their style and margins. The
-// canvas, `ui.gpu`, tables with headers, menus and dialogs are not drawn yet.
+// choices, images, lists (as rows of buttons), canvases (2D drawing and touches), dialogs, sound,
+// columns and rows with their style and margins. The
+// `ui.gpu`, tables with headers and menus are not drawn yet.
 
 use super::{library, symbol, Id, Insets, Kit, Rect, Size};
 use crate::shared::{UiAlign, UiNode, UiQueue, UiStyle};
@@ -47,6 +48,10 @@ struct Screen {
 
 /// Only the main thread reaches it.
 static SCREEN: crate::Global<Option<Screen>> = crate::Global::new(None);
+/// Each canvas now on screen (the main thread's).
+static CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
+/// The scroll view, whose size a `ui.fill` canvas follows.
+static SCROLL: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
 /// The window of the app, kept for the delegate.
 static WINDOW: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
 
@@ -121,7 +126,7 @@ extern "C" fn set_window(_me: Id, _message: Id, w: Id) {
 
 /// The app has started: a window with an empty view, then the program.
 extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
-    let Some(kit) = objc_kit() else { return false };
+    let Some(mut kit) = objc_kit() else { return false };
     unsafe {
         use core::mem::transmute as t;
         let objc = library("/usr/lib/libobjc.A.dylib").unwrap();
@@ -141,6 +146,15 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
         register(class);
         let target = kit.send(kit.send(class, "alloc"), "init");
+        // The view of a `ui.canvas`: it draws what the program says and hears touches.
+        let canvas = new_class(kit.class("UIView"), c"KovaUiCanvas".as_ptr() as *const u8, 0);
+        add(canvas, kit.sel("drawRect:"), draw_canvas as usize, c"v@:{CGRect={CGPoint=dd}{CGSize=dd}}".as_ptr() as *const u8);
+        add(canvas, kit.sel("touchesBegan:withEvent:"), touch_began as usize, c"v@:@@".as_ptr() as *const u8);
+        add(canvas, kit.sel("touchesMoved:withEvent:"), touch_moved as usize, c"v@:@@".as_ptr() as *const u8);
+        add(canvas, kit.sel("touchesEnded:withEvent:"), touch_ended as usize, c"v@:@@".as_ptr() as *const u8);
+        add(canvas, kit.sel("touchesCancelled:withEvent:"), touch_ended as usize, c"v@:@@".as_ptr() as *const u8);
+        register(canvas);
+        kit.canvas = canvas;
         let bounds = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds"));
         let w = msg!(kit, extern "C" fn(Id, Id, Rect) -> Id)(kit.send(kit.class("UIWindow"), "alloc"), kit.sel("initWithFrame:"), bounds);
         let controller = kit.send(kit.send(kit.class("UIViewController"), "alloc"), "init");
@@ -151,6 +165,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         let scroll = made(&kit, "UIScrollView");
         (kit.send_id)(scroll, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
         (kit.send_id)(scroll, kit.sel("setKeyboardDismissMode:"), 1);
+        *SCROLL.get() = scroll;
         (kit.send_two)(root, kit.sel("addSubview:"), scroll);
         let (safe, by) = (kit.send(root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
         for edge in ["topAnchor", "leadingAnchor", "trailingAnchor", "bottomAnchor"] {
@@ -272,6 +287,7 @@ fn draw_view(view: &UiNode) {
             kit.send(screen.content, "removeFromSuperview");
         }
         screen.made.clear();
+        CANVASES.get().clear();
         let content = build(kit, screen.target, view, &mut screen.made);
         let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
@@ -299,6 +315,14 @@ fn draw_view(view: &UiNode) {
             screen.timers.push(timer);
         }
         screen.clocks = clocks;
+    }
+    // The canvases that fill: the program is told how much room they have.
+    kit.send(screen.root, "layoutIfNeeded");
+    for (view, canvas) in CANVASES.get().iter() {
+        let bounds = msg!(kit, extern "C" fn(Id, Id) -> Rect)(*view, kit.sel("bounds"));
+        if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
+            hear(crate::shared::UI_RESIZED, String::new());
+        }
     }
     // `KOVA_UI_TAP=0,0,1`: for a test, the app taps those buttons itself, one for each time the
     // view is drawn (`simctl` cannot touch the screen).
@@ -474,11 +498,23 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             (kit.send_id)(stack, kit.sel("setLayoutMarginsRelativeArrangement:"), 1);
             return stack;
         }
-        // Not drawn yet: said where it would be.
-        UiNode::Canvas(_) => {
-            let label = made(kit, "UILabel");
-            (kit.send_two)(label, kit.sel("setText:"), kit.text("(a canvas: not on iOS yet)"));
-            label
+        UiNode::Canvas(c) => {
+            let view = made(kit, "KovaUiCanvas");
+            (kit.send_id)(view, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            (kit.send_two)(view, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "whiteColor"));
+            let (scroll, by) = (*SCROLL.get(), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
+            let frame = kit.send(scroll, "frameLayoutGuide");
+            // A size of 0 (`ui.fill`): the room of the screen, less the margins.
+            for (anchor, length) in [("widthAnchor", c.width), ("heightAnchor", c.height)] {
+                let fixed = if length == 0 {
+                    by(kit.send(view, anchor), kit.sel("constraintEqualToAnchor:constant:"), kit.send(frame, anchor), -32.0)
+                } else {
+                    (kit.send_float)(kit.send(view, anchor), kit.sel("constraintEqualToConstant:"), length as f64)
+                };
+                (kit.send_id)(fixed, kit.sel("setActive:"), 1);
+            }
+            CANVASES.get().push((view, c.clone()));
+            view
         }
     };
     made_views.push((leaf, core::ptr::null_mut()));
@@ -515,6 +551,12 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
         }
         UiNode::Choice(_, k, _) => {
             (kit.send_id)(v, kit.sel("setSelectedSegmentIndex:"), *k as i64);
+        }
+        UiNode::Canvas(c) => {
+            if let Some(there) = CANVASES.get().iter_mut().find(|e| e.0 == v) {
+                there.1 = c.clone();
+            }
+            kit.send(v, "setNeedsDisplay");
         }
         UiNode::Table(table) => {
             let rows = kit.send(v, "arrangedSubviews");
@@ -649,4 +691,119 @@ pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
     }
     (kit.pop)(pool);
     played
+}
+
+// ---- Canvases ----
+
+fn touch(me: Id, touches: Id, kind: &str) {
+    let Some(screen) = SCREEN.get().as_ref() else { return };
+    let kit = &screen.kit;
+    let Some(n) = CANVASES.get().iter().find(|e| e.0 == me).and_then(|e| e.1.mouse) else { return };
+    let any = kit.send(touches, "anyObject");
+    let at = msg!(kit, extern "C" fn(Id, Id, Id) -> Size)(any, kit.sel("locationInView:"), me);
+    hear(crate::shared::ui_changed(n), crate::shared::ui_mouse(kind, at.width as i32, at.height as i32, 1));
+}
+
+extern "C" fn touch_began(me: Id, _message: Id, touches: Id, _event: Id) {
+    touch(me, touches, "press");
+}
+
+extern "C" fn touch_moved(me: Id, _message: Id, touches: Id, _event: Id) {
+    touch(me, touches, "move");
+}
+
+extern "C" fn touch_ended(me: Id, _message: Id, touches: Id, _event: Id) {
+    touch(me, touches, "release");
+}
+
+/// The drawing of a canvas: Core Graphics, in the view's own points (y goes down, as in Kova).
+extern "C" fn draw_canvas(me: Id, _message: Id, _dirty: Rect) {
+    use crate::shared::UiOp as Op;
+    let Some(screen) = SCREEN.get().as_ref() else { return };
+    let kit = &screen.kit;
+    let Some((_, canvas)) = CANVASES.get().iter().find(|e| e.0 == me) else { return };
+    let bounds = msg!(kit, extern "C" fn(Id, Id) -> Rect)(me, kit.sel("bounds"));
+    let (Some(graphics), Some(uikit)) = (library("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"), library("/System/Library/Frameworks/UIKit.framework/UIKit")) else { return };
+    let f = |name: &str| symbol(graphics, name).unwrap_or(0);
+    unsafe {
+        use core::mem::transmute as t;
+        let current: extern "C" fn() -> Id = t(symbol(uikit, "UIGraphicsGetCurrentContext").unwrap_or(0));
+        let context = current();
+        let fill_color: extern "C" fn(Id, f64, f64, f64, f64) = t(f("CGContextSetRGBFillColor"));
+        let stroke_color: extern "C" fn(Id, f64, f64, f64, f64) = t(f("CGContextSetRGBStrokeColor"));
+        let fill_rect: extern "C" fn(Id, Rect) = t(f("CGContextFillRect"));
+        let fill_oval: extern "C" fn(Id, Rect) = t(f("CGContextFillEllipseInRect"));
+        let stroke_rect: extern "C" fn(Id, Rect) = t(f("CGContextStrokeRect"));
+        let stroke_oval: extern "C" fn(Id, Rect) = t(f("CGContextStrokeEllipseInRect"));
+        let thickness: extern "C" fn(Id, f64) = t(f("CGContextSetLineWidth"));
+        let move_to: extern "C" fn(Id, f64, f64) = t(f("CGContextMoveToPoint"));
+        let line_to: extern "C" fn(Id, f64, f64) = t(f("CGContextAddLineToPoint"));
+        let stroke: extern "C" fn(Id) = t(f("CGContextStrokePath"));
+        let part = |c: u32, shift: u32| (c >> shift & 255) as f64 / 255.0;
+        let fill = |c: u32| fill_color(context, part(c, 16), part(c, 8), part(c, 0), 1.0);
+        let line = |c: u32, n: i32| {
+            stroke_color(context, part(c, 16), part(c, 8), part(c, 0), 1.0);
+            thickness(context, n as f64);
+        };
+        let inside = |x: i32, y: i32, w: i32, h: i32, n: i32| {
+            let inset = n as f64 / 2.0;
+            Rect { x: x as f64 + inset, y: y as f64 + inset, width: w as f64 - 2.0 * inset, height: h as f64 - 2.0 * inset }
+        };
+        let whole = Rect { x: 0.0, y: 0.0, width: bounds.width, height: bounds.height };
+        fill(0xffffff);
+        fill_rect(context, whole);
+        if canvas.gpu() {
+            // The graphics card's drawing is OpenGL's: not on iOS yet.
+            return;
+        }
+        for op in &canvas.ops {
+            match op {
+                Op::Gpu | Op::GlClear(_) | Op::GlShader(..) | Op::GlUniform(..) | Op::GlTriangles(..) | Op::GlTexture(..) => {}
+                Op::Clear(c) => {
+                    fill(*c);
+                    fill_rect(context, whole);
+                }
+                Op::Rect { x, y, w, h, color, outline: 0 } => {
+                    fill(*color);
+                    fill_rect(context, inside(*x, *y, *w, *h, 0));
+                }
+                Op::Rect { x, y, w, h, color, outline } => {
+                    line(*color, *outline);
+                    stroke_rect(context, inside(*x, *y, *w, *h, *outline));
+                }
+                Op::Circle { x, y, r, color, outline: 0 } => {
+                    fill(*color);
+                    fill_oval(context, inside(x - r, y - r, 2 * r, 2 * r, 0));
+                }
+                Op::Circle { x, y, r, color, outline } => {
+                    line(*color, *outline);
+                    stroke_oval(context, inside(x - r, y - r, 2 * r, 2 * r, *outline));
+                }
+                Op::Line { x, y, x2, y2, color, thickness } => {
+                    line(*color, *thickness);
+                    move_to(context, *x as f64, *y as f64);
+                    line_to(context, *x2 as f64, *y2 as f64);
+                    stroke(context);
+                }
+                Op::Image { x, y, w, h, path } => {
+                    let image = (kit.send_two)(kit.class("UIImage"), kit.sel("imageWithContentsOfFile:"), kit.text(path));
+                    if !image.is_null() {
+                        let own = msg!(kit, extern "C" fn(Id, Id) -> Size)(image, kit.sel("size"));
+                        let place = Rect { x: *x as f64, y: *y as f64, width: if *w > 0 { *w as f64 } else { own.width }, height: if *h > 0 { *h as f64 } else { own.height } };
+                        msg!(kit, extern "C" fn(Id, Id, Rect) -> Id)(image, kit.sel("drawInRect:"), place);
+                    }
+                }
+                Op::Text { x, y, size, color, text } => {
+                    let named = |name: &str| symbol(uikit, name).map_or(core::ptr::null_mut(), |p| *(p as *const Id));
+                    let keys = [named("NSFontAttributeName"), named("NSForegroundColorAttributeName")];
+                    let values = [
+                        (kit.send_float)(kit.class("UIFont"), kit.sel("systemFontOfSize:"), *size as f64),
+                        msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id)(kit.class("UIColor"), kit.sel("colorWithRed:green:blue:alpha:"), part(*color, 16), part(*color, 8), part(*color, 0), 1.0),
+                    ];
+                    let attributes = msg!(kit, extern "C" fn(Id, Id, *const Id, *const Id, u64) -> Id)(kit.class("NSDictionary"), kit.sel("dictionaryWithObjects:forKeys:count:"), values.as_ptr(), keys.as_ptr(), 2);
+                    msg!(kit, extern "C" fn(Id, Id, Size, Id))(kit.text(text), kit.sel("drawAtPoint:withAttributes:"), Size { width: *x as f64, height: *y as f64 }, attributes);
+                }
+            }
+        }
+    }
 }

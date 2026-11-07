@@ -34,8 +34,10 @@ program prints.
 | `import ui` | real UIKit views: texts, buttons, fields, switches, sliders, choices, images, lists |
 | a window's column or row | a stack view, with its margins and styles |
 
-Not there yet: `ui.canvas`, `ui.gpu`, menus, dialogs and sound. A canvas shows a line of text
-where it would be.
+A window scrolls when it is taller than the screen, `ui.canvas` draws with Core Graphics and hears
+touches, dialogs are alerts and sound goes through `AVAudioPlayer`.
+
+Not there yet: `ui.gpu` and menus.
 
 ## Trying a program without a finger
 
