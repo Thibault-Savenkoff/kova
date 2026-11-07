@@ -54,6 +54,7 @@ Depuis n'importe quel système, `--target` compile pour n'importe quel autre :
 | `mac-intel` | seulement les Mac Intel |
 | `web` | un seul fichier `.html` qui tourne dans un navigateur ([Kova dans une page web](/fr/tools/web/)) |
 | `android` | un seul `.apk` signé pour téléphones et émulateurs ([Kova sur Android](/fr/tools/android/)) ; `android-arm`, `android-intel` contiennent un seul processeur |
+| `ios-simulator` | un dossier `.app` pour le simulateur d'iPhone et d'iPad de Xcode ([Kova sur iOS](/fr/tools/ios/)) |
 
 Chaque cible a besoin d'un petit morceau de Kova compilé pour elle, ajouté à Rust avant d'installer
 Kova ([Installation](/fr/start/install/#3-compiler-pour-dautres-systèmes-facultatif)) ; sinon
