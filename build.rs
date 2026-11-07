@@ -108,7 +108,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     let web = triple.starts_with("wasm");
     // The decoders (no_std, in cargo's registry): each one is compiled as `libm` is, after the ones
     // it needs. (crate, folder, edition, features, crates it needs)
-    let decoders: [(&str, &str, &str, &[&str], &[&str]); 9] = [
+    let decoders: [(&str, &str, &str, &[&str], &[&str]); 10] = [
         ("nanomp3_core", "nanomp3-core-0.2.0", "2021", &["layer12"], &[]),
         ("nanomp3", "nanomp3-0.2.0", "2021", &["alloc", "layer12"], &["nanomp3_core"]),
         ("bytemuck", "bytemuck-1.25.2", "2018", &[], &[]),
@@ -119,6 +119,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         ("opuscule", "opuscule-0.2.2", "2024", &["fixed-point"], &[]),
         // Not from the registry: the copy made no_std in `vendor/` (see its README).
         ("rusty_aac", "vendor/rusty_aac", "2021", &[], &["libm"]),
+        ("lewton", "vendor/lewton", "2015", &[], &["libm"]),
     ];
     let registry = registry_dir();
     let mut externs: Vec<(String, PathBuf)> = vec![("libm".to_string(), rlib.clone())];
@@ -152,6 +153,8 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         .args(model)
         .arg("--extern")
         .arg(format!("libm={}", rlib.display()))
+        .arg("--extern")
+        .arg(format!("lewton={}", externs.iter().find(|(n, _)| n == "lewton").unwrap().1.display()))
         .arg("--extern")
         .arg(format!("rusty_aac={}", externs.iter().find(|(n, _)| n == "rusty_aac").unwrap().1.display()))
         .arg("--extern")

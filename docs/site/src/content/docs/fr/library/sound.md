@@ -1,6 +1,6 @@
 ---
 title: sound
-description: Jouer des sons WAV, MP3, AAC, FLAC et Opus.
+description: Jouer des sons WAV, MP3, AAC, FLAC, Opus et Vorbis.
 sidebar:
   order: 25
 ---
@@ -11,12 +11,12 @@ import sound
 
 | Fonction | Ce qu'elle fait |
 | --- | --- |
-| `sound.play(path: String) -> Nothing or sound.Error` | joue un fichier WAV, MP3, AAC (`.m4a`, `.aac`), FLAC ou Opus (`.opus`), et revient quand il est fini. |
-| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | joue un WAV, un MP3, un AAC, un FLAC ou un Opus gardé en mémoire. |
+| `sound.play(path: String) -> Nothing or sound.Error` | joue un fichier WAV, MP3, AAC (`.m4a`, `.aac`), FLAC, Opus (`.opus`) ou Vorbis (`.ogg`), et revient quand il est fini. |
+| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | joue un WAV, un MP3, un AAC, un FLAC, un Opus ou un Vorbis gardé en mémoire. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | fabrique un WAV d'un canal à partir de ses échantillons, chacun de `-1.0` à `1.0` ; `rate` dit combien par seconde, 44100 s'il est omis. |
 
-`sound.Error` vaut `NotFound(path)`, `NotSound` (ni un MP3, ni un AAC, ni un FLAC, ni un Opus, ni un WAV non compressé : nombres entiers de 8, 16, 24 ou 32 bits, ou flottants de 32 bits) ou `NoDevice` (pas de carte
-son, ou pas de serveur de son sous Linux). Le WAV non compressé, le MP3, l'AAC (un fichier `.m4a` ou des trames `.aac` nues, HE-AAC compris), le FLAC et l'Opus (dans un fichier Ogg, mono ou stéréo) se jouent, pas encore l'Ogg Vorbis. Ils sont décodés par Kova lui-même, sur tous les systèmes, puis joués comme un WAV.
+`sound.Error` vaut `NotFound(path)`, `NotSound` (ni un MP3, ni un AAC, ni un FLAC, ni un Opus, ni un Vorbis, ni un WAV non compressé : nombres entiers de 8, 16, 24 ou 32 bits, ou flottants de 32 bits) ou `NoDevice` (pas de carte
+son, ou pas de serveur de son sous Linux). Le WAV non compressé, le MP3, l'AAC (un fichier `.m4a` ou des trames `.aac` nues, HE-AAC compris), le FLAC, l'Opus et le Vorbis (dans un fichier Ogg) se jouent. Ils sont décodés par Kova lui-même, sur tous les systèmes, puis joués comme un WAV.
 
 Kova utilise ce que le système a : PulseAudio ou PipeWire sous Linux, `PlaySound` sous Windows,
 `NSSound` sur Mac. Rien à installer, sauf sur un Linux sans serveur de son (paquet `libpulse0` ou

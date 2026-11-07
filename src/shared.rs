@@ -1259,7 +1259,7 @@ pub fn stereo_wav(wav: &Wav) -> Option<Vec<u8>> {
 /// Any sound Kova decodes itself, as a WAV file. `None` for anything else.
 #[allow(dead_code)]
 pub fn sound_as_wav(data: &[u8]) -> Option<Vec<u8>> {
-    flac_as_wav(data).or_else(|| ogg_as_wav(data)).or_else(|| aac_as_wav(data)).or_else(|| mp3_as_wav(data))
+    flac_as_wav(data).or_else(|| ogg_as_wav(data)).or_else(|| vorbis_as_wav(data)).or_else(|| aac_as_wav(data)).or_else(|| mp3_as_wav(data))
 }
 
 /// The boxes of an MP4 file side by side: (kind, content). Stops at a size that does not fit.
@@ -1475,6 +1475,37 @@ pub fn ogg_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     }
     let samples = samples.get(skip * channels..)?;
     (!samples.is_empty()).then(|| wav_file(samples, channels as u16, 48000))
+}
+
+/// An Ogg Vorbis file as a 16-bit WAV. Vorbis numbers its speakers its own way (FL FC FR ...): they are
+/// put back in the WAV order, for the layouts `speakers` knows (3.0, 5.0, 5.1, 7.1).
+#[allow(dead_code)]
+pub fn vorbis_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    let packets = ogg_packets(data)?;
+    if packets.len() < 4 || !packets[0].starts_with(b"\x01vorbis") {
+        return None;
+    }
+    let ident = lewton::header::read_header_ident(&packets[0]).ok()?;
+    let setup = lewton::header::read_header_setup(&packets[2], ident.audio_channels, (ident.blocksize_0, ident.blocksize_1)).ok()?;
+    let n = ident.audio_channels as usize;
+    // Where each WAV channel is in Vorbis' order.
+    let order: &[usize] = match n {
+        1 => &[0],
+        2 => &[0, 1],
+        3 => &[0, 2, 1],
+        5 => &[0, 2, 1, 3, 4],
+        6 => &[0, 2, 1, 5, 3, 4],
+        8 => &[0, 2, 1, 7, 5, 6, 3, 4],
+        _ => return None,
+    };
+    let (mut state, mut samples) = (lewton::audio::PreviousWindowRight::new(), Vec::new());
+    for packet in &packets[3..] {
+        let Ok(planes) = lewton::audio::read_audio_packet(&ident, &setup, packet, &mut state) else { continue };
+        for i in 0..planes.first().map_or(0, |p| p.len()) {
+            samples.extend(order.iter().map(|&c| planes[c][i]));
+        }
+    }
+    (!samples.is_empty()).then(|| wav_file(&samples, n as u16, ident.audio_sample_rate))
 }
 
 /// A FLAC (8 to 32 bits, one or two channels) as a 16-bit WAV.
@@ -1920,6 +1951,26 @@ mod tests {
         assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
         assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
         assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
+    }
+
+    #[test]
+    fn vorbis_becomes_wav() {
+        let made = vorbis_as_wav(include_bytes!("../tests/data/tone.ogg")).expect("a Vorbis");
+        let wav = wav(&made).expect("a WAV");
+        assert_eq!((wav.channels, wav.rate, wav.bits), (1, 22050, 16));
+        assert!((6000..10000).contains(&(wav.samples.len() / 2)), "{}", wav.samples.len() / 2);
+        assert!(wav.samples.iter().any(|&b| b != 0), "silence");
+        if let Ok(dir) = std::env::var("KOVA_DUMP") {
+            std::fs::write(format!("{dir}/vorbis.wav"), &made).unwrap();
+        }
+        let surround = vorbis_as_wav(include_bytes!("../tests/data/tone51.ogg")).expect("5.1");
+        assert_eq!(wav_of(&surround).channels, 6);
+        assert!(vorbis_as_wav(include_bytes!("../tests/data/tone.opus")).is_none(), "an Opus is not a Vorbis");
+        assert!(vorbis_as_wav(b"OggS not really").is_none());
+    }
+
+    fn wav_of(data: &[u8]) -> Wav<'_> {
+        wav(data).expect("a WAV")
     }
 
     #[test]

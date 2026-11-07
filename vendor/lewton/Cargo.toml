@@ -1,0 +1,12 @@
+[package]
+name = "lewton"
+version = "0.10.2"
+edition = "2015"
+license = "MIT OR Apache-2.0"
+description = "lewton 0.10.2 (est31), Ogg Vorbis decoder core made no_std for Kova: see README.md"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+libm = { version = "=0.2.16", default-features = false }

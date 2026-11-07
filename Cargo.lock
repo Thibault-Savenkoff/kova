@@ -551,6 +551,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "lewton",
  "libm",
  "lsp-server",
  "lsp-types",
@@ -579,6 +580,13 @@ dependencies = [
  "euclid",
  "polycool",
  "smallvec",
+]
+
+[[package]]
+name = "lewton"
+version = "0.10.2"
+dependencies = [
+ "libm",
 ]
 
 [[package]]
