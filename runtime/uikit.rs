@@ -287,6 +287,18 @@ fn draw_view(view: &UiNode) {
         }
         screen.clocks = clocks;
     }
+    // `KOVA_UI_TAP=0,0,1`: for a test, the app taps those buttons itself, one for each time the
+    // view is drawn (`simctl` cannot touch the screen).
+    static TAPS: crate::Global<Option<Vec<usize>>> = crate::Global::new(None);
+    let taps = TAPS.get().get_or_insert_with(|| super::var("KOVA_UI_TAP").map_or(Vec::new(), |v| v.split(',').filter_map(|n| n.parse().ok()).rev().collect()));
+    if let Some(n) = taps.pop() {
+        for ((leaf, _), &(v, _)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
+            if matches!(leaf, UiNode::Button(_, k) if *k == n) {
+                (kit.send_id)(v, kit.sel("sendActionsForControlEvents:"), 64);
+                break;
+            }
+        }
+    }
     (kit.pop)(pool);
 }
 
