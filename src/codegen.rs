@@ -167,7 +167,8 @@ impl Target {
         match self {
             Target::Linux => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux.a")),
             Target::Windows => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows.a")),
-            Target::Mac | Target::MacArm | Target::IosSimulator => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-arm.a")),
+            Target::Mac | Target::MacArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-arm.a")),
+            Target::IosSimulator => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-ios-sim.a")),
             Target::LinuxArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux-arm.a")),
             Target::WindowsArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows-arm.a")),
             Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),

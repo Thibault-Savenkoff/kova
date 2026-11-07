@@ -89,10 +89,19 @@ mod c {
 const EINTR: i32 = 4;
 const EEXIST: i32 = 17;
 
+/// iOS: UIKit's windows (`--cfg ios`, see build.rs).
+#[cfg(ios)]
+#[path = "uikit.rs"]
+mod uikit;
+
 /// The program starts here.
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
     *crate::ARGS.get() = (0..argc as usize).map(|i| String::from_utf8_lossy(unsafe { c_text(*argv.add(i)) }).into_owned()).collect();
+    // On iOS, UIKit keeps this thread and starts the program on another (src: uikit.rs).
+    #[cfg(ios)]
+    return uikit::launch(argc, argv);
+    #[cfg(not(ios))]
     crate::run()
 }
 
@@ -786,6 +795,12 @@ mod dl {
 /// cursor. The program runs its own event loop until something happens: the button clicked, a
 /// field changed (`shared::ui_changed`, its text in `typed`), or -1 once the window is closed.
 /// `KOVA_UI_HIDDEN` never shows the window.
+#[cfg(ios)]
+pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
+    uikit::show(title, view, menus, width, height, acts, typed)
+}
+
+#[cfg(not(ios))]
 pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared::UiMenu], width: i32, height: i32, acts: &[i64], typed: &mut String) -> i64 {
     use crate::Global;
     // `WAITING`: nothing yet, -1: the window closed.

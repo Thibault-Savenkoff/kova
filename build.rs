@@ -38,7 +38,7 @@ fn main() {
     for (name, triples) in targets {
         let lib = out.join(format!("runtime-{name}.a"));
         match triples.iter().find(|t| installed(t)) {
-            Some(triple) => compile(&rustc, triple, &lib, &libm, &out, false),
+            Some(triple) => compile(&rustc, triple, &lib, &libm, &out, ""),
             None => {
                 println!("cargo:warning=no runtime for `kova build --target {name}`: `rustup target add {}`, then build kova again", triples[0]);
                 std::fs::write(&lib, []).unwrap();
@@ -50,14 +50,21 @@ fn main() {
     for (name, triple) in [("android-arm", "aarch64-unknown-linux-gnu"), ("android-x86", "x86_64-unknown-linux-gnu")] {
         let lib = out.join(format!("runtime-{name}.a"));
         if installed(triple) {
-            compile(&rustc, triple, &lib, &libm, &out, true);
+            compile(&rustc, triple, &lib, &libm, &out, "android");
         } else {
             std::fs::write(&lib, []).unwrap();
         }
     }
+    // iOS's simulator: the Mac arm64 runtime again, with its own windows (runtime/uikit.rs).
+    let ios = out.join("runtime-ios-sim.a");
+    if installed("aarch64-apple-darwin") {
+        compile(&rustc, "aarch64-apple-darwin", &ios, &libm, &out, "ios");
+    } else {
+        std::fs::write(&ios, []).unwrap();
+    }
     let web = out.join("runtime-web.wasm");
     if installed("wasm32-unknown-unknown") {
-        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out, false);
+        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out, "");
     } else {
         println!("cargo:warning=no runtime for `kova build --target web`: `rustup target add wasm32-unknown-unknown`, then build kova again");
         std::fs::write(&web, []).unwrap();
@@ -85,15 +92,18 @@ fn registry_dir() -> PathBuf {
     home.expect("no home directory").join("registry").join("src")
 }
 
-fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, android: bool) {
+/// `variant`: "" the plain runtime, "android" (Linux's, loaded anywhere), "ios" (the Mac arm64 runtime
+/// with UIKit in place of AppKit).
+fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, variant: &str) {
     // Linux executables are static, not "position independent"; Android's libraries are.
-    let model: &[&str] = match (android, triple.contains("linux")) {
-        (true, _) => &["-C", "relocation-model=pic", "--cfg", "android"],
+    let model: &[&str] = match (variant, triple.contains("linux")) {
+        ("android", _) => &["-C", "relocation-model=pic", "--cfg", "android"],
+        ("ios", _) => &["--cfg", "ios"],
         (_, true) => &["-C", "relocation-model=static"],
         _ => &[],
     };
     let codegen = ["-C", "panic=abort", "-C", "opt-level=2", "-C", "codegen-units=1"];
-    let rlib = out.join(format!("libm-{triple}-{android}.rlib"));
+    let rlib = out.join(format!("libm-{triple}-{variant}.rlib"));
     let status = Command::new(rustc)
         .args(["--edition", "2021", "--crate-type", "rlib", "--crate-name", "libm", "--cap-lints", "allow", "--target", triple])
         .args(codegen)
@@ -124,7 +134,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     let registry = registry_dir();
     let mut externs: Vec<(String, PathBuf)> = vec![("libm".to_string(), rlib.clone())];
     for (name, folder, edition, features, needs) in decoders {
-        let path = out.join(format!("lib{name}-{triple}-{android}.rlib"));
+        let path = out.join(format!("lib{name}-{triple}-{variant}.rlib"));
         let mut command = Command::new(rustc);
         command.args(["--edition", edition, "--crate-type", "rlib", "--crate-name", name, "--cap-lints", "allow", "--target", triple]).args(codegen).args(model);
         for f in features {
