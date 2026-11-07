@@ -26,6 +26,20 @@ let client;
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
+  // Deleting the `Type` a snippet left (or anything after `x:`, `->`, `or`) asks for the types at
+  // once: the editor only does it when a character is typed.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      const editor = vscode.window.activeTextEditor;
+      if (e.document.languageId !== 'kova' || !editor || editor.document !== e.document) return;
+      if (e.contentChanges.length !== 1 || e.contentChanges[0].text !== '' || e.contentChanges[0].rangeLength === 0) return;
+      const at = editor.selection.active;
+      const before = e.document.lineAt(at.line).text.slice(0, at.character);
+      if (/(?<!:)(:|->|\bor|\bany)\s*$/.test(before) && !before.endsWith(':=')) {
+        vscode.commands.executeCommand('editor.action.triggerSuggest');
+      }
+    }),
+  );
   for (const action of /** @type {const} */ (['run', 'build', 'test'])) {
     context.subscriptions.push(
       vscode.commands.registerCommand(`kova.${action}`, (/** @type {vscode.Uri=} */ uri) => launch(action, uri))
