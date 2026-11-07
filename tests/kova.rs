@@ -593,6 +593,24 @@ fn cross_build() {
         assert!(exe.starts_with(start) && exe[at] == cpu, "{target}");
         std::fs::remove_file(dir.join(file)).unwrap();
     }
+    // iOS's simulator: a folder with the executable (platform 7 in its load commands) and the
+    // `Info.plist` that names it.
+    let out = kova(LANG).arg("build").arg(&source).args(["--target", "ios-simulator"]).output().unwrap();
+    if !text(&out.stderr).contains("rustup target add") {
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let exe = std::fs::read(dir.join("hello.app/hello")).unwrap();
+        let word = |at: usize| u32::from_le_bytes(exe[at..at + 4].try_into().unwrap()) as usize;
+        let (mut at, mut platform) = (32, 0);
+        for _ in 0..word(16) {
+            if word(at) == 0x32 {
+                platform = word(at + 8);
+            }
+            at += word(at + 4);
+        }
+        assert!(exe.starts_with(b"\xcf\xfa\xed\xfe") && exe[4] == 0x0C && platform == 7);
+        let plist = std::fs::read_to_string(dir.join("hello.app/Info.plist")).unwrap();
+        assert!(plist.contains("<string>hello</string>") && plist.contains("dev.kova.hello") && plist.contains("iPhoneSimulator"));
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

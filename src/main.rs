@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod android;
+mod ios;
 mod ast;
 mod bigint;
 mod codegen;
@@ -193,7 +194,10 @@ fn kova() {
             // One line on stderr, never mixed with what the program prints: `✓ hello.exe
             // (Windows, 22 KB) in 12 ms` (user, 2026-10-23).
             let system = target.or(codegen::Target::host()).map_or(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH), |t| t.made().title().to_string());
-            let size = std::fs::metadata(&output).map_or(0, |m| m.len()).div_ceil(1024);
+            // A `.app` is a folder: its executable is the size.
+            let stem = std::path::Path::new(&output).file_stem().map(|s| s.to_os_string()).unwrap_or_default();
+            let sized = if output.ends_with(".app") { std::path::Path::new(&output).join(stem) } else { output.clone().into() };
+            let size = std::fs::metadata(&sized).map_or(0, |m| m.len()).div_ceil(1024);
             let ms = started.elapsed().as_millis();
             let time = if ms < 1000 { format!("{ms} ms") } else { format!("{}{}{} s", ms / 1000, t!("decimal_mark"), ms % 1000 / 100) };
             eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));

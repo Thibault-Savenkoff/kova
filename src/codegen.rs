@@ -44,10 +44,12 @@ pub enum Target {
     /// The two halves of an Android app.
     AndroidArm,
     AndroidIntel,
+    /// An iPhone or iPad app for Xcode's simulator on an Apple-silicon Mac: a `.app` folder (src/ios.rs).
+    IosSimulator,
 }
 
 /// The systems an `extern` may name a library for (`windows "winsqlite3"`).
-pub const SYSTEMS: [&str; 4] = ["linux", "mac", "windows", "android"];
+pub const SYSTEMS: [&str; 5] = ["linux", "mac", "windows", "android", "ios"];
 
 impl Target {
     /// Its system in `SYSTEMS`.
@@ -55,7 +57,7 @@ impl Target {
         self.name().split('-').next().unwrap()
     }
 
-    pub const NAMES: [(&str, Target); 11] = [
+    pub const NAMES: [(&str, Target); 12] = [
         ("linux", Target::Linux),
         ("windows", Target::Windows),
         ("mac", Target::Mac),
@@ -67,6 +69,7 @@ impl Target {
         ("android", Target::Android),
         ("android-arm", Target::AndroidArm),
         ("android-intel", Target::AndroidIntel),
+        ("ios-simulator", Target::IosSimulator),
     ];
 
     pub fn named(name: &str) -> Option<Target> {
@@ -127,6 +130,7 @@ impl Target {
             Target::Android => "Android",
             Target::AndroidArm => "Android arm",
             Target::AndroidIntel => "Android Intel",
+            Target::IosSimulator => "iOS Simulator",
         }
     }
 
@@ -136,6 +140,7 @@ impl Target {
             Target::Windows | Target::WindowsArm => ".exe",
             Target::Web => ".html",
             Target::Android | Target::AndroidArm | Target::AndroidIntel => ".apk",
+            Target::IosSimulator => ".app",
             _ => "",
         }
     }
@@ -145,7 +150,9 @@ impl Target {
         match self {
             Target::Linux => "x86_64-unknown-linux-gnu",
             Target::Windows => "x86_64-pc-windows-msvc",
-            Target::Mac | Target::MacArm => "aarch64-apple-darwin",
+            // The simulator runs macOS's own code (same processor, same libSystem): only the load
+            // commands of the file say it is iOS's.
+            Target::Mac | Target::MacArm | Target::IosSimulator => "aarch64-apple-darwin",
             Target::LinuxArm => "aarch64-unknown-linux-gnu",
             Target::WindowsArm => "aarch64-pc-windows-msvc",
             Target::MacIntel => "x86_64-apple-darwin",
@@ -160,7 +167,7 @@ impl Target {
         match self {
             Target::Linux => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux.a")),
             Target::Windows => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows.a")),
-            Target::Mac | Target::MacArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-arm.a")),
+            Target::Mac | Target::MacArm | Target::IosSimulator => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-arm.a")),
             Target::LinuxArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-linux-arm.a")),
             Target::WindowsArm => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-windows-arm.a")),
             Target::MacIntel => include_bytes!(concat!(env!("OUT_DIR"), "/runtime-mac-intel.a")),
@@ -201,6 +208,10 @@ pub fn build(p: &Program, files: &[String], output: &str, lang: Option<usize>, t
         let app = crate::android::apk(&p.title, &libraries, icon.as_deref())?;
         return std::fs::write(output, app).map_err(|e| e.to_string());
     }
+    if target == Target::IosSimulator {
+        let stem = name.trim_end_matches(".app");
+        return crate::ios::app(output, stem, &p.title, &executable(p, files, stem, lang, target)?);
+    }
     write_executable(output, &executable(p, files, &name, lang, target)?)
 }
 
@@ -232,8 +243,9 @@ fn executable(p: &Program, files: &[String], name: &str, lang: Option<usize>, ta
         Target::LinuxArm => crate::link::elf(&object, runtime, true),
         Target::Windows => crate::link::pe(&object, runtime, false, &icon_images(p)),
         Target::WindowsArm => crate::link::pe(&object, runtime, true, &icon_images(p)),
-        Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true),
-        Target::MacIntel => crate::link::macho(&object, runtime, name, false),
+        Target::Mac | Target::MacArm => crate::link::macho(&object, runtime, name, true, false),
+        Target::MacIntel => crate::link::macho(&object, runtime, name, false, false),
+        Target::IosSimulator => crate::link::macho(&object, runtime, name, true, true),
         Target::AndroidArm => crate::link::library(&object, runtime, true, "Java_dev_kova_Main_call"),
         Target::AndroidIntel => crate::link::library(&object, runtime, false, "Java_dev_kova_Main_call"),
         Target::Web | Target::Android => unreachable!("made by `build`"),

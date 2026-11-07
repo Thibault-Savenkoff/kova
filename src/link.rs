@@ -1063,7 +1063,7 @@ fn macho_got_intel(flags: RelocationFlags) -> bool {
 /// the signature). An arm64 Mac starts a program anywhere in memory: each address the program
 /// holds is listed ("rebase") for `dyld` to move it, and each function of `libSystem` it reads
 /// ("bind") for `dyld` to write it.
-pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u8>, String> {
+pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: bool) -> Result<Vec<u8>, String> {
     let inputs = Inputs::read(main, runtime, true)?;
     let mut r = inputs.reach("_main", if arm { macho_got } else { macho_got_intel })?;
     // A stub jumps to a function of `libSystem`, reading its address in the GOT.
@@ -1292,8 +1292,10 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool) -> Result<Vec<u
         }
         named(&mut h, NETWORK, NETWORK.len() + 1);
     }
-    for v in [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] {
-        le32(&mut h, v); // LC_BUILD_VERSION: macOS 11 and later (10.15 on an Intel Mac)
+    // LC_BUILD_VERSION: macOS 11 and later (10.15 on an Intel Mac), or the iOS simulator (platform 7), 14 and later.
+    let build = if ios { [0x32, 24, 7, 0xE_0000, 0x11_0000, 0] } else { [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] };
+    for v in build {
+        le32(&mut h, v);
     }
     for v in [0x1D, 16, signed, signature_size] {
         le32(&mut h, v); // LC_CODE_SIGNATURE
