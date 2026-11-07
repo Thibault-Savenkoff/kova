@@ -1176,17 +1176,32 @@ pub fn wav(data: &[u8]) -> Option<Wav<'_>> {
 #[allow(dead_code)]
 fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
     let size = samples.len() as u32 * 2;
-    let mut out = Vec::with_capacity(44 + size as usize);
+    // Past two channels, WAVE_FORMAT_EXTENSIBLE says which speaker each one is (FFmpeg's order:
+    // FL FR FC LFE BL BR SL SR is the same as Windows' own).
+    let mask: u32 = match channels {
+        3 => 0x7,
+        6 => 0x3F,
+        8 => 0x63F,
+        _ => 0,
+    };
+    let mut out = Vec::with_capacity(68 + size as usize);
     out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + size).to_le_bytes());
+    out.extend_from_slice(&(if mask == 0 { 36 } else { 60 } + size).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(if mask == 0 { 16u32 } else { 40 }).to_le_bytes());
+    out.extend_from_slice(&(if mask == 0 { 1u16 } else { 0xFFFE }).to_le_bytes());
     out.extend_from_slice(&channels.to_le_bytes());
     out.extend_from_slice(&rate.to_le_bytes());
     out.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
     out.extend_from_slice(&(channels * 2).to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
+    if mask != 0 {
+        // Extension size 22, valid bits 16, the speakers, then the PCM sub-format's GUID.
+        out.extend_from_slice(&22u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(&mask.to_le_bytes());
+        out.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71]);
+    }
     out.extend_from_slice(b"data");
     out.extend_from_slice(&size.to_le_bytes());
     for sample in samples {
@@ -1320,7 +1335,7 @@ fn m4a_packets(data: &[u8]) -> Option<(&[u8], Vec<(usize, usize)>)> {
     None
 }
 
-/// An AAC sound (an M4A file, or bare ADTS frames as in `.aac`) as a 16-bit WAV. HE-AAC included.
+/// An AAC sound (an M4A file, or bare ADTS frames as in `.aac`) as a 16-bit WAV. HE-AAC and 5.1 included.
 #[allow(dead_code)]
 pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     // An ID3 tag may come first: 10 bytes + a size written 7 bits per byte.
@@ -1330,22 +1345,12 @@ pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
     };
     let (mut samples, mut shape): (Vec<i16>, Option<(u16, u32)>) = (Vec::new(), None);
     let mut take = |sound: rusty_aac::DecodedAudio| {
-        let n = sound.channels as usize;
-        // More than two channels (FFmpeg's order: FL FR FC LFE BL BR [SL SR]) are mixed down to stereo
-        // the usual way: the centre and the rear speakers at 0.707, the LFE dropped, all scaled to not clip.
-        let mixed: Vec<f32> = if matches!(n, 1 | 2) {
-            sound.samples
-        } else if matches!(n, 3 | 6 | 8) {
-            let scale = 1.0 / (1.0 + 0.707 * match n { 3 => 1.0, 6 => 2.0, _ => 3.0 });
-            sound.samples.chunks_exact(n).flat_map(|f| {
-                let rear = |i: usize| f.get(i).copied().unwrap_or(0.0);
-                let side = |i: usize| if n == 8 { rear(i) } else { 0.0 };
-                [(f[0] + 0.707 * (f[2] + rear(4) + side(6))) * scale, (f[1] + 0.707 * (f[2] + rear(5) + side(7))) * scale]
-            }).collect()
-        } else {
+        // Mono, stereo, 3.0, 5.1 and 7.1 keep their speakers; other layouts are not told apart.
+        if !matches!(sound.channels, 1 | 2 | 3 | 6 | 8) {
             return;
-        };
-        shape.get_or_insert((sound.channels.min(2), sound.sample_rate));
+        }
+        let mixed = sound.samples;
+        shape.get_or_insert((sound.channels, sound.sample_rate));
         samples.extend(mixed.iter().map(|s| (s * 32767.0 + if *s < 0.0 { -0.5 } else { 0.5 }) as i16));
     };
     if data.get(4..8) == Some(b"ftyp") {
@@ -1885,10 +1890,10 @@ mod tests {
         assert!(m4a.samples.iter().any(|&b| b != 0), "silence");
         assert!(aac_as_wav(b"not a sound at all, just text").is_none());
         assert!(aac_as_wav(include_bytes!("../tests/data/tone.mp3")).is_none());
-        // 5.1 is mixed down to stereo.
+        // 5.1 stays 5.1.
         let surround = aac_as_wav(include_bytes!("../tests/data/tone51.m4a")).expect("5.1");
         let surround = wav(&surround).expect("a WAV");
-        assert_eq!((surround.channels, surround.rate), (2, 22050));
+        assert_eq!((surround.channels, surround.rate), (6, 22050));
         assert!(surround.samples.iter().any(|&b| b != 0), "silence");
     }
 

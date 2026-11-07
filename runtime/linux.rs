@@ -2095,6 +2095,19 @@ pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
     spec[..4].copy_from_slice(&format.to_le_bytes());
     spec[4..8].copy_from_slice(&wav.rate.to_le_bytes());
     spec[8] = wav.channels as u8;
+    // Past two channels, say which speaker each is (the default map is AIFF's order, not the WAV's):
+    // `pa_channel_map` = a count, then 32 positions. FL 1, FR 2, FC 3, RL 5, RR 6, LFE 7, SL 10, SR 11.
+    let mut map = [0u8; 4 + 32 * 4];
+    let speakers: &[i32] = match wav.channels {
+        3 => &[1, 2, 3],
+        6 => &[1, 2, 3, 7, 5, 6],
+        8 => &[1, 2, 3, 7, 5, 6, 10, 11],
+        _ => &[],
+    };
+    map[0] = speakers.len() as u8;
+    for (k, speaker) in speakers.iter().enumerate() {
+        map[4 + 4 * k..8 + 4 * k].copy_from_slice(&speaker.to_le_bytes());
+    }
     unsafe {
         let new: extern "C" fn(*const u8, *const u8, i32, *const u8, *const u8, *const u8, *const u8, *const u8, *mut i32) -> P = t(f("pa_simple_new"));
         let write: extern "C" fn(P, *const u8, usize, *mut i32) -> i32 = t(f("pa_simple_write"));
@@ -2103,7 +2116,7 @@ pub fn sound(_whole: &[u8], wav: &crate::shared::Wav) -> bool {
         let mut failure = 0;
         let name = c_string(crate::ARGS.get().first().map_or("kova", |a| a.rsplit('/').next().unwrap_or(a)));
         // PA_STREAM_PLAYBACK = 1.
-        let stream = new(null(), name.as_ptr(), 1, null(), c"sound".as_ptr().cast(), spec.as_ptr(), null(), null(), &mut failure);
+        let stream = new(null(), name.as_ptr(), 1, null(), c"sound".as_ptr().cast(), spec.as_ptr(), if speakers.is_empty() { null() } else { map.as_ptr() }, null(), &mut failure);
         if stream.is_null() {
             return false;
         }
