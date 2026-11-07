@@ -30,6 +30,7 @@ nanoaudio-flac = "0.1.2"
 nanoaudio-core = "0.1.1"
 safe_arch = { version = "1.2.0", default-features = false, features = ["bytemuck"] }
 opuscule = { version = "0.2.2", default-features = false, features = ["fixed-point"] }
+rusty_aac = { path = "vendor/rusty_aac" }
 
 [build-dependencies]
 # Keeping only the runtime's objects an executable can reach (build.rs).

@@ -1,6 +1,6 @@
 ---
 title: sound
-description: Playing WAV, MP3, FLAC and Opus sounds.
+description: Playing WAV, MP3, AAC, FLAC and Opus sounds.
 sidebar:
   order: 25
 ---
@@ -11,12 +11,12 @@ import sound
 
 | Function | What it does |
 | --- | --- |
-| `sound.play(path: String) -> Nothing or sound.Error` | plays a WAV, MP3, FLAC or Opus (`.opus`) file, and comes back when it is over. |
-| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | plays a WAV, an MP3, a FLAC or an Opus held in memory. |
+| `sound.play(path: String) -> Nothing or sound.Error` | plays a WAV, MP3, AAC (`.m4a`, `.aac`), FLAC or Opus (`.opus`) file, and comes back when it is over. |
+| `sound.play_bytes(data: List<Int>) -> Nothing or sound.Error` | plays a WAV, an MP3, an AAC, a FLAC or an Opus held in memory. |
 | `sound.wav(samples: List<Float>) rate(r) -> List<Int>` | makes a WAV of one channel from its samples, each from `-1.0` to `1.0`; `rate` is how many per second, 44100 if left out. |
 
-`sound.Error` is `NotFound(path)`, `NotSound` (neither an MP3, a FLAC, an Opus nor an uncompressed WAV: whole numbers of 8, 16, 24 or 32 bits, or 32-bit floats) or `NoDevice` (no sound card,
-or no sound server on Linux). Uncompressed WAV, MP3, FLAC and Opus (in an Ogg file, mono or stereo) play; Ogg Vorbis and AAC do not yet. MP3, FLAC and Opus are decoded by Kova itself, on every system, then played as a WAV.
+`sound.Error` is `NotFound(path)`, `NotSound` (neither an MP3, an AAC, a FLAC, an Opus nor an uncompressed WAV: whole numbers of 8, 16, 24 or 32 bits, or 32-bit floats) or `NoDevice` (no sound card,
+or no sound server on Linux). Uncompressed WAV, MP3, AAC (an `.m4a` file or bare `.aac` frames, including HE-AAC), FLAC and Opus (in an Ogg file, mono or stereo) play; Ogg Vorbis does not yet. They are decoded by Kova itself, on every system, then played as a WAV.
 
 Kova uses what the system has: PulseAudio or PipeWire on Linux, `PlaySound` on Windows, `NSSound` on
 a Mac. Nothing needs installing, except on a Linux without a sound server (package

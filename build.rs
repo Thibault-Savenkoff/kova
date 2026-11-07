@@ -16,7 +16,7 @@ use object::{Object, ObjectSymbol};
 fn main() {
     let var = |name: &str| std::env::var(name).unwrap_or_default();
     let out = PathBuf::from(var("OUT_DIR"));
-    for f in ["runtime", "src/shared.rs", "src/bigint.rs", "src/http.rs", "src/json.rs", "src/deflate.rs", "src/regex.rs", "src/csv.rs", "src/crypto.rs", "src/openssl.rs", "src/schannel.rs", "src/network_framework.rs"] {
+    for f in ["runtime", "vendor", "src/shared.rs", "src/bigint.rs", "src/http.rs", "src/json.rs", "src/deflate.rs", "src/regex.rs", "src/csv.rs", "src/crypto.rs", "src/openssl.rs", "src/schannel.rs", "src/network_framework.rs"] {
         println!("cargo:rerun-if-changed={f}");
     }
     let rustc = var("RUSTC");
@@ -108,7 +108,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
     let web = triple.starts_with("wasm");
     // The decoders (no_std, in cargo's registry): each one is compiled as `libm` is, after the ones
     // it needs. (crate, folder, edition, features, crates it needs)
-    let decoders: [(&str, &str, &str, &[&str], &[&str]); 8] = [
+    let decoders: [(&str, &str, &str, &[&str], &[&str]); 9] = [
         ("nanomp3_core", "nanomp3-core-0.2.0", "2021", &["layer12"], &[]),
         ("nanomp3", "nanomp3-0.2.0", "2021", &["alloc", "layer12"], &["nanomp3_core"]),
         ("bytemuck", "bytemuck-1.25.2", "2018", &[], &[]),
@@ -117,9 +117,11 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         ("nanoaudio_core", "nanoaudio-core-0.1.1", "2024", &[], &[]),
         ("nanoaudio_flac", "nanoaudio-flac-0.1.2", "2024", &[], &["nanoaudio_core", "wide"]),
         ("opuscule", "opuscule-0.2.2", "2024", &["fixed-point"], &[]),
+        // Not from the registry: the copy made no_std in `vendor/` (see its README).
+        ("rusty_aac", "vendor/rusty_aac", "2021", &[], &["libm"]),
     ];
     let registry = registry_dir();
-    let mut externs: Vec<(String, PathBuf)> = vec![];
+    let mut externs: Vec<(String, PathBuf)> = vec![("libm".to_string(), rlib.clone())];
     for (name, folder, edition, features, needs) in decoders {
         let path = out.join(format!("lib{name}-{triple}-{android}.rlib"));
         let mut command = Command::new(rustc);
@@ -137,7 +139,7 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
             let found = externs.iter().find(|(n, _)| n == need).expect("built before");
             command.arg("--extern").arg(format!("{}={}", found.0, found.1.display()));
         }
-        let status = command.arg("-o").arg(&path).arg(found_crate(folder, &registry)).status().expect("the Rust compiler");
+        let status = command.arg("-o").arg(&path).arg(if folder.starts_with("vendor/") { PathBuf::from(folder).join("src").join("lib.rs") } else { found_crate(folder, &registry) }).status().expect("the Rust compiler");
         assert!(status.success(), "`{name}` does not compile for {triple}");
         externs.push((name.to_string(), path));
     }
@@ -150,6 +152,8 @@ fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, andro
         .args(model)
         .arg("--extern")
         .arg(format!("libm={}", rlib.display()))
+        .arg("--extern")
+        .arg(format!("rusty_aac={}", externs.iter().find(|(n, _)| n == "rusty_aac").unwrap().1.display()))
         .arg("--extern")
         .arg(format!("nanomp3={}", mp3.display()))
         .arg("--extern")

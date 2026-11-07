@@ -1195,10 +1195,169 @@ fn wav_file(samples: &[i16], channels: u16, rate: u32) -> Vec<u8> {
     out
 }
 
-/// Any sound Kova decodes itself, as a WAV file: an MP3 or a FLAC. `None` for anything else.
+/// Any sound Kova decodes itself, as a WAV file. `None` for anything else.
 #[allow(dead_code)]
 pub fn sound_as_wav(data: &[u8]) -> Option<Vec<u8>> {
-    flac_as_wav(data).or_else(|| ogg_as_wav(data)).or_else(|| mp3_as_wav(data))
+    flac_as_wav(data).or_else(|| ogg_as_wav(data)).or_else(|| aac_as_wav(data)).or_else(|| mp3_as_wav(data))
+}
+
+/// The boxes of an MP4 file side by side: (kind, content). Stops at a size that does not fit.
+#[allow(dead_code)]
+fn mp4_boxes(data: &[u8]) -> Vec<(&[u8], &[u8])> {
+    let (mut at, mut found) = (0usize, Vec::new());
+    while at + 8 <= data.len() {
+        let size = u32::from_be_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+        let (head, size) = match size {
+            0 => (8, data.len() - at),
+            1 if at + 16 <= data.len() => (16, u64::from_be_bytes(data[at + 8..at + 16].try_into().unwrap()) as usize),
+            _ => (8, size),
+        };
+        if size < head || at + size > data.len() {
+            break;
+        }
+        found.push((&data[at + 4..at + 8], &data[at + head..at + size]));
+        at += size;
+    }
+    found
+}
+
+/// The first box of this kind, inside the content of its parent.
+#[allow(dead_code)]
+fn mp4_child<'a>(parent: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
+    mp4_boxes(parent).into_iter().find(|(k, _)| *k == kind).map(|(_, content)| content)
+}
+
+/// A descriptor's length: 7 bits per byte, the high bit says another byte follows.
+#[allow(dead_code)]
+fn mp4_length(data: &[u8], at: &mut usize) -> Option<usize> {
+    let mut length = 0usize;
+    for _ in 0..4 {
+        let byte = *data.get(*at)?;
+        *at += 1;
+        length = length << 7 | (byte & 127) as usize;
+        if byte & 128 == 0 {
+            return Some(length);
+        }
+    }
+    None
+}
+
+/// The decoder setup bytes (tag 5) hidden in an `esds` box's descriptors.
+#[allow(dead_code)]
+fn mp4_setup(data: &[u8]) -> Option<&[u8]> {
+    let (mut at, mut found) = (0usize, None);
+    while at < data.len() && found.is_none() {
+        let tag = data[at];
+        at += 1;
+        let length = mp4_length(data, &mut at)?;
+        let inside = data.get(at..(at + length).min(data.len()))?;
+        match tag {
+            5 => found = Some(inside),
+            // ES_Descriptor: id (2), flags (1) and what they announce; then its children.
+            3 => {
+                let flags = *inside.get(2)?;
+                let skip = 3 + if flags & 128 != 0 { 2 } else { 0 } + if flags & 64 != 0 { 1 + *inside.get(3)? as usize } else { 0 } + if flags & 32 != 0 { 2 } else { 0 };
+                found = mp4_setup(inside.get(skip..)?);
+            }
+            // DecoderConfigDescriptor: 13 bytes, then its children.
+            4 => found = mp4_setup(inside.get(13..)?),
+            _ => {}
+        }
+        at += length;
+    }
+    found
+}
+
+/// The AAC of an M4A file: its setup bytes and each packet's place in the file. `None` if there is
+/// no AAC track.
+#[allow(dead_code)]
+fn m4a_packets(data: &[u8]) -> Option<(&[u8], Vec<(usize, usize)>)> {
+    let moov = mp4_child(data, b"moov")?;
+    for (kind, trak) in mp4_boxes(moov) {
+        if kind != b"trak" {
+            continue;
+        }
+        let Some(stbl) = mp4_child(trak, b"mdia").and_then(|m| mp4_child(m, b"minf")).and_then(|m| mp4_child(m, b"stbl")) else { continue };
+        // stsd: version + flags (4), a count (4), then the sample entries. mp4a: 28 bytes, then boxes.
+        let Some(entry) = mp4_child(stbl, b"stsd").and_then(|s| s.get(8..)).map(mp4_boxes).and_then(|e| e.into_iter().find(|(k, _)| *k == b"mp4a")) else { continue };
+        let Some(setup) = entry.1.get(28..).and_then(|b| mp4_child(b, b"esds")).and_then(|e| e.get(4..)).and_then(mp4_setup) else { continue };
+        let number = |bytes: &[u8], at: usize| bytes.get(at..at + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()) as usize);
+        let sizes = mp4_child(stbl, b"stsz")?;
+        let count = number(sizes, 8)?;
+        let sample_size = number(sizes, 4)?;
+        let size_of = |i: usize| if sample_size != 0 { Some(sample_size) } else { number(sizes, 12 + 4 * i) };
+        // Where each chunk starts: stco (32 bits) or co64.
+        let mut chunks: Vec<usize> = Vec::new();
+        if let Some(c) = mp4_child(stbl, b"stco") {
+            for i in 0..number(c, 4)? {
+                chunks.push(number(c, 8 + 4 * i)?);
+            }
+        } else {
+            let c = mp4_child(stbl, b"co64")?;
+            for i in 0..number(c, 4)? {
+                chunks.push(u64::from_be_bytes(c.get(8 + 8 * i..16 + 8 * i)?.try_into().unwrap()) as usize);
+            }
+        }
+        // stsc: from chunk `first` on, `per` samples in each chunk.
+        let table = mp4_child(stbl, b"stsc")?;
+        let rows: Vec<(usize, usize)> = (0..number(table, 4)?).map(|i| Some((number(table, 8 + 12 * i)?, number(table, 12 + 12 * i)?))).collect::<Option<_>>()?;
+        let (mut packets, mut sample) = (Vec::new(), 0);
+        for (index, start) in chunks.iter().enumerate() {
+            let per = rows.iter().take_while(|(first, _)| *first <= index + 1).last()?.1;
+            let mut at = *start;
+            for _ in 0..per {
+                if sample == count {
+                    break;
+                }
+                let size = size_of(sample)?;
+                packets.push((at, size));
+                at += size;
+                sample += 1;
+            }
+        }
+        return Some((setup, packets));
+    }
+    None
+}
+
+/// An AAC sound (an M4A file, or bare ADTS frames as in `.aac`) as a 16-bit WAV. HE-AAC included.
+#[allow(dead_code)]
+pub fn aac_as_wav(data: &[u8]) -> Option<Vec<u8>> {
+    // An ID3 tag may come first: 10 bytes + a size written 7 bits per byte.
+    let data = match data.strip_prefix(b"ID3") {
+        Some(rest) if rest.len() >= 7 => data.get(10 + rest[3..7].iter().fold(0usize, |n, b| n << 7 | (*b & 127) as usize)..)?,
+        _ => data,
+    };
+    let (mut samples, mut shape): (Vec<i16>, Option<(u16, u32)>) = (Vec::new(), None);
+    let mut take = |sound: rusty_aac::DecodedAudio| {
+        shape.get_or_insert((sound.channels, sound.sample_rate));
+        samples.extend(sound.samples.iter().map(|s| (s * 32767.0 + if *s < 0.0 { -0.5 } else { 0.5 }) as i16));
+    };
+    if data.get(4..8) == Some(b"ftyp") {
+        let (setup, packets) = m4a_packets(data)?;
+        let mut decoder = rusty_aac::AacDecoder::with_config_bytes(setup).ok()?;
+        for (at, size) in packets {
+            // ponytail: the start-of-file priming (1024 samples, the edit list) is kept as a blip of silence.
+            if let Ok(sound) = decoder.decode(data.get(at..at + size)?, None) {
+                take(sound);
+            }
+        }
+    } else {
+        if !rusty_aac::is_adts(data) {
+            return None;
+        }
+        let (mut decoder, mut at) = (rusty_aac::AacDecoder::new(), 0);
+        while at + 7 <= data.len() {
+            let Ok(header) = rusty_aac::parse_adts(&data[at..]) else { at += 1; continue };
+            let end = (at + header.frame_length).min(data.len());
+            if let Ok(sound) = decoder.decode(&data[at..end], None) {
+                take(sound);
+            }
+            at = end.max(at + 1);
+        }
+    }
+    let (channels, rate) = shape?;
+    (!samples.is_empty() && channels <= 2).then(|| wav_file(&samples, channels, rate))
 }
 
 /// The packets of the first stream of an Ogg file, in order: pages of segments, a packet ends with a
@@ -1695,6 +1854,22 @@ mod tests {
         assert_eq!((c.width, c.height, c.mouse, c.key), (3, 2, Some(0), Some(1)));
         assert_eq!(c.ops[1], UiOp::Text { x: 1, y: -2, size: 9, color: 0, text: "a b".into() });
         assert_eq!(c.ops[2], UiOp::Line { x: 0, y: 0, x2: 1, y2: 1, color: 7, thickness: 2 });
+    }
+
+    #[test]
+    fn aac_becomes_wav() {
+        // The same tone as ADTS frames and in an M4A: both must give the same sound.
+        let adts = aac_as_wav(include_bytes!("../tests/data/tone.aac")).expect("ADTS");
+        let m4a = aac_as_wav(include_bytes!("../tests/data/tone.m4a")).expect("M4A");
+        let (adts, m4a) = (wav(&adts).expect("a WAV"), wav(&m4a).expect("a WAV"));
+        assert_eq!((adts.channels, adts.rate, adts.bits), (1, 22050, 16));
+        assert_eq!((m4a.channels, m4a.rate), (1, 22050));
+        // 0.37 s, give or take the encoder's frames.
+        assert!((6000..10000).contains(&(adts.samples.len() / 2)), "{}", adts.samples.len() / 2);
+        assert!(adts.samples.iter().any(|&b| b != 0), "silence");
+        assert!(m4a.samples.iter().any(|&b| b != 0), "silence");
+        assert!(aac_as_wav(b"not a sound at all, just text").is_none());
+        assert!(aac_as_wav(include_bytes!("../tests/data/tone.mp3")).is_none());
     }
 
     #[test]

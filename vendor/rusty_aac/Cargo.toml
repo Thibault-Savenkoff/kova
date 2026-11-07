@@ -1,0 +1,12 @@
+[package]
+name = "rusty_aac"
+version = "2.0.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "rusty_aac 2.0.1 (Mata Network), decoder only, made no_std for Kova: see README.md"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+libm = { version = "=0.2.16", default-features = false }

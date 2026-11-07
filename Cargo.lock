@@ -561,6 +561,7 @@ dependencies = [
  "opuscule",
  "p256",
  "resvg",
+ "rusty_aac",
  "safe_arch",
  "serde_json",
  "target-lexicon",
@@ -856,6 +857,13 @@ name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
+
+[[package]]
+name = "rusty_aac"
+version = "2.0.1"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "safe_arch"
