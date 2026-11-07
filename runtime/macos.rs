@@ -1699,6 +1699,12 @@ fn mac_menus(kit: &Kit, menus: &[crate::shared::UiMenu]) {
 /// `sound.play`: `NSSound` plays on a thread of its own, and this one waits for the end by the WAV's
 /// length: `isPlaying` only turns false when the run loop turns, and here nothing turns it. It may
 /// run in a program without a window, so it finds what it needs itself.
+#[cfg(ios)]
+pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
+    uikit::sound(whole, wav)
+}
+
+#[cfg(not(ios))]
 pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
     use core::mem::transmute as t;
     let (Some(objc), Some(_)) = (library("/usr/lib/libobjc.A.dylib"), library("/System/Library/Frameworks/AppKit.framework/AppKit")) else { return false };
@@ -1731,6 +1737,12 @@ pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
 }
 
 /// `ui.dialog`: AppKit's own, whose `runModal` waits for the answer.
+#[cfg(ios)]
+pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    uikit::dialog(kind, title, text)
+}
+
+#[cfg(not(ios))]
 pub fn ui_dialog(kind: i64, title: &str, text: &str) -> Option<String> {
     let kit = KIT.get().as_ref()?;
     if kind >= 3 {

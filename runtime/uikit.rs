@@ -32,6 +32,10 @@ struct Screen {
     target: Id,
     /// The view of the window's controller.
     root: Id,
+    /// The scroll view that fills its safe area: the content is in it.
+    scroll: Id,
+    /// The window's view controller, which shows the dialogs.
+    controller: Id,
     /// The stack view now shown.
     content: Id,
     shape: String,
@@ -143,9 +147,18 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         let root = kit.send(controller, "view");
         (kit.send_two)(root, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "systemBackgroundColor"));
         (kit.send_two)(w, kit.sel("setRootViewController:"), controller);
+        // The content scrolls when it is taller than the screen; the keyboard goes away when it is dragged.
+        let scroll = made(&kit, "UIScrollView");
+        (kit.send_id)(scroll, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+        (kit.send_id)(scroll, kit.sel("setKeyboardDismissMode:"), 1);
+        (kit.send_two)(root, kit.sel("addSubview:"), scroll);
+        let (safe, by) = (kit.send(root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
+        for edge in ["topAnchor", "leadingAnchor", "trailingAnchor", "bottomAnchor"] {
+            (kit.send_id)(by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, edge), 0.0), kit.sel("setActive:"), 1);
+        }
         kit.send(w, "makeKeyAndVisible");
         *WINDOW.get() = w;
-        *SCREEN.get() = Some(Screen { kit, target, root, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
+        *SCREEN.get() = Some(Screen { kit, target, root, scroll, controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
     }
     // The program: a thread of its own, which never comes back here.
     extern "C" fn program(_: i64) {
@@ -261,7 +274,7 @@ fn draw_view(view: &UiNode) {
         screen.made.clear();
         let content = build(kit, screen.target, view, &mut screen.made);
         let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
-        place(kit, screen.root, content, crate::shared::ui_fills(view));
+        place(kit, screen.scroll, content, crate::shared::ui_fills(view));
         screen.content = content;
         screen.shape = shape;
     }
@@ -311,20 +324,22 @@ fn wrapped(kit: &Kit, part: Id) -> Id {
     stack
 }
 
-/// `content` in the safe area of `root`, 16 points from its edges: at the top left, or across the
-/// width when something in it fills.
-fn place(kit: &Kit, root: Id, content: Id, fills: bool) {
+/// `content` in `scroll`, 16 points from its edges: at the top left, or across the width when
+/// something in it fills. The scrolled area is as wide as the screen and as tall as the content.
+fn place(kit: &Kit, scroll: Id, content: Id, fills: bool) {
     (kit.send_id)(content, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
-    (kit.send_two)(root, kit.sel("addSubview:"), content);
-    let safe = kit.send(root, "safeAreaLayoutGuide");
-    let by: extern "C" fn(Id, Id, Id, f64) -> Id = msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id);
+    (kit.send_two)(scroll, kit.sel("addSubview:"), content);
+    let (area, frame) = (kit.send(scroll, "contentLayoutGuide"), kit.send(scroll, "frameLayoutGuide"));
+    let by = msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id);
     let on = |constraint: Id| {
         (kit.send_id)(constraint, kit.sel("setActive:"), 1);
     };
-    on(by(kit.send(content, "topAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, "topAnchor"), 16.0));
-    on(by(kit.send(content, "leadingAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, "leadingAnchor"), 16.0));
+    on(by(kit.send(content, "topAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "topAnchor"), 16.0));
+    on(by(kit.send(content, "bottomAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "bottomAnchor"), -16.0));
+    on(by(kit.send(content, "leadingAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "leadingAnchor"), 16.0));
+    on(by(kit.send(area, "widthAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(frame, "widthAnchor"), 0.0));
     let end = if fills { "constraintEqualToAnchor:constant:" } else { "constraintLessThanOrEqualToAnchor:constant:" };
-    on(by(kit.send(content, "trailingAnchor"), kit.sel(end), kit.send(safe, "trailingAnchor"), -16.0));
+    on(by(kit.send(content, "trailingAnchor"), kit.sel(end), kit.send(area, "trailingAnchor"), -16.0));
 }
 
 /// A width of at least `points`.
@@ -533,4 +548,105 @@ fn styled(kit: &Kit, view: Id, label: Id, leaf: &UiNode, style: UiStyle) {
         None => kit.send(kit.class("UIColor"), "labelColor"),
     };
     (kit.send_two)(view, kit.sel("setTextColor:"), color);
+}
+
+// ---- Dialogs and sound ----
+
+/// What an alert's button said: 1 yes, 0 no, `i64::MIN` nothing yet.
+static ANSWER: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(i64::MIN);
+static ASKED: AtomicU32 = AtomicU32::new(0);
+
+/// A block of Objective-C that holds no value, as the system's own `^{ }` at file level: the
+/// system finds its code in `invoke` and copies nothing.
+#[repr(C)]
+struct Block {
+    isa: *const u8,
+    flags: i32,
+    reserved: i32,
+    invoke: usize,
+    descriptor: *const Descriptor,
+}
+
+#[repr(C)]
+struct Descriptor {
+    reserved: usize,
+    size: usize,
+}
+
+static DESCRIPTOR: Descriptor = Descriptor { reserved: 0, size: core::mem::size_of::<Block>() };
+
+/// BLOCK_IS_GLOBAL.
+fn global_block(invoke: usize) -> Id {
+    let isa = library("/usr/lib/libSystem.B.dylib").and_then(|l| symbol(l, "_NSConcreteGlobalBlock")).unwrap_or(0);
+    alloc::boxed::Box::leak(alloc::boxed::Box::new(Block { isa: isa as *const u8, flags: 1 << 28, reserved: 0, invoke, descriptor: &DESCRIPTOR })) as *mut Block as Id
+}
+
+fn answered(value: i64) {
+    ANSWER.store(value, SeqCst);
+    ASKED.fetch_add(1, SeqCst);
+    super::wake(&ASKED);
+}
+
+extern "C" fn said_yes(_block: Id, _action: Id) {
+    answered(1);
+}
+
+extern "C" fn said_no(_block: Id, _action: Id) {
+    answered(0);
+}
+
+/// `ui.dialog` on iOS: a message or a question (`kind` 3 and 4); the file dialogs are not there yet.
+pub fn dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    if kind < 3 || SCREEN.get().is_none() {
+        return None;
+    }
+    struct Job<'a> {
+        kind: i64,
+        title: &'a str,
+        text: &'a str,
+    }
+    extern "C" fn present(job: *mut u8) {
+        let job = unsafe { &*(job as *const Job) };
+        let screen = screen();
+        let kit = &screen.kit;
+        let alert = msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(kit.class("UIAlertController"), kit.sel("alertControllerWithTitle:message:preferredStyle:"), kit.text(job.title), kit.text(job.text), 1);
+        let button = msg!(kit, extern "C" fn(Id, Id, Id, i64, Id) -> Id);
+        let names: &[(&str, usize, i64)] = if job.kind == 3 { &[("OK", said_yes as usize, 0)] } else { &[("No", said_no as usize, 1), ("Yes", said_yes as usize, 0)] };
+        for &(name, invoke, style) in names {
+            let action = button(kit.class("UIAlertAction"), kit.sel("actionWithTitle:style:handler:"), kit.text(name), style, global_block(invoke));
+            (kit.send_two)(alert, kit.sel("addAction:"), action);
+        }
+        msg!(kit, extern "C" fn(Id, Id, Id, bool, Id) -> Id)(screen.controller, kit.sel("presentViewController:animated:completion:"), alert, true, core::ptr::null_mut());
+    }
+    ANSWER.store(i64::MIN, SeqCst);
+    let system = library("/usr/lib/libSystem.B.dylib")?;
+    let sync: extern "C" fn(usize, *mut u8, extern "C" fn(*mut u8)) = unsafe { core::mem::transmute(symbol(system, "dispatch_sync_f")?) };
+    let job = Job { kind, title, text };
+    sync(symbol(system, "_dispatch_main_q")?, &job as *const Job as *mut u8, present);
+    loop {
+        let seen = ASKED.load(SeqCst);
+        let answer = ANSWER.load(SeqCst);
+        if answer != i64::MIN {
+            return (answer == 1).then(|| "yes".into());
+        }
+        super::wait(&ASKED, seen);
+    }
+}
+
+/// `sound.play` on iOS: AVFoundation's player; the program waits for the end of the sound.
+pub fn sound(whole: &[u8], wav: &crate::shared::Wav) -> bool {
+    let (Some(_), Some(kit)) = (library("/System/Library/Frameworks/AVFoundation.framework/AVFoundation"), objc_kit()) else { return false };
+    let pool = (kit.push)();
+    let data = msg!(kit, extern "C" fn(Id, Id, *const u8, u64) -> Id)(kit.class("NSData"), kit.sel("dataWithBytes:length:"), whole.as_ptr(), whole.len() as u64);
+    let player = msg!(kit, extern "C" fn(Id, Id, Id, *mut Id) -> Id)(kit.send(kit.class("AVAudioPlayer"), "alloc"), kit.sel("initWithData:error:"), data, core::ptr::null_mut());
+    let played = !player.is_null() && (kit.send_int)(player, kit.sel("play")) & 0xff != 0;
+    if played {
+        super::sleep(wav.samples.len() as f64 / (wav.rate * wav.channels * wav.bits / 8).max(1) as f64 + 0.1);
+        kit.send(player, "stop");
+    }
+    if !player.is_null() {
+        kit.send(player, "release");
+    }
+    (kit.pop)(pool);
+    played
 }
