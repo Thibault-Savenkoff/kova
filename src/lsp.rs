@@ -55,11 +55,11 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                         let p: CompletionParams = serde_json::from_value(req.params)?;
                         let doc = &p.text_document_position;
                         let path = file_path(&doc.text_document.uri);
-                        // A space only asks for the files after `import `; anywhere else it offers nothing.
+                        // A space only asks for the files after `import ` or the types after `x: `; anywhere else it offers nothing.
                         let spaced = p.context.as_ref().and_then(|c| c.trigger_character.as_deref()) == Some(" ");
                         let items = docs.get(&doc.text_document.uri).and_then(|src| {
                             let cursor = offset(src, doc.position);
-                            if spaced { import_files(&path, src, cursor) } else { Some(completion(&path, src, cursor)) }
+                            if spaced { import_files(&path, src, cursor).or_else(|| type_names(src, cursor)) } else { Some(completion(&path, src, cursor)) }
                         });
                         Response::new_ok(req.id, items)
                     }
@@ -1710,6 +1710,10 @@ mod tests {
                 assert!(found.contains(&want.to_string()), "{place}: {want} missing in {found:?}");
             }
             assert!(!found.contains(&"print".to_string()), "{place}");
+        }
+        // `let x: | := 1`: text after the cursor changes nothing.
+        for text in ["fn main {\n  let x: | := 1\n}\n", "fn main {\n  let x: |\n}\n", "fn main {\n  let x:| := \n}\n", "struct A {\n  n: |\n}\n"] {
+            assert!(at(text).contains(&"Int".to_string()), "{text}");
         }
         // An expression is not a type position.
         assert!(!at(&format!("{head}fn f(a: Bool, b: Bool) {{\n  let c: Bool := a or |")).contains(&"List".to_string()));
