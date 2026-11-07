@@ -187,6 +187,7 @@ lang en {
     select_channel := "`threads.select` waits for a channel, this is a `{type}`"
     function_alone := "`{name}` is a function: call it with `{name}(…)`, or give it where a block is expected"
     habit_equal := "Kova compares with one `=`: write `a = b`"
+    habit_declare := "a variable is declared with `let`: `let {name}: Type := value`"
     habit_assign := "Kova gives a value with `:=`, and keeps `=` for comparing"
     habit_and := "write `&&`"
     habit_or := "write `||`"

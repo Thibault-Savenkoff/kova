@@ -301,6 +301,8 @@ impl Parser<'_> {
             ("not", _) => t!("habit_not"),
             ("?", _) if word(2) == "?" => t!("habit_default"),
             (_, "=") => t!("habit_assign"),
+            // `x: Int` alone at the start of a line: a variable needs `let`.
+            (_, ":") if self.pos > 0 && self.t[self.pos - 1].kind == Kind::Ident && (self.pos == 1 || matches!(self.t[self.pos - 2].kind, Kind::Newline | Kind::Sym("{" | "}"))) => t!("habit_declare", name = before),
             (_, "in") => t!("habit_in", name = before),
             (_, "=>") if self.pos > 0 && self.t[self.pos - 1].kind == Kind::Ident => t!("habit_block_type", name = before),
             (_, "and") => t!("habit_and"),

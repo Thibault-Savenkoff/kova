@@ -1,0 +1,4 @@
+fn main {
+    x: Int
+}
+// error: a variable is declared with `let`: `let x: Type := value`

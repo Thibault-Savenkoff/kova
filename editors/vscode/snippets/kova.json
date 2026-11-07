@@ -194,11 +194,6 @@
     "body": ["extern ${1:lib} from \"${2:name}\" {", "\tfn ${3:function}(${4:param}: ${5:Int32}) -> ${6:Int32}", "}"],
     "description": "Call a system library"
   },
-  "lang": {
-    "prefix": "lang",
-    "body": ["lang ${1:fr} {", "\t${2:key} := \"${3:text}\"", "}"],
-    "description": "Translation block"
-  },
   "while let": {
     "prefix": "whilex",
     "body": ["while ${1:x} := ${2:optional} {", "\t$0", "}"],
