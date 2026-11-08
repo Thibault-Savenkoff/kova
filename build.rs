@@ -35,13 +35,17 @@ fn main() {
         ("linux-arm", &["aarch64-unknown-linux-gnu"]),
         ("mac-intel", &["x86_64-apple-darwin"]),
     ];
+    // Every runtime is compiled on its own thread: they share nothing (each has its own files,
+    // named after its target and variant), and a build used to wait for them one by one.
+    let mut jobs: Vec<(String, PathBuf, &str)> = Vec::new();
+    let empty = |lib: &Path| std::fs::write(lib, []).unwrap();
     for (name, triples) in targets {
         let lib = out.join(format!("runtime-{name}.a"));
         match triples.iter().find(|t| installed(t)) {
-            Some(triple) => compile(&rustc, triple, &lib, &libm, &out, ""),
+            Some(triple) => jobs.push((triple.to_string(), lib, "")),
             None => {
                 println!("cargo:warning=no runtime for `kova build --target {name}`: `rustup target add {}`, then build kova again", triples[0]);
-                std::fs::write(&lib, []).unwrap();
+                empty(&lib);
             }
         }
     }
@@ -50,25 +54,31 @@ fn main() {
     for (name, triple) in [("android-arm", "aarch64-unknown-linux-gnu"), ("android-x86", "x86_64-unknown-linux-gnu")] {
         let lib = out.join(format!("runtime-{name}.a"));
         if installed(triple) {
-            compile(&rustc, triple, &lib, &libm, &out, "android");
+            jobs.push((triple.to_string(), lib, "android"));
         } else {
-            std::fs::write(&lib, []).unwrap();
+            empty(&lib);
         }
     }
     // iOS's simulator: the Mac arm64 runtime again, with its own windows (runtime/uikit.rs).
     let ios = out.join("runtime-ios-sim.a");
     if installed("aarch64-apple-darwin") {
-        compile(&rustc, "aarch64-apple-darwin", &ios, &libm, &out, "ios");
+        jobs.push(("aarch64-apple-darwin".into(), ios, "ios"));
     } else {
-        std::fs::write(&ios, []).unwrap();
+        empty(&ios);
     }
     let web = out.join("runtime-web.wasm");
     if installed("wasm32-unknown-unknown") {
-        compile(&rustc, "wasm32-unknown-unknown", &web, &libm, &out, "");
+        jobs.push(("wasm32-unknown-unknown".into(), web, ""));
     } else {
         println!("cargo:warning=no runtime for `kova build --target web`: `rustup target add wasm32-unknown-unknown`, then build kova again");
-        std::fs::write(&web, []).unwrap();
+        empty(&web);
     }
+    std::thread::scope(|scope| {
+        for (triple, lib, variant) in &jobs {
+            let (rustc, libm, out) = (&rustc, &libm, &out);
+            scope.spawn(move || compile(rustc, triple, lib, libm, out, variant));
+        }
+    });
 }
 
 /// `libm`'s sources, which cargo downloaded for Cargo.toml before running build.rs.

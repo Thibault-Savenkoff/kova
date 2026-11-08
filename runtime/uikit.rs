@@ -7,7 +7,7 @@
 // or a clock puts an event in `HEARD`. What is drawn: texts, buttons, fields, check boxes, sliders,
 // choices, images, lists (as rows of buttons), canvases (2D drawing and touches), dialogs, sound,
 // columns and rows with their style and margins. The
-// `ui.gpu`, tables with headers and menus are not drawn yet.
+// `ui.gpu` and tables with headers are not drawn yet.
 
 use super::{library, symbol, Id, Insets, Kit, Rect, Size};
 use crate::shared::{UiAlign, UiNode, UiQueue, UiStyle};
@@ -29,6 +29,8 @@ fn hear(answer: i64, text: String) {
 /// What the main thread keeps of the window.
 struct Screen {
     kit: Kit,
+    /// The menus now shown (a row of buttons above the content).
+    menus: Vec<crate::shared::UiMenu>,
     /// The object that hears the buttons and fields (`KovaUiTarget`).
     target: Id,
     /// The view of the window's controller.
@@ -173,7 +175,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         }
         kit.send(w, "makeKeyAndVisible");
         *WINDOW.get() = w;
-        *SCREEN.get() = Some(Screen { kit, target, root, scroll, controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
+        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
     }
     // The program: a thread of its own, which never comes back here.
     extern "C" fn program(_: i64) {
@@ -245,22 +247,23 @@ extern "C" fn returned(_me: Id, _message: Id, field: Id) -> bool {
 }
 
 /// What `ui.show` does on iOS: hands `view` to the main thread, then waits for what the user does.
-pub fn show(_title: &str, view: &UiNode, _menus: &[crate::shared::UiMenu], _width: i32, _height: i32, acts: &[i64], typed: &mut String) -> i64 {
+pub fn show(_title: &str, view: &UiNode, menus: &[crate::shared::UiMenu], _width: i32, _height: i32, acts: &[i64], typed: &mut String) -> i64 {
     // `ui.close`: the app ends.
     if acts.contains(&1) {
         return -1;
     }
     struct Job<'a> {
         view: &'a UiNode,
+        menus: &'a [crate::shared::UiMenu],
     }
     extern "C" fn draw(job: *mut u8) {
         let job = unsafe { &*(job as *const Job) };
-        draw_view(job.view);
+        draw_view(job.view, job.menus);
     }
     let system = library("/usr/lib/libSystem.B.dylib").expect("libSystem");
     let sync: extern "C" fn(usize, *mut u8, extern "C" fn(*mut u8)) = unsafe { core::mem::transmute(symbol(system, "dispatch_sync_f").expect("dispatch_sync_f")) };
     let main_queue = symbol(system, "_dispatch_main_q").expect("the main queue");
-    let job = Job { view };
+    let job = Job { view, menus };
     sync(main_queue, &job as *const Job as *mut u8, draw);
     loop {
         let seen = RING.load(SeqCst);
@@ -273,12 +276,12 @@ pub fn show(_title: &str, view: &UiNode, _menus: &[crate::shared::UiMenu], _widt
 }
 
 /// On the main thread: the window shows `view`.
-fn draw_view(view: &UiNode) {
+fn draw_view(view: &UiNode, menus: &[crate::shared::UiMenu]) {
     let Some(screen) = SCREEN.get().as_mut() else { return };
     let kit = &screen.kit;
     let pool = (kit.push)();
     let shape = crate::shared::ui_shape(view);
-    if shape == screen.shape {
+    if shape == screen.shape && menus == screen.menus.as_slice() {
         for ((leaf, _), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
             refresh(kit, leaf, v, label);
         }
@@ -290,9 +293,22 @@ fn draw_view(view: &UiNode) {
         CANVASES.get().clear();
         let content = build(kit, screen.target, view, &mut screen.made);
         let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
+        // The menus: a row of buttons above everything, each opening its items.
+        let content = if menus.is_empty() {
+            content
+        } else {
+            let outer = made(kit, "UIStackView");
+            (kit.send_id)(outer, kit.sel("setAxis:"), 1);
+            (kit.send_id)(outer, kit.sel("setAlignment:"), 1);
+            (kit.send_float)(outer, kit.sel("setSpacing:"), 12.0);
+            (kit.send_two)(outer, kit.sel("addArrangedSubview:"), menu_bar(kit, menus));
+            (kit.send_two)(outer, kit.sel("addArrangedSubview:"), content);
+            outer
+        };
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
         screen.content = content;
         screen.shape = shape;
+        screen.menus = menus.to_vec();
     }
     for ((leaf, style), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
         styled(kit, v, label, leaf, style);
@@ -361,7 +377,8 @@ fn place(kit: &Kit, scroll: Id, content: Id, fills: bool) {
     on(by(kit.send(content, "topAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "topAnchor"), 16.0));
     on(by(kit.send(content, "bottomAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "bottomAnchor"), -16.0));
     on(by(kit.send(content, "leadingAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(area, "leadingAnchor"), 16.0));
-    on(by(kit.send(area, "widthAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(frame, "widthAnchor"), 0.0));
+    // As wide as the screen, or wider when something fixed (a canvas) is: then it scrolls sideways.
+    on(by(kit.send(area, "widthAnchor"), kit.sel("constraintGreaterThanOrEqualToAnchor:constant:"), kit.send(frame, "widthAnchor"), 0.0));
     let end = if fills { "constraintEqualToAnchor:constant:" } else { "constraintLessThanOrEqualToAnchor:constant:" };
     on(by(kit.send(content, "trailingAnchor"), kit.sel(end), kit.send(area, "trailingAnchor"), -16.0));
 }
@@ -805,5 +822,49 @@ extern "C" fn draw_canvas(me: Id, _message: Id, _dirty: Rect) {
                 }
             }
         }
+    }
+}
+
+// ---- Menus ----
+
+/// A row of buttons, one for each menu; a tap opens the menu (`UIMenu`, as the primary action).
+fn menu_bar(kit: &Kit, menus: &[crate::shared::UiMenu]) -> Id {
+    let bar = made(kit, "UIStackView");
+    (kit.send_id)(bar, kit.sel("setAxis:"), 0);
+    (kit.send_float)(bar, kit.sel("setSpacing:"), 16.0);
+    for m in menus {
+        let actions: Vec<Id> = m
+            .items
+            .iter()
+            .filter_map(|(label, event, _key)| {
+                // The number of the event is the action's identifier, which the handler reads back.
+                let n = (*event)?;
+                Some(msg!(kit, extern "C" fn(Id, Id, Id, Id, Id, Id) -> Id)(
+                    kit.class("UIAction"),
+                    kit.sel("actionWithTitle:image:identifier:handler:"),
+                    kit.text(label),
+                    core::ptr::null_mut(),
+                    kit.text(&alloc::format!("{n}")),
+                    global_block(menu_chosen as usize),
+                ))
+            })
+            .collect();
+        let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
+        let menu = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(&m.title), array);
+        let b = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
+        msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(b, kit.sel("setTitle:forState:"), kit.text(&m.title), 0);
+        (kit.send_two)(b, kit.sel("setMenu:"), menu);
+        (kit.send_id)(b, kit.sel("setShowsMenuAsPrimaryAction:"), 1);
+        (kit.send_two)(bar, kit.sel("addArrangedSubview:"), b);
+    }
+    bar
+}
+
+/// An item of a menu was chosen: its action's identifier is the number of its event.
+extern "C" fn menu_chosen(_block: Id, action: Id) {
+    let Some(screen) = SCREEN.get().as_ref() else { return };
+    let kit = &screen.kit;
+    if let Ok(n) = text_of(kit, kit.send(action, "identifier")).parse::<usize>() {
+        hear(crate::shared::ui_changed(n), String::new());
     }
 }

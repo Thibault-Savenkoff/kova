@@ -36,7 +36,11 @@ le programme affiche.
 Une fenêtre défile quand elle dépasse l'écran, `ui.canvas` dessine avec Core Graphics et entend les
 touchers, les dialogues sont des alertes et le son passe par `AVAudioPlayer`.
 
-Pas encore là : `ui.gpu` et les menus.
+Les menus sont une rangée de boutons au-dessus de la fenêtre, chacun ouvrant ses éléments (les
+raccourcis sont pour un clavier, qu'un iPhone n'a pas). Un canvas plus large que l'écran défile sur
+le côté.
+
+Pas encore là : `ui.gpu`.
 
 ## Sur un vrai iPhone
 

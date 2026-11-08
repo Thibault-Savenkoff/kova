@@ -36,7 +36,10 @@ program prints.
 A window scrolls when it is taller than the screen, `ui.canvas` draws with Core Graphics and hears
 touches, dialogs are alerts and sound goes through `AVAudioPlayer`.
 
-Not there yet: `ui.gpu` and menus.
+Menus are a row of buttons above the window, each opening its items (shortcuts are for a keyboard, which
+an iPhone has not). A canvas wider than the screen scrolls sideways.
+
+Not there yet: `ui.gpu`.
 
 ## On a real iPhone
 
