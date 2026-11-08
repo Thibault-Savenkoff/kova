@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 57] = [
+const OWN: [&str; 58] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate", "native",
+    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate", "native", "panel",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -89,6 +89,18 @@ public:
         require pixels >= 0 else "a margin cannot be negative"
     {
         return self.styled("m", pixels)
+    }
+
+    // A color behind the view and its margin. On an iPhone for now: elsewhere the view is shown alone.
+    fn background(self, c: Color) -> View {
+        return self.styled("g", number(c))
+    }
+
+    // Rounded corners for the `background`.
+    fn rounded(self, pixels: Int) -> View
+        require pixels >= 0 else "a corner cannot be negative"
+    {
+        return self.styled("r", pixels)
     }
 
     fn on_mouse(self, heard: {Mouse -> EVENT}) -> View
@@ -333,6 +345,11 @@ fn black -> Color {
 
 fn white -> Color {
     return rgb(255, 255, 255)
+}
+
+// The system's background for a card or a panel: light or dark like the rest of the system. Only `background` takes it (iPhone for now).
+fn panel -> Color {
+    return Color { r := 256, g := 0, b := 1 }
 }
 
 enum Align {

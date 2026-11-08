@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite", "sound", "ios"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite", "sound", "ios", "markdown"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -469,6 +469,7 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "sqlite" => include_str!("library/sqlite.kova"),
         "sound" => include_str!("library/sound.kova"),
         "ios" => include_str!("library/ios.kova"),
+        "markdown" => include_str!("library/markdown.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })

@@ -895,6 +895,9 @@ pub enum UiNode {
     Styled(UiStyle, alloc::boxed::Box<UiNode>),
     /// Empty pixels around a view.
     Spaced(i32, alloc::boxed::Box<UiNode>),
+    /// A color behind a view and its room, with rounded corners (iPhone only for now; a color past 0xFFFFFF is the system's panel).
+    #[cfg(ios)]
+    Boxed(u32, i32, alloc::boxed::Box<UiNode>),
     /// A drawing area.
     Canvas(UiCanvas),
     /// A view and a clock: every so many milliseconds, the button number's event.
@@ -1603,6 +1606,8 @@ pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
         UiNode::Tabs(_) => Vec::new(),
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
+        #[cfg(ios)]
+        UiNode::Boxed(_, _, inner) => ui_clocks(inner),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
         _ => Vec::new(),
     }
@@ -1658,6 +1663,8 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Column(parts, a) => *a != UiAlign::Start || parts.iter().any(ui_fills),
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
+        #[cfg(ios)]
+        UiNode::Boxed(_, _, inner) => ui_fills(inner),
         UiNode::Context(inner, _) => ui_fills(inner),
         UiNode::Canvas(c) => c.width == 0,
         _ => false,
@@ -1670,6 +1677,8 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
+        #[cfg(ios)]
+        UiNode::Boxed(_, _, inner) => ui_fills_down(inner),
         UiNode::Context(inner, _) => ui_fills_down(inner),
         UiNode::Canvas(c) => c.height == 0,
         _ => false,
@@ -1727,6 +1736,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Context(inner, items) => format!("J{items:?}({})", ui_shape(inner)),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
+        #[cfg(ios)]
+        UiNode::Boxed(c, r, inner) => format!("X{c}:{r}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
         UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}{}", c.width, c.height, c.mouse, c.key, c.gpu()),
         // Nor its clocks: each system compares those itself, widgets stay when one starts.
@@ -1740,6 +1751,8 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
+        #[cfg(ios)]
+        UiNode::Boxed(_, _, inner) => ui_leaves(inner),
         UiNode::Context(inner, _) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
         leaf => alloc::vec![(leaf, UiStyle::default())],
@@ -1774,6 +1787,8 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
 
 fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyle) -> UiNode {
     let (mut own, mut margin) = (UiStyle::default(), None);
+    #[cfg_attr(not(ios), allow(unused_variables, unused_mut))]
+    let (mut back, mut round) = (None, 0);
     // What listens, the last one written first.
     let mut listening = Vec::new();
     let mut kind = chars.next().unwrap_or('C');
@@ -1786,6 +1801,8 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             Some('b') => own.bold = true,
             Some('w') => own.wide = true,
             Some('m') => margin = margin.or(Some(n as i32)),
+            Some('g') => back = back.or(Some(n as u32)),
+            Some('r') => round = n as i32,
             Some(key @ ('M' | 'K' | 'E')) => listening.push((key, n as i32)),
             _ => {}
         }
@@ -1818,6 +1835,12 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
         Some(m) => UiNode::Spaced(m, node.into()),
         None => node,
     };
+    #[cfg(ios)]
+    let node = match back {
+        Some(c) => UiNode::Boxed(c, round, node.into()),
+        None => node,
+    };
+    let _ = (back, round);
     clocks.into_iter().fold(node, |inner, (ms, n)| UiNode::Every(ms, n, inner.into()))
 }
 
@@ -2007,6 +2030,11 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Spaced(m, inner) => {
                 write(inner, out);
                 out.push_str(&format!(" margin({m})"));
+            }
+            #[cfg(ios)]
+            UiNode::Boxed(c, r, inner) => {
+                write(inner, out);
+                out.push_str(&format!(" background({c}) rounded({r})"));
             }
             UiNode::Every(ms, _, inner) => {
                 write(inner, out);

@@ -37,6 +37,7 @@ presque la même chose.
 | `import arguments` | [arguments](/fr/library/arguments/) | lire la ligne de commande |
 | `import toml` | [toml](/fr/library/toml/) | lire des fichiers de configuration |
 | `import xml` | [xml](/fr/library/xml/) | lire et écrire du XML |
+| `import markdown` | [markdown](/fr/library/markdown/) | lire du Markdown en blocs, en texte simple ou en HTML |
 | `import compress`, `import zip` | [compress et zip](/fr/library/compress/) | gzip et archives zip |
 | `import net` | [net](/fr/library/net/) | TCP et UDP |
 | `import websocket` | [websocket](/fr/library/websocket/) | des connexions qui restent ouvertes avec les pages web |

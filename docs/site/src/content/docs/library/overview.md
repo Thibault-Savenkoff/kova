@@ -36,6 +36,7 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import arguments` | [arguments](/library/arguments/) | reading the command line |
 | `import toml` | [toml](/library/toml/) | reading configuration files |
 | `import xml` | [xml](/library/xml/) | reading and writing XML |
+| `import markdown` | [markdown](/library/markdown/) | reading Markdown as blocks, plain text or HTML |
 | `import compress`, `import zip` | [compress and zip](/library/compress/) | gzip and zip archives |
 | `import net` | [net](/library/net/) | TCP and UDP |
 | `import websocket` | [websocket](/library/websocket/) | connections that stay open with web pages |

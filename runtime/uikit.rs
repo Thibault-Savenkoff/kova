@@ -36,6 +36,8 @@ struct Screen {
     root: Id,
     /// The scroll view that fills its safe area: the content is in it.
     scroll: Id,
+    /// The tab bar of `ui.tabs`, pinned to the bottom of the screen as iOS does (null for none).
+    bar: Id,
     /// The window's view controller, which shows the dialogs.
     controller: Id,
     /// The stack view now shown.
@@ -507,11 +509,16 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         (kit.send_two)(root, kit.sel("addSubview:"), scroll);
         let (safe, by) = (kit.send(root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
         for edge in ["topAnchor", "leadingAnchor", "trailingAnchor", "bottomAnchor"] {
-            (kit.send_id)(by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, edge), 0.0), kit.sel("setActive:"), 1);
+            let c = by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, edge), 0.0);
+            // The bottom gives way to a tab bar (required `<=` below it).
+            if edge == "bottomAnchor" {
+                msg!(kit, extern "C" fn(Id, Id, f32))(c, kit.sel("setPriority:"), 750.0);
+            }
+            (kit.send_id)(c, kit.sel("setActive:"), 1);
         }
         kit.send(w, "makeKeyAndVisible");
         *WINDOW.get() = w;
-        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
+        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, bar: core::ptr::null_mut(), controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
     }
     // The program: a thread of its own, which never comes back here.
     extern "C" fn program(_: i64) {
@@ -657,6 +664,10 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         if !screen.content.is_null() {
             kit.send(screen.content, "removeFromSuperview");
         }
+        if !screen.bar.is_null() {
+            kit.send(screen.bar, "removeFromSuperview");
+            screen.bar = core::ptr::null_mut();
+        }
         screen.made.clear();
         CANVASES.get().clear();
         CONTEXTS.get().clear();
@@ -668,6 +679,25 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), buttons.as_ptr(), buttons.len() as u64);
         (kit.send_two)(item, kit.sel("setRightBarButtonItems:"), array);
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
+        // A tab bar goes to the bottom of the screen, under the scrolled content.
+        let tab_bar = screen.made.iter().map(|&(v, _)| v).find(|&v| kit.class("UITabBar") == kit.send(v, "class"));
+        if let Some(bar) = tab_bar {
+            kit.send(bar, "removeFromSuperview");
+            (kit.send_two)(screen.root, kit.sel("addSubview:"), bar);
+            let (safe, by) = (kit.send(screen.root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
+            for edge in ["leadingAnchor", "trailingAnchor", "bottomAnchor"] {
+                (kit.send_id)(by(kit.send(bar, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, edge), 0.0), kit.sel("setActive:"), 1);
+            }
+            let tall = (kit.send_float)(kit.send(bar, "heightAnchor"), kit.sel("constraintEqualToConstant:"), 76.0);
+            (kit.send_id)(tall, kit.sel("setActive:"), 1);
+            let above = (kit.send_two)(kit.send(screen.scroll, "bottomAnchor"), kit.sel("constraintLessThanOrEqualToAnchor:"), kit.send(bar, "topAnchor"));
+            (kit.send_id)(above, kit.sel("setActive:"), 1);
+            // Its items are drawn only once it is in the window: give them again.
+            let (items, now) = (kit.send(bar, "items"), kit.send(bar, "selectedItem"));
+            msg!(kit, extern "C" fn(Id, Id, Id, bool))(bar, kit.sel("setItems:animated:"), items, false);
+            (kit.send_two)(bar, kit.sel("setSelectedItem:"), now);
+            screen.bar = bar;
+        }
         screen.content = content;
         screen.shape = shape;
         screen.menus = menus.to_vec();
@@ -788,7 +818,9 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             (kit.send_id)(field, kit.sel("setBorderStyle:"), 3);
             (kit.send_two)(field, kit.sel("setDelegate:"), target);
             hears(kit, target, field, *n, "edited:", 131072);
-            at_least(kit, field, 200.0);
+            // A search field takes the screen's width, as on iOS.
+            let width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+            at_least(kit, field, if matches!(node, UiNode::Search(..)) { width - 32.0 } else { 200.0 });
             field
         }
         UiNode::Check(s, on, n) => {
@@ -976,6 +1008,26 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             (kit.send_two)(view, kit.sel("addInteraction:"), interaction);
             CONTEXTS.get().push((view, items.clone()));
             return view;
+        }
+        // A color behind a view (and its room), corners rounded: a stack view of one part, across the width.
+        UiNode::Boxed(c, radius, inner) => {
+            let stack = wrapped(kit, build(kit, target, inner, made_views));
+            let color = if *c > 0xff_ffff {
+                kit.send(kit.class("UIColor"), "secondarySystemBackgroundColor")
+            } else {
+                let channel = |shift: u32| ((*c >> shift) & 0xff) as f64 / 255.0;
+                msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id)(kit.class("UIColor"), kit.sel("colorWithRed:green:blue:alpha:"), channel(16), channel(8), channel(0), 1.0)
+            };
+            (kit.send_two)(stack, kit.sel("setBackgroundColor:"), color);
+            let layer = kit.send(stack, "layer");
+            (kit.send_float)(layer, kit.sel("setCornerRadius:"), *radius as f64);
+            (kit.send_id)(layer, kit.sel("setMasksToBounds:"), 1);
+            let screen_width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+            at_least(kit, stack, screen_width - 32.0);
+            // Never wider than the screen: its texts wrap inside the room, they do not push the page sideways.
+            let narrow = (kit.send_float)(kit.send(stack, "widthAnchor"), kit.sel("constraintLessThanOrEqualToConstant:"), screen_width - 32.0);
+            (kit.send_id)(narrow, kit.sel("setActive:"), 1);
+            return stack;
         }
         // Room around a view: a stack view with margins.
         UiNode::Spaced(m, inner) => {

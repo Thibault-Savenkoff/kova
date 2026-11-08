@@ -1,0 +1,51 @@
+// `import markdown`: a text read as blocks, written as plain text or as HTML.
+import markdown
+
+fn main {
+    let text: String := """
+# Shopping *list*
+
+Things to **buy**
+for the week, with a [recipe](https://example.com/soup).
+
+- bread
+- `milk` & eggs
+
+1. first
+2. second
+
+> Keep it simple
+---
+```
+let x = 1 < 2
+```
+"""
+    for block in markdown.blocks(text) {
+        print(block)
+    }
+    print(markdown.plain("**bold**, *stressed*, `code`, snake_case, _word_ and [a link](x.com)"))
+    print(markdown.html(text))
+}
+// expect: heading 1: Shopping *list*
+// expect: paragraph: Things to **buy** for the week, with a [recipe](https://example.com/soup).
+// expect: bullet: bread
+// expect: bullet: `milk` & eggs
+// expect: number 1: first
+// expect: number 2: second
+// expect: quote: Keep it simple
+// expect: rule
+// expect: code: let x = 1 < 2
+// expect: bold, stressed, code, snake_case, word and a link
+// expect: <h1>Shopping <em>list</em></h1>
+// expect: <p>Things to <strong>buy</strong> for the week, with a <a href="https://example.com/soup">recipe</a>.</p>
+// expect: <ul>
+// expect: <li>bread</li>
+// expect: <li><code>milk</code> &amp; eggs</li>
+// expect: </ul>
+// expect: <ol>
+// expect: <li>first</li>
+// expect: <li>second</li>
+// expect: </ol>
+// expect: <blockquote>Keep it simple</blockquote>
+// expect: <hr>
+// expect: <pre><code>let x = 1 &lt; 2</code></pre>
