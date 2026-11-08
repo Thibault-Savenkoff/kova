@@ -281,6 +281,15 @@ return ui.column([content]).menus([
 Sur Mac, la barre est en haut de l'écran, et contient toujours le menu de l'application (avec
 Quitter) et un menu Édition, pour que copier et coller marchent dans les champs de texte.
 
+N'importe quelle vue peut aussi avoir son propre menu, qui s'ouvre quand on l'appuie longuement, avec
+`context` :
+
+```kova
+ui.text("Compteur : {app.count}").context([ui.item("Remise à zéro", Event.Reset), ui.item("Doubler", Event.Double)])
+```
+
+Pour l'instant, seulement sur un iPhone : sur les autres systèmes la vue s'affiche seule, sans son menu.
+
 ## Les fenêtres de dialogue
 
 `ui.open_file`, `ui.save_file` et `ui.open_folder` montrent la fenêtre du système et rendent le

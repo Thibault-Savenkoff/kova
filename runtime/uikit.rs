@@ -96,6 +96,54 @@ macro_rules! msg {
     };
 }
 
+/// Each view with a context menu now on screen, and its items (label, button number).
+static CONTEXTS: crate::Global<Vec<(Id, Vec<(String, usize)>)>> = crate::Global::new(Vec::new());
+/// The menu the next call of `provide` gives back.
+static PROVIDED: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
+
+extern "C" fn provide(_block: Id, _suggested: Id) -> Id {
+    *PROVIDED.get()
+}
+
+/// A view was pressed and held: the menu its `.context` described.
+extern "C" fn context_for(_me: Id, _message: Id, interaction: Id, _x: f64, _y: f64) -> Id {
+    let kit = &screen().kit;
+    let view = kit.send(interaction, "view");
+    let Some(items) = CONTEXTS.get().iter().find(|e| e.0 == view).map(|e| e.1.clone()) else { return core::ptr::null_mut() };
+    let actions: Vec<Id> = items
+        .iter()
+        .map(|(label, n)| {
+            msg!(kit, extern "C" fn(Id, Id, Id, Id, Id, Id) -> Id)(
+                kit.class("UIAction"),
+                kit.sel("actionWithTitle:image:identifier:handler:"),
+                kit.text(label),
+                core::ptr::null_mut(),
+                kit.text(&alloc::format!("{n}")),
+                global_block(context_chosen as usize),
+            )
+        })
+        .collect();
+    let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
+    *PROVIDED.get() = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(""), array);
+    msg!(kit, extern "C" fn(Id, Id, Id, Id, Id) -> Id)(
+        kit.class("UIContextMenuConfiguration"),
+        kit.sel("configurationWithIdentifier:previewProvider:actionProvider:"),
+        core::ptr::null_mut(),
+        core::ptr::null_mut(),
+        global_block(provide as usize),
+    )
+}
+
+/// An item of a context menu was chosen: its identifier is the number of its button.
+extern "C" fn context_chosen(_block: Id, action: Id) {
+    let Some(screen) = SCREEN.get().as_ref() else { return };
+    let kit = &screen.kit;
+    if let Ok(n) = text_of(kit, kit.send(action, "identifier")).parse::<usize>() {
+        hear(n as i64, String::new());
+    }
+}
+
+
 /// A new object, owned by the current pool.
 fn made(kit: &Kit, class: &str) -> Id {
     kit.send(kit.send(kit.send(kit.class(class), "alloc"), "init"), "autorelease")
@@ -148,6 +196,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
         add(class, kit.sel("dated:"), dated as usize, action);
+        add(class, kit.sel("contextMenuInteraction:configurationForMenuAtLocation:"), context_for as usize, c"@@:@{CGPoint=dd}".as_ptr() as *const u8);
         add(class, kit.sel("documentPicker:didPickDocumentsAtURLs:"), picked_file as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("documentPickerWasCancelled:"), picked_nothing as usize, action);
         add(class, kit.sel("stepped:"), stepped as usize, action);
@@ -341,6 +390,7 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         }
         screen.made.clear();
         CANVASES.get().clear();
+        CONTEXTS.get().clear();
         let content = build(kit, screen.target, view, &mut screen.made);
         let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
         // The menus go in the navigation bar, each a button opening its items.
@@ -625,6 +675,13 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
+        UiNode::Context(inner, items) => {
+            let view = build(kit, target, inner, made_views);
+            let interaction = (kit.send_two)(kit.send(kit.class("UIContextMenuInteraction"), "alloc"), kit.sel("initWithDelegate:"), target);
+            (kit.send_two)(view, kit.sel("addInteraction:"), interaction);
+            CONTEXTS.get().push((view, items.clone()));
+            return view;
+        }
         // Room around a view: a stack view with margins.
         UiNode::Spaced(m, inner) => {
             let stack = wrapped(kit, build(kit, target, inner, made_views));

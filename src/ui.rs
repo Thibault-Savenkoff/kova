@@ -68,6 +68,18 @@ public:
         return self.styled("b", 1)
     }
 
+    // A menu that opens when the view is pressed and held. On an iPhone only for now: elsewhere the view is shown alone.
+    fn context(self, items: List<Item>) -> View {
+        var parts: List<View> := [self.written(self.text.clone)]
+        for i in items {
+            match i.event {
+                none => {}
+                e => parts.add(button(i.label, e.clone))
+            }
+        }
+        return group("J", parts, Align.Left)
+    }
+
     // The text stays on one line, even if it is wider than the window (the window then scrolls sideways).
     fn no_wrap(self) -> View {
         return self.styled("w", 1)

@@ -1,0 +1,44 @@
+// `view.context(items)`: a menu that opens when the view is pressed and held. Where the system has no such
+// menu the view is shown alone; its items still have their numbers (`0` in the input picks the first).
+import ui
+
+enum Event {
+    Add
+    Reset
+    Double
+}
+
+struct App {
+    count: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Count: {app.count}").context([
+            ui.item("Reset", Event.Reset),
+            ui.item("Double", Event.Double)
+        ]),
+        ui.button("Add", Event.Add),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Add => app.count := app.count + 1
+        .Reset => app.count := 0
+        .Double => app.count := app.count * 2
+    }
+}
+
+fn main {
+    ui.run("Context", App { count := 0 }, view, update)
+}
+// stdin: 2
+// stdin: 2
+// stdin: 1
+// stdin: 0
+// expect: [Context] column(text "Count: 0", button "Add")
+// expect: [Context] column(text "Count: 1", button "Add")
+// expect: [Context] column(text "Count: 2", button "Add")
+// expect: [Context] column(text "Count: 4", button "Add")
+// expect: [Context] column(text "Count: 0", button "Add")

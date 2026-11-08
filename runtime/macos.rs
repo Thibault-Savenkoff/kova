@@ -1888,7 +1888,7 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
         // Top 3, Bottom 4, Leading 5, Trailing 6, CenterX 9, CenterY 10.
         // iOS windows are drawn by uikit.rs.
         #[cfg(ios)]
-        Tabs(_) | Date(..) | Progress(..) | Stepper(..) | Spinner | Search(..) => unreachable!(),
+        Tabs(_) | Date(..) | Progress(..) | Stepper(..) | Spinner | Search(..) | Context(..) => unreachable!(),
         Column(parts, a) | Row(parts, a) => {
             use crate::shared::UiAlign::*;
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
