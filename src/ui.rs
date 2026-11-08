@@ -385,7 +385,7 @@ fn tabs(names: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
     for i, name in names {
         parts.add(if i = selected { text(name).bold } else { button(name, changed(i)) })
     }
-    return row(parts) align(Align.Center)
+    return group("H", parts, Align.Center)
 }
 
 fn image(path: String) -> View

@@ -145,6 +145,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("chosen:"), chosen as usize, action);
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
+        add(class, kit.sel("tabBar:didSelectItem:"), tab_chosen as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
         register(class);
         let target = kit.send(kit.send(class, "alloc"), "init");
@@ -171,7 +172,9 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         let controller = kit.send(kit.send(kit.class("UIViewController"), "alloc"), "init");
         let root = kit.send(controller, "view");
         (kit.send_two)(root, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "systemBackgroundColor"));
-        (kit.send_two)(w, kit.sel("setRootViewController:"), controller);
+        // The controller sits in a navigation controller: its bar shows the title and the menus.
+        let nav = (kit.send_two)(kit.send(kit.class("UINavigationController"), "alloc"), kit.sel("initWithRootViewController:"), controller);
+        (kit.send_two)(w, kit.sel("setRootViewController:"), nav);
         // The content scrolls when it is taller than the screen; the keyboard goes away when it is dragged.
         let scroll = made(&kit, "UIScrollView");
         (kit.send_id)(scroll, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
@@ -201,6 +204,14 @@ fn screen() -> &'static Screen {
 fn tag_of(sender: Id) -> usize {
     let kit = &screen().kit;
     (kit.send_int)(sender, kit.sel("tag")) as usize
+}
+
+/// A tab of a tab bar was chosen: its tag is the number of its button.
+extern "C" fn tab_chosen(_me: Id, _message: Id, _bar: Id, item: Id) {
+    let tag = (screen().kit.send_int)(item, screen().kit.sel("tag"));
+    if tag >= 0 {
+        hear(tag, String::new());
+    }
 }
 
 extern "C" fn tapped(_me: Id, _message: Id, sender: Id) {
@@ -256,23 +267,24 @@ extern "C" fn returned(_me: Id, _message: Id, field: Id) -> bool {
 }
 
 /// What `ui.show` does on iOS: hands `view` to the main thread, then waits for what the user does.
-pub fn show(_title: &str, view: &UiNode, menus: &[crate::shared::UiMenu], _width: i32, _height: i32, acts: &[i64], typed: &mut String) -> i64 {
+pub fn show(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu], _width: i32, _height: i32, acts: &[i64], typed: &mut String) -> i64 {
     // `ui.close`: the app ends.
     if acts.contains(&1) {
         return -1;
     }
     struct Job<'a> {
+        title: &'a str,
         view: &'a UiNode,
         menus: &'a [crate::shared::UiMenu],
     }
     extern "C" fn draw(job: *mut u8) {
         let job = unsafe { &*(job as *const Job) };
-        draw_view(job.view, job.menus);
+        draw_view(job.title, job.view, job.menus);
     }
     let system = library("/usr/lib/libSystem.B.dylib").expect("libSystem");
     let sync: extern "C" fn(usize, *mut u8, extern "C" fn(*mut u8)) = unsafe { core::mem::transmute(symbol(system, "dispatch_sync_f").expect("dispatch_sync_f")) };
     let main_queue = symbol(system, "_dispatch_main_q").expect("the main queue");
-    let job = Job { view, menus };
+    let job = Job { title, view, menus };
     sync(main_queue, &job as *const Job as *mut u8, draw);
     loop {
         let seen = RING.load(SeqCst);
@@ -285,11 +297,12 @@ pub fn show(_title: &str, view: &UiNode, menus: &[crate::shared::UiMenu], _width
 }
 
 /// On the main thread: the window shows `view`.
-fn draw_view(view: &UiNode, menus: &[crate::shared::UiMenu]) {
+fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
     let Some(screen) = SCREEN.get().as_mut() else { return };
     let kit = &screen.kit;
     let pool = (kit.push)();
     let shape = crate::shared::ui_shape(view);
+    (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setTitle:"), kit.text(title));
     if shape == screen.shape && menus == screen.menus.as_slice() {
         for ((leaf, _), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
             refresh(kit, leaf, v, label);
@@ -302,18 +315,11 @@ fn draw_view(view: &UiNode, menus: &[crate::shared::UiMenu]) {
         CANVASES.get().clear();
         let content = build(kit, screen.target, view, &mut screen.made);
         let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
-        // The menus: a row of buttons above everything, each opening its items.
-        let content = if menus.is_empty() {
-            content
-        } else {
-            let outer = made(kit, "UIStackView");
-            (kit.send_id)(outer, kit.sel("setAxis:"), 1);
-            (kit.send_id)(outer, kit.sel("setAlignment:"), 1);
-            (kit.send_float)(outer, kit.sel("setSpacing:"), 12.0);
-            (kit.send_two)(outer, kit.sel("addArrangedSubview:"), menu_bar(kit, menus));
-            (kit.send_two)(outer, kit.sel("addArrangedSubview:"), content);
-            outer
-        };
+        // The menus go in the navigation bar, each a button opening its items.
+        let item = kit.send(screen.controller, "navigationItem");
+        let buttons: Vec<Id> = menus.iter().rev().map(|m| bar_button(kit, m)).collect();
+        let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), buttons.as_ptr(), buttons.len() as u64);
+        (kit.send_two)(item, kit.sel("setRightBarButtonItems:"), array);
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
         screen.content = content;
         screen.shape = shape;
@@ -482,6 +488,33 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             // The rows are not leaves: the list as a whole is one, nothing to refresh in place.
             made_views.push((stack, core::ptr::null_mut()));
             return stack;
+        }
+        // `ui.tabs`: a tab bar. The tab in use is a text (tag -1), each other a button (its number).
+        UiNode::Tabs(parts) => {
+            let bar = made(kit, "UITabBar");
+            let mut items = Vec::new();
+            let mut now = core::ptr::null_mut();
+            for p in parts {
+                let (name, tag) = match p {
+                    UiNode::Text(t) => (t, -1),
+                    UiNode::Button(t, n) => (t, *n as i64),
+                    _ => continue,
+                };
+                let item = msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(kit.send(kit.class("UITabBarItem"), "alloc"), kit.sel("initWithTitle:image:tag:"), kit.text(name), core::ptr::null_mut(), tag);
+                if tag < 0 {
+                    now = item;
+                }
+                items.push(item);
+            }
+            let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), items.as_ptr(), items.len() as u64);
+            msg!(kit, extern "C" fn(Id, Id, Id, bool))(bar, kit.sel("setItems:animated:"), array, false);
+            (kit.send_two)(bar, kit.sel("setSelectedItem:"), now);
+            (kit.send_two)(bar, kit.sel("setDelegate:"), target);
+            // In a column aligned to the left a bar has no width of its own: it takes the screen's, less the margins.
+            let screen_width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+            at_least(kit, bar, screen_width - 32.0);
+            made_views.push((bar, core::ptr::null_mut()));
+            return bar;
         }
         UiNode::Column(parts, a) | UiNode::Row(parts, a) => {
             let stack = made(kit, "UIStackView");
@@ -845,36 +878,27 @@ extern "C" fn draw_canvas(me: Id, _message: Id, _dirty: Rect) {
 // ---- Menus ----
 
 /// A row of buttons, one for each menu; a tap opens the menu (`UIMenu`, as the primary action).
-fn menu_bar(kit: &Kit, menus: &[crate::shared::UiMenu]) -> Id {
-    let bar = made(kit, "UIStackView");
-    (kit.send_id)(bar, kit.sel("setAxis:"), 0);
-    (kit.send_float)(bar, kit.sel("setSpacing:"), 16.0);
-    for m in menus {
-        let actions: Vec<Id> = m
-            .items
-            .iter()
-            .filter_map(|(label, event, _key)| {
-                // The number of the event is the action's identifier, which the handler reads back.
-                let n = (*event)?;
-                Some(msg!(kit, extern "C" fn(Id, Id, Id, Id, Id, Id) -> Id)(
-                    kit.class("UIAction"),
-                    kit.sel("actionWithTitle:image:identifier:handler:"),
-                    kit.text(label),
-                    core::ptr::null_mut(),
-                    kit.text(&alloc::format!("{n}")),
-                    global_block(menu_chosen as usize),
-                ))
-            })
-            .collect();
-        let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
-        let menu = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(&m.title), array);
-        let b = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
-        msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(b, kit.sel("setTitle:forState:"), kit.text(&m.title), 0);
-        (kit.send_two)(b, kit.sel("setMenu:"), menu);
-        (kit.send_id)(b, kit.sel("setShowsMenuAsPrimaryAction:"), 1);
-        (kit.send_two)(bar, kit.sel("addArrangedSubview:"), b);
-    }
-    bar
+/// A navigation bar button that opens one menu.
+fn bar_button(kit: &Kit, m: &crate::shared::UiMenu) -> Id {
+    let actions: Vec<Id> = m
+        .items
+        .iter()
+        .filter_map(|(label, event, _key)| {
+            // The number of the event is the action's identifier, which the handler reads back.
+            let n = (*event)?;
+            Some(msg!(kit, extern "C" fn(Id, Id, Id, Id, Id, Id) -> Id)(
+                kit.class("UIAction"),
+                kit.sel("actionWithTitle:image:identifier:handler:"),
+                kit.text(label),
+                core::ptr::null_mut(),
+                kit.text(&alloc::format!("{n}")),
+                global_block(menu_chosen as usize),
+            ))
+        })
+        .collect();
+    let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
+    let menu = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(&m.title), array);
+    msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UIBarButtonItem"), "alloc"), kit.sel("initWithTitle:menu:"), kit.text(&m.title), menu)
 }
 
 /// An item of a menu was chosen: its action's identifier is the number of its event.

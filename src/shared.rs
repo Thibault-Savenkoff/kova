@@ -907,6 +907,9 @@ pub enum UiNode {
     Choice(Vec<String>, i32, usize),
     /// A list of lines to pick from.
     Table(UiTable),
+    /// `ui.tabs` on iOS: a native tab bar. The tab in use is a text, each other a button.
+    #[cfg(ios)]
+    Tabs(Vec<UiNode>),
 }
 
 /// `ui.list` (no headers, one column) and `ui.table`.
@@ -1576,6 +1579,8 @@ pub const UI_RESIZED: i64 = 1 << 40;
 pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_clocks).collect(),
+        #[cfg(ios)]
+        UiNode::Tabs(_) => Vec::new(),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
         _ => Vec::new(),
@@ -1678,6 +1683,9 @@ pub fn ui_shape(node: &UiNode) -> String {
             format!("{kind}{}{}({})", *a as u8, parts.len(), inside.join(","))
         }
         UiNode::Image(path, width) => format!("P{width}:{path}"),
+        // The names and the tab in use: a tab bar is made again when they change.
+        #[cfg(ios)]
+        UiNode::Tabs(parts) => format!("H{:?}", parts.iter().map(|p| match p { UiNode::Text(t) => format!("*{t}"), UiNode::Button(t, n) => format!("{n}{t}"), _ => String::new() }).collect::<Vec<_>>()),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
@@ -1825,8 +1833,12 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             if kind == 'I' { UiNode::Input(label, *count - 1) } else { UiNode::Button(label, *count - 1) }
         }
         _ => {
-            let parts = (0..n).map(|_| ui_node(chars, counts, style)).collect();
-            if kind == 'R' { UiNode::Row(parts, align) } else { UiNode::Column(parts, align) }
+            let parts: Vec<UiNode> = (0..n).map(|_| ui_node(chars, counts, style)).collect();
+            #[cfg(ios)]
+            if kind == 'H' {
+                return UiNode::Tabs(parts.into_iter().map(|p| match p { UiNode::Styled(_, inner) => *inner, other => other }).collect());
+            }
+            if matches!(kind, 'R' | 'H') { UiNode::Row(parts, align) } else { UiNode::Column(parts, align) }
         }
     }
 }
@@ -1863,6 +1875,8 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::Start) => group("row", parts, out),
             UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
+            #[cfg(ios)]
+            UiNode::Tabs(parts) => group("row center", parts, out),
             UiNode::Image(path, 0) => out.push_str(&format!("image {path:?}")),
             UiNode::Image(path, width) => out.push_str(&format!("image {path:?} size({width})")),
             UiNode::Styled(style, leaf) => {

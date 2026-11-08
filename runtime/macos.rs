@@ -1886,6 +1886,9 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
         }
         // NSUserInterfaceLayoutOrientationHorizontal = 0, Vertical = 1. `NSLayoutAttribute`:
         // Top 3, Bottom 4, Leading 5, Trailing 6, CenterX 9, CenterY 10.
+        // iOS windows are drawn by uikit.rs.
+        #[cfg(ios)]
+        Tabs(_) => unreachable!(),
         Column(parts, a) | Row(parts, a) => {
             use crate::shared::UiAlign::*;
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");

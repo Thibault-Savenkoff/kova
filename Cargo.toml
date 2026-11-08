@@ -37,3 +37,6 @@ lewton = { path = "vendor/lewton" }
 [build-dependencies]
 # Keeping only the runtime's objects an executable can reach (build.rs).
 object = { version = "0.40", default-features = false, features = ["read_core", "archive", "elf", "coff", "macho", "std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ios)"] }

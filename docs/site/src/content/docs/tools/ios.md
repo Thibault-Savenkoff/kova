@@ -36,8 +36,9 @@ program prints.
 A window scrolls when it is taller than the screen, `ui.canvas` draws with Core Graphics and hears
 touches, dialogs are alerts and sound goes through `AVAudioPlayer`.
 
-Menus are a row of buttons above the window, each opening its items (shortcuts are for a keyboard, which
-an iPhone has not). A canvas wider than the screen scrolls sideways.
+The window sits in a navigation bar: its title is the window's, and each menu is a button of the bar opening
+its items (shortcuts are for a keyboard, which an iPhone has not). `ui.tabs` is a real tab bar. Programs
+are linked against iOS 26, so the system controls and both bars have the Liquid Glass look. A canvas wider than the screen scrolls sideways.
 
 `ui.gpu` runs on OpenGL ES 3.0, which every iPhone has: your shaders keep `#version 330 core`, Kova gives
 them the header iOS wants. Apple has stopped improving OpenGL ES, and still runs it.

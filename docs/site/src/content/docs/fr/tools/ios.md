@@ -36,8 +36,10 @@ le programme affiche.
 Une fenêtre défile quand elle dépasse l'écran, `ui.canvas` dessine avec Core Graphics et entend les
 touchers, les dialogues sont des alertes et le son passe par `AVAudioPlayer`.
 
-Les menus sont une rangée de boutons au-dessus de la fenêtre, chacun ouvrant ses éléments (les
-raccourcis sont pour un clavier, qu'un iPhone n'a pas). Un canvas plus large que l'écran défile sur
+La fenêtre est dans une barre de navigation : son titre est celui de la fenêtre, et chaque menu est un
+bouton de la barre qui ouvre ses éléments (les raccourcis sont pour un clavier, qu'un iPhone n'a pas).
+`ui.tabs` est une vraie tab bar. Les programmes sont liés à iOS 26 : les contrôles du système et les deux
+barres ont l'aspect Liquid Glass. Un canvas plus large que l'écran défile sur
 le côté.
 
 `ui.gpu` tourne sur OpenGL ES 3.0, que tous les iPhone ont : tes shaders gardent `#version 330 core`,
