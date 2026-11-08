@@ -27,8 +27,8 @@ fn view(app: App) -> ui.View {
             Event.Hello
         )]),
         ui.text(app.said),
-        ui.text("2. Do you see the picture below?"),
-        ui.image("counter.png").size(64),
+        ui.text("2. Do you see two squares below (small and big)?"),
+        ui.row([ui.image("counter.png"), ui.image("counter.png").size(64)]),
         ui.row([
             ui.button("I see it", Event.SeeImage),
             ui.button("I do not see it", Event.NoImage),
