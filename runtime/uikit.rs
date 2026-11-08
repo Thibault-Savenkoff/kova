@@ -124,7 +124,13 @@ extern "C" fn context_for(_me: Id, _message: Id, interaction: Id, _x: f64, _y: f
         })
         .collect();
     let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
-    *PROVIDED.get() = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(""), array);
+    // UIKit asks for the menu later, after this call's autorelease pool is emptied: keep it, let go of the last one.
+    let menu = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(""), array);
+    kit.send(menu, "retain");
+    let old = core::mem::replace(PROVIDED.get(), menu);
+    if !old.is_null() {
+        kit.send(old, "release");
+    }
     msg!(kit, extern "C" fn(Id, Id, Id, Id, Id) -> Id)(
         kit.class("UIContextMenuConfiguration"),
         kit.sel("configurationWithIdentifier:previewProvider:actionProvider:"),
@@ -678,6 +684,8 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
         UiNode::Context(inner, items) => {
             let view = build(kit, target, inner, made_views);
             let interaction = (kit.send_two)(kit.send(kit.class("UIContextMenuInteraction"), "alloc"), kit.sel("initWithDelegate:"), target);
+            // A label ignores touches until it is told not to.
+            (kit.send_id)(view, kit.sel("setUserInteractionEnabled:"), 1);
             (kit.send_two)(view, kit.sel("addInteraction:"), interaction);
             CONTEXTS.get().push((view, items.clone()));
             return view;
