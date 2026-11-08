@@ -187,6 +187,12 @@
     "vscode-languageclient": "^10.1.2"
   },
   "overrides": {
-    "@azure/msal-node": "^7.1.1"
+    "@azure/msal-node": "^7.1.1",
+    "@vscode/vsce": {
+      "minimatch": "^11.0.1"
+    },
+    "vscode-languageclient": {
+      "minimatch": "^11.0.1"
+    }
   }
 }
