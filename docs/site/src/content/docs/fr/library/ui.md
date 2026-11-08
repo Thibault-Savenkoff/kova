@@ -50,6 +50,28 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | n'importe quelle couleur, chaque composante allant de 0 à 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | des couleurs toutes prêtes. |
 
+## Une vue native dans une fenêtre `ui`
+
+Sur un iPhone ou un iPad, une vue faite avec [`import ios`](/fr/library/ios/) peut se placer dans une fenêtre
+`ui`, entre les textes et les boutons que le système dessine pour toi :
+
+```kova
+import ui
+import ios
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Compte : {app.count}"),
+        ui.native(app.swatch, 200, 80),
+        ui.button("Ajouter", Event.Add),
+    ])
+}
+```
+
+`ui.native(view, width, height)` prend le numéro de la vue (`swatch.object.id`, gardé dans l'état) et la taille
+qu'elle reçoit, en points. La vue garde tout ce que tu lui as réglé, et une fenêtre reconstruite la remet à sa
+place. Ailleurs que sur un iPhone ou un iPad, elle ne montre rien : le même programme tourne partout.
+
 ## Les fenêtres de dialogue
 
 Chacune attend l'utilisateur, et se place dans `update`.

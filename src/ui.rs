@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 56] = [
+const OWN: [&str; 57] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
+    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate", "native",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -402,6 +402,15 @@ fn stepper(value: Int, least: Int, most: Int, changed: {Int -> EVENT}) -> View
 // Something is going on and takes a while: a turning wheel on an iPhone, `…` elsewhere.
 fn spinner -> View {
     return View { text := "Z0:", events := [], typed := [] }
+}
+
+// A view you made yourself with `import ios` (its `.object.id`), put in the window at a fixed size in points. On
+// a system other than an iPhone or iPad there is nothing to show: an empty text takes its place.
+fn native(view: Int, width: Int, height: Int) -> View
+    require width > 0 && height > 0 else "a native view has a size"
+{
+    let body: String := "{view} {width} {height}"
+    return View { text := "F{body.length}:{body}", events := [], typed := [] }
 }
 
 // A bar `value` of the way to `most` (past either end, the bar stops there); on a system with no such bar, a line of blocks and a percentage.

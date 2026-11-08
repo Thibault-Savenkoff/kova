@@ -827,6 +827,22 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             hears(kit, target, s, *n, "stepped:", 4096);
             s
         }
+        UiNode::Native(id, width, height) => {
+            // A box of the asked size, with the view pinned inside: the view may sit in only one place, so each
+            // build makes a new box and takes it over, and the view keeps its own constraints.
+            let (inner, by) = (*id as Id, msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
+            let boxed = made(kit, "UIView");
+            (kit.send_id)(boxed, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            (kit.send_id)(inner, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            (kit.send_two)(boxed, kit.sel("addSubview:"), inner);
+            for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
+                (kit.send_id)(by(kit.send(inner, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(boxed, edge), 0.0), kit.sel("setActive:"), 1);
+            }
+            for (anchor, length) in [("widthAnchor", *width), ("heightAnchor", *height)] {
+                (kit.send_id)((kit.send_float)(kit.send(boxed, anchor), kit.sel("constraintEqualToConstant:"), length as f64), kit.sel("setActive:"), 1);
+            }
+            boxed
+        }
         UiNode::Spinner => {
             let wheel = (kit.send_id)(kit.send(kit.class("UIActivityIndicatorView"), "alloc"), kit.sel("initWithActivityIndicatorStyle:"), 100);
             kit.send(wheel, "startAnimating");

@@ -50,6 +50,28 @@ lists what `ui` has.
 | `ui.rgb(r: Int, g: Int, b: Int) -> ui.Color` | any color, each part from 0 to 255. |
 | `ui.red`, `ui.green`, `ui.blue`, `ui.orange`, `ui.yellow`, `ui.purple`, `ui.gray`, `ui.black`, `ui.white` | ready-made colors. |
 
+## A native view in a `ui` window
+
+On an iPhone or iPad, a view you made with [`import ios`](/library/ios/) can sit inside a `ui` window, between
+the texts and the buttons the system draws for you:
+
+```kova
+import ui
+import ios
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Count: {app.count}"),
+        ui.native(app.swatch, 200, 80),
+        ui.button("Add", Event.Add),
+    ])
+}
+```
+
+`ui.native(view, width, height)` takes the view's number (`swatch.object.id`, kept in the state) and the size it
+gets, in points. The view keeps whatever you set on it, and a rebuilt window puts it back where it was. Anywhere
+but on an iPhone or iPad it shows nothing, so the same program runs everywhere.
+
 ## Dialogs
 
 Each one waits for the user, and belongs in `update`.

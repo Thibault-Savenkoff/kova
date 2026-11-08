@@ -1,0 +1,22 @@
+// `ui.native(view, width, height)`: a view made with `import ios`, put in the window. Anywhere else than an iPhone
+// or an iPad it shows nothing (an empty text), so one program runs everywhere.
+import ui
+
+struct App {
+    count: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Count: {app.count}"),
+        ui.native(1234, 200, 100),
+    ])
+}
+
+fn update(app: var App, e: Int) {
+}
+
+fn main {
+    ui.run("Native", App { count := 0 }, view, update)
+}
+// expect: [Native] column(text "Count: 0", text "")

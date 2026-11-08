@@ -925,6 +925,9 @@ pub enum UiNode {
     /// `ui.search` on iOS: a search field, its text and its number among the fields.
     #[cfg(ios)]
     Search(String, usize),
+    /// `ui.native` on iOS: the address of a view the program made, its width and its height.
+    #[cfg(ios)]
+    Native(i64, i32, i32),
     /// `view.context(items)` on iOS: a view and the menu that opens when it is pressed and held (label, button number).
     Context(alloc::boxed::Box<UiNode>, Vec<(String, usize)>),
 }
@@ -1718,6 +1721,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         #[cfg(ios)]
         UiNode::Spinner => "Z".into(),
         #[cfg(ios)]
+        UiNode::Native(id, w, h) => format!("F{id}:{w}:{h}"),
+        #[cfg(ios)]
         UiNode::Search(..) => "Q".into(),
         UiNode::Context(inner, items) => format!("J{items:?}({})", ui_shape(inner)),
         UiNode::Styled(_, inner) => ui_shape(inner),
@@ -1817,7 +1822,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V' | 'U' | 'Z' | 'Q') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V' | 'U' | 'Z' | 'Q' | 'F') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1860,6 +1865,22 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                     let headers = if headed && !rows.is_empty() { rows.remove(0) } else { Vec::new() };
                     UiNode::Table(UiTable { headers, rows, selected: at(0), number })
                 }
+            }
+        }
+        'F' => {
+            let body: String = chars.by_ref().take(n).collect();
+            #[cfg(ios)]
+            {
+                let mut numbers = body.split(' ');
+                let id = numbers.next().and_then(|w| w.parse().ok()).unwrap_or(0);
+                let mut size = || numbers.next().and_then(|w| w.parse().ok()).unwrap_or(1);
+                let (width, height) = (size(), size());
+                return UiNode::Native(id, width, height);
+            }
+            #[cfg(not(ios))]
+            {
+                let _ = body;
+                UiNode::Text(String::new())
             }
         }
         'Z' => {
@@ -1958,6 +1979,8 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Stepper(v, min, max, _) => out.push_str(&format!("slider {v} of {min} to {max}")),
             #[cfg(ios)]
             UiNode::Spinner => out.push_str("text \"…\""),
+            #[cfg(ios)]
+            UiNode::Native(id, w, h) => out.push_str(&format!("native {id} {w}x{h}")),
             #[cfg(ios)]
             UiNode::Search(t, _) => out.push_str(&format!("input {t:?}")),
             UiNode::Context(inner, items) => {
