@@ -57,6 +57,9 @@ program prints. Run it from a Terminal on the Mac: the first time, macOS asks to
 your key (choose Always Allow). Without `--run`, you get the signed `counter.app` and install it
 yourself.
 
+The iPhone may be on the same Wi-Fi instead of on a cable: in Xcode, Window → Devices and
+Simulators, select it once and tick Connect via network.
+
 ### On any computer
 
 Kova signs by itself with a profile and an identity file, on Linux, Windows or Mac. What Apple needs,

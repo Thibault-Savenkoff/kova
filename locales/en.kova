@@ -732,6 +732,6 @@ lang en {
     sign_xcode := "Xcode refused: {detail}"
     sign_no_identity := "the keychain holds no signing certificate listed in the profile: make one in Xcode (Settings > Accounts > Manage Certificates)"
     sign_codesign := "codesign failed: {detail} (run kova from a Terminal on the Mac, and allow access to the key when asked)"
-    ios_no_device := "no iPhone is connected: plug it in, unlock it, and try again"
+    ios_no_device := "no iPhone found: plug it in, or turn on Window > Devices and Simulators > Connect via network in Xcode, unlock it, and try again"
     ios_failed := "{what} failed: {detail}"
 }

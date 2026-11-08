@@ -58,6 +58,9 @@ programme affiche. Lance-le depuis un Terminal sur le Mac : la première fois, m
 `codesign` peut utiliser ta clé (choisis Toujours autoriser). Sans `--run`, tu obtiens
 `compteur.app` signée et tu l'installes toi-même.
 
+L'iPhone peut aussi être sur le même Wi-Fi plutôt que sur un câble : dans Xcode, Window → Devices
+and Simulators, sélectionne-le une fois et coche Connect via network.
+
 ### Sur n'importe quel ordinateur
 
 Kova signe tout seul avec un profil et un fichier d'identité, sous Linux, Windows ou Mac. Ce que

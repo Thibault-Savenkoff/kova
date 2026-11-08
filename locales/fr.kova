@@ -732,6 +732,6 @@ lang fr {
     sign_xcode := "Xcode a refusé : {detail}"
     sign_no_identity := "le trousseau n'a aucun certificat de signature listé dans le profil : fais-en un dans Xcode (Réglages > Comptes > Gérer les certificats)"
     sign_codesign := "codesign a échoué : {detail} (lance kova depuis un Terminal sur le Mac, et autorise l'accès à la clé quand on te le demande)"
-    ios_no_device := "aucun iPhone n'est connecté : branche-le, déverrouille-le et réessaie"
+    ios_no_device := "aucun iPhone trouvé : branche-le, ou active Window > Devices and Simulators > Connect via network dans Xcode, déverrouille-le et réessaie"
     ios_failed := "{what} a échoué : {detail}"
 }

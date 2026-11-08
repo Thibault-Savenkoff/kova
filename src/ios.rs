@@ -74,9 +74,12 @@ pub fn run(app: &str, id: &str, device: bool) -> Result<i32, String> {
         check(Command::new("xcrun").args(["devicectl", "list", "devices", "--json-output"]).arg(&list), "devicectl")?;
         let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&list).map_err(|e| failed("devicectl", e.to_string()))?).map_err(|e| failed("devicectl", e.to_string()))?;
         let _ = std::fs::remove_file(&list);
-        let phone = json["result"]["devices"]
-            .as_array()
-            .and_then(|all| all.iter().find(|d| d["hardwareProperties"]["reality"] == "physical" && d["connectionProperties"]["tunnelState"] == "connected"))
+        // A cable first; else an iPhone paired for the Wi-Fi (`localNetwork`), which devicectl wakes.
+        let physical: Vec<&serde_json::Value> = json["result"]["devices"].as_array().into_iter().flatten().filter(|d| d["hardwareProperties"]["reality"] == "physical").collect();
+        let phone = physical
+            .iter()
+            .find(|d| d["connectionProperties"]["tunnelState"] == "connected")
+            .or_else(|| physical.iter().find(|d| d["connectionProperties"]["transportType"] == "localNetwork"))
             .and_then(|d| d["identifier"].as_str().map(str::to_string))
             .ok_or_else(|| t!("ios_no_device"))?;
         check(Command::new("xcrun").args(["devicectl", "device", "install", "app", "--device", &phone, app]), "install")?;
