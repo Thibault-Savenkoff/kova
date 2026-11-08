@@ -910,6 +910,12 @@ pub enum UiNode {
     /// `ui.tabs` on iOS: a native tab bar. The tab in use is a text, each other a button.
     #[cfg(ios)]
     Tabs(Vec<UiNode>),
+    /// `ui.date` on iOS: a date picker (`2026-11-08`) and its number among the fields.
+    #[cfg(ios)]
+    Date(String, usize),
+    /// `ui.progress` on iOS: a bar, the value and the total.
+    #[cfg(ios)]
+    Progress(i32, i32),
 }
 
 /// `ui.list` (no headers, one column) and `ui.table`.
@@ -1686,6 +1692,10 @@ pub fn ui_shape(node: &UiNode) -> String {
         // The names and the tab in use: a tab bar is made again when they change.
         #[cfg(ios)]
         UiNode::Tabs(parts) => format!("H{:?}", parts.iter().map(|p| match p { UiNode::Text(t) => format!("*{t}"), UiNode::Button(t, n) => format!("{n}{t}"), _ => String::new() }).collect::<Vec<_>>()),
+        #[cfg(ios)]
+        UiNode::Date(..) => "N".into(),
+        #[cfg(ios)]
+        UiNode::Progress(_, most) => format!("V{most}"),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
@@ -1781,7 +1791,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1799,7 +1809,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             counts[2] += 1;
             UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), number: counts[2] - 1, ops: ui_ops(ops), ..UiCanvas::default() })
         }
-        'X' | 'W' | 'O' | 'G' => {
+        'X' | 'W' | 'O' | 'G' | 'N' => {
             let body: String = chars.by_ref().take(n).collect();
             counts[1] += 1;
             let number = counts[1] - 1;
@@ -1809,6 +1819,9 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             let lines: Vec<String> = rest.split('\n').map(String::from).collect();
             match kind {
                 'X' => UiNode::Check(rest.into(), at(0) == 1, number),
+                #[cfg(ios)]
+                'N' => UiNode::Date(body, number),
+                'N' => UiNode::Input(body, number),
                 'W' => UiNode::Slider(at(0), at(1), at(2), number),
                 'O' => UiNode::Choice(if rest.is_empty() { Vec::new() } else { lines }, at(0), number),
                 _ => {
@@ -1819,6 +1832,21 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                     let headers = if headed && !rows.is_empty() { rows.remove(0) } else { Vec::new() };
                     UiNode::Table(UiTable { headers, rows, selected: at(0), number })
                 }
+            }
+        }
+        'V' => {
+            let body: String = chars.by_ref().take(n).collect();
+            let mut numbers = body.split(' ').map(|w| w.parse::<i32>().unwrap_or(0));
+            let (value, most) = (numbers.next().unwrap_or(0), numbers.next().unwrap_or(1).max(1));
+            #[cfg(ios)]
+            return UiNode::Progress(value, most);
+            // No such bar: a line of blocks, as wide as the total up to 20.
+            #[cfg(not(ios))]
+            {
+                let cells = most.min(20);
+                let full = (value as i64 * cells as i64 / most as i64) as usize;
+                let bar: String = (0..cells as usize).map(|k| if k < full { '▰' } else { '▱' }).collect();
+                UiNode::Text(format!("{bar} {}%", value as i64 * 100 / most as i64))
             }
         }
         'T' | 'B' | 'I' | 'P' => {
@@ -1877,6 +1905,10 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
             #[cfg(ios)]
             UiNode::Tabs(parts) => group("row center", parts, out),
+            #[cfg(ios)]
+            UiNode::Date(t, _) => out.push_str(&format!("input {t:?}")),
+            #[cfg(ios)]
+            UiNode::Progress(v, most) => out.push_str(&format!("progress {v} of {most}")),
             UiNode::Image(path, 0) => out.push_str(&format!("image {path:?}")),
             UiNode::Image(path, width) => out.push_str(&format!("image {path:?} size({width})")),
             UiNode::Styled(style, leaf) => {

@@ -145,6 +145,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("chosen:"), chosen as usize, action);
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
+        add(class, kit.sel("dated:"), dated as usize, action);
         add(class, kit.sel("tabBar:didSelectItem:"), tab_chosen as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
         register(class);
@@ -204,6 +205,22 @@ fn screen() -> &'static Screen {
 fn tag_of(sender: Id) -> usize {
     let kit = &screen().kit;
     (kit.send_int)(sender, kit.sel("tag")) as usize
+}
+
+/// `yyyy-MM-dd`, as the date pickers and `ui.date` write dates.
+fn date_formatter(kit: &Kit) -> Id {
+    let f = kit.send(kit.send(kit.class("NSDateFormatter"), "alloc"), "init");
+    (kit.send_two)(f, kit.sel("setDateFormat:"), kit.text("yyyy-MM-dd"));
+    f
+}
+
+fn picked_date(kit: &Kit, picker: Id) -> String {
+    text_of(kit, (kit.send_two)(date_formatter(kit), kit.sel("stringFromDate:"), kit.send(picker, "date")))
+}
+
+extern "C" fn dated(_me: Id, _message: Id, picker: Id) {
+    let kit = &screen().kit;
+    hear(crate::shared::ui_changed(tag_of(picker)), picked_date(kit, picker));
 }
 
 /// A tab of a tab bar was chosen: its tag is the number of its button.
@@ -451,6 +468,26 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             made_views.push((switch, label));
             return stack;
         }
+        UiNode::Date(text, n) => {
+            let picker = made(kit, "UIDatePicker");
+            // UIDatePickerMode date = 1, UIDatePickerStyle compact = 2.
+            (kit.send_id)(picker, kit.sel("setDatePickerMode:"), 1);
+            (kit.send_id)(picker, kit.sel("setPreferredDatePickerStyle:"), 2);
+            let date = (kit.send_two)(date_formatter(kit), kit.sel("dateFromString:"), kit.text(text));
+            if !date.is_null() {
+                (kit.send_two)(picker, kit.sel("setDate:"), date);
+            }
+            hears(kit, target, picker, *n, "dated:", 4096);
+            picker
+        }
+        UiNode::Progress(v, most) => {
+            let bar = (kit.send_id)(kit.class("UIProgressView"), kit.sel("alloc"), 0);
+            let bar = (kit.send_id)(bar, kit.sel("initWithProgressViewStyle:"), 0);
+            (kit.send_id)(bar, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            msg!(kit, extern "C" fn(Id, Id, f32) -> Id)(bar, kit.sel("setProgress:"), *v as f32 / *most as f32);
+            at_least(kit, bar, 200.0);
+            bar
+        }
         UiNode::Slider(v, min, max, n) => {
             let s = made(kit, "UISlider");
             let set = msg!(kit, extern "C" fn(Id, Id, f32) -> Id);
@@ -615,6 +652,17 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
             if (now + if now < 0.0 { -0.5 } else { 0.5 }) as i64 != *value as i64 {
                 msg!(kit, extern "C" fn(Id, Id, f32) -> Id)(v, kit.sel("setValue:"), *value as f32);
             }
+        }
+        UiNode::Date(text, _) => {
+            if picked_date(kit, v) != *text {
+                let date = (kit.send_two)(date_formatter(kit), kit.sel("dateFromString:"), kit.text(text));
+                if !date.is_null() {
+                    (kit.send_two)(v, kit.sel("setDate:"), date);
+                }
+            }
+        }
+        UiNode::Progress(value, most) => {
+            msg!(kit, extern "C" fn(Id, Id, f32) -> Id)(v, kit.sel("setProgress:"), *value as f32 / *most as f32);
         }
         UiNode::Choice(_, k, _) => {
             (kit.send_id)(v, kit.sel("setSelectedSegmentIndex:"), *k as i64);

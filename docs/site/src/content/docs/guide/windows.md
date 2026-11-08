@@ -237,6 +237,11 @@ widgets together, simply by what `update` does.
 text of the line: two lines may read the same, and a position stays right when the texts are
 translated. `ui.list` and `ui.table` take `-1` for "nothing selected".
 
+`ui.date(app.day) { d: Date => Event.Day(d) }` is a date picker: a native one on an iPhone, a text field
+holding `2026-11-08` everywhere else (a text that is not a date changes nothing). `ui.progress(done, total)`
+is a bar that is `done` of the way to `total`; where the system has no such bar it is a line of blocks and
+a percentage.
+
 `ui.tabs` is only the row of tabs. Which page shows under it is yours to write, and that is one `if`
 in `view`:
 

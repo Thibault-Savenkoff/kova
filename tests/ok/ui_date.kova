@@ -1,0 +1,40 @@
+// `ui.date` is a date picker (a text field `2026-11-08` where there is none) and `ui.progress` a bar (a line of
+// blocks where there is none); a text that is not a date changes nothing.
+import ui
+
+struct App {
+    day: Date
+    done: Int
+}
+
+enum Event {
+    Day(day: Date)
+    More
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Day: {app.day}"),
+        ui.date(app.day) { d: Date => Event.Day(d) },
+        ui.progress(app.done, 10),
+        ui.button("More", Event.More),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Day(d) => app.day := d
+        .More => app.done := app.done + 3
+    }
+}
+
+fn main {
+    ui.run("Dates", App { day := Date.year(2026) month(11) day(8), done := 3 }, view, update)
+}
+// stdin: 0
+// stdin: 0=2027-01-02
+// stdin: 0=nope
+// expect: [Dates] column(text "Day: 2026-11-08", input "2026-11-08", text "▰▰▰▱▱▱▱▱▱▱ 30%", button "More")
+// expect: [Dates] column(text "Day: 2026-11-08", input "2026-11-08", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")
+// expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")
+// expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")

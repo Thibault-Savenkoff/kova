@@ -242,6 +242,11 @@ deux widgets, simplement par ce que fait `update`.
 pas avec le texte de la ligne : deux lignes peuvent se lire pareil, et une position reste juste quand
 les textes sont traduits. `ui.list` et `ui.table` prennent `-1` pour « rien de sélectionné ».
 
+`ui.date(app.day) { d: Date => Event.Day(d) }` est un sélecteur de date : natif sur un iPhone, un champ de
+texte contenant `2026-11-08` ailleurs (un texte qui n'est pas une date ne change rien).
+`ui.progress(fait, total)` est une barre remplie à `fait` sur `total` ; sans barre native, c'est une ligne
+de blocs et un pourcentage.
+
 `ui.tabs` n'est que la rangée d'onglets. La page montrée dessous, c'est à toi de l'écrire, et cela
 tient en un `if` dans `view` :
 

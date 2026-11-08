@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 51] = [
+const OWN: [&str; 53] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
+    "checkbox", "slider", "date", "progress", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -355,6 +355,23 @@ fn slider(value: Int, least: Int, most: Int, changed: {Int -> EVENT}) -> View
         none => none
         v => if v >= least && v <= most { changed(v) } else { none }
     })
+}
+
+// A date picker. Everywhere but on an iPhone it is a text field holding `2026-11-08`: a text that is
+// not a date changes nothing.
+fn date(value: Date, changed: {Date -> EVENT}) -> View {
+    return leaf("N", "{value}", match ui.typed.to_date {
+        none => none
+        d => changed(d)
+    })
+}
+
+// A bar `value` of the way to `most`; on a system with no such bar, a line of blocks and a percentage.
+fn progress(value: Int, most: Int) -> View
+    require most > 0 && value >= 0 && value <= most else "a progress bar goes from 0 to a positive total"
+{
+    let body: String := "{value} {most}"
+    return View { text := "V{body.length}:{body}", events := [], typed := [] }
 }
 
 fn choice(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
