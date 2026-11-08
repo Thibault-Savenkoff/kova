@@ -916,6 +916,12 @@ pub enum UiNode {
     /// `ui.progress` on iOS: a bar, the value and the total.
     #[cfg(ios)]
     Progress(i32, i32),
+    /// `ui.stepper` on iOS: the value, its limits, its number among the fields.
+    #[cfg(ios)]
+    Stepper(i32, i32, i32, usize),
+    /// `ui.spinner` on iOS: an activity indicator.
+    #[cfg(ios)]
+    Spinner,
 }
 
 /// `ui.list` (no headers, one column) and `ui.table`.
@@ -1696,6 +1702,10 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Date(..) => "N".into(),
         #[cfg(ios)]
         UiNode::Progress(_, most) => format!("V{most}"),
+        #[cfg(ios)]
+        UiNode::Stepper(_, min, max, _) => format!("U{min}:{max}"),
+        #[cfg(ios)]
+        UiNode::Spinner => "Z".into(),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
@@ -1791,7 +1801,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V' | 'U' | 'Z') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1809,7 +1819,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             counts[2] += 1;
             UiNode::Canvas(UiCanvas { width: width.parse().unwrap_or(1), height: height.parse().unwrap_or(1), number: counts[2] - 1, ops: ui_ops(ops), ..UiCanvas::default() })
         }
-        'X' | 'W' | 'O' | 'G' | 'N' => {
+        'X' | 'W' | 'O' | 'G' | 'N' | 'U' => {
             let body: String = chars.by_ref().take(n).collect();
             counts[1] += 1;
             let number = counts[1] - 1;
@@ -1822,7 +1832,9 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                 #[cfg(ios)]
                 'N' => UiNode::Date(body, number),
                 'N' => UiNode::Input(body, number),
-                'W' => UiNode::Slider(at(0), at(1), at(2), number),
+                #[cfg(ios)]
+                'U' => UiNode::Stepper(at(0), at(1), at(2), number),
+                'W' | 'U' => UiNode::Slider(at(0), at(1), at(2), number),
                 'O' => UiNode::Choice(if rest.is_empty() { Vec::new() } else { lines }, at(0), number),
                 _ => {
                     // The selection, the columns, whether the first line is the headers, the lines.
@@ -1833,6 +1845,13 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                     UiNode::Table(UiTable { headers, rows, selected: at(0), number })
                 }
             }
+        }
+        'Z' => {
+            let _: String = chars.by_ref().take(n).collect();
+            #[cfg(ios)]
+            return UiNode::Spinner;
+            #[cfg(not(ios))]
+            UiNode::Text("…".into())
         }
         'V' => {
             let body: String = chars.by_ref().take(n).collect();
@@ -1909,6 +1928,10 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Date(t, _) => out.push_str(&format!("input {t:?}")),
             #[cfg(ios)]
             UiNode::Progress(v, most) => out.push_str(&format!("progress {v} of {most}")),
+            #[cfg(ios)]
+            UiNode::Stepper(v, min, max, _) => out.push_str(&format!("slider {v} of {min} to {max}")),
+            #[cfg(ios)]
+            UiNode::Spinner => out.push_str("text \"…\""),
             UiNode::Image(path, 0) => out.push_str(&format!("image {path:?}")),
             UiNode::Image(path, width) => out.push_str(&format!("image {path:?} size({width})")),
             UiNode::Styled(style, leaf) => {

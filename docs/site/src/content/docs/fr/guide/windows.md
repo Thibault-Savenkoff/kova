@@ -247,6 +247,10 @@ texte contenant `2026-11-08` ailleurs (un texte qui n'est pas une date ne change
 `ui.progress(fait, total)` est une barre remplie à `fait` sur `total` ; sans barre native, c'est une ligne
 de blocs et un pourcentage.
 
+`ui.stepper(app.count, 0, 5, .Count)` est un bouton plus et un bouton moins autour d'une valeur (un curseur
+là où le système n'en a pas), et `ui.spinner` une roue qui tourne pour ce qui prend du temps (`…` là où le
+système n'en a pas).
+
 `ui.tabs` n'est que la rangée d'onglets. La page montrée dessous, c'est à toi de l'écrire, et cela
 tient en un `if` dans `view` :
 

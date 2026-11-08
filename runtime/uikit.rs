@@ -146,6 +146,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
         add(class, kit.sel("dated:"), dated as usize, action);
+        add(class, kit.sel("stepped:"), stepped as usize, action);
         add(class, kit.sel("tabBar:didSelectItem:"), tab_chosen as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
         register(class);
@@ -216,6 +217,12 @@ fn date_formatter(kit: &Kit) -> Id {
 
 fn picked_date(kit: &Kit, picker: Id) -> String {
     text_of(kit, (kit.send_two)(date_formatter(kit), kit.sel("stringFromDate:"), kit.send(picker, "date")))
+}
+
+extern "C" fn stepped(_me: Id, _message: Id, sender: Id) {
+    let kit = &screen().kit;
+    let value = msg!(kit, extern "C" fn(Id, Id) -> f64)(sender, kit.sel("value"));
+    hear(crate::shared::ui_changed(tag_of(sender)), alloc::format!("{}", value as i64));
 }
 
 extern "C" fn dated(_me: Id, _message: Id, picker: Id) {
@@ -480,6 +487,20 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             hears(kit, target, picker, *n, "dated:", 4096);
             picker
         }
+        UiNode::Stepper(v, min, max, n) => {
+            let s = made(kit, "UIStepper");
+            let set = msg!(kit, extern "C" fn(Id, Id, f64) -> Id);
+            set(s, kit.sel("setMinimumValue:"), *min as f64);
+            set(s, kit.sel("setMaximumValue:"), *max as f64);
+            set(s, kit.sel("setValue:"), *v as f64);
+            hears(kit, target, s, *n, "stepped:", 4096);
+            s
+        }
+        UiNode::Spinner => {
+            let wheel = (kit.send_id)(kit.send(kit.class("UIActivityIndicatorView"), "alloc"), kit.sel("initWithActivityIndicatorStyle:"), 100);
+            kit.send(wheel, "startAnimating");
+            wheel
+        }
         UiNode::Progress(v, most) => {
             let bar = (kit.send_id)(kit.class("UIProgressView"), kit.sel("alloc"), 0);
             let bar = (kit.send_id)(bar, kit.sel("initWithProgressViewStyle:"), 0);
@@ -659,6 +680,12 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
                 if !date.is_null() {
                     (kit.send_two)(v, kit.sel("setDate:"), date);
                 }
+            }
+        }
+        UiNode::Stepper(value, ..) => {
+            let now = msg!(kit, extern "C" fn(Id, Id) -> f64)(v, kit.sel("value"));
+            if now as i64 != *value as i64 {
+                msg!(kit, extern "C" fn(Id, Id, f64) -> Id)(v, kit.sel("setValue:"), *value as f64);
             }
         }
         UiNode::Progress(value, most) => {

@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 53] = [
+const OWN: [&str; 55] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "date", "progress", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
+    "checkbox", "slider", "date", "progress", "stepper", "spinner", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -364,6 +364,21 @@ fn date(value: Date, changed: {Date -> EVENT}) -> View {
         none => none
         d => changed(d)
     })
+}
+
+// Plus and minus buttons around a value. Everywhere but on an iPhone it is a slider.
+fn stepper(value: Int, least: Int, most: Int, changed: {Int -> EVENT}) -> View
+    require least < most else "a stepper goes from a value to a larger one"
+{
+    return leaf("U", "{value} {least} {most}", match ui.typed.to_int {
+        none => none
+        v => if v >= least && v <= most { changed(v) } else { none }
+    })
+}
+
+// Something is going on and takes a while: a turning wheel on an iPhone, `…` elsewhere.
+fn spinner -> View {
+    return View { text := "Z0:", events := [], typed := [] }
 }
 
 // A bar `value` of the way to `most`; on a system with no such bar, a line of blocks and a percentage.

@@ -1,0 +1,34 @@
+// `ui.stepper` is plus and minus buttons around a value (a slider where there are none), `ui.spinner` a turning
+// wheel (`…` where there is none); a value out of range changes nothing.
+import ui
+
+enum Event {
+    Count(n: Int)
+}
+
+struct App {
+    count: Int
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("Count: {app.count}"),
+        ui.stepper(app.count, 0, 5, .Count),
+        ui.spinner,
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Count(n) => app.count := n
+    }
+}
+
+fn main {
+    ui.run("Stepper", App { count := 2 }, view, update)
+}
+// stdin: 0=4
+// stdin: 0=9
+// expect: [Stepper] column(text "Count: 2", slider 2 of 0 to 5, text "…")
+// expect: [Stepper] column(text "Count: 4", slider 4 of 0 to 5, text "…")
+// expect: [Stepper] column(text "Count: 4", slider 4 of 0 to 5, text "…")

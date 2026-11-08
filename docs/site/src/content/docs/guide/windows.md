@@ -242,6 +242,9 @@ holding `2026-11-08` everywhere else (a text that is not a date changes nothing)
 is a bar that is `done` of the way to `total`; where the system has no such bar it is a line of blocks and
 a percentage.
 
+`ui.stepper(app.count, 0, 5, .Count)` is plus and minus buttons around a value (a slider where the system
+has none), and `ui.spinner` a turning wheel for something that takes a while (`…` where the system has none).
+
 `ui.tabs` is only the row of tabs. Which page shows under it is yours to write, and that is one `if`
 in `view`:
 
