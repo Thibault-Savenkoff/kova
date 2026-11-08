@@ -165,6 +165,251 @@ fn wait -> Int {
     }
 }
 
+// ---- Typed wrappers: the usual views, with methods you can read ----
+// `View`, `Label`, `Button`, `TextField` and `Switch` each hold the native object they stand for (`.object`), so
+// anything these methods do not cover is still one `send` away. A made view stays alive until you `release` it.
+
+// A color: `ios.Color.rgb(0.2, 0.4, 1.0)` or one of the system's own, `ios.Color.blue`.
+struct Color {
+public:
+    object: Object
+
+    // Each part from 0.0 to 1.0.
+    fn rgb(r: Float, g: Float, b: Float) -> Color {
+        return Color { object := get("UIColor").send("colorWithRed:green:blue:alpha:", [decimal(r), decimal(g), decimal(b), decimal(1.0)]).object }
+    }
+
+    fn blue -> Color {
+        return Color { object := get("UIColor").child("systemBlueColor") }
+    }
+
+    fn red -> Color {
+        return Color { object := get("UIColor").child("systemRedColor") }
+    }
+
+    fn green -> Color {
+        return Color { object := get("UIColor").child("systemGreenColor") }
+    }
+
+    fn gray -> Color {
+        return Color { object := get("UIColor").child("systemGrayColor") }
+    }
+
+    fn white -> Color {
+        return Color { object := get("UIColor").child("whiteColor") }
+    }
+
+    fn black -> Color {
+        return Color { object := get("UIColor").child("blackColor") }
+    }
+
+    fn clear -> Color {
+        return Color { object := get("UIColor").child("clearColor") }
+    }
+}
+
+// A rectangle on the screen: anything you see is one.
+struct View {
+public:
+    object: Object
+
+    fn new -> View {
+        return View { object := get("UIView").child("new") }
+    }
+
+    // Where it is and how big, in points, from the top left of the view that holds it.
+    fn set_frame(self, x: Float, y: Float, width: Float, height: Float) {
+        self.object.send("setFrame:", [rect(x, y, width, height)])
+    }
+
+    fn set_background(self, color: Color) {
+        self.object.send("setBackgroundColor:", [color.object.value])
+    }
+
+    // From 0.0 (invisible) to 1.0.
+    fn set_alpha(self, alpha: Float) {
+        self.object.send("setAlpha:", [decimal(alpha)])
+    }
+
+    fn set_hidden(self, hidden: Bool) {
+        self.object.send("setHidden:", [flag(hidden)])
+    }
+
+    // Rounds the corners.
+    fn set_corner(self, radius: Float) {
+        let layer: Object := self.object.child("layer")
+        layer.send("setCornerRadius:", [decimal(radius)])
+        layer.send("setMasksToBounds:", [flag(true)])
+    }
+
+    // Puts `other` inside this view.
+    fn add(self, other: View) {
+        self.object.send("addSubview:", [other.object.value])
+    }
+
+    // Takes this view out of the one that holds it.
+    fn remove(self) {
+        self.object.call("removeFromSuperview")
+    }
+
+    fn width(self) -> Float {
+        return self.size_part(2)
+    }
+
+    fn height(self) -> Float {
+        return self.size_part(3)
+    }
+
+    fn size_part(self, at: Int) -> Float {
+        return match self.object.call("bounds") {
+            .Numbers(v) => v[at]
+            _ => 0.0
+        }
+    }
+
+    fn release(self) {
+        self.object.release
+    }
+}
+
+// The screen of the app: add your views to it.
+fn screen -> View {
+    return View { object := root.child("view") }
+}
+
+// A line of text.
+struct Label {
+public:
+    object: Object
+
+    fn new(words: String) -> Label {
+        let o: Object := get("UILabel").child("new")
+        o.send("setText:", [text(words)])
+        return Label { object := o }
+    }
+
+    fn view(self) -> View {
+        return View { object := self.object.clone }
+    }
+
+    fn set_text(self, words: String) {
+        self.object.send("setText:", [text(words)])
+    }
+
+    fn text(self) -> String {
+        return match self.object.call("text") {
+            .Text(t) => t.clone
+            _ => ""
+        }
+    }
+
+    fn set_color(self, color: Color) {
+        self.object.send("setTextColor:", [color.object.value])
+    }
+
+    // The size of the letters, in points.
+    fn set_size(self, points: Float) {
+        self.object.send("setFont:", [get("UIFont").send("systemFontOfSize:", [decimal(points)]).object.value])
+    }
+
+    fn set_centered(self, centered: Bool) {
+        self.object.send("setTextAlignment:", [number(if centered { 1 } else { 0 })])
+    }
+
+    // How many lines it may take (0 = as many as it needs).
+    fn set_lines(self, lines: Int) {
+        self.object.send("setNumberOfLines:", [number(lines)])
+    }
+}
+
+// A button: `button.on_tap(1)`, then `ios.wait` gives 1 when it is touched.
+struct Button {
+public:
+    object: Object
+
+    fn new(title: String) -> Button {
+        let o: Object := get("UIButton").send("buttonWithType:", [number(1)]).object
+        o.send("setTitle:forState:", [text(title), number(0)])
+        return Button { object := o }
+    }
+
+    fn view(self) -> View {
+        return View { object := self.object.clone }
+    }
+
+    fn set_title(self, title: String) {
+        self.object.send("setTitle:forState:", [text(title), number(0)])
+    }
+
+    fn on_tap(self, event: Int) {
+        let tap: Object := handler(event)
+        self.object.send("addTarget:action:forControlEvents:", [tap.value, selector("invoke:"), number(64)])
+    }
+}
+
+// A line the user types in.
+struct TextField {
+public:
+    object: Object
+
+    fn new(hint: String) -> TextField {
+        let o: Object := get("UITextField").child("new")
+        o.send("setPlaceholder:", [text(hint)])
+        o.send("setBorderStyle:", [number(3)])
+        return TextField { object := o }
+    }
+
+    fn view(self) -> View {
+        return View { object := self.object.clone }
+    }
+
+    // What is typed now.
+    fn text(self) -> String {
+        return match self.object.call("text") {
+            .Text(t) => t.clone
+            _ => ""
+        }
+    }
+
+    fn set_text(self, words: String) {
+        self.object.send("setText:", [text(words)])
+    }
+
+    // `ios.wait` gives `event` each time the text changes.
+    fn on_change(self, event: Int) {
+        let tap: Object := handler(event)
+        self.object.send("addTarget:action:forControlEvents:", [tap.value, selector("invoke:"), number(131072)])
+    }
+}
+
+// An on / off switch.
+struct Switch {
+public:
+    object: Object
+
+    fn new -> Switch {
+        return Switch { object := get("UISwitch").child("new") }
+    }
+
+    fn view(self) -> View {
+        return View { object := self.object.clone }
+    }
+
+    fn is_on(self) -> Bool {
+        return self.object.call("isOn").int = 1
+    }
+
+    fn set_on(self, on: Bool) {
+        self.object.send("setOn:", [flag(on)])
+    }
+
+    // `ios.wait` gives `event` each time it is flipped.
+    fn on_change(self, event: Int) {
+        let tap: Object := handler(event)
+        self.object.send("addTarget:action:forControlEvents:", [tap.value, selector("invoke:"), number(4096)])
+    }
+}
+
 // Stops the program with `message`: what a message that cannot be sent is, a mistake in the program.
 fn fail<T>(message: String, never: T) -> T
     require false else "{message}"

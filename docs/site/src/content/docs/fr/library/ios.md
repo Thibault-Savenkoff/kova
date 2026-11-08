@@ -69,6 +69,49 @@ while true {
 }
 ```
 
+## Des vues lisibles
+
+Envoyer des messages par leur sélecteur atteint tout, mais les vues usuelles ont des méthodes qui se lisent.
+Chacune garde l'objet natif qu'elle représente (`.object`) : ce qu'une méthode ne couvre pas reste à un
+`send` près.
+
+```kova
+import ios
+
+fn main {
+    let screen: ios.View := ios.screen
+    screen.set_background(ios.Color.white)
+
+    let title: ios.Label := ios.Label.new("Bonjour")
+    title.set_size(28.0)
+    title.set_color(ios.Color.blue)
+    title.view.set_frame(20.0, 80.0, 300.0, 40.0)
+    screen.add(title.view)
+
+    let button: ios.Button := ios.Button.new("Saluer")
+    button.view.set_frame(20.0, 140.0, 120.0, 44.0)
+    button.on_tap(1)
+    screen.add(button.view)
+
+    while true {
+        if ios.wait = 1 {
+            title.set_text("Touché")
+        }
+    }
+}
+```
+
+| Type | Fabriqué avec | Méthodes |
+|---|---|---|
+| `ios.View` | `ios.View.new`, `ios.screen`, ou `.view` de n'importe quel type ci-dessous | `set_frame(x, y, width, height)`, `set_background(color)`, `set_alpha(a)`, `set_hidden(b)`, `set_corner(radius)`, `add(view)`, `remove`, `width`, `height`, `release` |
+| `ios.Label` | `ios.Label.new(words)` | `set_text`, `text`, `set_color`, `set_size(points)`, `set_centered(b)`, `set_lines(n)`, `view` |
+| `ios.Button` | `ios.Button.new(title)` | `set_title`, `on_tap(n)`, `view` |
+| `ios.TextField` | `ios.TextField.new(hint)` | `text`, `set_text`, `on_change(n)`, `view` |
+| `ios.Switch` | `ios.Switch.new` | `is_on`, `set_on(b)`, `on_change(n)`, `view` |
+| `ios.Color` | `ios.Color.rgb(r, g, b)` (chacun de 0.0 à 1.0), `blue`, `red`, `green`, `gray`, `white`, `black`, `clear` | donné à `set_background`, `set_color` |
+
+`on_tap(n)`, comme `on_change(n)`, fait que `ios.wait` donne `n` à chaque fois que cela arrive.
+
 ## À savoir
 
 - Chaque message est envoyé sur le fil principal, comme UIKit le veut, donc le programme peut aller à son
