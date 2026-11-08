@@ -146,6 +146,8 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
         add(class, kit.sel("dated:"), dated as usize, action);
+        add(class, kit.sel("documentPicker:didPickDocumentsAtURLs:"), picked_file as usize, c"v@:@@".as_ptr() as *const u8);
+        add(class, kit.sel("documentPickerWasCancelled:"), picked_nothing as usize, action);
         add(class, kit.sel("stepped:"), stepped as usize, action);
         add(class, kit.sel("tabBar:didSelectItem:"), tab_chosen as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
@@ -780,8 +782,24 @@ extern "C" fn said_no(_block: Id, _action: Id) {
 }
 
 /// `ui.dialog` on iOS: a message or a question (`kind` 3 and 4); the file dialogs are not there yet.
+/// What the file picker gave back: its path, read by `dialog` once `ANSWER` says 1.
+static PICKED: crate::Global<Option<String>> = crate::Global::new(None);
+
+extern "C" fn picked_file(_me: Id, _message: Id, _picker: Id, urls: Id) {
+    let kit = &screen().kit;
+    let url = (kit.send_id)(urls, kit.sel("objectAtIndex:"), 0);
+    // A file outside the app's folder is only reachable while this is on.
+    kit.send(url, "startAccessingSecurityScopedResource");
+    *PICKED.get() = Some(text_of(kit, kit.send(url, "path")));
+    answered(1);
+}
+
+extern "C" fn picked_nothing(_me: Id, _message: Id, _picker: Id) {
+    answered(0);
+}
+
 pub fn dialog(kind: i64, title: &str, text: &str) -> Option<String> {
-    if kind < 3 || SCREEN.get().is_none() {
+    if SCREEN.get().is_none() {
         return None;
     }
     struct Job<'a> {
@@ -793,6 +811,33 @@ pub fn dialog(kind: i64, title: &str, text: &str) -> Option<String> {
         let job = unsafe { &*(job as *const Job) };
         let screen = screen();
         let kit = &screen.kit;
+        if job.kind < 3 {
+            // The system's file picker: open a file (0), save one (1), open a folder (2).
+            if let Some(types) = library("/System/Library/Frameworks/UniformTypeIdentifiers.framework/UniformTypeIdentifiers") {
+                let _ = types;
+            }
+            let make = msg!(kit, extern "C" fn(Id, Id, Id) -> Id);
+            let one = |name: &str| {
+                let t = make(kit.class("UTType"), kit.sel("typeWithIdentifier:"), kit.text(name));
+                msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), &t, 1)
+            };
+            let alloc = kit.send(kit.class("UIDocumentPickerViewController"), "alloc");
+            let picker = match job.kind {
+                0 => msg!(kit, extern "C" fn(Id, Id, Id, bool) -> Id)(alloc, kit.sel("initForOpeningContentTypes:asCopy:"), one("public.data"), true),
+                2 => (kit.send_two)(alloc, kit.sel("initForOpeningContentTypes:"), one("public.folder")),
+                _ => {
+                    // The picker saves a copy of a file that exists: an empty one, with the name offered.
+                    let folder = kit.send(kit.send(kit.class("NSFileManager"), "defaultManager"), "temporaryDirectory");
+                    let url = (kit.send_two)(folder, kit.sel("URLByAppendingPathComponent:"), kit.text(if job.text.is_empty() { "untitled" } else { job.text }));
+                    msg!(kit, extern "C" fn(Id, Id, Id, bool) -> bool)(kit.send(kit.class("NSData"), "data"), kit.sel("writeToURL:atomically:"), url, false);
+                    let urls = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), &url, 1);
+                    msg!(kit, extern "C" fn(Id, Id, Id, bool) -> Id)(alloc, kit.sel("initForExportingURLs:asCopy:"), urls, true)
+                }
+            };
+            (kit.send_two)(picker, kit.sel("setDelegate:"), screen.target);
+            msg!(kit, extern "C" fn(Id, Id, Id, bool, Id) -> Id)(screen.controller, kit.sel("presentViewController:animated:completion:"), picker, true, core::ptr::null_mut());
+            return;
+        }
         let alert = msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(kit.class("UIAlertController"), kit.sel("alertControllerWithTitle:message:preferredStyle:"), kit.text(job.title), kit.text(job.text), 1);
         let button = msg!(kit, extern "C" fn(Id, Id, Id, i64, Id) -> Id);
         let names: &[(&str, usize, i64)] = if job.kind == 3 { &[("OK", said_yes as usize, 0)] } else { &[("No", said_no as usize, 1), ("Yes", said_yes as usize, 0)] };
@@ -811,6 +856,9 @@ pub fn dialog(kind: i64, title: &str, text: &str) -> Option<String> {
         let seen = ASKED.load(SeqCst);
         let answer = ANSWER.load(SeqCst);
         if answer != i64::MIN {
+            if kind < 3 {
+                return if answer == 1 { PICKED.get().take() } else { None };
+            }
             return (answer == 1).then(|| "yes".into());
         }
         super::wait(&ASKED, seen);

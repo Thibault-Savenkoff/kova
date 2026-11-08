@@ -43,7 +43,7 @@ are linked against iOS 26, so the system controls and both bars have the Liquid 
 `ui.gpu` runs on OpenGL ES 3.0, which every iPhone has: your shaders keep `#version 330 core`, Kova gives
 them the header iOS wants. Apple has stopped improving OpenGL ES, and still runs it.
 
-Not there yet: file dialogs (`ui.open_file`, `ui.save_file`).
+`ui.open_file`, `ui.save_file` and `ui.open_folder` open the system's Files picker. A file you open is a copy in the app's own folder; where you save is the place the user chose.
 
 ## On a real iPhone
 
