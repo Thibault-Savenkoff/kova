@@ -1,5 +1,6 @@
 # A ready-made `kova` for each system, holding the runtimes of all its targets: nothing to
 # install to use it (no Rust, no rustup). Only in the public repository, where minutes cost nothing.
+# `KOVA_RELEASE` makes `kova --version` say just the version (a build from the source also says its commit).
 # Started by hand: `gh workflow run release.yml -R Thibault-Savenkoff/kova -f version=0.1.0`
 # publishes the release `v0.1.0`; with `-f dry=true`, everything is built and checked, nothing is
 # published (the files stay a few days among the run's artifacts).
@@ -35,6 +36,8 @@ jobs:
           - { os: macos-latest, name: mac-intel, triple: x86_64-apple-darwin }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      KOVA_RELEASE: '1'
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable

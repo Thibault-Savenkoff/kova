@@ -72,7 +72,10 @@ fn kova() {
 
     let (command, file) = match args.as_slice() {
         ["--version" | "-V"] => {
-            println!("kova {}", env!("CARGO_PKG_VERSION"));
+            match env!("KOVA_COMMIT") {
+                "" => println!("kova {}", env!("CARGO_PKG_VERSION")),
+                commit => println!("kova {} (dev, {commit})", env!("CARGO_PKG_VERSION")),
+            }
             return;
         }
         ["fmt", files @ ..] if !files.is_empty() => exit(fmt(files)),

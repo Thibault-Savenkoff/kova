@@ -16,6 +16,15 @@ use object::{Object, ObjectSymbol};
 fn main() {
     let var = |name: &str| std::env::var(name).unwrap_or_default();
     let out = PathBuf::from(var("OUT_DIR"));
+    // `kova --version` of a build that is not a release says which commit it comes from. The release workflow sets
+    // KOVA_RELEASE. (ponytail: read when this script runs, so a plain `cargo build` may show an older commit.)
+    println!("cargo:rerun-if-env-changed=KOVA_RELEASE");
+    let commit = if var("KOVA_RELEASE").is_empty() {
+        std::process::Command::new("git").args(["rev-parse", "--short", "HEAD"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    println!("cargo:rustc-env=KOVA_COMMIT={commit}");
     for f in ["runtime", "vendor", "src/shared.rs", "src/bigint.rs", "src/http.rs", "src/json.rs", "src/deflate.rs", "src/regex.rs", "src/csv.rs", "src/crypto.rs", "src/openssl.rs", "src/schannel.rs", "src/network_framework.rs"] {
         println!("cargo:rerun-if-changed={f}");
     }

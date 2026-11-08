@@ -361,7 +361,11 @@ fn rejected_programs() {
 fn command_line() {
     let out = kova(LANG).arg("--version").output().unwrap();
     assert!(out.status.success());
-    assert_eq!(text(&out.stdout).trim(), format!("kova {}", env!("CARGO_PKG_VERSION")));
+    // A release says the version alone; a build from the source adds its commit.
+    let version = format!("kova {}", env!("CARGO_PKG_VERSION"));
+    let said = text(&out.stdout);
+    let said = said.trim();
+    assert!(said == version || (said.starts_with(&format!("{version} (dev, ")) && said.ends_with(')')), "{said}");
 
     let out = kova(LANG).arg("whatever").output().unwrap();
     assert_eq!(out.status.code(), Some(2), "unknown command → usage + code 2");
