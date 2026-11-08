@@ -950,9 +950,23 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
         *SETTING.get() = true;
         let edge = win_edge();
         WIN_CONTEXTS.get().clear();
+        if !same {
+            WIN_RECTS.get().clear();
+        }
+        *WIN_MOVED.get() = false;
         win_place(win, dc, window, view, Default::default(), edge, edge, now[2] - now[0] - 2 * edge, CONTROLS.get(), same, &mut 0);
         *SETTING.get() = false;
         (win.release_dc)(window, dc);
+        // RedrawWindow(window, no rectangle, no region, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN): what a moved
+        // control covered is painted again, and so are the controls.
+        if same && *WIN_MOVED.get() {
+            if let Some(user) = library("user32.dll") {
+                if let Some(redraw) = symbol(user, "RedrawWindow") {
+                    let redraw: extern "system" fn(Handle, *const [i32; 4], Handle, u32) -> i32 = unsafe { core::mem::transmute(redraw) };
+                    redraw(window, null(), 0, 0x1 | 0x4 | 0x80);
+                }
+            }
+        }
     }
     extern "system" fn procedure(h: Handle, message: u32, w: usize, l: isize) -> isize {
         let win = WIN.get().as_ref().expect("made before the window");
@@ -1808,6 +1822,9 @@ fn win_common() {
 
 /// The menus' shortcuts (an accelerator table, 0 if none) and `TranslateAcceleratorW`.
 static WIN_KEYS: Global<Handle> = Global::new(0);
+/// Where each control was placed, in the order of `made`, and whether one moved since `arrange` last looked.
+static WIN_RECTS: Global<Vec<[i32; 4]>> = Global::new(Vec::new());
+static WIN_MOVED: Global<bool> = Global::new(false);
 /// The areas of the views with a `context` menu now on the window, with their items (label, number): `[left, top, right, bottom]`.
 static WIN_CONTEXTS: Global<Vec<([i32; 4], Vec<(String, usize)>)>> = Global::new(Vec::new());
 static WIN_ACCELERATE: Global<extern "system" fn(Handle, Handle, *const u64) -> i32> = Global::new(no_accelerator);
@@ -2045,6 +2062,13 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
     let mut control = |class: &str, s: &str, id: usize, flags: u32| {
         let c = if same {
             let c = made[*at];
+            // A control that really moved leaves its old pixels behind: `arrange` repaints the window then.
+            let rects = WIN_RECTS.get();
+            if rects.get(*at) != Some(&[x, y, w, h]) {
+                *WIN_MOVED.get() = true;
+                rects.resize(*at + 1, [0; 4]);
+                rects[*at] = [x, y, w, h];
+            }
             (win.set_pos)(c, 0, x, y, w, h, 0x4 | 0x10); // SWP_NOZORDER | SWP_NOACTIVATE
             if matches!(class, "BUTTON" | "EDIT" | "STATIC") && win_text(win, c) != s {
                 (win.set_text)(c, wide(s).as_ptr());
@@ -2054,6 +2078,9 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
             // WS_CHILD | WS_VISIBLE
             let c = (win.create)(0, wide(class).as_ptr(), wide(s).as_ptr(), 0x5000_0000 | flags, x, y, w, h, window, id as Handle, 0, null_mut());
             made.push(c);
+            let rects = WIN_RECTS.get();
+            rects.resize(*at + 1, [0; 4]);
+            rects[*at] = [x, y, w, h];
             c
         };
         *at += 1;
