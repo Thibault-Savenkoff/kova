@@ -1069,8 +1069,14 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
         }
         UiNode::Table(table) => {
             let rows = kit.send(v, "arrangedSubviews");
+            // The headers, when there are some, are the first line: a label, not a row.
+            let first = !table.headers.is_empty() as i64;
+            if first == 1 {
+                let head = (kit.send_id)(rows, kit.sel("objectAtIndex:"), 0);
+                (kit.send_two)(head, kit.sel("setText:"), kit.text(&table.headers.join("  ")));
+            }
             for (k, row) in table.rows.iter().enumerate() {
-                let b = (kit.send_id)(rows, kit.sel("objectAtIndex:"), k as i64);
+                let b = (kit.send_id)(rows, kit.sel("objectAtIndex:"), k as i64 + first);
                 msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(b, kit.sel("setTitle:forState:"), kit.text(&alloc::format!("{}{}", if table.selected == k as i32 { "▸ " } else { "" }, row.join("  "))), 0);
             }
         }
