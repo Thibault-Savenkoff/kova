@@ -1403,7 +1403,8 @@ extern "C" fn menu_chosen(_block: Id, action: Id) {
     let Some(screen) = SCREEN.get().as_ref() else { return };
     let kit = &screen.kit;
     if let Ok(n) = text_of(kit, kit.send(action, "identifier")).parse::<usize>() {
-        hear(crate::shared::ui_changed(n), String::new());
+        // A click, as on the other systems: the number of the item's event.
+        hear(n as i64, String::new());
     }
 }
 
