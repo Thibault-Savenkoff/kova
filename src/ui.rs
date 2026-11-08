@@ -381,11 +381,12 @@ fn spinner -> View {
     return View { text := "Z0:", events := [], typed := [] }
 }
 
-// A bar `value` of the way to `most`; on a system with no such bar, a line of blocks and a percentage.
+// A bar `value` of the way to `most` (past either end, the bar stops there); on a system with no such bar, a line of blocks and a percentage.
 fn progress(value: Int, most: Int) -> View
-    require most > 0 && value >= 0 && value <= most else "a progress bar goes from 0 to a positive total"
+    require most > 0 else "a progress bar has a positive total"
 {
-    let body: String := "{value} {most}"
+    // A value past the ends stops at them: a bar that is full is full.
+    let body: String := "{if value < 0 { 0 } else if value > most { most } else { value }} {most}"
     return View { text := "V{body.length}:{body}", events := [], typed := [] }
 }
 

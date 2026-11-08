@@ -34,7 +34,13 @@ fn main {
 // stdin: 0
 // stdin: 0=2027-01-02
 // stdin: 0=nope
+// stdin: 0
+// stdin: 0
+// stdin: 0
 // expect: [Dates] column(text "Day: 2026-11-08", input "2026-11-08", text "▰▰▰▱▱▱▱▱▱▱ 30%", button "More")
 // expect: [Dates] column(text "Day: 2026-11-08", input "2026-11-08", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")
 // expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")
 // expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▱▱▱▱ 60%", button "More")
+// expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▰▰▰▱ 90%", button "More")
+// expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▰▰▰▰ 100%", button "More")
+// expect: [Dates] column(text "Day: 2027-01-02", input "2027-01-02", text "▰▰▰▰▰▰▰▰▰▰ 100%", button "More")
