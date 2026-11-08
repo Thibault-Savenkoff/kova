@@ -37,7 +37,7 @@ fenêtre. Cette page liste ce qu'a `ui`.
 | `ui.row(items: List<ui.View>) -> ui.View` | les vues côte à côte. |
 | `ui.column(…) align(left\|center\|right)` | la colonne prend toute la largeur qu'on lui donne et y place ses vues. |
 | `ui.row(…) align(top\|center\|bottom)` | les vues en haut, au milieu ou en bas de la ligne. |
-| `vue.color(c: ui.Color) -> ui.View` | la couleur d'un texte ou d'un champ. Un bouton garde la couleur du système. |
+| `vue.color(c: ui.Color) -> ui.View` | la couleur d'un texte ou d'un champ. Un bouton garde la couleur du système (sur un iPhone, celle que tu lui donnes). |
 | `vue.size(pixels: Int) -> ui.View` | la hauteur du texte, pour un texte, un bouton ou un champ. |
 | `vue.bold -> ui.View` | le texte en gras. |
 | `vue.margin(pixels: Int) -> ui.View` | des pixels vides tout autour de la vue. |
@@ -138,6 +138,28 @@ formes, et que l'événement de chaque bouton est un `Event`.
 | Linux | GTK 4 | GTK 4, présent sur la plupart des bureaux |
 | Windows | Win32 | rien |
 | macOS | AppKit | rien |
+
+## L'aspect propre à l'iPhone
+
+Tout ce qui suit change l'aspect d'un programme sur un iPhone ou un iPad ; sur les autres systèmes, c'est ignoré (une
+page poussée sur une vue s'affiche dessous, une marque dans un texte s'affiche telle qu'écrite). Le programme reste
+dessiné par les vrais contrôles d'UIKit : il a donc les grands titres, la barre d'onglets, la barre de navigation
+du système et, en mode sombre, ses couleurs.
+
+| | |
+| --- | --- |
+| `vue.title(nom)` | le titre de la page que cette vue forme, dans la barre de navigation ; grand, puis petit quand la page défile. |
+| `ui.tabs(…).icons(["note.text", "chart.bar.fill"])` | un symbole SF pour chaque onglet, par son nom. |
+| `ui.menu(titre, items) icon("ellipsis.circle")` | un symbole SF dans la barre à la place du titre du menu. |
+| `vue.background(c).rounded(px)` | une couleur derrière la vue et sa `margin`, aux coins arrondis : une carte. |
+| `ui.panel`, `ui.page`, `ui.card` | les fonds du système, clairs ou sombres comme lui : un panneau, une page entière de sections groupées, l'une de ces sections. `.background(ui.page)` sur la vue que donne `view` peint la fenêtre. |
+| `ui.list(lignes, selected)` | ses lignes dans une carte blanche, un chevron au bout de chacune. Un saut de ligne dans une ligne lui donne un titre, un sous-titre et un détail. |
+| `vue.pushing(page, closed: E)` | `page` comme un nouvel écran par-dessus celui-ci, avec un bouton retour ; `closed` est l'événement qu'envoient le bouton retour et le glissement arrière, et le programme cesse de donner une page quand il arrive. À donner avant `menus`. |
+| `vue.nav_button(libellé, événement)` | un bouton dans la barre de navigation de cette page. |
+| `vue.markdown` | sur un texte : `**gras**`, `*accent*`, `` `code` `` et `[libellé](adresse)` s'affichent pour ce qu'ils veulent dire. |
+
+Une colonne dans une carte s'étale sur toute sa largeur : un interrupteur finit au bord droit de la carte, comme dans
+Réglages.
 
 ## Variables d'environnement
 

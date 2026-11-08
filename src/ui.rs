@@ -80,6 +80,24 @@ public:
         return group("J", parts, Align.Left)
     }
 
+    // A button in the navigation bar of this page (iPhone for now: elsewhere an ordinary button below the page).
+    fn nav_button(self, title: String, event: EVENT) -> View {
+        return group("E", [self.clone, button(title, event)], Align.Left)
+    }
+
+    // Shows `page` over this view, as a new screen with a back button (iPhone for now: elsewhere the page shows below).
+    // `closed` is the event the back button, or a swipe back, sends: the program then stops giving a page.
+    // Give it before `menus`, which stay on the whole view.
+    fn pushing(self, detail: View, closed: EVENT) -> View {
+        return group("A", [self.clone, detail.clone, button("", closed)], Align.Left)
+    }
+
+    // `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` in a text show as what they mean (iPhone for now:
+    // elsewhere the marks show as written).
+    fn markdown(self) -> View {
+        return self.styled("k", 1)
+    }
+
     // The text stays on one line, even if it is wider than the window (the window then scrolls sideways).
     fn no_wrap(self) -> View {
         return self.styled("w", 1)

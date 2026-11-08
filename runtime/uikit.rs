@@ -42,6 +42,11 @@ struct Screen {
     controller: Id,
     /// The stack view now shown.
     content: Id,
+    /// The pushed page: its controller, its scroll view, its content (all null when there is none), and the event its back button sends.
+    pushed: Id,
+    page_scroll: Id,
+    page_content: Id,
+    back: usize,
     shape: String,
     /// Each text, button and field now shown, with the label that goes with it (0: none).
     made: Vec<(Id, Id)>,
@@ -472,6 +477,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("documentPickerWasCancelled:"), picked_nothing as usize, action);
         add(class, kit.sel("stepped:"), stepped as usize, action);
         add(class, kit.sel("tabBar:didSelectItem:"), tab_chosen as usize, c"v@:@@".as_ptr() as *const u8);
+        add(class, kit.sel("navigationController:didShowViewController:animated:"), page_shown as usize, c"v@:@@c".as_ptr() as *const u8);
         add(class, kit.sel("textFieldShouldReturn:"), returned as usize, ret);
         register(class);
         let target = kit.send(kit.send(class, "alloc"), "init");
@@ -501,6 +507,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         // The controller sits in a navigation controller: its bar shows the title and the menus.
         let nav = (kit.send_two)(kit.send(kit.class("UINavigationController"), "alloc"), kit.sel("initWithRootViewController:"), controller);
         (kit.send_two)(w, kit.sel("setRootViewController:"), nav);
+        (kit.send_two)(nav, kit.sel("setDelegate:"), target);
         // Large titles that shrink when the content scrolls, as in the system's own apps.
         (kit.send_id)(kit.send(nav, "navigationBar"), kit.sel("setPrefersLargeTitles:"), 1);
         (kit.send_id)(kit.send(controller, "navigationItem"), kit.sel("setLargeTitleDisplayMode:"), 1);
@@ -523,7 +530,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         }
         kit.send(w, "makeKeyAndVisible");
         *WINDOW.get() = w;
-        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, bar: core::ptr::null_mut(), controller, content: core::ptr::null_mut(), shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
+        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, bar: core::ptr::null_mut(), controller, content: core::ptr::null_mut(), pushed: core::ptr::null_mut(), page_scroll: core::ptr::null_mut(), page_content: core::ptr::null_mut(), back: 0, shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
     }
     // The program: a thread of its own, which never comes back here.
     extern "C" fn program(_: i64) {
@@ -569,6 +576,20 @@ extern "C" fn tab_chosen(_me: Id, _message: Id, _bar: Id, item: Id) {
     let tag = (screen().kit.send_int)(item, screen().kit.sel("tag"));
     if tag >= 0 {
         hear(tag, String::new());
+    }
+}
+
+/// A page was shown by the navigation controller: when it is the window's own again while the program still gives a
+/// pushed page, the person went back (button or swipe): the program is told.
+extern "C" fn page_shown(_me: Id, _message: Id, _nav: Id, shown: Id, _animated: u8) {
+    let Some(screen) = SCREEN.get().as_mut() else { return };
+    if shown == screen.controller && !screen.pushed.is_null() {
+        screen.pushed = core::ptr::null_mut();
+        screen.page_content = core::ptr::null_mut();
+        screen.page_scroll = core::ptr::null_mut();
+        // The shape no longer holds the page: the next view is built afresh.
+        screen.shape = String::new();
+        hear(screen.back as i64, String::new());
     }
 }
 
@@ -660,6 +681,12 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
     let kit = &screen.kit;
     let pool = (kit.push)();
     let shape = crate::shared::ui_shape(view);
+    // A page pushed over the window's view: the window's own part is built apart from it.
+    let (view, page) = match view {
+        UiNode::Pushed(main, page, back) => (&**main, Some((&**page, *back))),
+        other => (other, None),
+    };
+    let whole = crate::shared::ui_leaves_of(view, page.map(|p| p.0));
     // A view may give its page a title of its own (`.title("Stats")`), else the window's.
     let title = crate::shared::ui_title(view).unwrap_or_else(|| title.into());
     (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setTitle:"), kit.text(&title));
@@ -670,7 +697,7 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
     };
     (kit.send_two)(screen.root, kit.sel("setBackgroundColor:"), window_color);
     if shape == screen.shape && menus == screen.menus.as_slice() {
-        for ((leaf, _), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
+        for ((leaf, _), &(v, label)) in whole.iter().zip(screen.made.iter()) {
             refresh(kit, leaf, v, label);
         }
     } else {
@@ -681,6 +708,10 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
             kit.send(screen.bar, "removeFromSuperview");
             screen.bar = core::ptr::null_mut();
         }
+        if !screen.page_content.is_null() {
+            kit.send(screen.page_content, "removeFromSuperview");
+            screen.page_content = core::ptr::null_mut();
+        }
         screen.made.clear();
         CANVASES.get().clear();
         CONTEXTS.get().clear();
@@ -690,7 +721,8 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         let item = kit.send(screen.controller, "navigationItem");
         let buttons: Vec<Id> = menus.iter().rev().map(|m| bar_button(kit, m)).collect();
         let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), buttons.as_ptr(), buttons.len() as u64);
-        (kit.send_two)(item, kit.sel("setRightBarButtonItems:"), array);
+        let own = crate::shared::ui_bar_buttons(view);
+        (kit.send_two)(item, kit.sel("setRightBarButtonItems:"), if own.is_empty() { array } else { nav_items(kit, screen.target, &own) });
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
         // A tab bar goes to the bottom of the screen, under the scrolled content.
         let tab_bar = screen.made.iter().map(|&(v, _)| v).find(|&v| kit.class("UITabBar") == kit.send(v, "class"));
@@ -712,11 +744,56 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
             screen.bar = bar;
         }
         screen.content = content;
+        // The pushed page: a screen of its own over the window's, with a back button.
+        if let Some((page, back)) = page {
+            let content = build(kit, screen.target, page, &mut screen.made);
+            let content = if kit.class("UIStackView") == kit.send(content, "class") { content } else { wrapped(kit, content) };
+            if screen.pushed.is_null() {
+                let controller = kit.send(kit.send(kit.class("UIViewController"), "alloc"), "init");
+                let root = kit.send(controller, "view");
+                (kit.send_two)(root, kit.sel("setBackgroundColor:"), window_color);
+                let scroll = made(kit, "UIScrollView");
+                (kit.send_id)(scroll, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+                (kit.send_id)(scroll, kit.sel("setKeyboardDismissMode:"), 1);
+                (kit.send_two)(root, kit.sel("addSubview:"), scroll);
+                let (safe, by) = (kit.send(root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
+                for edge in ["topAnchor", "leadingAnchor", "trailingAnchor", "bottomAnchor"] {
+                    let to = if edge == "topAnchor" { root } else { safe };
+                    (kit.send_id)(by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(to, edge), 0.0), kit.sel("setActive:"), 1);
+                }
+                // The title stays small on a detail page.
+                (kit.send_id)(kit.send(controller, "navigationItem"), kit.sel("setLargeTitleDisplayMode:"), 2);
+                screen.pushed = controller;
+                screen.page_scroll = scroll;
+                msg!(kit, extern "C" fn(Id, Id, Id, bool))(kit.send(screen.controller, "navigationController"), kit.sel("pushViewController:animated:"), controller, true);
+            }
+            place(kit, screen.page_scroll, content, crate::shared::ui_fills(page));
+            screen.page_content = content;
+            screen.back = back;
+        }
         screen.shape = shape;
         screen.menus = menus.to_vec();
     }
-    for ((leaf, style), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
-        styled(kit, v, label, leaf, style);
+    // The pushed page's title, and the page going away when the program stops giving one.
+    match page {
+        Some((page, _)) => {
+            let name = crate::shared::ui_title(page).unwrap_or_default();
+            (kit.send_two)(kit.send(screen.pushed, "navigationItem"), kit.sel("setTitle:"), kit.text(&name));
+            let own = crate::shared::ui_bar_buttons(page);
+            (kit.send_two)(kit.send(screen.pushed, "navigationItem"), kit.sel("setRightBarButtonItems:"), nav_items(kit, screen.target, &own));
+            (kit.send_id)(kit.send(screen.pushed, "navigationItem"), kit.sel("setLargeTitleDisplayMode:"), 2);
+        }
+        None if !screen.pushed.is_null() => {
+            let nav = kit.send(screen.controller, "navigationController");
+            screen.pushed = core::ptr::null_mut();
+            screen.page_scroll = core::ptr::null_mut();
+            screen.page_content = core::ptr::null_mut();
+            (kit.send_id)(nav, kit.sel("popViewControllerAnimated:"), 1);
+        }
+        None => {}
+    }
+    for ((leaf, style), &(v, label)) in whole.iter().zip(screen.made.iter()) {
+        styled(kit, v, label, leaf, *style);
     }
     let clocks = crate::shared::ui_clocks(view);
     if clocks != screen.clocks {
@@ -905,12 +982,17 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             let b = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
             msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(b, kit.sel("setTitle:forState:"), kit.text(s), 0);
             hears(kit, target, b, *n, "tapped:", 64);
+            // Left-aligned, as a button in a form is.
+            (kit.send_id)(b, kit.sel("setContentHorizontalAlignment:"), 1);
             b
         }
         UiNode::Input(s, n) | UiNode::Search(s, n) => {
             let field = made(kit, if matches!(node, UiNode::Search(..)) { "UISearchTextField" } else { "UITextField" });
             (kit.send_two)(field, kit.sel("setText:"), kit.text(s));
-            (kit.send_id)(field, kit.sel("setBorderStyle:"), 3);
+            // No frame, as in the system's forms: a search field has its own look.
+            if !matches!(node, UiNode::Search(..)) {
+                (kit.send_id)(field, kit.sel("setBorderStyle:"), 0);
+            }
             (kit.send_two)(field, kit.sel("setDelegate:"), target);
             hears(kit, target, field, *n, "edited:", 131072);
             // A search field takes the screen's width, as on iOS.
@@ -927,8 +1009,8 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             let switch = made(kit, "UISwitch");
             (kit.send_id)(switch, kit.sel("setOn:"), *on as i64);
             hears(kit, target, switch, *n, "switched:", 4096);
-            (kit.send_two)(stack, kit.sel("addArrangedSubview:"), switch);
             (kit.send_two)(stack, kit.sel("addArrangedSubview:"), label);
+            (kit.send_two)(stack, kit.sel("addArrangedSubview:"), switch);
             made_views.push((switch, label));
             return stack;
         }
@@ -1101,7 +1183,9 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
-        UiNode::Titled(_, inner) => return build(kit, target, inner, made_views),
+        UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => return build(kit, target, inner, made_views),
+        // Only at the top of a view does a page get its screen (`draw_view`).
+        UiNode::Pushed(main, _, _) => return build(kit, target, main, made_views),
         UiNode::Context(inner, items) => {
             let view = build(kit, target, inner, made_views);
             let interaction = (kit.send_two)(kit.send(kit.class("UIContextMenuInteraction"), "alloc"), kit.sel("initWithDelegate:"), target);
@@ -1113,7 +1197,19 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
         }
         // A color behind a view (and its room), corners rounded: a stack view of one part, across the width.
         UiNode::Boxed(c, radius, inner) => {
-            let stack = wrapped(kit, build(kit, target, inner, made_views));
+            let built = build(kit, target, inner, made_views);
+            // What is in a card spreads across it: a switch ends at its right edge, as in a form.
+            let mut level = built;
+            while kit.class("UIStackView") == kit.send(level, "class") {
+                (kit.send_id)(level, kit.sel("setAlignment:"), 0);
+                let kids = kit.send(level, "arrangedSubviews");
+                if (kit.send_int)(kids, kit.sel("count")) != 1 {
+                    break;
+                }
+                level = (kit.send_id)(kids, kit.sel("objectAtIndex:"), 0);
+            }
+            let stack = wrapped(kit, built);
+            (kit.send_id)(stack, kit.sel("setAlignment:"), 0);
             let color = ui_color(kit, *c);
             (kit.send_two)(stack, kit.sel("setBackgroundColor:"), color);
             let layer = kit.send(stack, "layer");
@@ -1233,6 +1329,44 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Range {
+    location: u64,
+    length: u64,
+}
+
+/// A label showing a line of Markdown: its marks gone, bold, stressed, code and links as attributes of the text.
+fn rich_text(kit: &Kit, label: Id, text: &str, size: f64, style: UiStyle) {
+    let (plain, runs) = crate::shared::ui_marks(text);
+    let all = (kit.send_two)(kit.send(kit.class("NSMutableAttributedString"), "alloc"), kit.sel("initWithString:"), kit.text(&plain));
+    let all = kit.send(all, "autorelease");
+    let add = msg!(kit, extern "C" fn(Id, Id, Id, Id, Range));
+    let ui_font = |name: &str| (kit.send_float)(kit.class("UIFont"), kit.sel(name), size);
+    let width = plain.encode_utf16().count() as u64;
+    let color = match style.color {
+        Some(c) => ui_color(kit, c),
+        None => kit.send(kit.class("UIColor"), "labelColor"),
+    };
+    add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), ui_font(if style.bold { "boldSystemFontOfSize:" } else { "systemFontOfSize:" }), Range { location: 0, length: width });
+    add(all, kit.sel("addAttribute:value:range:"), kit.text("NSColor"), color, Range { location: 0, length: width });
+    for (start, length, kind) in runs {
+        let range = Range { location: start as u64, length: length as u64 };
+        match kind {
+            1 => add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), ui_font("boldSystemFontOfSize:"), range),
+            2 => add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), ui_font("italicSystemFontOfSize:"), range),
+            3 => {
+                let mono = msg!(kit, extern "C" fn(Id, Id, f64, f64) -> Id)(kit.class("UIFont"), kit.sel("monospacedSystemFontOfSize:weight:"), size * 0.9, 0.0);
+                add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), mono, range);
+            }
+            _ => {
+                add(all, kit.sel("addAttribute:value:range:"), kit.text("NSColor"), kit.send(kit.class("UIColor"), "systemBlueColor"), range);
+            }
+        }
+    }
+    (kit.send_two)(label, kit.sel("setAttributedText:"), all);
+}
+
 /// Gives a text, button or field its style; without one, the system's font and color.
 fn styled(kit: &Kit, view: Id, label: Id, leaf: &UiNode, style: UiStyle) {
     if !matches!(leaf, UiNode::Text(_) | UiNode::Button(..) | UiNode::Input(..)) {
@@ -1243,9 +1377,19 @@ fn styled(kit: &Kit, view: Id, label: Id, leaf: &UiNode, style: UiStyle) {
     let _ = label;
     if matches!(leaf, UiNode::Button(..)) {
         (kit.send_two)(kit.send(view, "titleLabel"), kit.sel("setFont:"), font);
+        // A color the program asked for (a red `Delete`); else the system's tint.
+        if let Some(c) = style.color {
+            msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(view, kit.sel("setTitleColor:forState:"), ui_color(kit, c), 0);
+        }
         return;
     }
     (kit.send_two)(view, kit.sel("setFont:"), font);
+    if style.marks {
+        if let UiNode::Text(text) = leaf {
+            rich_text(kit, view, text, size, style);
+            return;
+        }
+    }
     let color = match style.color {
         Some(c) => {
             let channel = |shift: u32| ((c >> shift) & 0xff) as f64 / 255.0;
@@ -1525,6 +1669,20 @@ extern "C" fn draw_canvas(me: Id, _message: Id, _dirty: Rect) {
 
 /// A row of buttons, one for each menu; a tap opens the menu (`UIMenu`, as the primary action).
 /// A navigation bar button that opens one menu.
+/// The buttons a page gives its navigation bar (`.nav_button`): each a bar item that sends its event's number.
+fn nav_items(kit: &Kit, target: Id, buttons: &[(String, usize)]) -> Id {
+    let items: Vec<Id> = buttons
+        .iter()
+        .rev()
+        .map(|(label, n)| {
+            let item = msg!(kit, extern "C" fn(Id, Id, Id, i64, Id, Id) -> Id)(kit.send(kit.class("UIBarButtonItem"), "alloc"), kit.sel("initWithTitle:style:target:action:"), kit.text(label), 0, target, kit.sel("tapped:"));
+            (kit.send_id)(item, kit.sel("setTag:"), *n as i64);
+            kit.send(item, "autorelease")
+        })
+        .collect();
+    msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), items.as_ptr(), items.len() as u64)
+}
+
 fn bar_button(kit: &Kit, m: &crate::shared::UiMenu) -> Id {
     let actions: Vec<Id> = m
         .items

@@ -37,7 +37,7 @@ lists what `ui` has.
 | `ui.row(items: List<ui.View>) -> ui.View` | the views side by side. |
 | `ui.column(…) align(left\|center\|right)` | the column takes the whole width it is given and places its views there. |
 | `ui.row(…) align(top\|center\|bottom)` | the views at the top, in the middle or at the bottom of the row. |
-| `view.color(c: ui.Color) -> ui.View` | the color of a text or a field. A button keeps the system's color. |
+| `view.color(c: ui.Color) -> ui.View` | the color of a text or a field. A button keeps the system's color (on an iPhone, the one you give it). |
 | `view.size(pixels: Int) -> ui.View` | the height of the text, for a text, a button or a field. |
 | `view.bold -> ui.View` | the text in bold. |
 | `view.margin(pixels: Int) -> ui.View` | empty pixels all around the view. |
@@ -138,6 +138,26 @@ every button's event is an `Event`.
 | Linux | GTK 4 | GTK 4, there on most desktops |
 | Windows | Win32 | nothing |
 | macOS | AppKit | nothing |
+
+## The iPhone's own look
+
+Everything here changes how a program looks on an iPhone or an iPad; on the other systems it is ignored (a page
+pushed over a view shows below it, a mark in a text shows as written). The program is still drawn by UIKit's real
+controls, so it has the system's large titles, tab bar, navigation bar and, in dark mode, its colors.
+
+| | |
+| --- | --- |
+| `view.title(name)` | the title of the page this view is, in the navigation bar; large, and small once the page scrolls. |
+| `ui.tabs(…).icons(["note.text", "chart.bar.fill"])` | an SF Symbol for each tab, by its name. |
+| `ui.menu(title, items) icon("ellipsis.circle")` | an SF Symbol in the bar instead of the menu's title. |
+| `view.background(c).rounded(px)` | a color behind the view and its `margin`, with rounded corners: a card. |
+| `ui.panel`, `ui.page`, `ui.card` | the system's backgrounds, light or dark as the system is: a panel, a whole page of grouped sections, one of those sections. `.background(ui.page)` on the view `view` gives paints the window. |
+| `ui.list(lines, selected)` | its rows in a white card, a chevron at the end of each. A line break inside a row gives it a title, a subtitle and a detail line. |
+| `view.pushing(page, closed: E)` | `page` as a new screen over this one, with a back button; `closed` is the event the back button and the swipe back send, and the program stops giving a page when it comes. Give it before `menus`. |
+| `view.nav_button(label, event)` | a button in the navigation bar of this page. |
+| `view.markdown` | on a text: `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` show as what they mean. |
+
+A column inside a card spreads across it, so a switch ends at the card's right edge as in the Settings app.
 
 ## Environment variables
 

@@ -901,6 +901,12 @@ pub enum UiNode {
     /// The title of the page this view is (`.title("Stats")`): the navigation bar shows it (iPhone only for now).
     #[cfg(ios)]
     Titled(String, alloc::boxed::Box<UiNode>),
+    /// A page shown over a view, as a new screen with a back button, and the number of the event the back button sends.
+    #[cfg(ios)]
+    Pushed(alloc::boxed::Box<UiNode>, alloc::boxed::Box<UiNode>, usize),
+    /// Buttons in the navigation bar of the page this view is (their label and event number), last one first.
+    #[cfg(ios)]
+    Barred(alloc::boxed::Box<UiNode>, Vec<(String, usize)>),
     /// A drawing area.
     Canvas(UiCanvas),
     /// A view and a clock: every so many milliseconds, the button number's event.
@@ -1616,7 +1622,9 @@ pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_clocks(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_clocks(inner),
+        #[cfg(ios)]
+        UiNode::Pushed(main, page, _) => ui_clocks(main).into_iter().chain(ui_clocks(page)).collect(),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
         _ => Vec::new(),
     }
@@ -1630,6 +1638,8 @@ pub struct UiStyle {
     pub bold: bool,
     /// `.no_wrap`: the text stays on one line, even wider than the window (only iOS cuts texts at the screen's width).
     pub wide: bool,
+    /// `.markdown`: `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` in the text show as what they mean (iPhone only for now).
+    pub marks: bool,
 }
 
 impl UiStyle {
@@ -1640,6 +1650,7 @@ impl UiStyle {
             size: if self.size > 0 { self.size } else { around.size },
             bold: self.bold || around.bold,
             wide: self.wide || around.wide,
+            marks: self.marks || around.marks,
         }
     }
 }
@@ -1673,7 +1684,9 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_fills(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_fills(inner),
+        #[cfg(ios)]
+        UiNode::Pushed(main, _, _) => ui_fills(main),
         UiNode::Context(inner, _) => ui_fills(inner),
         UiNode::Canvas(c) => c.width == 0,
         _ => false,
@@ -1687,7 +1700,9 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_fills_down(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_fills_down(inner),
+        #[cfg(ios)]
+        UiNode::Pushed(main, _, _) => ui_fills_down(main),
         UiNode::Context(inner, _) => ui_fills_down(inner),
         UiNode::Canvas(c) => c.height == 0,
         _ => false,
@@ -1749,6 +1764,10 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Boxed(c, r, inner) => format!("X{c}:{r}({})", ui_shape(inner)),
         #[cfg(ios)]
         UiNode::Titled(_, inner) => ui_shape(inner),
+        #[cfg(ios)]
+        UiNode::Barred(inner, buttons) => format!("E{buttons:?}({})", ui_shape(inner)),
+        #[cfg(ios)]
+        UiNode::Pushed(main, page, _) => format!("A({})({})", ui_shape(main), ui_shape(page)),
         // Not its drawing, which changes at every frame.
         UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}{}", c.width, c.height, c.mouse, c.key, c.gpu()),
         // Nor its clocks: each system compares those itself, widgets stay when one starts.
@@ -1763,11 +1782,21 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_leaves(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_leaves(inner),
+        #[cfg(ios)]
+        UiNode::Pushed(main, page, _) => ui_leaves(main).into_iter().chain(ui_leaves(page)).collect(),
         UiNode::Context(inner, _) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
         leaf => alloc::vec![(leaf, UiStyle::default())],
     }
+}
+
+/// The leaves of a view and of the page pushed over it, in the order they were built.
+#[allow(dead_code)]
+pub fn ui_leaves_of<'a>(view: &'a UiNode, page: Option<&'a UiNode>) -> Vec<(&'a UiNode, UiStyle)> {
+    let mut all = ui_leaves(view);
+    all.extend(page.map(ui_leaves).unwrap_or_default());
+    all
 }
 
 /// A line of `KOVA_UI_SCRIPT`'s input: `3` clicks button 3, `0=Ada` types `Ada` into field 0;
@@ -1796,11 +1825,84 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
     n
 }
 
+/// The inline marks of a line of Markdown: the text without them, and the runs they covered as (start, length, kind) in
+/// UTF-16 units: 1 bold, 2 stressed, 3 code, 4 link (the address after the label's end is dropped too).
+#[allow(dead_code)]
+pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8)>) {
+    let chars: Vec<char> = text.chars().collect();
+    let (mut plain, mut runs) = (String::new(), Vec::new());
+    let mut width = 0usize;
+    let (mut bold, mut stressed, mut code) = (None::<usize>, None::<usize>, None::<usize>);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '`' {
+            match code.take() {
+                Some(from) => runs.push((from, width - from, 3)),
+                None => code = Some(width),
+            }
+            i += 1;
+        } else if code.is_some() {
+            plain.push(c);
+            width += c.len_utf16();
+            i += 1;
+        } else if c == '*' && next == Some('*') {
+            match bold.take() {
+                Some(from) => runs.push((from, width - from, 1)),
+                None => bold = Some(width),
+            }
+            i += 2;
+        } else if c == '*' {
+            match stressed.take() {
+                Some(from) => runs.push((from, width - from, 2)),
+                None => stressed = Some(width),
+            }
+            i += 1;
+        } else if c == '[' {
+            // `[label](address)`: the label stays, as a link.
+            let rest: String = chars[i + 1..].iter().collect();
+            match rest.find("](").and_then(|m| rest[m + 2..].find(')').map(|e| (m, e))) {
+                Some((m, e)) => {
+                    let label = &rest[..m];
+                    let len: usize = label.chars().map(char::len_utf16).sum();
+                    runs.push((width, len, 4));
+                    plain.push_str(label);
+                    width += len;
+                    i += 1 + label.chars().count() + 2 + rest[m + 2..m + 2 + e].chars().count() + 1;
+                }
+                None => {
+                    plain.push(c);
+                    width += 1;
+                    i += 1;
+                }
+            }
+        } else {
+            plain.push(c);
+            width += c.len_utf16();
+            i += 1;
+        }
+    }
+    (plain, runs)
+}
+
+/// The buttons a view gives its page's navigation bar, in the order they were written.
+#[cfg(ios)]
+pub fn ui_bar_buttons(node: &UiNode) -> Vec<(String, usize)> {
+    match node {
+        UiNode::Barred(_, buttons) => buttons.iter().rev().cloned().collect(),
+        UiNode::Titled(_, inner) | UiNode::Boxed(_, _, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_bar_buttons(inner),
+        _ => Vec::new(),
+    }
+}
+
 /// The color a view gives the whole window (`.background(ui.page)` on the view `view` returns), if it does.
 #[cfg(ios)]
 pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
     match node {
         UiNode::Boxed(c, _, inner) if *c > 0xff_ffff => Some(*c).or_else(|| ui_backdrop(inner)),
+        UiNode::Pushed(main, _, _) => ui_backdrop(main),
+        UiNode::Barred(inner, _) => ui_backdrop(inner),
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_backdrop(inner),
         _ => None,
     }
@@ -1811,6 +1913,8 @@ pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
 pub fn ui_title(node: &UiNode) -> Option<String> {
     match node {
         UiNode::Titled(t, _) => Some(t.clone()),
+        UiNode::Pushed(main, _, _) => ui_title(main),
+        UiNode::Barred(inner, _) => ui_title(inner),
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().find_map(ui_title),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) | UiNode::Boxed(_, _, inner) => ui_title(inner),
         _ => None,
@@ -1834,6 +1938,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             Some('s') if own.size == 0 => own.size = n as i32,
             Some('b') => own.bold = true,
             Some('w') => own.wide = true,
+            Some('k') => own.marks = true,
             Some('m') => margin = margin.or(Some(n as i32)),
             Some('g') => back = back.or(Some(n as u32)),
             Some('r') => round = n as i32,
@@ -1866,7 +1971,9 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             UiNode::Image(path, _) => UiNode::Image(path, own.size),
             other => other,
         },
-        'B' if style.size > 0 || style.bold => UiNode::Styled(UiStyle { color: None, ..style }, node.into()),
+        // A button keeps the system's text color unless it was given its own.
+        // (On an iPhone only: the other systems' buttons keep theirs.)
+        'B' if style.size > 0 || style.bold || (cfg!(ios) && own.color.is_some()) => UiNode::Styled(UiStyle { color: if cfg!(ios) { own.color } else { None }, ..style }, node.into()),
         'T' | 'I' if style != UiStyle::default() => UiNode::Styled(style, node.into()),
         _ => node,
     };
@@ -2000,6 +2107,33 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             if kind == 'H' {
                 return UiNode::Tabs(parts.into_iter().map(|p| match p { UiNode::Styled(_, inner) => *inner, other => other }).collect(), Vec::new());
             }
+            // A page over a view: [the view, the page, a hidden button for the back event].
+            if kind == 'A' && parts.len() == 3 {
+                let mut parts = parts.into_iter();
+                let (main, page) = (parts.next().unwrap(), parts.next().unwrap());
+                #[cfg(ios)]
+                if let Some(UiNode::Button(_, back)) = parts.next() {
+                    return UiNode::Pushed(main.into(), page.into(), back);
+                }
+                // Elsewhere there is no such screen: the page shows below the view.
+                return UiNode::Column(alloc::vec![main, page], UiAlign::Start);
+            }
+            // A button in the navigation bar: [the page, a hidden button for the label and the event].
+            if kind == 'E' && parts.len() == 2 {
+                let mut parts = parts.into_iter();
+                let inner = parts.next().unwrap();
+                #[cfg(ios)]
+                if let Some(UiNode::Button(label, n)) = parts.next() {
+                    return match inner {
+                        UiNode::Barred(more, mut buttons) => {
+                            buttons.insert(0, (label, n));
+                            UiNode::Barred(more, buttons)
+                        }
+                        other => UiNode::Barred(other.into(), alloc::vec![(label, n)]),
+                    };
+                }
+                return inner;
+            }
             if kind == 'J' {
                 let mut parts = parts.into_iter();
                 let inner = parts.next().unwrap_or(UiNode::Text(String::new()));
@@ -2086,6 +2220,20 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Spaced(m, inner) => {
                 write(inner, out);
                 out.push_str(&format!(" margin({m})"));
+            }
+            #[cfg(ios)]
+            UiNode::Pushed(main, page, _) => {
+                write(main, out);
+                out.push_str(" pushing(");
+                write(page, out);
+                out.push(')');
+            }
+            #[cfg(ios)]
+            UiNode::Barred(inner, buttons) => {
+                write(inner, out);
+                for (label, _) in buttons.iter().rev() {
+                    out.push_str(&format!(" nav_button({label})"));
+                }
             }
             #[cfg(ios)]
             UiNode::Titled(t, inner) => {
