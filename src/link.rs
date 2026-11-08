@@ -1043,7 +1043,7 @@ pub fn fat(slices: &[(u32, u32, &[u8])]) -> Vec<u8> {
 /// The Mac's pages on arm64 (4 times those of x86-64).
 const MACHO_PAGE: u64 = 0x4000;
 /// The header's commands (see `macho`).
-const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16;
+const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16 + 24;
 /// Its name and the 0 after it: a multiple of 8, as a load command's size must be.
 const NETWORK: &str = "/System/Library/Frameworks/Network.framework/Versions/A/Network";
 
@@ -1239,7 +1239,7 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
     // 64 bits, arm64 (or x86-64), an executable; no undefined names, linked by dyld, two-level
     // names, PIE.
     let (cpu, subtype) = if arm { (0x0100_000C, 0) } else { (0x0100_0007, 3) };
-    for v in [0xFEED_FACF, cpu, subtype, 2, 12 + network as u64, commands, 0x20_0085, 0] {
+    for v in [0xFEED_FACF, cpu, subtype, 2, 13 + network as u64, commands, 0x20_0085, 0] {
         le32(&mut h, v);
     }
     let segment = |h: &mut Vec<u8>, name: &str, at: u64, size: u64, file: u64, file_size: u64, rights: u64, sections: u64| {
@@ -1292,8 +1292,14 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
         }
         named(&mut h, NETWORK, NETWORK.len() + 1);
     }
+    // LC_UUID: the system of 2025 refuses a program without one (an iOS 26 SDK's dyld). The same
+    // program gets the same number.
+    for v in [0x1B, 24] {
+        le32(&mut h, v);
+    }
+    h.extend_from_slice(&crate::crypto::sha256(main)[..16]);
     // LC_BUILD_VERSION: macOS 11 and later (10.15 on an Intel Mac), or the iOS simulator (platform 7), 14 and later.
-    let build = if ios != 0 { [0x32, 24, ios as u64, 0xE_0000, 0x11_0000, 0] } else { [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] };
+    let build = if ios != 0 { [0x32, 24, ios as u64, 0xE_0000, 0x1A_0000, 0] } else { [0x32, 24, 1, if arm { 0xB_0000 } else { 0xA_0F00 }, 0xE_0000, 0] };
     for v in build {
         le32(&mut h, v);
     }
