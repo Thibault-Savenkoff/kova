@@ -72,7 +72,13 @@ pub fn install(p: &Program, files: &[String], lang: Option<usize>, name: &str, w
                     std::fs::write(contents.join("Resources/icon.icns"), crate::icon::icns_of(i)).map_err(made)?;
                 }
             }
-            Some("lnk") => std::fs::write(other, shortcut(&exe)).map_err(made)?,
+            Some("lnk") => {
+                // Windows writes its own shortcut (it wants an item list that a hand-made one lacks:
+                // it read an empty target); our bytes are the fallback when PowerShell is missing.
+                if !windows_shortcut(other, &exe) {
+                    std::fs::write(other, shortcut(&exe)).map_err(made)?;
+                }
+            }
             _ => {}
         }
         written.push(other.clone());
@@ -105,6 +111,20 @@ pub fn reachable(exe: &Path) -> bool {
 
 fn xml(t: &str) -> String {
     t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Asks Windows (PowerShell, through `WScript.Shell`) to write the shortcut `lnk` to `exe`.
+fn windows_shortcut(lnk: &Path, exe: &Path) -> bool {
+    let script = "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:KOVA_LNK); \
+        $s.TargetPath = $env:KOVA_EXE; $s.WorkingDirectory = Split-Path $env:KOVA_EXE; $s.Save()";
+    cfg!(windows)
+        && std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("KOVA_LNK", lnk)
+            .env("KOVA_EXE", exe)
+            .status()
+            .is_ok_and(|s| s.success())
+        && lnk.is_file()
 }
 
 /// A Windows shortcut (`.lnk`, Microsoft's "Shell Link" format) to `exe`: a header, then where
