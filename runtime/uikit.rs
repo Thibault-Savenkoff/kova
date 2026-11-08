@@ -425,12 +425,28 @@ extern "C" fn set_window(_me: Id, _message: Id, w: Id) {
     *WINDOW.get() = w;
 }
 
+extern "C" fn uncaught(exception: Id) {
+    if let Some(kit) = objc_kit() {
+        let name = text_of(&kit, kit.send(exception, "name"));
+        let reason = text_of(&kit, kit.send(exception, "reason"));
+        super::write(2, alloc::format!("error: {name}: {reason}\n").as_bytes());
+    }
+    super::exit(101);
+}
+
 /// The app has started: a window with an empty view, then the program.
 extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
     let Some(mut kit) = objc_kit() else { return false };
     unsafe {
         use core::mem::transmute as t;
         let objc = library("/usr/lib/libobjc.A.dylib").unwrap();
+        // An Objective-C exception no program catches (a wrong selector in `import ios`): say it, then stop with 101.
+        if let Some(foundation) = library("/System/Library/Frameworks/Foundation.framework/Foundation") {
+            if let Some(set) = symbol(foundation, "NSSetUncaughtExceptionHandler") {
+                let set: extern "C" fn(extern "C" fn(Id)) = t(set);
+                set(uncaught);
+            }
+        }
         let f = |name: &str| symbol(objc, name).unwrap_or(0);
         let new_class: extern "C" fn(Id, *const u8, usize) -> Id = t(f("objc_allocateClassPair"));
         let add: extern "C" fn(Id, Id, usize, *const u8) -> bool = t(f("class_addMethod"));
