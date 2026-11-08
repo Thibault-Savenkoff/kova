@@ -288,7 +288,7 @@ N'importe quelle vue peut aussi avoir son propre menu, qui s'ouvre au clic droit
 ui.text("Compteur : {app.count}").context([ui.item("Remise à zéro", Event.Reset), ui.item("Doubler", Event.Double)])
 ```
 
-Cela marche sur Linux, Windows, Mac, dans une page web et sur un iPhone ou un iPad. Sur Android, la vue s'affiche pour l'instant sans son menu.
+Cela marche sur Linux, Windows, Mac, dans une page web, sur un iPhone ou un iPad (appui long) et sur Android (appui long).
 
 ## Les fenêtres de dialogue
 

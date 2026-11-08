@@ -279,7 +279,7 @@ Any view can also have a menu of its own, opened by a right click (by pressing a
 ui.text("Count: {app.count}").context([ui.item("Reset", Event.Reset), ui.item("Double", Event.Double)])
 ```
 
-It works on Linux, Windows, Mac, in a web page and on an iPhone or iPad. On Android the view is shown for now without its menu.
+It works on Linux, Windows, Mac, in a web page, on an iPhone or iPad (long press) and on Android (long press).
 
 ## Dialogs
 

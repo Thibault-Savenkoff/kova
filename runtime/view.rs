@@ -152,10 +152,7 @@ pub fn node(o: &mut String, n: &UiNode) {
             o.push_str(&format!("[\"S\",{color},{},{},", style.size, style.bold));
             node(o, inner);
         }
-        // The page opens it on a right click; Android has no such menu yet and shows the view alone.
-        #[cfg(android)]
-        UiNode::Context(inner, _) => node(o, inner),
-        #[cfg(not(android))]
+        // A right click on a page, a long press on Android.
         UiNode::Context(inner, items) => {
             o.push_str("[\"J\",");
             list(o, items, |o, (label, number)| {

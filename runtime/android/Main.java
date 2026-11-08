@@ -412,6 +412,7 @@ public class Main extends Activity {
                 for (int i = 0; i < n.getJSONArray(2).length(); i++) clocksOf(n.getJSONArray(2).getJSONArray(i), found);
                 break;
             case "M":
+            case "J":
                 clocksOf(n.getJSONArray(2), found);
                 break;
             case "S":
@@ -432,6 +433,7 @@ public class Main extends Activity {
             case "S":
                 return fills(n.getJSONArray(4), side);
             case "M":
+            case "J":
                 return fills(n.getJSONArray(2), side);
             case "C":
             case "R": {
@@ -571,6 +573,10 @@ public class Main extends Activity {
                 return build(n.getJSONArray(4), s.over(n));
             case "E":
                 return build(n.getJSONArray(3), s);
+            case "J":
+                v = build(n.getJSONArray(2), s);
+                context(v, n.getJSONArray(1));
+                return v;
             case "D": {
                 JSONArray ops = n.getJSONArray(6);
                 boolean gpu = ops.length() > 0 && ops.getJSONArray(0).getString(0).equals("g");
@@ -716,6 +722,10 @@ public class Main extends Activity {
             case "E":
                 update(v, n.getJSONArray(3), s);
                 break;
+            case "J":
+                update(v, n.getJSONArray(2), s);
+                context(v, n.getJSONArray(1));
+                break;
             case "D": {
                 JSONArray ops = n.getJSONArray(6);
                 if (n.getInt(1) != 0 || n.getInt(2) != 0) {
@@ -734,6 +744,28 @@ public class Main extends Activity {
             default:
                 break;
         }
+    }
+
+    /** A long press on `v` opens a menu of `items` ([label, event number]), the phone's right click. */
+    void context(View v, JSONArray items) {
+        v.setOnLongClickListener(x -> {
+            android.widget.PopupMenu menu = new android.widget.PopupMenu(this, x);
+            try {
+                for (int i = 0; i < items.length(); i++) menu.getMenu().add(0, i, 0, items.getJSONArray(i).getString(0));
+                menu.setOnMenuItemClickListener(item -> {
+                    try {
+                        hear(items.getJSONArray(item.getItemId()).getLong(1), "");
+                    } catch (JSONException e) {
+                        return false;
+                    }
+                    return true;
+                });
+            } catch (JSONException e) {
+                return false;
+            }
+            menu.show();
+            return true;
+        });
     }
 
     Bitmap picture(String path) {
