@@ -302,7 +302,7 @@ fn native_run(program: &kir::Program, files: &[String], lang: Option<usize>, giv
         use std::os::unix::process::CommandExt;
         let old = |name: &str| name.starts_with("kova-run-") && !dir.ends_with(name);
         for e in std::fs::read_dir(&temp).into_iter().flatten().flatten() {
-            let a_while = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 10));
+            let a_while = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 600));
             if old(&e.file_name().to_string_lossy()) && a_while {
                 // Folders since 2026-10-29, single files before.
                 let _ = std::fs::remove_dir_all(e.path()).or_else(|_| std::fs::remove_file(e.path()));

@@ -211,9 +211,18 @@ fn guide_examples() {
         }
     }
     docs.sort();
-    let mut failures = vec![];
+    // First every example is read; then they run, one per core at a time, each in a folder of
+    // its own (most of the time goes to starting programs).
+    struct Example {
+        doc: String,
+        files: Vec<(String, String)>,
+        body: String,
+        stdout: bool,
+        speaks: &'static str,
+    }
+    let mut examples: Vec<Example> = vec![];
     for path in &docs {
-        let doc = path.strip_prefix(root).unwrap().display();
+        let doc = path.strip_prefix(root).unwrap().display().to_string();
         let page = std::fs::read_to_string(path).unwrap();
         // (language, text) of each fenced block.
         let mut blocks: Vec<(String, String)> = vec![];
@@ -234,26 +243,42 @@ fn guide_examples() {
                 ("kova", Some(name)) => files.push((name.to_string(), body)),
                 ("kova", None) => files = vec![("main.kova".to_string(), body)],
                 ("text" | "txt", _) if !files.is_empty() => {
-                    let _ = std::fs::remove_dir_all(&tmp);
-                    std::fs::create_dir_all(&tmp).unwrap();
-                    for (name, code) in &files {
-                        std::fs::write(tmp.join(name), code).unwrap();
-                    }
                     // The French pages show Kova's French messages.
                     let speaks = if path.components().any(|c| c.as_os_str() == "fr") { "fr" } else { LANG };
-                    let out = kova(speaks).arg("run").arg(&files[0].0).current_dir(&tmp).env("NO_COLOR", "1").output().unwrap();
-                    // An error block loses the empty line that ends the message.
-                    let (shown, fine) = if lang == "text" { (text(&out.stdout), out.status.success()) } else { (text(&out.stderr).trim_end().to_string() + "\n", !out.status.success()) };
-                    if shown != body || !fine {
-                        failures.push(format!("{doc}, {}:\n{}{}", files[0].1.lines().next().unwrap_or(""), text(&out.stdout), text(&out.stderr)));
-                    }
-                    files.clear();
+                    examples.push(Example { doc: doc.clone(), files: std::mem::take(&mut files), body, stdout: lang == "text", speaks });
                 }
                 _ => {}
             }
         }
     }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let found = std::sync::Mutex::new(vec![]);
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    std::thread::scope(|s| {
+        for _ in 0..cores {
+            s.spawn(|| {
+                while let Some(n) = Some(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)).filter(|n| *n < examples.len()) {
+                    let e = &examples[n];
+                    let folder = tmp.join(n.to_string());
+                    std::fs::create_dir_all(&folder).unwrap();
+                    for (name, code) in &e.files {
+                        std::fs::write(folder.join(name), code).unwrap();
+                    }
+                    let out = kova(e.speaks).arg("run").arg(&e.files[0].0).current_dir(&folder).env("NO_COLOR", "1").output().unwrap();
+                    // An error block loses the empty line that ends the message.
+                    let (shown, fine) = if e.stdout { (text(&out.stdout), out.status.success()) } else { (text(&out.stderr).trim_end().to_string() + "\n", !out.status.success()) };
+                    if shown != e.body || !fine {
+                        let failure = format!("{}, {}:\n{}{}", e.doc, e.files[0].1.lines().next().unwrap_or(""), text(&out.stdout), text(&out.stderr));
+                        found.lock().unwrap().push((n, failure));
+                    }
+                }
+            });
+        }
+    });
     let _ = std::fs::remove_dir_all(&tmp);
+    let mut failures = found.into_inner().unwrap();
+    failures.sort();
+    let failures: Vec<String> = failures.into_iter().map(|(_, f)| f).collect();
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n\n"));
 }
 
