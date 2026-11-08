@@ -40,8 +40,27 @@ Not there yet: `ui.gpu` and menus.
 
 ## On a real iPhone
 
-Apple only runs apps signed with a certificate it made for you. A free Apple ID is enough, and Kova
-signs by itself, on Linux, Windows or Mac. What Apple needs, you do **once, on a Mac**:
+Apple only runs apps signed with a certificate it made for you. A free Apple ID is enough.
+
+### On a Mac: nothing to give Kova
+
+Add your Apple ID in Xcode once (Settings → Accounts), plug the iPhone in with Developer Mode on
+(Settings → Privacy & Security), then:
+
+```console
+$ kova build counter.kova --target ios --run
+```
+
+Kova asks Xcode for the profile of `dev.kova.counter` (it makes one the first time), signs the app
+with your certificate from the keychain, installs it on the iPhone and starts it, showing what the
+program prints. Run it from a Terminal on the Mac: the first time, macOS asks to let `codesign` use
+your key (choose Always Allow). Without `--run`, you get the signed `counter.app` and install it
+yourself.
+
+### On any computer
+
+Kova signs by itself with a profile and an identity file, on Linux, Windows or Mac. What Apple needs,
+you do **once, on a Mac**:
 
 1. Plug the iPhone in, and turn on Settings → Privacy & Security → Developer Mode.
 2. In Xcode, add your Apple ID (Settings → Accounts) and make an empty iOS App project whose

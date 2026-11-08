@@ -197,11 +197,18 @@ fn kova() {
             let system = target.or(codegen::Target::host()).map_or(format!("{} {}", std::env::consts::OS, std::env::consts::ARCH), |t| t.made().title().to_string());
             // A `.app` is a folder: its executable is the size.
             let stem = std::path::Path::new(&output).file_stem().map(|s| s.to_os_string()).unwrap_or_default();
-            let sized = if output.ends_with(".app") { std::path::Path::new(&output).join(stem) } else { output.clone().into() };
+            let sized = if output.ends_with(".app") { std::path::Path::new(&output).join(&stem) } else { output.clone().into() };
             let size = std::fs::metadata(&sized).map_or(0, |m| m.len()).div_ceil(1024);
             let ms = started.elapsed().as_millis();
             let time = if ms < 1000 { format!("{ms} ms") } else { format!("{}{}{} s", ms / 1000, t!("decimal_mark"), ms % 1000 / 100) };
             eprintln!("{}", t!("built", file = output, system = system, size = size, time = time));
+            if sign::RUN.load(std::sync::atomic::Ordering::Relaxed) && matches!(target, Some(codegen::Target::Ios | codegen::Target::IosSimulator)) {
+                let id = ios::identifier(&stem.to_string_lossy());
+                match ios::run(&output, &id, target == Some(codegen::Target::Ios)) {
+                    Ok(code) => exit(code),
+                    Err(e) => fail(e),
+                }
+            }
         }
         Command::Test { only } if !tree.externs.is_empty() || info.threads => exit(native_test(&mut program, &files, lang(), only.as_deref())),
         Command::Test { only } => exit(interp::test(&program, &files, only.as_deref())),
@@ -682,6 +689,7 @@ fn build_options(options: &[&str]) -> Option<(Option<String>, bool, Option<codeg
     while i < options.len() {
         match options[i] {
             "--boost" => boost = true,
+            "--run" => sign::RUN.store(true, std::sync::atomic::Ordering::Relaxed),
             "-o" => {
                 output = Some(options.get(i + 1)?.to_string());
                 i += 1;

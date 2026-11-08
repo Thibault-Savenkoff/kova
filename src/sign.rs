@@ -24,6 +24,8 @@ use std::sync::OnceLock;
 /// `--profile` and `--identity` of `kova build --target ios`.
 pub static PROFILE: OnceLock<String> = OnceLock::new();
 pub static IDENTITY: OnceLock<String> = OnceLock::new();
+/// `--run`: install and start the app once built.
+pub static RUN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Apple's public certificates, sent along with the signature.
 const WWDR: &[u8] = include_bytes!("apple/wwdr-g3.cer");
@@ -34,6 +36,9 @@ const RULES: &str = include_str!("apple/rules.txt");
 /// Signs the app folder `dir` (holding `Info.plist` and the executable `stem`).
 pub fn bundle(dir: &Path, stem: &str, id: &str) -> Result<(), String> {
     let (Some(profile), Some(identity)) = (PROFILE.get(), IDENTITY.get()) else {
+        #[cfg(target_os = "macos")]
+        return mac::bundle(dir, id);
+        #[cfg(not(target_os = "macos"))]
         return Err(t!("sign_needs"));
     };
     let read = |file: &str| std::fs::read(file).map_err(|e| t!("sign_read", file = file, detail = e));
@@ -341,13 +346,18 @@ impl Certificate {
 
 /// The common name ("Apple Development: …") of a certificate's subject.
 fn common_name(cert: &[u8]) -> Option<String> {
+    subject_field(cert, 3)
+}
+
+/// A field of a certificate's subject: 3 is the common name, 11 the organizational unit (the team).
+fn subject_field(cert: &[u8], field: u8) -> Option<String> {
     let subject = Certificate::read(cert)?.subject;
     let (_, _, mut names, _) = der(&subject)?;
     while !names.is_empty() {
         let (_, _, set, next) = der(names)?;
         let (_, _, pair, _) = der(set)?;
         let (_, _, kind, value) = der(pair)?;
-        if kind == [0x55, 0x04, 0x03] {
+        if kind == [0x55, 0x04, field] {
             return Some(String::from_utf8_lossy(der(value)?.2).into_owned());
         }
         names = next;
@@ -687,6 +697,108 @@ fn now_iso() -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + (month <= 2) as i64;
     format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+}
+
+// ---- On a Mac: Xcode's own files and `codesign` ----
+
+/// What a Mac already has: Xcode's profiles and the keychain. Nothing to give to Kova.
+#[cfg(target_os = "macos")]
+mod mac {
+    use super::*;
+    use std::process::Command;
+
+    fn profile_folders() -> Vec<std::path::PathBuf> {
+        let home = std::env::var("HOME").unwrap_or_default();
+        ["Library/Developer/Xcode/UserData/Provisioning Profiles", "Library/MobileDevice/Provisioning Profiles"].iter().map(|f| Path::new(&home).join(f)).collect()
+    }
+
+    /// Every profile Xcode keeps, read.
+    fn profiles() -> Vec<(Vec<u8>, Profile)> {
+        let mut all = Vec::new();
+        for folder in profile_folders() {
+            for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+                if entry.path().extension().is_some_and(|e| e == "mobileprovision") {
+                    if let Some(bytes) = std::fs::read(entry.path()).ok().filter(|b| Profile::read(b).is_some()) {
+                        let profile = Profile::read(&bytes).unwrap();
+                        all.push((bytes, profile));
+                    }
+                }
+            }
+        }
+        all
+    }
+
+    /// The profile of the app `id`: one that exists and is valid, an exact one before a wildcard
+    /// one, else the one Xcode makes for it.
+    fn profile_for(id: &str) -> Result<(Vec<u8>, Profile), String> {
+        let find = || {
+            let now = now_iso();
+            let mut usable: Vec<_> = profiles().into_iter().filter(|(_, p)| p.allows(id) && p.expires > now).collect();
+            usable.sort_by_key(|(_, p)| p.application.ends_with('*'));
+            usable.into_iter().next()
+        };
+        if let Some(found) = find() {
+            return Ok(found);
+        }
+        let team = profiles().first().map(|(_, p)| p.team.clone()).or_else(team_from_keychain).ok_or_else(|| t!("sign_no_team"))?;
+        make_profile(id, &team)?;
+        find().ok_or_else(|| t!("sign_no_profile", id = id))
+    }
+
+    fn team_from_keychain() -> Option<String> {
+        let out = Command::new("security").args(["find-certificate", "-c", "Apple Development", "-p"]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let (_, body) = pem_blocks(&text).into_iter().find(|(k, _)| k == "CERTIFICATE")?;
+        subject_field(&from_base64(&body, false)?, 11)
+    }
+
+    /// Asks Xcode for the profile of `id` the way it does for its own projects: a tiny project is
+    /// "built" with `-allowProvisioningUpdates`, which registers the name and the iPhone with Apple
+    /// and downloads the profile. Whether the build then succeeds does not matter.
+    fn make_profile(id: &str, team: &str) -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("kova-profile-{}", std::process::id()));
+        let made = |e: std::io::Error| e.to_string();
+        std::fs::create_dir_all(dir.join("K.xcodeproj")).map_err(made)?;
+        std::fs::write(dir.join("main.c"), "int main(void) { return 0; }\n").map_err(made)?;
+        let project = XCODE_PROJECT.replace("@ID@", id).replace("@TEAM@", team);
+        std::fs::write(dir.join("K.xcodeproj/project.pbxproj"), project).map_err(made)?;
+        eprintln!("{}", t!("sign_asking", id = id));
+        let run = Command::new("xcodebuild")
+            .current_dir(&dir)
+            .args(["-project", "K.xcodeproj", "-target", "K", "-sdk", "iphoneos", "-configuration", "Release", "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration", "build"])
+            .output()
+            .map_err(|e| t!("sign_tool", tool = "xcodebuild", detail = e))?;
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = String::from_utf8_lossy(&run.stdout).into_owned() + &String::from_utf8_lossy(&run.stderr);
+        if let Some(line) = text.lines().rev().find(|l| l.contains("error:") && (l.contains("Apple ID") || l.contains("account") || l.contains("Provisioning") || l.contains("team"))) {
+            return Err(t!("sign_xcode", detail = line.trim()));
+        }
+        Ok(())
+    }
+
+    /// Signs `dir` with `codesign` and the certificate of the profile that is in the keychain.
+    pub fn bundle(dir: &Path, id: &str) -> Result<(), String> {
+        let (bytes, profile) = profile_for(id)?;
+        let made = |e: std::io::Error| e.to_string();
+        std::fs::write(dir.join("embedded.mobileprovision"), &bytes).map_err(made)?;
+        let listed = Command::new("security").args(["find-identity", "-v", "-p", "codesigning"]).output().map_err(|e| t!("sign_tool", tool = "security", detail = e))?;
+        let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+        let hex = |d: &[u8; 20]| d.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let wanted: Vec<String> = profile.certificates.iter().map(|c| hex(&sha1(c))).collect();
+        let identity = listed.lines().filter_map(|l| l.split_whitespace().nth(1)).find(|h| wanted.iter().any(|w| w == h)).ok_or_else(|| t!("sign_no_identity"))?;
+        let entitlements = std::env::temp_dir().join(format!("kova-entitlements-{}.plist", std::process::id()));
+        std::fs::write(&entitlements, profile.entitlements_for(id).xml()).map_err(made)?;
+        let run = Command::new("codesign").args(["-f", "-s", identity, "--entitlements"]).arg(&entitlements).arg(dir).output().map_err(|e| t!("sign_tool", tool = "codesign", detail = e));
+        let _ = std::fs::remove_file(&entitlements);
+        let run = run?;
+        if run.status.success() {
+            Ok(())
+        } else {
+            Err(t!("sign_codesign", detail = String::from_utf8_lossy(&run.stderr).trim()))
+        }
+    }
+
+    const XCODE_PROJECT: &str = include_str!("apple/project.pbxproj");
 }
 
 #[cfg(test)]

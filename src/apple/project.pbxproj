@@ -1,0 +1,21 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+		A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000002; };
+		A00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
+		A00000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = K.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000002, A00000000000000000000005); sourceTree = "<group>"; };
+		A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000003); name = Products; sourceTree = "<group>"; };
+		A00000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000007; buildPhases = (A00000000000000000000008); buildRules = (); dependencies = (); name = K; productName = K; productReference = A00000000000000000000003; productType = "com.apple.product-type.application"; };
+		A00000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000009 = {isa = PBXProject; attributes = {}; buildConfigurationList = A0000000000000000000000A; compatibilityVersion = "Xcode 14.0"; mainGroup = A00000000000000000000004; productRefGroup = A00000000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000006); };
+		A00000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000B); defaultConfigurationName = Release; };
+		A0000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000C); defaultConfigurationName = Release; };
+		A0000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = K; PRODUCT_BUNDLE_IDENTIFIER = "@ID@"; DEVELOPMENT_TEAM = @TEAM@; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; }; name = Release; };
+		A0000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; }; name = Release; };
+	};
+	rootObject = A00000000000000000000009;
+}

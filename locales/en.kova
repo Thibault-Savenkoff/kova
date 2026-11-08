@@ -725,4 +725,13 @@ lang en {
     sign_app_id := "the profile allows the app `{allowed}`, but this program is `{id}`: name it that way with the `name` setting of its `header`, or make a profile for it"
     sign_no_cert := "no certificate of {file} is listed in the profile {profile}, or its private key is missing"
     sign_expired := "the profile expired on {date}"
+    sign_no_team := "no Apple developer team found: open Xcode, add your Apple ID in Settings > Accounts, then try again"
+    sign_no_profile := "Xcode made no provisioning profile for `{id}`: check that your Apple ID is signed in to Xcode and the iPhone is plugged in"
+    sign_asking := "asking Xcode for a provisioning profile for `{id}`..."
+    sign_tool := "cannot run {tool}: {detail}"
+    sign_xcode := "Xcode refused: {detail}"
+    sign_no_identity := "the keychain holds no signing certificate listed in the profile: make one in Xcode (Settings > Accounts > Manage Certificates)"
+    sign_codesign := "codesign failed: {detail} (run kova from a Terminal on the Mac, and allow access to the key when asked)"
+    ios_no_device := "no iPhone is connected: plug it in, unlock it, and try again"
+    ios_failed := "{what} failed: {detail}"
 }

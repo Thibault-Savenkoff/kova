@@ -725,4 +725,13 @@ lang fr {
     sign_app_id := "le profil autorise l'application `{allowed}`, mais ce programme est `{id}` : donne-lui ce nom avec le réglage `name` de son `header`, ou fais un profil pour lui"
     sign_no_cert := "aucun certificat de {file} n'est dans le profil {profile}, ou sa clé privée manque"
     sign_expired := "le profil a expiré le {date}"
+    sign_no_team := "aucune équipe de développeur Apple trouvée : ouvre Xcode, ajoute ton Apple ID dans Réglages > Comptes, puis réessaie"
+    sign_no_profile := "Xcode n'a pas fait de profil pour `{id}` : vérifie que ton Apple ID est connecté dans Xcode et que l'iPhone est branché"
+    sign_asking := "demande à Xcode un profil pour `{id}`..."
+    sign_tool := "impossible de lancer {tool} : {detail}"
+    sign_xcode := "Xcode a refusé : {detail}"
+    sign_no_identity := "le trousseau n'a aucun certificat de signature listé dans le profil : fais-en un dans Xcode (Réglages > Comptes > Gérer les certificats)"
+    sign_codesign := "codesign a échoué : {detail} (lance kova depuis un Terminal sur le Mac, et autorise l'accès à la clé quand on te le demande)"
+    ios_no_device := "aucun iPhone n'est connecté : branche-le, déverrouille-le et réessaie"
+    ios_failed := "{what} a échoué : {detail}"
 }

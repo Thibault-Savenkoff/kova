@@ -41,8 +41,27 @@ Pas encore là : `ui.gpu` et les menus.
 ## Sur un vrai iPhone
 
 Apple ne lance que des apps signées avec un certificat qu'il a fait pour toi. Un Apple ID gratuit
-suffit, et Kova signe tout seul, sous Linux, Windows ou Mac. Ce que veut Apple, tu le fais **une
-seule fois, sur un Mac** :
+suffit.
+
+### Sur un Mac : rien à donner à Kova
+
+Ajoute ton Apple ID dans Xcode une fois (Réglages → Comptes), branche l'iPhone avec le Mode
+développeur activé (Réglages → Confidentialité et sécurité), puis :
+
+```console
+$ kova build compteur.kova --target ios --run
+```
+
+Kova demande à Xcode le profil de `dev.kova.compteur` (il en fait un la première fois), signe l'app
+avec ton certificat du trousseau, l'installe sur l'iPhone et la lance, en montrant ce que le
+programme affiche. Lance-le depuis un Terminal sur le Mac : la première fois, macOS demande si
+`codesign` peut utiliser ta clé (choisis Toujours autoriser). Sans `--run`, tu obtiens
+`compteur.app` signée et tu l'installes toi-même.
+
+### Sur n'importe quel ordinateur
+
+Kova signe tout seul avec un profil et un fichier d'identité, sous Linux, Windows ou Mac. Ce que
+veut Apple, tu le fais **une seule fois, sur un Mac** :
 
 1. Branche l'iPhone, et active Réglages → Confidentialité et sécurité → Mode développeur.
 2. Dans Xcode, ajoute ton Apple ID (Réglages → Comptes) et crée un projet iOS App vide dont
