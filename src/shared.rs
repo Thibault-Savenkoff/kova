@@ -898,6 +898,9 @@ pub enum UiNode {
     /// A color behind a view and its room, with rounded corners (iPhone only for now; a color past 0xFFFFFF is the system's panel).
     #[cfg(ios)]
     Boxed(u32, i32, alloc::boxed::Box<UiNode>),
+    /// The title of the page this view is (`.title("Stats")`): the navigation bar shows it (iPhone only for now).
+    #[cfg(ios)]
+    Titled(String, alloc::boxed::Box<UiNode>),
     /// A drawing area.
     Canvas(UiCanvas),
     /// A view and a clock: every so many milliseconds, the button number's event.
@@ -912,7 +915,8 @@ pub enum UiNode {
     Table(UiTable),
     /// `ui.tabs` on iOS: a native tab bar. The tab in use is a text, each other a button.
     #[cfg(ios)]
-    Tabs(Vec<UiNode>),
+    /// The tabs and the SF Symbol name of each (empty for none).
+    Tabs(Vec<UiNode>, Vec<String>),
     /// `ui.date` on iOS: a date picker (`2026-11-08`) and its number among the fields.
     #[cfg(ios)]
     Date(String, usize),
@@ -952,6 +956,8 @@ pub struct UiTable {
 #[derive(Clone, PartialEq, Debug)]
 pub struct UiMenu {
     pub title: String,
+    /// The SF Symbol shown instead of the title (iPhone), or empty.
+    pub icon: String,
     pub items: Vec<(String, Option<usize>, String)>,
 }
 
@@ -964,7 +970,10 @@ pub fn ui_menus(text: &str) -> (Vec<UiMenu>, &str) {
     let mut menus: Vec<UiMenu> = Vec::new();
     for line in body.lines() {
         match (line.strip_prefix('\t'), menus.last_mut()) {
-            (None, _) => menus.push(UiMenu { title: line.into(), items: Vec::new() }),
+            (None, _) => {
+                let (title, icon) = line.split_once('\t').unwrap_or((line, ""));
+                menus.push(UiMenu { title: title.into(), icon: icon.into(), items: Vec::new() })
+            }
             (Some("-"), Some(m)) => m.items.push((String::new(), None, String::new())),
             (Some(item), Some(m)) => {
                 let (number, label) = item.split_once(' ').unwrap_or((item, ""));
@@ -1603,11 +1612,11 @@ pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_clocks).collect(),
         #[cfg(ios)]
-        UiNode::Tabs(_) => Vec::new(),
+        UiNode::Tabs(..) => Vec::new(),
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) => ui_clocks(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_clocks(inner),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
         _ => Vec::new(),
     }
@@ -1664,7 +1673,7 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) => ui_fills(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_fills(inner),
         UiNode::Context(inner, _) => ui_fills(inner),
         UiNode::Canvas(c) => c.width == 0,
         _ => false,
@@ -1678,7 +1687,7 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) => ui_fills_down(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_fills_down(inner),
         UiNode::Context(inner, _) => ui_fills_down(inner),
         UiNode::Canvas(c) => c.height == 0,
         _ => false,
@@ -1720,7 +1729,7 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Image(path, width) => format!("P{width}:{path}"),
         // The names and the tab in use: a tab bar is made again when they change.
         #[cfg(ios)]
-        UiNode::Tabs(parts) => format!("H{:?}", parts.iter().map(|p| match p { UiNode::Text(t) => format!("*{t}"), UiNode::Button(t, n) => format!("{n}{t}"), _ => String::new() }).collect::<Vec<_>>()),
+        UiNode::Tabs(parts, icons) => format!("H{icons:?}{:?}", parts.iter().map(|p| match p { UiNode::Text(t) => format!("*{t}"), UiNode::Button(t, n) => format!("{n}{t}"), _ => String::new() }).collect::<Vec<_>>()),
         #[cfg(ios)]
         UiNode::Date(..) => "N".into(),
         #[cfg(ios)]
@@ -1738,6 +1747,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         #[cfg(ios)]
         UiNode::Boxed(c, r, inner) => format!("X{c}:{r}({})", ui_shape(inner)),
+        #[cfg(ios)]
+        UiNode::Titled(_, inner) => ui_shape(inner),
         // Not its drawing, which changes at every frame.
         UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}{}", c.width, c.height, c.mouse, c.key, c.gpu()),
         // Nor its clocks: each system compares those itself, widgets stay when one starts.
@@ -1752,7 +1763,7 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) => ui_leaves(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) => ui_leaves(inner),
         UiNode::Context(inner, _) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
         leaf => alloc::vec![(leaf, UiStyle::default())],
@@ -1785,10 +1796,33 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
     n
 }
 
+/// The color a view gives the whole window (`.background(ui.page)` on the view `view` returns), if it does.
+#[cfg(ios)]
+pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
+    match node {
+        UiNode::Boxed(c, _, inner) if *c > 0xff_ffff => Some(*c).or_else(|| ui_backdrop(inner)),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_backdrop(inner),
+        _ => None,
+    }
+}
+
+/// The title a view gives its page (`.title("…")`), if it does.
+#[cfg(ios)]
+pub fn ui_title(node: &UiNode) -> Option<String> {
+    match node {
+        UiNode::Titled(t, _) => Some(t.clone()),
+        UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().find_map(ui_title),
+        UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) | UiNode::Boxed(_, _, inner) => ui_title(inner),
+        _ => None,
+    }
+}
+
 fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyle) -> UiNode {
     let (mut own, mut margin) = (UiStyle::default(), None);
     #[cfg_attr(not(ios), allow(unused_variables, unused_mut))]
     let (mut back, mut round) = (None, 0);
+    #[cfg_attr(not(ios), allow(unused_variables, unused_mut))]
+    let (mut icons, mut title): (Option<String>, Option<String>) = (None, None);
     // What listens, the last one written first.
     let mut listening = Vec::new();
     let mut kind = chars.next().unwrap_or('C');
@@ -1803,6 +1837,11 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             Some('m') => margin = margin.or(Some(n as i32)),
             Some('g') => back = back.or(Some(n as u32)),
             Some('r') => round = n as i32,
+            // `.icons([…])` and `.title("…")`: a text of `n` characters follows.
+            Some(key @ ('i' | 't')) => {
+                let text: String = chars.by_ref().take(n).collect();
+                if key == 'i' { icons = Some(text) } else { title = title.or(Some(text)) }
+            }
             Some(key @ ('M' | 'K' | 'E')) => listening.push((key, n as i32)),
             _ => {}
         }
@@ -1840,6 +1879,18 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
         Some(c) => UiNode::Boxed(c, round, node.into()),
         None => node,
     };
+    #[cfg(ios)]
+    let node = match (node, icons) {
+        (UiNode::Tabs(parts, _), Some(names)) => UiNode::Tabs(parts, names.split(',').map(|n| n.trim().into()).collect()),
+        (node, _) => node,
+    };
+    #[cfg(ios)]
+    let node = match title {
+        Some(t) => UiNode::Titled(t, node.into()),
+        None => node,
+    };
+    #[cfg(not(ios))]
+    let _ = (&icons, &title);
     let _ = (back, round);
     clocks.into_iter().fold(node, |inner, (ms, n)| UiNode::Every(ms, n, inner.into()))
 }
@@ -1947,7 +1998,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             let parts: Vec<UiNode> = (0..n).map(|_| ui_node(chars, counts, style)).collect();
             #[cfg(ios)]
             if kind == 'H' {
-                return UiNode::Tabs(parts.into_iter().map(|p| match p { UiNode::Styled(_, inner) => *inner, other => other }).collect());
+                return UiNode::Tabs(parts.into_iter().map(|p| match p { UiNode::Styled(_, inner) => *inner, other => other }).collect(), Vec::new());
             }
             if kind == 'J' {
                 let mut parts = parts.into_iter();
@@ -1993,7 +2044,12 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
             #[cfg(ios)]
-            UiNode::Tabs(parts) => group("row center", parts, out),
+            UiNode::Tabs(parts, icons) => {
+                group("row center", parts, out);
+                if !icons.is_empty() {
+                    out.push_str(&format!(" icons({})", icons.join(", ")));
+                }
+            }
             #[cfg(ios)]
             UiNode::Date(t, _) => out.push_str(&format!("input {t:?}")),
             #[cfg(ios)]
@@ -2030,6 +2086,11 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Spaced(m, inner) => {
                 write(inner, out);
                 out.push_str(&format!(" margin({m})"));
+            }
+            #[cfg(ios)]
+            UiNode::Titled(t, inner) => {
+                write(inner, out);
+                out.push_str(&format!(" title({t})"));
             }
             #[cfg(ios)]
             UiNode::Boxed(c, r, inner) => {

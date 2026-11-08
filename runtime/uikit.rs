@@ -501,6 +501,9 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         // The controller sits in a navigation controller: its bar shows the title and the menus.
         let nav = (kit.send_two)(kit.send(kit.class("UINavigationController"), "alloc"), kit.sel("initWithRootViewController:"), controller);
         (kit.send_two)(w, kit.sel("setRootViewController:"), nav);
+        // Large titles that shrink when the content scrolls, as in the system's own apps.
+        (kit.send_id)(kit.send(nav, "navigationBar"), kit.sel("setPrefersLargeTitles:"), 1);
+        (kit.send_id)(kit.send(controller, "navigationItem"), kit.sel("setLargeTitleDisplayMode:"), 1);
         // The content scrolls when it is taller than the screen; the keyboard goes away when it is dragged.
         let scroll = made(&kit, "UIScrollView");
         (kit.send_id)(scroll, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
@@ -509,7 +512,9 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         (kit.send_two)(root, kit.sel("addSubview:"), scroll);
         let (safe, by) = (kit.send(root, "safeAreaLayoutGuide"), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
         for edge in ["topAnchor", "leadingAnchor", "trailingAnchor", "bottomAnchor"] {
-            let c = by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(safe, edge), 0.0);
+            // The top goes under the navigation bar (large titles collapse by scrolling), the content is inset by it.
+            let to = if edge == "topAnchor" { root } else { safe };
+            let c = by(kit.send(scroll, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(to, edge), 0.0);
             // The bottom gives way to a tab bar (required `<=` below it).
             if edge == "bottomAnchor" {
                 msg!(kit, extern "C" fn(Id, Id, f32))(c, kit.sel("setPriority:"), 750.0);
@@ -655,7 +660,15 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
     let kit = &screen.kit;
     let pool = (kit.push)();
     let shape = crate::shared::ui_shape(view);
-    (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setTitle:"), kit.text(title));
+    // A view may give its page a title of its own (`.title("Stats")`), else the window's.
+    let title = crate::shared::ui_title(view).unwrap_or_else(|| title.into());
+    (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setTitle:"), kit.text(&title));
+    // `.background(ui.page)` on the whole view paints the window, as grouped lists have it.
+    let window_color = match crate::shared::ui_backdrop(view) {
+        Some(c) => ui_color(kit, c),
+        None => kit.send(kit.class("UIColor"), "systemBackgroundColor"),
+    };
+    (kit.send_two)(screen.root, kit.sel("setBackgroundColor:"), window_color);
     if shape == screen.shape && menus == screen.menus.as_slice() {
         for ((leaf, _), &(v, label)) in crate::shared::ui_leaves(view).into_iter().zip(screen.made.iter()) {
             refresh(kit, leaf, v, label);
@@ -779,6 +792,88 @@ fn place(kit: &Kit, scroll: Id, content: Id, fills: bool) {
 }
 
 /// A width of at least `points`.
+/// A color of a view: red, green and blue in the low 24 bits, or one of the system's (`ui.panel`, `ui.page`, `ui.card`) past them.
+fn ui_color(kit: &Kit, c: u32) -> Id {
+    if c > 0xff_ffff {
+        return kit.send(kit.class("UIColor"), match c & 0xff {
+            2 => "systemGroupedBackgroundColor",
+            3 => "secondarySystemGroupedBackgroundColor",
+            _ => "secondarySystemBackgroundColor",
+        });
+    }
+    let channel = |shift: u32| ((c >> shift) & 0xff) as f64 / 255.0;
+    msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id)(kit.class("UIColor"), kit.sel("colorWithRed:green:blue:alpha:"), channel(16), channel(8), channel(0), 1.0)
+}
+
+/// A list: its rows in a rounded white card as the Settings app has them, a chevron on each; a line break in a
+/// row (a tab) gives a title, a subtitle and a detail. Each row is a button laid over its labels.
+fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_views: &mut Vec<(Id, Id)>) -> Id {
+    let card = made(kit, "UIStackView");
+    (kit.send_id)(card, kit.sel("setAxis:"), 1);
+    (kit.send_id)(card, kit.sel("setAlignment:"), 0);
+    (kit.send_two)(card, kit.sel("setBackgroundColor:"), ui_color(kit, 0x100_0003));
+    let layer = kit.send(card, "layer");
+    (kit.send_float)(layer, kit.sel("setCornerRadius:"), 24.0);
+    (kit.send_id)(layer, kit.sel("setMasksToBounds:"), 1);
+    let screen_width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+    at_least(kit, card, screen_width - 32.0);
+    let (by, inset) = (msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id), msg!(kit, extern "C" fn(Id, Id, Insets)));
+    for (k, row) in table.rows.iter().enumerate() {
+        if k > 0 {
+            // A hairline from the text's edge to the card's.
+            let line = made(kit, "UIView");
+            (kit.send_two)(line, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "separatorColor"));
+            (kit.send_id)((kit.send_float)(kit.send(line, "heightAnchor"), kit.sel("constraintEqualToConstant:"), 0.5), kit.sel("setActive:"), 1);
+            let wrap = wrapped(kit, line);
+            (kit.send_id)(wrap, kit.sel("setAlignment:"), 0);
+            inset(wrap, kit.sel("setLayoutMargins:"), Insets { top: 0.0, left: 16.0, bottom: 0.0, right: 0.0 });
+            (kit.send_id)(wrap, kit.sel("setLayoutMarginsRelativeArrangement:"), 1);
+            (kit.send_two)(card, kit.sel("addArrangedSubview:"), wrap);
+        }
+        let labels = made(kit, "UIStackView");
+        (kit.send_id)(labels, kit.sel("setAxis:"), 1);
+        (kit.send_float)(labels, kit.sel("setSpacing:"), 2.0);
+        for (j, text) in row.join(" ").split('\t').enumerate() {
+            let label = made(kit, "UILabel");
+            (kit.send_two)(label, kit.sel("setText:"), kit.text(text));
+            let size = [17.0, 15.0, 12.0][j.min(2)];
+            let font = (kit.send_float)(kit.class("UIFont"), kit.sel(if j == 0 { "boldSystemFontOfSize:" } else { "systemFontOfSize:" }), size);
+            (kit.send_two)(label, kit.sel("setFont:"), font);
+            if j > 0 {
+                (kit.send_two)(label, kit.sel("setTextColor:"), kit.send(kit.class("UIColor"), "secondaryLabelColor"));
+            }
+            (kit.send_id)(label, kit.sel("setNumberOfLines:"), 1);
+            (kit.send_two)(labels, kit.sel("addArrangedSubview:"), label);
+        }
+        let chevron = (kit.send_two)(kit.send(kit.class("UIImageView"), "alloc"), kit.sel("initWithImage:"), (kit.send_two)(kit.class("UIImage"), kit.sel("systemImageNamed:"), kit.text("chevron.right")));
+        let chevron = kit.send(chevron, "autorelease");
+        (kit.send_two)(chevron, kit.sel("setTintColor:"), kit.send(kit.class("UIColor"), "tertiaryLabelColor"));
+        (kit.send_id)(chevron, kit.sel("setContentMode:"), 1); // scale to fit
+        (kit.send_id)(chevron, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+        (kit.send_id)((kit.send_float)(kit.send(chevron, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 14.0), kit.sel("setActive:"), 1);
+        let line = made(kit, "UIStackView");
+        (kit.send_id)(line, kit.sel("setAlignment:"), 3);
+        (kit.send_float)(line, kit.sel("setSpacing:"), 8.0);
+        (kit.send_two)(line, kit.sel("addArrangedSubview:"), labels);
+        (kit.send_two)(line, kit.sel("addArrangedSubview:"), chevron);
+        inset(line, kit.sel("setLayoutMargins:"), Insets { top: 12.0, left: 16.0, bottom: 12.0, right: 16.0 });
+        (kit.send_id)(line, kit.sel("setLayoutMarginsRelativeArrangement:"), 1);
+        // The button over the whole row.
+        let b = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 0);
+        (kit.send_id)(b, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+        (kit.send_id)(b, kit.sel("setTag:"), (table.number * 100000 + k) as i64);
+        msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(b, kit.sel("addTarget:action:forControlEvents:"), target, kit.sel("rowed:"), 64);
+        (kit.send_two)(line, kit.sel("addSubview:"), b);
+        for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
+            (kit.send_id)(by(kit.send(b, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(line, edge), 0.0), kit.sel("setActive:"), 1);
+        }
+        (kit.send_two)(card, kit.sel("addArrangedSubview:"), line);
+    }
+    // The rows are not leaves: the list as a whole is one, nothing to refresh in place.
+    made_views.push((card, core::ptr::null_mut()));
+    card
+}
+
 fn at_least(kit: &Kit, view: Id, points: f64) {
     let wide = (kit.send_float)(kit.send(view, "widthAnchor"), kit.sel("constraintGreaterThanOrEqualToConstant:"), points);
     (kit.send_id)(wide, kit.sel("setActive:"), 1);
@@ -909,6 +1004,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             c
         }
         // Rows of buttons: the one picked starts with an arrow.
+        UiNode::Table(table) if table.headers.is_empty() => return grouped_rows(kit, target, table, made_views),
         UiNode::Table(table) => {
             let stack = made(kit, "UIStackView");
             (kit.send_id)(stack, kit.sel("setAxis:"), 1);
@@ -934,17 +1030,22 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return stack;
         }
         // `ui.tabs`: a tab bar. The tab in use is a text (tag -1), each other a button (its number).
-        UiNode::Tabs(parts) => {
+        UiNode::Tabs(parts, icons) => {
             let bar = made(kit, "UITabBar");
             let mut items = Vec::new();
             let mut now = core::ptr::null_mut();
-            for p in parts {
+            for (k, p) in parts.iter().enumerate() {
                 let (name, tag) = match p {
                     UiNode::Text(t) => (t, -1),
                     UiNode::Button(t, n) => (t, *n as i64),
                     _ => continue,
                 };
-                let item = msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(kit.send(kit.class("UITabBarItem"), "alloc"), kit.sel("initWithTitle:image:tag:"), kit.text(name), core::ptr::null_mut(), tag);
+                // An SF Symbol, when the program gave names for them.
+                let image = match icons.get(k) {
+                    Some(symbol) => (kit.send_two)(kit.class("UIImage"), kit.sel("systemImageNamed:"), kit.text(symbol)),
+                    None => core::ptr::null_mut(),
+                };
+                let item = msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(kit.send(kit.class("UITabBarItem"), "alloc"), kit.sel("initWithTitle:image:tag:"), kit.text(name), image, tag);
                 if tag < 0 {
                     now = item;
                 }
@@ -1000,6 +1101,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
+        UiNode::Titled(_, inner) => return build(kit, target, inner, made_views),
         UiNode::Context(inner, items) => {
             let view = build(kit, target, inner, made_views);
             let interaction = (kit.send_two)(kit.send(kit.class("UIContextMenuInteraction"), "alloc"), kit.sel("initWithDelegate:"), target);
@@ -1012,12 +1114,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
         // A color behind a view (and its room), corners rounded: a stack view of one part, across the width.
         UiNode::Boxed(c, radius, inner) => {
             let stack = wrapped(kit, build(kit, target, inner, made_views));
-            let color = if *c > 0xff_ffff {
-                kit.send(kit.class("UIColor"), "secondarySystemBackgroundColor")
-            } else {
-                let channel = |shift: u32| ((*c >> shift) & 0xff) as f64 / 255.0;
-                msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id)(kit.class("UIColor"), kit.sel("colorWithRed:green:blue:alpha:"), channel(16), channel(8), channel(0), 1.0)
-            };
+            let color = ui_color(kit, *c);
             (kit.send_two)(stack, kit.sel("setBackgroundColor:"), color);
             let layer = kit.send(stack, "layer");
             (kit.send_float)(layer, kit.sel("setCornerRadius:"), *radius as f64);
@@ -1447,6 +1544,10 @@ fn bar_button(kit: &Kit, m: &crate::shared::UiMenu) -> Id {
         .collect();
     let array = msg!(kit, extern "C" fn(Id, Id, *const Id, u64) -> Id)(kit.class("NSArray"), kit.sel("arrayWithObjects:count:"), actions.as_ptr(), actions.len() as u64);
     let menu = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.class("UIMenu"), kit.sel("menuWithTitle:children:"), kit.text(&m.title), array);
+    if !m.icon.is_empty() {
+        let image = (kit.send_two)(kit.class("UIImage"), kit.sel("systemImageNamed:"), kit.text(&m.icon));
+        return msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UIBarButtonItem"), "alloc"), kit.sel("initWithImage:menu:"), image, menu);
+    }
     msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UIBarButtonItem"), "alloc"), kit.sel("initWithTitle:menu:"), kit.text(&m.title), menu)
 }
 

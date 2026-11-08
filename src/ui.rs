@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 58] = [
+const OWN: [&str; 60] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate", "native", "panel",
+    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate", "native", "panel", "page", "card",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -91,6 +91,18 @@ public:
         return self.styled("m", pixels)
     }
 
+    // The SF Symbol names of the tabs of a `ui.tabs`, in order (iPhone; elsewhere the tabs keep their names only).
+    fn icons(self, symbols: List<String>) -> View {
+        let names: String := symbols.join(",")
+        return self.written("Si{names.length}:{names}{self.text}")
+    }
+
+    // The title of the page this view is: the navigation bar shows it (iPhone for now).
+    fn title(self, name: String) -> View {
+        let one: String := one_line(name)
+        return self.written("St{one.length}:{one}{self.text}")
+    }
+
     // A color behind the view and its margin. On an iPhone for now: elsewhere the view is shown alone.
     fn background(self, c: Color) -> View {
         return self.styled("g", number(c))
@@ -134,7 +146,7 @@ public:
         var events: List<EVENT> := self.events.clone
         var body: String := ""
         for m in all {
-            body := body + "{one_line(m.title)}\n"
+            body := body + "{one_line(m.title)}{if m.icon = "" { "" } else { "\t{one_line(m.icon)}" }}\n"
             for i in m.items {
                 match i.event {
                     none => body := body + "\t-\n"
@@ -161,10 +173,12 @@ struct Menu {
 private:
     title: String
     items: List<Item>
+    icon: String
 }
 
-fn menu(title: String, items: List<Item>) -> Menu {
-    return Menu { title := title.clone, items := items.clone }
+// `icon("ellipsis.circle")`: the name of an SF Symbol shown instead of the title (iPhone; elsewhere the title).
+fn menu(title: String, items: List<Item>) icon(symbol: String := "") -> Menu {
+    return Menu { title := title.clone, items := items.clone, icon := symbol.clone }
 }
 
 // `key("o")`: Ctrl+O, or ⌘O on a Mac; `key("shift+s")` adds Shift.
@@ -352,6 +366,16 @@ fn panel -> Color {
     return Color { r := 256, g := 0, b := 1 }
 }
 
+// The system's background for a whole page of grouped sections, and the one of those sections (the sections of the Settings app).
+// `view.background(ui.page)` on the page's view paints the whole window with it.
+fn page -> Color {
+    return Color { r := 256, g := 0, b := 2 }
+}
+
+fn card -> Color {
+    return Color { r := 256, g := 0, b := 3 }
+}
+
 enum Align {
     Left
     Top
@@ -445,7 +469,8 @@ fn choice(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
 }
 
 fn list(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
-    let body: String := "{selected} 1 0\n{items.map { s: String => one_line(s) }.join("\n")}"
+    // A line break inside an item stays one (a tab): an iPhone shows the lines as a title, a subtitle and a detail.
+    let body: String := "{selected} 1 0\n{items.map { s: String => s.replace("\n") with("\t") }.join("\n")}"
     return leaf("G", body, picked(items.length, changed))
 }
 
