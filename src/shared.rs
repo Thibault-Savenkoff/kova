@@ -926,7 +926,6 @@ pub enum UiNode {
     #[cfg(ios)]
     Search(String, usize),
     /// `view.context(items)` on iOS: a view and the menu that opens when it is pressed and held (label, button number).
-    #[cfg(ios)]
     Context(alloc::boxed::Box<UiNode>, Vec<(String, usize)>),
 }
 
@@ -1599,7 +1598,6 @@ pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_clocks).collect(),
         #[cfg(ios)]
         UiNode::Tabs(_) => Vec::new(),
-        #[cfg(ios)]
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
@@ -1657,7 +1655,6 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Column(parts, a) => *a != UiAlign::Start || parts.iter().any(ui_fills),
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
-        #[cfg(ios)]
         UiNode::Context(inner, _) => ui_fills(inner),
         UiNode::Canvas(c) => c.width == 0,
         _ => false,
@@ -1670,7 +1667,6 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
-        #[cfg(ios)]
         UiNode::Context(inner, _) => ui_fills_down(inner),
         UiNode::Canvas(c) => c.height == 0,
         _ => false,
@@ -1723,7 +1719,6 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Spinner => "Z".into(),
         #[cfg(ios)]
         UiNode::Search(..) => "Q".into(),
-        #[cfg(ios)]
         UiNode::Context(inner, items) => format!("J{items:?}({})", ui_shape(inner)),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
@@ -1740,7 +1735,6 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
-        #[cfg(ios)]
         UiNode::Context(inner, _) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
         leaf => alloc::vec![(leaf, UiStyle::default())],
@@ -1915,10 +1909,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                 let mut parts = parts.into_iter();
                 let inner = parts.next().unwrap_or(UiNode::Text(String::new()));
                 // The items are hidden buttons, there for their numbers.
-                #[cfg(ios)]
                 return UiNode::Context(inner.into(), parts.filter_map(|p| match p { UiNode::Button(l, n) => Some((l, n)), _ => None }).collect());
-                #[cfg(not(ios))]
-                return inner;
             }
             if matches!(kind, 'R' | 'H') { UiNode::Row(parts, align) } else { UiNode::Column(parts, align) }
         }
@@ -1969,7 +1960,6 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Spinner => out.push_str("text \"…\""),
             #[cfg(ios)]
             UiNode::Search(t, _) => out.push_str(&format!("input {t:?}")),
-            #[cfg(ios)]
             UiNode::Context(inner, items) => {
                 write(inner, out);
                 out.push_str(&format!(" context({})", items.iter().map(|(l, _)| format!("{l:?}")).collect::<Vec<_>>().join(", ")));

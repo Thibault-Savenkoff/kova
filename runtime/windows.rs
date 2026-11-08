@@ -949,6 +949,7 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
         (win.client)(window, &mut now);
         *SETTING.get() = true;
         let edge = win_edge();
+        WIN_CONTEXTS.get().clear();
         win_place(win, dc, window, view, Default::default(), edge, edge, now[2] - now[0] - 2 * edge, CONTROLS.get(), same, &mut 0);
         *SETTING.get() = false;
         (win.release_dc)(window, dc);
@@ -965,6 +966,42 @@ pub fn ui_show(title: &str, view: &crate::shared::UiNode, menus: &[crate::shared
                 // waits for a posted one: WM_NULL, posted to the thread (the window may be gone), wakes it.
                 (win.post)(0, 0, 0, 0);
                 0
+            }
+            // WM_CONTEXTMENU (a right click, or Shift+F10 with -1): the menu of the innermost `context` there; its
+            // items are ids like buttons', so choosing one is a WM_COMMAND.
+            0x007B => {
+                if let Some(user) = library("user32.dll") {
+                    let f = |name: &str| symbol(user, name).unwrap_or(0);
+                    unsafe {
+                        use core::mem::transmute as t;
+                        let mut at = [(l & 0xffff) as i16 as i32, ((l >> 16) & 0xffff) as i16 as i32];
+                        if l == -1 {
+                            // From the keyboard: under the focused control.
+                            let (focus, rect_of): (extern "system" fn() -> Handle, extern "system" fn(Handle, *mut [i32; 4]) -> i32) = (t(f("GetFocus")), t(f("GetWindowRect")));
+                            let mut rect = [0i32; 4];
+                            rect_of(focus(), &mut rect);
+                            at = [rect[0], rect[3]];
+                        }
+                        let to_client: extern "system" fn(Handle, *mut [i32; 2]) -> i32 = t(f("ScreenToClient"));
+                        let mut client = at;
+                        to_client(h, &mut client);
+                        let found = WIN_CONTEXTS.get().iter().rev().find(|(r, _)| client[0] >= r[0] && client[0] < r[2] && client[1] >= r[1] && client[1] < r[3]).map(|(_, items)| items.clone());
+                        if let Some(items) = found {
+                            let new_popup: extern "system" fn() -> Handle = t(f("CreatePopupMenu"));
+                            let append: extern "system" fn(Handle, u32, usize, *const u16) -> i32 = t(f("AppendMenuW"));
+                            let track: extern "system" fn(Handle, u32, i32, i32, i32, Handle, *const u8) -> i32 = t(f("TrackPopupMenu"));
+                            let destroy: extern "system" fn(Handle) -> i32 = t(f("DestroyMenu"));
+                            let menu = new_popup();
+                            for (label, number) in &items {
+                                append(menu, 0, number + 1, wide(label).as_ptr());
+                            }
+                            track(menu, 0x2, at[0], at[1], 0, h, null()); // TPM_RIGHTBUTTON
+                            destroy(menu);
+                            return 0;
+                        }
+                    }
+                }
+                (win.default)(h, message, w, l)
             }
             // From a field (EN_CHANGE), unless its text was set from here.
             0x0111 if w >> 16 == 0x0300 && id >= FIELD && !*SETTING.get() => {
@@ -1771,6 +1808,8 @@ fn win_common() {
 
 /// The menus' shortcuts (an accelerator table, 0 if none) and `TranslateAcceleratorW`.
 static WIN_KEYS: Global<Handle> = Global::new(0);
+/// The areas of the views with a `context` menu now on the window, with their items (label, number): `[left, top, right, bottom]`.
+static WIN_CONTEXTS: Global<Vec<([i32; 4], Vec<(String, usize)>)>> = Global::new(Vec::new());
 static WIN_ACCELERATE: Global<extern "system" fn(Handle, Handle, *const u64) -> i32> = Global::new(no_accelerator);
 extern "system" fn no_accelerator(_: Handle, _: Handle, _: *const u64) -> i32 {
     0
@@ -1983,7 +2022,7 @@ fn win_size(win: &Win32, dc: Handle, node: &crate::shared::UiNode) -> (i32, i32)
         Row(parts, _) => parts.iter().map(|p| win_size(win, dc, p)).fold((-GAP, 0), |(w, h), (pw, ph)| (w + GAP + pw, h.max(ph))),
         Image(path, width) => win_image(path, *width).map_or((0, 0), |(_, w, h)| (w, h)),
         Canvas(c) => (c.width, c.height),
-        Every(_, _, inner) => win_size(win, dc, inner),
+        Every(_, _, inner) | Context(inner, _) => win_size(win, dc, inner),
         Styled(style, leaf) => {
             let before = (win.select)(dc, win_font(win, *style));
             let size = win_size(win, dc, leaf);
@@ -2125,6 +2164,12 @@ fn win_place(win: &Win32, dc: Handle, window: Handle, node: &crate::shared::UiNo
         }
         Spaced(m, inner) => win_place(win, dc, window, inner, style, x + m, y + m, room - 2 * m, made, same, at),
         Every(_, _, inner) => win_place(win, dc, window, inner, style, x, y, room, made, same, at),
+        // Where a right click opens the menu: the area the view takes (the outer ones first, so the last match is the innermost).
+        Context(inner, items) => {
+            let (w, h) = win_size(win, dc, inner);
+            WIN_CONTEXTS.get().push(([x, y, x + w, y + h], items.clone()));
+            win_place(win, dc, window, inner, style, x, y, room, made, same, at)
+        }
         Canvas(c) => {
             control("KovaCanvas", "", 0, 0);
             let (handle, canvases) = (made[*at - 1], WIN_CANVASES.get());

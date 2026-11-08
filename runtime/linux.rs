@@ -1933,6 +1933,49 @@ impl Gtk {
     }
 }
 
+/// `view.context(items)`: a right click on `widget` opens a popover of buttons, each one giving its number like any button.
+fn gtk_context(g: &Gtk, widget: P, items: &[(String, usize)]) {
+    use core::mem::transmute as t;
+    extern "C" fn pressed(_gesture: P, _count: i32, x: f64, y: f64, popover: P) {
+        let f = |name: &str| symbol(*GTK_LIBRARY.get(), name).unwrap_or(0);
+        unsafe {
+            let point: extern "C" fn(P, *const [i32; 4]) = t(f("gtk_popover_set_pointing_to"));
+            let popup: extern "C" fn(P) = t(f("gtk_popover_popup"));
+            point(popover, &[x as i32, y as i32, 1, 1]);
+            popup(popover);
+        }
+    }
+    extern "C" fn close(_button: P, popover: P) {
+        let popdown: extern "C" fn(P) = unsafe { t(symbol(*GTK_LIBRARY.get(), "gtk_popover_popdown").unwrap_or(0)) };
+        popdown(popover);
+    }
+    // The popover is a child GTK does not know the widget has: it goes when the widget does.
+    extern "C" fn leave(_widget: P, popover: P) {
+        let unparent: extern "C" fn(P) = unsafe { t(symbol(*GTK_LIBRARY.get(), "gtk_widget_unparent").unwrap_or(0)) };
+        unparent(popover);
+    }
+    unsafe {
+        let popover: P = t::<_, extern "C" fn() -> P>(g.get("gtk_popover_new"))();
+        let list = (g.boxed)(1, 0);
+        for (label, number) in items {
+            let b = (g.button)(c_string(label).as_ptr());
+            t::<_, extern "C" fn(P, i32)>(g.get("gtk_button_set_has_frame"))(b, 0);
+            (g.halign)(b, 0);
+            (g.connect)(b, c"clicked".as_ptr() as *const u8, g.clicked, *number as P, null_mut(), 0);
+            (g.connect)(b, c"clicked".as_ptr() as *const u8, close as usize, popover, null_mut(), 0);
+            (g.append)(list, b);
+        }
+        t::<_, extern "C" fn(P, P)>(g.get("gtk_popover_set_child"))(popover, list);
+        t::<_, extern "C" fn(P, i32)>(g.get("gtk_popover_set_has_arrow"))(popover, 0);
+        t::<_, extern "C" fn(P, P)>(g.get("gtk_widget_set_parent"))(popover, widget);
+        let click: P = t::<_, extern "C" fn() -> P>(g.get("gtk_gesture_click_new"))();
+        t::<_, extern "C" fn(P, u32)>(g.get("gtk_gesture_single_set_button"))(click, 3);
+        (g.connect)(click, c"pressed".as_ptr() as *const u8, pressed as usize, popover, null_mut(), 0);
+        t::<_, extern "C" fn(P, P)>(g.get("gtk_widget_add_controller"))(widget, click);
+        (g.connect)(widget, c"destroy".as_ptr() as *const u8, leave as usize, popover, null_mut(), 0);
+    }
+}
+
 /// The window's menus: a model of `GMenu`s, whose items start actions of an action group.
 fn gtk_menu_bar(g: &Gtk, window: P, menus: &[crate::shared::UiMenu]) -> P {
     use core::mem::transmute as t;
@@ -2335,6 +2378,11 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
         },
         Canvas(c) => gtk_canvas(g, c),
         Styled(_, inner) | Every(_, _, inner) => return gtk_make(g, inner, made, h, v),
+        Context(inner, items) => {
+            let widget = gtk_make(g, inner, made, h, v);
+            gtk_context(g, widget, items);
+            return widget;
+        }
         Spaced(m, inner) => {
             let widget = gtk_make(g, inner, made, h, v);
             g.margins.iter().for_each(|margin| margin(widget, *m));

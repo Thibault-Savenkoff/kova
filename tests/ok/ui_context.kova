@@ -1,5 +1,5 @@
-// `view.context(items)`: a menu that opens when the view is pressed and held. Where the system has no such
-// menu the view is shown alone; its items still have their numbers (`0` in the input picks the first).
+// `view.context(items)`: a menu that opens on a right click, or when the view is pressed and held on a phone. In the
+// script mode used here it is written after the view; its items have numbers (`0` in the input picks the first).
 import ui
 
 enum Event {
@@ -37,8 +37,8 @@ fn main {
 // stdin: 2
 // stdin: 1
 // stdin: 0
-// expect: [Context] column(text "Count: 0", button "Add")
-// expect: [Context] column(text "Count: 1", button "Add")
-// expect: [Context] column(text "Count: 2", button "Add")
-// expect: [Context] column(text "Count: 4", button "Add")
-// expect: [Context] column(text "Count: 0", button "Add")
+// expect: [Context] column(text "Count: 0" context("Reset", "Double"), button "Add")
+// expect: [Context] column(text "Count: 1" context("Reset", "Double"), button "Add")
+// expect: [Context] column(text "Count: 2" context("Reset", "Double"), button "Add")
+// expect: [Context] column(text "Count: 4" context("Reset", "Double"), button "Add")
+// expect: [Context] column(text "Count: 0" context("Reset", "Double"), button "Add")

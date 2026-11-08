@@ -1888,7 +1888,7 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
         // Top 3, Bottom 4, Leading 5, Trailing 6, CenterX 9, CenterY 10.
         // iOS windows are drawn by uikit.rs.
         #[cfg(ios)]
-        Tabs(_) | Date(..) | Progress(..) | Stepper(..) | Spinner | Search(..) | Context(..) => unreachable!(),
+        Tabs(_) | Date(..) | Progress(..) | Stepper(..) | Spinner | Search(..) => unreachable!(),
         Column(parts, a) | Row(parts, a) => {
             use crate::shared::UiAlign::*;
             let stack = kit.send(kit.send(kit.class("NSStackView"), "alloc"), "init");
@@ -1935,6 +1935,20 @@ fn mac_make(kit: &Kit, node: &crate::shared::UiNode, made: &mut Vec<Id>, insets:
             }
         }
         Styled(_, inner) => return mac_make(kit, inner, made, insets),
+        // A right click (or control-click) on the view or what it holds opens the menu.
+        Context(inner, items) => {
+            let view = mac_make(kit, inner, made, insets);
+            let item: extern "C" fn(Id, Id, Id, Id, Id) -> Id = unsafe { core::mem::transmute(kit.send as usize) };
+            let menu = (kit.send_two)(kit.send(kit.class("NSMenu"), "alloc"), kit.sel("initWithTitle:"), kit.text(""));
+            for (label, number) in items {
+                let e = item(kit.send(kit.class("NSMenuItem"), "alloc"), kit.sel("initWithTitle:action:keyEquivalent:"), kit.text(label), kit.sel("clicked:"), kit.text(""));
+                (kit.send_two)(e, kit.sel("setTarget:"), kit.target);
+                (kit.send_id)(e, kit.sel("setTag:"), *number as i64);
+                (kit.send_two)(menu, kit.sel("addItem:"), e);
+            }
+            (kit.send_two)(view, kit.sel("setMenu:"), menu);
+            return view;
+        }
         Every(_, _, inner) => return mac_make(kit, inner, made, insets),
         Canvas(c) => mac_canvas(kit, c),
         // A stack view of one part, with room around it.

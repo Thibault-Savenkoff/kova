@@ -287,6 +287,40 @@ function kovaPage() {
             make: (n, s) => build(n[4], over(n, s)),
             change: (el, n, s) => update(el, n[4], over(n, s)),
         },
+        // A right click on the view opens its menu where the pointer is; a click anywhere else closes it.
+        J: {
+            make(n, s) {
+                const el = document.createElement("div");
+                el.appendChild(build(n[2], s));
+                el.addEventListener("contextmenu", e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    document.querySelectorAll(".kova-context").forEach(m => m.remove());
+                    const menu = document.body.appendChild(document.createElement("div"));
+                    menu.className = "kova-context";
+                    menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:10;display:flex;flex-direction:column;background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:6px;padding:4px;box-shadow:0 4px 16px #0004`;
+                    for (const [label, k] of el.items) {
+                        const item = menu.appendChild(document.createElement("button"));
+                        item.textContent = label;
+                        item.style.cssText = "text-align:left;border:0;background:none;color:inherit;padding:4px 12px;font:inherit;cursor:pointer";
+                        item.onclick = () => {
+                            menu.remove();
+                            hear(k);
+                        };
+                    }
+                    const close = () => {
+                        menu.remove();
+                        document.removeEventListener("click", close, true);
+                    };
+                    setTimeout(() => document.addEventListener("click", close, true));
+                });
+                return el;
+            },
+            change(el, n, s) {
+                el.items = n[1];
+                update(el.firstChild, n[2], s);
+            },
+        },
         E: {
             make: (n, s) => build(n[3], s),
             change: (el, n, s) => update(el, n[3], s),
@@ -533,7 +567,7 @@ function kovaPage() {
     function clocksOf(n, found) {
         if (n[0] === "E") found.push([n[1], n[2]]);
         if (n[0] === "C" || n[0] === "R") n[2].forEach(p => clocksOf(p, found));
-        if (n[0] === "M") clocksOf(n[2], found);
+        if (n[0] === "M" || n[0] === "J") clocksOf(n[2], found);
         if (n[0] === "S") clocksOf(n[4], found);
         if (n[0] === "E") clocksOf(n[3], found);
         return found;

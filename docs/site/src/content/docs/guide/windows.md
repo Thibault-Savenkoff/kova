@@ -273,13 +273,13 @@ return ui.column([content]).menus([
 On a Mac, the bar sits at the top of the screen, and always holds the application's menu (with Quit)
 and an Edit menu, so that copy and paste work in text fields.
 
-Any view can also have a menu of its own, opened by pressing and holding it, with `context`:
+Any view can also have a menu of its own, opened by a right click (by pressing and holding it on an iPhone), with `context`:
 
 ```kova
 ui.text("Count: {app.count}").context([ui.item("Reset", Event.Reset), ui.item("Double", Event.Double)])
 ```
 
-For now that is only on an iPhone: on the other systems the view is shown alone, without its menu.
+It works on Linux, Windows, Mac, in a web page and on an iPhone or iPad. On Android the view is shown for now without its menu.
 
 ## Dialogs
 
