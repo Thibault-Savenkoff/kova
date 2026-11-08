@@ -5,6 +5,7 @@ extern crate alloc;
 
 mod android;
 mod ios;
+mod sign;
 mod ast;
 mod bigint;
 mod codegen;
@@ -683,6 +684,11 @@ fn build_options(options: &[&str]) -> Option<(Option<String>, bool, Option<codeg
             "--boost" => boost = true,
             "-o" => {
                 output = Some(options.get(i + 1)?.to_string());
+                i += 1;
+            }
+            "--profile" | "--identity" => {
+                let file = options.get(i + 1)?.to_string();
+                let _ = if options[i] == "--profile" { sign::PROFILE.set(file) } else { sign::IDENTITY.set(file) };
                 i += 1;
             }
             "--target" => {

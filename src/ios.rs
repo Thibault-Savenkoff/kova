@@ -20,7 +20,11 @@ pub fn app(output: &str, stem: &str, title: &str, exe: &[u8], device: bool) -> R
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).map_err(made)?;
     }
-    std::fs::write(dir.join("Info.plist"), plist(stem, title, device)).map_err(made)
+    std::fs::write(dir.join("Info.plist"), plist(stem, title, device)).map_err(made)?;
+    if device {
+        crate::sign::bundle(dir, stem, &identifier(stem))?;
+    }
+    Ok(())
 }
 
 /// The identifier of the app: what `simctl launch` is given.

@@ -719,4 +719,10 @@ lang en {
     completion_default := "{help} (default)"
     completion_setting := "{values}: {help}"
     web_refuses := "`{what}` cannot work in a web page (`--target web`)."
+    sign_needs := "`--target ios` needs `--profile app.mobileprovision` and `--identity key.pem` (see the iOS page of the documentation)"
+    sign_read := "cannot read {file}: {detail}"
+    sign_bad := "{file} is not a valid {what}"
+    sign_app_id := "the profile allows the app `{allowed}`, but this program is `{id}`: name it that way with the `name` setting of its `header`, or make a profile for it"
+    sign_no_cert := "no certificate of {file} is listed in the profile {profile}, or its private key is missing"
+    sign_expired := "the profile expired on {date}"
 }

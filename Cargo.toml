@@ -25,6 +25,7 @@ resvg = { version = "0.49.0", default-features = false }
 zune-jpeg = { version = "0.5.9", default-features = false, features = ["std"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "png-format"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2", "pem"] }
 nanomp3 = { version = "0.2.0", default-features = false, features = ["alloc", "layer12"] }
 nanoaudio-flac = "0.1.2"
 nanoaudio-core = "0.1.1"

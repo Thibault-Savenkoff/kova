@@ -5,9 +5,8 @@ sidebar:
   order: 4
 ---
 
-Un programme Kova peut être une app d'iPhone et d'iPad. Pour l'instant elle tourne dans le
-**simulateur** de Xcode, sur un Mac avec une puce Apple ; un vrai iPhone viendra plus tard (Apple
-ne lance que des apps signées avec son propre certificat).
+Un programme Kova peut être une app d'iPhone et d'iPad. Elle tourne dans le **simulateur** de Xcode, sur un Mac avec une puce Apple,
+ou sur un **vrai iPhone** une fois signée avec ton propre certificat Apple (plus bas).
 
 ```console
 $ kova build compteur.kova --target ios-simulator
@@ -38,6 +37,41 @@ Une fenêtre défile quand elle dépasse l'écran, `ui.canvas` dessine avec Core
 touchers, les dialogues sont des alertes et le son passe par `AVAudioPlayer`.
 
 Pas encore là : `ui.gpu` et les menus.
+
+## Sur un vrai iPhone
+
+Apple ne lance que des apps signées avec un certificat qu'il a fait pour toi. Un Apple ID gratuit
+suffit, et Kova signe tout seul, sous Linux, Windows ou Mac. Ce que veut Apple, tu le fais **une
+seule fois, sur un Mac** :
+
+1. Branche l'iPhone, et active Réglages → Confidentialité et sécurité → Mode développeur.
+2. Dans Xcode, ajoute ton Apple ID (Réglages → Comptes) et crée un projet iOS App vide dont
+   l'identifiant est celui de ton programme : `dev.kova.` et son nom en minuscules (un programme
+   avec `header { name := "essai" }` est `dev.kova.essai`). Choisis ton compte dans Signing &
+   Capabilities et lance-le une fois sur l'iPhone. Xcode fait le certificat et le profil.
+3. Sur l'iPhone, fais-toi confiance dans Réglages → Général → VPN et gestion de l'appareil.
+4. Donne à Kova les deux choses que Xcode a faites. Le profil est le fichier `.mobileprovision`
+   de `~/Library/Developer/Xcode/UserData/Provisioning Profiles`. L'identité est ta clé et ton
+   certificat dans un fichier PEM, à partir de l'export (`.p12`) de l'Accès au trousseau :
+
+```console
+$ openssl pkcs12 -legacy -in identite.p12 -nodes -out ios.pem
+```
+
+Ensuite, sur n'importe quel ordinateur :
+
+```console
+$ kova build compteur.kova --target ios --profile app.mobileprovision --identity ios.pem
+✓ compteur.app (iOS, 230 Ko) en 6 s
+```
+
+Installe-la depuis un Mac avec `xcrun devicectl device install app --device <nom> compteur.app`.
+
+Kova vérifie que le profil autorise le nom du programme (`dev.kova.compteur`) et qu'il n'a pas
+expiré. **Un profil gratuit dure 7 jours** : ensuite l'app ne s'ouvre plus et tu la refais avec un
+nouveau profil. Un compte développeur payant (99 $ par an) dure un an, et son profil peut autoriser
+tous les noms qui commencent par `dev.kova.`. Garde `ios.pem` privé : c'est la clé qui signe tes
+apps.
 
 ## Essayer un programme sans le doigt
 
