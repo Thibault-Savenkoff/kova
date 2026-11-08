@@ -74,7 +74,7 @@ while true {
 - Every message is sent on the main thread, as UIKit wants, so the program may go on at its own pace.
 - An object you make stays alive until you `release` it; the objects a message gives back are kept for you
   too. A program that makes thousands of views should release the ones it drops.
-- An Objective-C exception (a wrong selector for the object, a view added twice) is not caught: the app stops,
-  as it would in Swift. Kova checks that the object answers the selector and that the number of arguments is
+- An Objective-C exception (a wrong selector for the object, a view added twice) is not caught: the app prints `error: NSInvalidArgumentException: Can't add self as subview` and stops
+  with code 101, as it would in Swift. Kova checks that the object answers the selector and that the number of arguments is
   right before it sends.
 - `ui` and `ios` work together: `ui.run` builds its views in the same window, and `ios.root` reaches them.

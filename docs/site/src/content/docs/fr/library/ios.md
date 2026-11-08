@@ -76,6 +76,7 @@ while true {
 - Un objet que tu fabriques reste en vie jusqu'à ce que tu le `release` ; les objets qu'un message rend sont
   gardés pour toi aussi. Un programme qui fabrique des milliers de vues doit relâcher celles qu'il abandonne.
 - Une exception Objective-C (un mauvais sélecteur pour l'objet, une vue ajoutée deux fois) n'est pas attrapée :
-  l'app s'arrête, comme en Swift. Kova vérifie que l'objet répond au sélecteur et que le nombre d'arguments est
+  l'app écrit `error: NSInvalidArgumentException: Can't add self as subview` et s'arrête avec le code 101,
+  comme en Swift. Kova vérifie que l'objet répond au sélecteur et que le nombre d'arguments est
   juste avant d'envoyer.
 - `ui` et `ios` marchent ensemble : `ui.run` construit ses vues dans la même fenêtre, et `ios.root` les atteint.
