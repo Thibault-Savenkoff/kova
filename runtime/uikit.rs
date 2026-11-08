@@ -6,8 +6,7 @@
 // to the main thread with `dispatch_sync_f`, which draws it, then sleeps until a tap, a keystroke
 // or a clock puts an event in `HEARD`. What is drawn: texts, buttons, fields, check boxes, sliders,
 // choices, images, lists (as rows of buttons), canvases (2D drawing and touches), dialogs, sound,
-// columns and rows with their style and margins. The
-// `ui.gpu` and tables with headers are not drawn yet.
+// columns and rows with their style and margins, tables with their headers, `ui.gpu` (OpenGL ES).
 
 use super::{library, symbol, Id, Insets, Kit, Rect, Size};
 use crate::shared::{UiAlign, UiNode, UiQueue, UiStyle};
@@ -882,6 +881,14 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             let stack = made(kit, "UIStackView");
             (kit.send_id)(stack, kit.sel("setAxis:"), 1);
             (kit.send_id)(stack, kit.sel("setAlignment:"), 1);
+            // The headers: a line of bold text above the rows, not a button.
+            if !table.headers.is_empty() {
+                let head = made(kit, "UILabel");
+                (kit.send_two)(head, kit.sel("setText:"), kit.text(&table.headers.join("  ")));
+                let font = (kit.send_float)(kit.class("UIFont"), kit.sel("boldSystemFontOfSize:"), 17.0);
+                (kit.send_two)(head, kit.sel("setFont:"), font);
+                (kit.send_two)(stack, kit.sel("addArrangedSubview:"), head);
+            }
             for (k, row) in table.rows.iter().enumerate() {
                 let b = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
                 let line = row.join("  ");
