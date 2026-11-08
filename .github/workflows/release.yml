@@ -30,8 +30,9 @@ jobs:
           - { os: ubuntu-22.04-arm, name: linux-arm64 }
           - { os: windows-latest, name: windows-x64 }
           - { os: windows-11-arm, name: windows-arm64 }
-          # Both Macs in one file, made on an arm Mac.
-          - { os: macos-latest, name: mac }
+          # Each Mac half is built at the same time (half the waiting); the `mac` job then joins them.
+          - { os: macos-latest, name: mac-arm, triple: aarch64-apple-darwin }
+          - { os: macos-latest, name: mac-intel, triple: x86_64-apple-darwin }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -49,10 +50,15 @@ jobs:
           mkdir out && cp target/release/kova${{ runner.os == 'Windows' && '.exe' || '' }} out/
       - if: runner.os == 'macOS'
         run: |
-          cargo build --release --locked --target aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
-          mkdir out && lipo -create -output out/kova target/aarch64-apple-darwin/release/kova target/x86_64-apple-darwin/release/kova
+          cargo build --release --locked --target ${{ matrix.triple }}
+          mkdir out && cp target/${{ matrix.triple }}/release/kova out/
+      - if: matrix.triple
+        uses: actions/upload-artifact@v4
+        with:
+          name: half-${{ matrix.name }}
+          path: out/kova
       - name: It builds for every system
+        if: ${{ !matrix.triple }}
         shell: bash
         run: |
           printf 'fn main {\n    print("hello")\n}\n' > hello.kova
@@ -62,7 +68,7 @@ jobs:
           done
           [ "$(out/kova run hello.kova)" = hello ]
           out/kova --version
-      - if: runner.os != 'Windows'
+      - if: runner.os != 'Windows' && !matrix.triple
         run: |
           cp LICENSE-MIT LICENSE-APACHE out/
           tar -czf kova-${{ matrix.name }}.tar.gz -C out .
@@ -71,18 +77,48 @@ jobs:
         run: |
           Copy-Item LICENSE-MIT, LICENSE-APACHE out/
           Compress-Archive -Path out/* -DestinationPath kova-${{ matrix.name }}.zip
-      - uses: actions/upload-artifact@v4
+      - if: ${{ !matrix.triple }}
+        uses: actions/upload-artifact@v4
         with:
           name: kova-${{ matrix.name }}
           path: kova-${{ matrix.name }}.*
 
-  publish:
+  # Both Macs in one file: join the two halves, then check it like the others.
+  mac:
     needs: build
+    if: github.repository == 'Thibault-Savenkoff/kova'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: half-mac-*
+      - run: |
+          mkdir out && lipo -create -output out/kova half-mac-arm/kova half-mac-intel/kova
+          chmod +x out/kova
+          printf 'fn main {\n    print("hello")\n}\n' > hello.kova
+          for t in linux linux-arm windows windows-arm mac mac-arm mac-intel web android; do
+            out/kova build hello.kova --target $t -o hello-$t 2> said.txt || { cat said.txt; exit 1; }
+            if grep -q rustup said.txt; then cat said.txt; exit 1; fi
+          done
+          [ "$(out/kova run hello.kova)" = hello ]
+          out/kova --version
+          cp LICENSE-MIT LICENSE-APACHE out/
+          tar -czf kova-mac.tar.gz -C out .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kova-mac
+          path: kova-mac.*
+
+  publish:
+    needs: [build, mac]
     if: inputs.dry != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: kova-*
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
