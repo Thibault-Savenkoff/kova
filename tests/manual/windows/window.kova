@@ -1,0 +1,54 @@
+// Part of `check.ps1`: a right-click menu, an image and two answers, each written to windows_check_result.txt.
+import ui
+import files
+
+enum Event {
+    Hello
+    SeeImage
+    NoImage
+    Done
+}
+
+struct App {
+    said: String
+}
+
+fn note(line: String) {
+    match files.append("windows_check_result.txt", "{line}\n") {
+        err(e) => print("cannot write the result: {e}")
+        ok => print(line)
+    }
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.text("1. Right-click this text and choose 'Say hello'").context([ui.item(
+            "Say hello",
+            Event.Hello
+        )]),
+        ui.text(app.said),
+        ui.text("2. Do you see the picture below?"),
+        ui.image("counter.png").size(64),
+        ui.row([
+            ui.button("I see it", Event.SeeImage),
+            ui.button("I do not see it", Event.NoImage),
+        ]),
+        ui.button("Done", Event.Done),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Hello => {
+            note("right-click menu: OK")
+            app.said := "The menu worked."
+        }
+        .SeeImage => note("image: seen")
+        .NoImage => note("image: NOT seen")
+        .Done => ui.close
+    }
+}
+
+fn main {
+    ui.run("Windows check", App { said := "" }, view, update)
+}

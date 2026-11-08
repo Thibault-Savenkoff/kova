@@ -1,0 +1,15 @@
+// Part of `check.ps1`: `kova install` puts this program in the Start menu.
+import ui
+
+header { name := "kovacheck" }
+
+fn view(n: Int) -> ui.View {
+    return ui.text("Start menu check")
+}
+
+fn update(n: var Int, e: Int) {
+}
+
+fn main {
+    ui.run("kovacheck", 0, view, update)
+}
