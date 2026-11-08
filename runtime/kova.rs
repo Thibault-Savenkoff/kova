@@ -2520,6 +2520,13 @@ pub fn gl_paint(key: usize, ops: &[shared::UiOp], width: i32, height: i32, load:
     wipe(0);
     let compile = |kind: u32, source: &str| {
         let shader = create_shader(kind);
+        // iOS has OpenGL ES 3.0 only: the same shaders, with the header it wants (`#line` keeps the
+        // lines of the messages where the program wrote them).
+        #[cfg(ios)]
+        let source = &match source.strip_prefix("#version 330 core") {
+            Some(rest) => alloc::format!("#version 300 es\nprecision highp float;\nprecision highp int;\n#line 2{rest}"),
+            None => alloc::string::String::from(source),
+        };
         let (start, length) = (source.as_ptr(), source.len() as i32);
         shader_source(shader, 1, &start, &length);
         compile_shader(shader);

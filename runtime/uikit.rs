@@ -157,6 +157,15 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(canvas, kit.sel("touchesCancelled:withEvent:"), touch_ended as usize, c"v@:@@".as_ptr() as *const u8);
         register(canvas);
         kit.canvas = canvas;
+        // The view of a `ui.gpu`: its layer is an OpenGL ES surface (`+layerClass`), painted by `gpu_paint`.
+        let gpu = new_class(kit.class("UIView"), c"KovaUiGpu".as_ptr() as *const u8, 0);
+        let meta: extern "C" fn(Id) -> Id = t(f("object_getClass"));
+        add(meta(gpu), kit.sel("layerClass"), gpu_layer as usize, c"#@:".as_ptr() as *const u8);
+        add(gpu, kit.sel("touchesBegan:withEvent:"), touch_began as usize, c"v@:@@".as_ptr() as *const u8);
+        add(gpu, kit.sel("touchesMoved:withEvent:"), touch_moved as usize, c"v@:@@".as_ptr() as *const u8);
+        add(gpu, kit.sel("touchesEnded:withEvent:"), touch_ended as usize, c"v@:@@".as_ptr() as *const u8);
+        add(gpu, kit.sel("touchesCancelled:withEvent:"), touch_ended as usize, c"v@:@@".as_ptr() as *const u8);
+        register(gpu);
         let bounds = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds"));
         let w = msg!(kit, extern "C" fn(Id, Id, Rect) -> Id)(kit.send(kit.class("UIWindow"), "alloc"), kit.sel("initWithFrame:"), bounds);
         let controller = kit.send(kit.send(kit.class("UIViewController"), "alloc"), "init");
@@ -339,6 +348,9 @@ fn draw_view(view: &UiNode, menus: &[crate::shared::UiMenu]) {
         if (canvas.width == 0 || canvas.height == 0) && crate::ui_room(canvas.number, bounds.width as i32, bounds.height as i32) {
             hear(crate::shared::UI_RESIZED, String::new());
         }
+        if canvas.gpu() {
+            gpu_paint(kit, *view, canvas, bounds);
+        }
     }
     // `KOVA_UI_TAP=0,0,1`: for a test, the app taps those buttons itself, one for each time the
     // view is drawn (`simctl` cannot touch the screen).
@@ -516,7 +528,12 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return stack;
         }
         UiNode::Canvas(c) => {
-            let view = made(kit, "KovaUiCanvas");
+            let view = made(kit, if c.gpu() { "KovaUiGpu" } else { "KovaUiCanvas" });
+            if c.gpu() {
+                // A custom view's scale is 1: ask for the screen's, so that the surface has its pixels.
+                let scale = msg!(kit, extern "C" fn(Id, Id) -> f64)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("scale"));
+                (kit.send_float)(view, kit.sel("setContentScaleFactor:"), scale);
+            }
             (kit.send_id)(view, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
             (kit.send_two)(view, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "whiteColor"));
             let (scroll, by) = (*SCROLL.get(), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
@@ -866,5 +883,80 @@ extern "C" fn menu_chosen(_block: Id, action: Id) {
     let kit = &screen.kit;
     if let Ok(n) = text_of(kit, kit.send(action, "identifier")).parse::<usize>() {
         hear(crate::shared::ui_changed(n), String::new());
+    }
+}
+
+// ---- ui.gpu ----
+
+/// The OpenGL ES 3.0 context of a `ui.gpu` view, and the buffers it draws into.
+struct Gpu {
+    view: Id,
+    context: Id,
+    framebuffer: u32,
+    color: u32,
+    depth: u32,
+    size: (i32, i32),
+}
+
+static GPUS: crate::Global<Vec<Gpu>> = crate::Global::new(Vec::new());
+
+extern "C" fn gpu_layer(_class: Id, _message: Id) -> Id {
+    screen().kit.class("CAEAGLLayer")
+}
+
+/// Paints a frame of a `ui.gpu`: the view's layer is the screen of an OpenGL ES context; `gl_paint`
+/// draws as on the other systems, then the frame is shown. OpenGL ES is old on Apple's systems
+/// too, and works on every iPhone.
+fn gpu_paint(kit: &Kit, view: Id, canvas: &crate::shared::UiCanvas, bounds: Rect) {
+    let Some(gl) = library("/System/Library/Frameworks/OpenGLES.framework/OpenGLES") else { crate::gl_stop(crate::GPU_MISSING, b"") };
+    unsafe {
+        use core::mem::transmute as t;
+        let load = |name: &str| symbol(gl, name).unwrap_or(0);
+        let scale = msg!(kit, extern "C" fn(Id, Id) -> f64)(view, kit.sel("contentScaleFactor"));
+        let (width, height) = ((bounds.width * scale) as i32, (bounds.height * scale) as i32);
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        let gpus = GPUS.get();
+        let at = match gpus.iter().position(|g| g.view == view) {
+            Some(at) => at,
+            None => {
+                // kEAGLRenderingAPIOpenGLES3 is 3.
+                let context = (kit.send_id)(kit.send(kit.class("EAGLContext"), "alloc"), kit.sel("initWithAPI:"), 3);
+                if context.is_null() {
+                    crate::gl_stop(crate::GPU_MISSING, b"");
+                }
+                gpus.push(Gpu { view, context, framebuffer: 0, color: 0, depth: 0, size: (0, 0) });
+                gpus.len() - 1
+            }
+        };
+        let gpu = &mut gpus[at];
+        (kit.send_two)(kit.class("EAGLContext"), kit.sel("setCurrentContext:"), gpu.context);
+        let generate: extern "C" fn(i32, *mut u32) = t(load("glGenFramebuffers"));
+        let generate_render: extern "C" fn(i32, *mut u32) = t(load("glGenRenderbuffers"));
+        let bind_frame: extern "C" fn(u32, u32) = t(load("glBindFramebuffer"));
+        let bind_render: extern "C" fn(u32, u32) = t(load("glBindRenderbuffer"));
+        let storage: extern "C" fn(u32, u32, i32, i32) = t(load("glRenderbufferStorage"));
+        let attach: extern "C" fn(u32, u32, u32, u32) = t(load("glFramebufferRenderbuffer"));
+        if gpu.framebuffer == 0 {
+            generate(1, &mut gpu.framebuffer);
+            generate_render(1, &mut gpu.color);
+            generate_render(1, &mut gpu.depth);
+        }
+        bind_frame(0x8D40, gpu.framebuffer); // GL_FRAMEBUFFER
+        if gpu.size != (width, height) {
+            // The color comes from the layer, which gets its size from the view; the depth is ours.
+            bind_render(0x8D41, gpu.color); // GL_RENDERBUFFER
+            let layer = kit.send(view, "layer");
+            msg!(kit, extern "C" fn(Id, Id, u64, Id) -> bool)(gpu.context, kit.sel("renderbufferStorage:fromDrawable:"), 0x8D41, layer);
+            attach(0x8D40, 0x8CE0, 0x8D41, gpu.color); // GL_COLOR_ATTACHMENT0
+            bind_render(0x8D41, gpu.depth);
+            storage(0x8D41, 0x81A6, width, height); // GL_DEPTH_COMPONENT24
+            attach(0x8D40, 0x8D00, 0x8D41, gpu.depth); // GL_DEPTH_ATTACHMENT
+            gpu.size = (width, height);
+        }
+        crate::gl_paint(view as usize, &canvas.ops, width, height, &load);
+        bind_render(0x8D41, gpu.color);
+        msg!(kit, extern "C" fn(Id, Id, u64) -> bool)(gpu.context, kit.sel("presentRenderbuffer:"), 0x8D41);
     }
 }

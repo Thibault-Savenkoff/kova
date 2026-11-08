@@ -40,7 +40,10 @@ Les menus sont une rangée de boutons au-dessus de la fenêtre, chacun ouvrant s
 raccourcis sont pour un clavier, qu'un iPhone n'a pas). Un canvas plus large que l'écran défile sur
 le côté.
 
-Pas encore là : `ui.gpu`.
+`ui.gpu` tourne sur OpenGL ES 3.0, que tous les iPhone ont : tes shaders gardent `#version 330 core`,
+Kova leur donne l'en-tête qu'iOS veut. Apple n'améliore plus OpenGL ES, et le fait toujours tourner.
+
+Pas encore là : les dialogues de fichier (`ui.open_file`, `ui.save_file`).
 
 ## Sur un vrai iPhone
 

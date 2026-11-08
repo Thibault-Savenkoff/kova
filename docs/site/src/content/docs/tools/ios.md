@@ -39,7 +39,10 @@ touches, dialogs are alerts and sound goes through `AVAudioPlayer`.
 Menus are a row of buttons above the window, each opening its items (shortcuts are for a keyboard, which
 an iPhone has not). A canvas wider than the screen scrolls sideways.
 
-Not there yet: `ui.gpu`.
+`ui.gpu` runs on OpenGL ES 3.0, which every iPhone has: your shaders keep `#version 330 core`, Kova gives
+them the header iOS wants. Apple has stopped improving OpenGL ES, and still runs it.
+
+Not there yet: file dialogs (`ui.open_file`, `ui.save_file`).
 
 ## On a real iPhone
 
