@@ -52,6 +52,8 @@ struct Screen {
 static SCREEN: crate::Global<Option<Screen>> = crate::Global::new(None);
 /// Each canvas now on screen (the main thread's).
 static CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
+/// The next text is built without its width cap (`.no_wrap`).
+static WIDE: crate::Global<bool> = crate::Global::new(false);
 /// The scroll view, whose size a `ui.fill` canvas follows.
 static SCROLL: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
 /// The window of the app, kept for the delegate.
@@ -446,6 +448,13 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             let label = made(kit, "UILabel");
             (kit.send_two)(label, kit.sel("setText:"), kit.text(s));
             (kit.send_id)(label, kit.sel("setNumberOfLines:"), 0);
+            // The text stays within the screen: a long word (a path) breaks where it must, not at the edge.
+            // `.no_wrap` leaves it alone.
+            if !core::mem::take(WIDE.get()) {
+                let width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+                let cap = (kit.send_float)(kit.send(label, "widthAnchor"), kit.sel("constraintLessThanOrEqualToConstant:"), width - 32.0);
+                (kit.send_id)(cap, kit.sel("setActive:"), 1);
+            }
             label
         }
         UiNode::Button(s, n) => {
@@ -611,7 +620,11 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
                 v
             }
         }
-        UiNode::Styled(_, inner) | UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
+        UiNode::Styled(style, inner) => {
+            *WIDE.get() = style.wide && matches!(**inner, UiNode::Text(_));
+            return build(kit, target, inner, made_views);
+        }
+        UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
         // Room around a view: a stack view with margins.
         UiNode::Spaced(m, inner) => {
             let stack = wrapped(kit, build(kit, target, inner, made_views));

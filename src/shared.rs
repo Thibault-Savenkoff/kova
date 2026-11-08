@@ -1608,6 +1608,8 @@ pub struct UiStyle {
     pub color: Option<u32>,
     pub size: i32,
     pub bold: bool,
+    /// `.no_wrap`: the text stays on one line, even wider than the window (only iOS cuts texts at the screen's width).
+    pub wide: bool,
 }
 
 impl UiStyle {
@@ -1617,6 +1619,7 @@ impl UiStyle {
             color: self.color.or(around.color),
             size: if self.size > 0 { self.size } else { around.size },
             bold: self.bold || around.bold,
+            wide: self.wide || around.wide,
         }
     }
 }
@@ -1769,6 +1772,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             Some('c') => own.color = own.color.or(Some(n as u32)),
             Some('s') if own.size == 0 => own.size = n as i32,
             Some('b') => own.bold = true,
+            Some('w') => own.wide = true,
             Some('m') => margin = margin.or(Some(n as i32)),
             Some(key @ ('M' | 'K' | 'E')) => listening.push((key, n as i32)),
             _ => {}
@@ -1955,6 +1959,9 @@ pub fn ui_describe(text: &str) -> String {
                 }
                 if style.bold {
                     out.push_str(" bold");
+                }
+                if style.wide {
+                    out.push_str(" no_wrap");
                 }
             }
             UiNode::Spaced(m, inner) => {

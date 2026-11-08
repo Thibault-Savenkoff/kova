@@ -129,6 +129,10 @@ Les couleurs sont `ui.red`, `ui.blue` et les autres, ou n'importe quelle couleur
 vues ; le style propre d'une vue l'emporte. `margin` ajoute des pixels vides autour de la vue où il
 est écrit.
 
+Sur un iPhone, un texte est coupé à la largeur de l'écran, même un mot très long (un chemin de fichier,
+par exemple). Écris `.no_wrap` sur un texte pour le garder sur une seule ligne, même plus large que
+l'écran : la fenêtre défile alors de côté.
+
 Le texte d'un bouton garde la couleur du système : Windows ne laisse pas un bouton natif la changer,
 et une fenêtre doit se comporter pareil partout. `size` et `bold` y fonctionnent.
 

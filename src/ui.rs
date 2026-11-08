@@ -68,6 +68,11 @@ public:
         return self.styled("b", 1)
     }
 
+    // The text stays on one line, even if it is wider than the window (the window then scrolls sideways).
+    fn no_wrap(self) -> View {
+        return self.styled("w", 1)
+    }
+
     fn margin(self, pixels: Int) -> View
         require pixels >= 0 else "a margin cannot be negative"
     {

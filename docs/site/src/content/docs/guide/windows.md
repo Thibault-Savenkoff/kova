@@ -125,6 +125,9 @@ Colors are `ui.red`, `ui.blue` and the others, or any color with `ui.rgb(37, 99,
 or a row, `color`, `size` and `bold` go to all its views; a view's own style wins. `margin` adds
 empty pixels around the view it is written on.
 
+On an iPhone a text is cut to the width of the screen, a long word included (a file path, say). Write
+`.no_wrap` on a text to keep it on one line, even wider than the screen: the window then scrolls sideways.
+
 A button's text keeps the system's color: Windows does not let a native button change it, and a
 window should behave the same everywhere. Its `size` and `bold` work.
 
