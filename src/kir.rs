@@ -6015,7 +6015,7 @@ impl<'a> Translator<'a> {
                     self.track(&[t], &Type::String);
                     return vec![t];
                 }
-                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw" | "ui.act" | "ui.put" | "ui.room" | "ui.dialog") = name.text.as_str() {
+                if let n @ ("secure.uuid" | "secure.key" | "secure.password_matches(…) hash(…)" | "ui.typed" | "ui.drawn" | "ui.draw" | "ui.act" | "ui.put" | "ui.room" | "ui.dialog" | "ios.raw") = name.text.as_str() {
                     let vals: Vec<Local> = args.iter().map(|a| self.expr1(a)).collect();
                     let t = self.int_local();
                     let op = match n {
@@ -6027,7 +6027,7 @@ impl<'a> Translator<'a> {
                         "ui.act" => StrOp::UiAct,
                         "ui.put" => StrOp::UiPlace,
                         "ui.room" => StrOp::UiRoom,
-                        "ui.dialog" => StrOp::UiDialog,
+                        "ui.dialog" | "ios.raw" => StrOp::UiDialog,
                         _ => StrOp::PasswordMatches,
                     };
                     self.emit(Inst::Str(t, op, vals));

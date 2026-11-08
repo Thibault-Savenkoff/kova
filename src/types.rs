@@ -452,7 +452,7 @@ pub const BUILTINS: &[&str] = &["print", "write"];
 
 /// The modules Kova brings itself (PLAN Part 4 "Kova's own modules"): `import web` reads no file,
 /// it makes `web.get`, `web.Request`… reachable as `web.` (or the alias given).
-pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite", "sound"];
+pub const MODULES: &[&str] = &["web", "files", "system", "secure", "log", "ui", "threads", "paths", "url", "arguments", "toml", "xml", "compress", "zip", "net", "websocket", "sqlite", "sound", "ios"];
 
 /// What Kova's library writes in Kova (`src/library`): read like a file of the program.
 pub fn bundled(module: &str) -> Option<&'static str> {
@@ -468,6 +468,7 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "websocket" => include_str!("library/websocket.kova"),
         "sqlite" => include_str!("library/sqlite.kova"),
         "sound" => include_str!("library/sound.kova"),
+        "ios" => include_str!("library/ios.kova"),
         "files" => include_str!("library/files.kova"),
         _ => return None,
     })
@@ -1555,6 +1556,8 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("ui.room".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Int));
     c.functions.insert("ui.act".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], Type::Unit));
     c.functions.insert("ui.dialog".into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, string()), (Mode::Read, string())], string()));
+    // What src/library/ios.kova is written with: the same call as `ui.dialog`, with kinds from 10 up.
+    c.functions.insert("ios.raw".into(), Signature::new(None, vec![(Mode::Read, Type::Int), (Mode::Read, string()), (Mode::Read, string())], string()));
     c.functions.insert("ui.put".into(), Signature::new(None, vec![(Mode::Read, Type::Int); 4], Type::Unit));
     c.functions.insert("secure.token".into(), Signature::new(None, vec![(Mode::Read, Type::Int)], string()));
     c.functions.insert("secure.uuid".into(), Signature::new(None, vec![], string()));

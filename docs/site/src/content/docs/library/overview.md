@@ -42,6 +42,7 @@ is downloaded, and there is no package to choose between three that do almost th
 | `import sqlite` | [sqlite](/library/sqlite/) | a database in one file |
 | `import ui` | [ui](/library/ui/) | native windows |
 | `import sound` | [sound](/library/sound/) | playing sounds |
+| `import ios` | [ios](/library/ios/) | all of UIKit, on an iPhone or iPad |
 
 ## Every value has
 

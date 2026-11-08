@@ -1,0 +1,220 @@
+// `import ios`: all of UIKit (and every other framework of an iPhone or iPad), the way Smalltalk talks to objects: you
+// name a class and you send messages by their selector, `view.send("setAlpha:", [.Float(0.5)])`.
+// It works on an iPhone or iPad only; a program that imports it stops with a message anywhere else.
+import ios
+
+public:
+
+// A native object: a view, a controller, a color, a class... Its number is its address.
+// An object stays alive until you `release` it.
+struct Object : Equal {
+public:
+    id: Int
+
+    // Sends a message with no argument and gives back the answer: `UILabel.call("new")`.
+    fn call(self, selector: String) -> Value {
+        return self.send(selector, [])
+    }
+
+    // Sends a message. Each argument is written as the selector's parameter wants it:
+    // `.Int` for numbers and Booleans of any size, `.Float` for decimals, `.Text` for an `NSString`, `.Object`
+    // for an object (`.Nothing` is `nil`), `.Selector` for `@selector(x:)`, and `.Numbers` for a rectangle
+    // `[x, y, width, height]`, a point or a size.
+    fn send(self, selector: String, args: List<Value>) -> Value {
+        return decode(ios.raw(10, selector, "{self.id}\n{encode(args)}"))
+    }
+
+    // The same, when you only want the object it gives back (`view.object("addSubview:", ...)` is rarely what
+    // you want: this is for `alloc`, `init`, `view`, `layer`...).
+    fn child(self, selector: String) -> Object {
+        return self.call(selector).object
+    }
+
+    // This object as an argument: `view.send("addSubview:", [label.value])`.
+    fn value(self) -> Value {
+        return .Object(self.clone)
+    }
+
+    // Lets the object go: do it for an object you made and no longer use.
+    fn release(self) {
+        self.call("release")
+    }
+}
+
+// What a message takes and gives.
+enum Value : Display {
+    Nothing
+    Int(value: Int)
+    Float(value: Float)
+    Bool(value: Bool)
+    Text(value: String)
+    Object(value: Object)
+    // Only in what you send.
+    Selector(name: String)
+    // A rectangle, a point, a size, an edge insets...: its numbers.
+    Numbers(values: List<Float>)
+
+public:
+    // The object a message gave back: it stops the program if it gave something else.
+    fn object(self) -> Object {
+        return match self {
+            .Object(o) => o.clone
+            _ => fail("expected an object, got {self}", Object { id := 0 })
+        }
+    }
+
+    fn int(self) -> Int {
+        return match self {
+            .Int(n) => n
+            .Bool(b) => if b { 1 } else { 0 }
+            _ => fail("expected a number, got {self}", 0)
+        }
+    }
+
+    fn text(self) -> String {
+        return match self {
+            .Text(t) => t.clone
+            _ => fail("expected a text, got {self}", "")
+        }
+    }
+
+    fn to_string(self) -> String {
+        return match self {
+            .Nothing => "nil"
+            .Int(v) => "{v}"
+            .Float(v) => "{v}"
+            .Bool(v) => "{v}"
+            .Text(v) => "{v}"
+            .Object(o) => "object {o.id}"
+            .Selector(n) => "@selector({n})"
+            .Numbers(vs) => vs.map { v: Float => "{v}" }.join(" ")
+        }
+    }
+}
+
+// Short ways to write arguments: `ios.text("Hi")`, `ios.number(3)`, `ios.decimal(0.5)`, `ios.rect(0.0, 0.0, 100.0, 40.0)`.
+fn text(s: String) -> Value {
+    return .Text(s.clone)
+}
+
+fn number(n: Int) -> Value {
+    return .Int(n)
+}
+
+fn decimal(x: Float) -> Value {
+    return .Float(x)
+}
+
+fn flag(b: Bool) -> Value {
+    return .Bool(b)
+}
+
+fn selector(name: String) -> Value {
+    return .Selector(name.clone)
+}
+
+// A rectangle, `CGRect`: where it starts and how big it is.
+fn rect(x: Float, y: Float, width: Float, height: Float) -> Value {
+    return .Numbers([x, y, width, height])
+}
+
+// The class called `name`, or `none`: `ios.class("UILabel")`.
+fn class(name: String) -> Object? {
+    return match decode(ios.raw(14, name, "")) {
+        .Object(o) => o.clone
+        _ => none
+    }
+}
+
+// The window's view controller: its `view` is the screen you can add views to.
+fn root -> Object {
+    return match decode(ios.raw(13, "", "")) {
+        .Object(o) => o.clone
+        _ => fail("no window", Object { id := 0 })
+    }
+}
+
+// The class called `name` itself, to send it class messages (`ios.get("UIColor").child("systemBlueColor")`). It stops the
+// program if there is no such class.
+fn get(name: String) -> Object {
+    return match class(name) {
+        none => fail("there is no class called {name}", Object { id := 0 })
+        c => c.clone
+    }
+}
+
+// A new object of the class called `name`: `ios.new("UILabel")`. It stops the program if there is no such class.
+fn new(name: String) -> Object {
+    return get(name).child("new")
+}
+
+// An object that tells you when it is called: give it as the target of `addTarget:action:forControlEvents:`
+// with `.Selector("invoke:")`, then `wait` gives the number you chose here.
+fn handler(number: Int) -> Object {
+    return match decode(ios.raw(12, "", "{number}")) {
+        .Object(o) => o.clone
+        _ => fail("no handler", Object { id := 0 })
+    }
+}
+
+// Waits for the next handler to be called and gives its number.
+fn wait -> Int {
+    return match decode(ios.raw(11, "", "")) {
+        .Int(n) => n
+        _ => fail("the window is closed", 0)
+    }
+}
+
+// Stops the program with `message`: what a message that cannot be sent is, a mistake in the program.
+fn fail<T>(message: String, never: T) -> T
+    require false else "{message}"
+{
+    return never.clone
+}
+
+fn encode(args: List<Value>) -> String {
+    var out: String := ""
+    for a in args {
+        let piece: String := match a {
+            .Nothing => "n;"
+            .Int(v) => "i{v};"
+            .Float(v) => "f{v};"
+            .Bool(v) => if v { "b1;" } else { "b0;" }
+            .Text(v) => "s{v.to_bytes.length}:{v}"
+            .Object(o) => "o{o.id};"
+            .Selector(v) => "l{v.to_bytes.length}:{v}"
+            .Numbers(vs) => "d{vs.map { v: Float => "{v}" }.join(" ")};"
+        }
+        out := out + piece
+    }
+    return out
+}
+
+fn decode(answer: String) -> Value {
+    if answer = "" {
+        return fail("import ios works on an iPhone or an iPad only", Value.Nothing)
+    }
+    let rest: String := answer[1..answer.length]
+    return match answer[0..1] {
+        "n" => .Nothing
+        "i" => match rest.to_int {
+            none => fail("a bad number: {rest}", Value.Nothing)
+            n => .Int(n)
+        }
+        "f" => match rest.to_float {
+            none => fail("a bad number: {rest}", Value.Nothing)
+            x => .Float(x)
+        }
+        "b" => .Bool(rest = "1")
+        "s" => .Text(rest.clone)
+        "o" => match rest.to_int {
+            none => fail("a bad object: {rest}", Value.Nothing)
+            n => .Object(Object { id := n })
+        }
+        "d" => .Numbers(rest.split(" ").map { s: String => match s.to_float {
+            none => 0.0
+            x => x
+        } })
+        _ => fail(rest, Value.Nothing)
+    }
+}

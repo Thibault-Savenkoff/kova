@@ -43,6 +43,7 @@ presque la même chose.
 | `import sqlite` | [sqlite](/fr/library/sqlite/) | une base de données dans un fichier |
 | `import ui` | [ui](/fr/library/ui/) | des fenêtres natives |
 | `import sound` | [sound](/fr/library/sound/) | jouer des sons |
+| `import ios` | [ios](/fr/library/ios/) | tout UIKit, sur un iPhone ou un iPad |
 
 ## Chaque valeur a
 

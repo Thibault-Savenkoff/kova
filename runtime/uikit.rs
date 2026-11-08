@@ -96,6 +96,249 @@ macro_rules! msg {
     };
 }
 
+// ---- import ios ----
+
+/// The class of `ios.handler` objects, and each one made with the number it reports.
+static HANDLER_CLASS: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
+static HANDLERS: crate::Global<Vec<(Id, i64)>> = crate::Global::new(Vec::new());
+
+extern "C" fn handler_invoke(me: Id, _message: Id, _sender: Id) {
+    if let Some(&(_, tag)) = HANDLERS.get().iter().find(|e| e.0 == me) {
+        hear(tag, String::new());
+    }
+}
+
+/// The arguments of a message as `ios.kova` writes them: `n;` `i3;` `f1.5;` `b1;` `o1234;` `d1 2 3 4;` and
+/// `s5:hello` / `l9:setText:` (a text and a selector, with their length in bytes).
+enum Arg {
+    Nothing,
+    Int(i64),
+    Float(f64),
+    Object(Id),
+    Selector(String),
+    Text(String),
+    Numbers(Vec<f64>),
+}
+
+fn ios_args(mut b: &[u8]) -> Option<Vec<Arg>> {
+    let mut all = Vec::new();
+    while let Some((&kind, rest)) = b.split_first() {
+        b = rest;
+        if matches!(kind, b's' | b'l') {
+            let colon = b.iter().position(|&c| c == b':')?;
+            let n: usize = core::str::from_utf8(&b[..colon]).ok()?.parse().ok()?;
+            let text = String::from_utf8_lossy(b.get(colon + 1..colon + 1 + n)?).into_owned();
+            b = &b[colon + 1 + n..];
+            all.push(if kind == b's' { Arg::Text(text) } else { Arg::Selector(text) });
+            continue;
+        }
+        let end = b.iter().position(|&c| c == b';')?;
+        let word = core::str::from_utf8(&b[..end]).ok()?;
+        b = &b[end + 1..];
+        all.push(match kind {
+            b'n' => Arg::Nothing,
+            b'i' => Arg::Int(word.parse().ok()?),
+            b'b' => Arg::Int((word == "1") as i64),
+            b'o' => Arg::Object(word.parse::<i64>().ok()? as Id),
+            b'f' => Arg::Float(crate::shared::parse_float(word)?),
+            b'd' => Arg::Numbers(word.split(' ').filter(|w| !w.is_empty()).map(|w| crate::shared::parse_float(w)).collect::<Option<Vec<_>>>()?),
+            _ => return None,
+        });
+    }
+    Some(all)
+}
+
+/// The fields of a C structure's encoding, `{CGRect={CGPoint=dd}{CGSize=dd}}` giving `dddd`.
+fn struct_fields(encoding: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut depth = 0;
+    let mut named = false;
+    for &c in encoding {
+        match c {
+            b'{' => {
+                depth += 1;
+                named = false;
+            }
+            b'}' => depth -= 1,
+            b'=' if depth > 0 && !named => named = true,
+            c if depth > 0 && named => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Sends the message `name` to `object` with `args`, through `NSInvocation`: whatever the selector's types are.
+/// The answer as `ios.kova` reads it: `n`, `i3`, `f1.5`, `b1`, `sHello`, `o1234`, `d1 2 3 4`, or `!` and a complaint.
+fn ios_send(kit: &Kit, object: Id, name: &str, args: &[u8]) -> String {
+    use alloc::format;
+    if object.is_null() {
+        return format!("!sending {name} to nil");
+    }
+    let Some(args) = ios_args(args) else { return format!("!the arguments of {name} are badly written") };
+    let sel = kit.sel(name);
+    let answers = (kit.send_two)(object, kit.sel("respondsToSelector:"), sel) as usize & 0xff != 0;
+    if !answers {
+        return format!("!the object does not answer {name}");
+    }
+    let sig = (kit.send_two)(object, kit.sel("methodSignatureForSelector:"), sel);
+    let wanted = (kit.send_int)(sig, kit.sel("numberOfArguments")) as usize;
+    if wanted != args.len() + 2 {
+        return format!("!{name} takes {} arguments, not {}", wanted.saturating_sub(2), args.len());
+    }
+    let inv = (kit.send_two)(kit.class("NSInvocation"), kit.sel("invocationWithMethodSignature:"), sig);
+    (kit.send_two)(inv, kit.sel("setTarget:"), object);
+    (kit.send_two)(inv, kit.sel("setSelector:"), sel);
+    let type_at = |i: usize| -> Vec<u8> {
+        let p = msg!(kit, extern "C" fn(Id, Id, u64) -> Id)(sig, kit.sel("getArgumentTypeAtIndex:"), i as u64) as *const u8;
+        let mut t = unsafe { crate::c_text(p) }.to_vec();
+        while t.first().is_some_and(|c| b"rnNoORV".contains(c)) {
+            t.remove(0);
+        }
+        t
+    };
+    for (k, arg) in args.iter().enumerate() {
+        let t = type_at(k + 2);
+        let mut buffer = [0u8; 64];
+        let set = |buffer: &mut [u8; 64], bytes: &[u8]| buffer[..bytes.len()].copy_from_slice(bytes);
+        match (t.first().copied().unwrap_or(b'?'), arg) {
+            (b'f', Arg::Float(x)) => set(&mut buffer, &(*x as f32).to_le_bytes()),
+            (b'f', Arg::Int(n)) => set(&mut buffer, &(*n as f32).to_le_bytes()),
+            (b'd', Arg::Float(x)) => set(&mut buffer, &x.to_le_bytes()),
+            (b'd', Arg::Int(n)) => set(&mut buffer, &(*n as f64).to_le_bytes()),
+            (b'c' | b'C' | b'B' | b's' | b'S' | b'i' | b'I' | b'l' | b'L' | b'q' | b'Q' | b'*' | b'^', Arg::Int(n)) => set(&mut buffer, &n.to_le_bytes()),
+            (b'c' | b'C' | b'B' | b'q' | b'Q', Arg::Float(x)) => set(&mut buffer, &(*x as i64).to_le_bytes()),
+            (b'@' | b'#', Arg::Nothing) => {}
+            (b'@' | b'#', Arg::Object(o)) => set(&mut buffer, &(*o as usize).to_le_bytes()),
+            (b'@', Arg::Text(s)) => set(&mut buffer, &(kit.text(s) as usize).to_le_bytes()),
+            (b'@', Arg::Int(n)) => set(&mut buffer, &(msg!(kit, extern "C" fn(Id, Id, i64) -> Id)(kit.class("NSNumber"), kit.sel("numberWithLongLong:"), *n) as usize).to_le_bytes()),
+            (b':', Arg::Selector(s)) => set(&mut buffer, &(kit.sel(s) as usize).to_le_bytes()),
+            (b'{', Arg::Numbers(xs)) => {
+                let fields = struct_fields(&t);
+                if fields.len() != xs.len() || fields.len() * 8 > 64 {
+                    return format!("!argument {} of {name} is a structure of {} numbers, not {}", k + 1, fields.len(), xs.len());
+                }
+                for (j, (&f, x)) in fields.iter().zip(xs).enumerate() {
+                    match f {
+                        b'd' => buffer[j * 8..j * 8 + 8].copy_from_slice(&x.to_le_bytes()),
+                        b'q' | b'Q' => buffer[j * 8..j * 8 + 8].copy_from_slice(&(*x as i64).to_le_bytes()),
+                        _ => return format!("!argument {} of {name}: a structure that is not made of numbers", k + 1),
+                    }
+                }
+            }
+            _ => return format!("!argument {} of {name} is not of the kind it wants ({})", k + 1, String::from_utf8_lossy(&t)),
+        }
+        msg!(kit, extern "C" fn(Id, Id, *const u8, i64))(inv, kit.sel("setArgument:atIndex:"), buffer.as_ptr(), (k + 2) as i64);
+    }
+    kit.send(inv, "invoke");
+    let ret = {
+        let p = kit.send(sig, "methodReturnType") as *const u8;
+        let mut t = unsafe { crate::c_text(p) }.to_vec();
+        while t.first().is_some_and(|c| b"rnNoORV".contains(c)) {
+            t.remove(0);
+        }
+        t
+    };
+    let mut buffer = [0u8; 64];
+    let kind = ret.first().copied().unwrap_or(b'v');
+    if kind != b'v' {
+        msg!(kit, extern "C" fn(Id, Id, *mut u8))(inv, kit.sel("getReturnValue:"), buffer.as_mut_ptr());
+    }
+    let word = |n: usize| u64::from_le_bytes(buffer[n..n + 8].try_into().unwrap());
+    match kind {
+        b'v' => "n".into(),
+        b'B' | b'c' | b'C' if kind == b'B' => format!("b{}", buffer[0] & 1),
+        b'c' => format!("i{}", buffer[0] as i8),
+        b'C' => format!("i{}", buffer[0]),
+        b's' => format!("i{}", i16::from_le_bytes([buffer[0], buffer[1]])),
+        b'S' => format!("i{}", u16::from_le_bytes([buffer[0], buffer[1]])),
+        b'i' => format!("i{}", i32::from_le_bytes(buffer[..4].try_into().unwrap())),
+        b'I' => format!("i{}", u32::from_le_bytes(buffer[..4].try_into().unwrap())),
+        b'l' | b'q' => format!("i{}", word(0) as i64),
+        b'L' | b'Q' => format!("i{}", word(0) as i64),
+        b'f' => format!("f{}", f32::from_le_bytes(buffer[..4].try_into().unwrap())),
+        b'd' => format!("f{}", f64::from_le_bytes(buffer[..8].try_into().unwrap())),
+        b'@' | b'#' => {
+            let o = word(0) as usize as Id;
+            if o.is_null() {
+                "n".into()
+            } else {
+                // Kept alive: the pool this runs in is emptied when the call is over.
+                kit.send(o, "retain");
+                format!("o{}", o as usize)
+            }
+        }
+        b'{' => {
+            let fields = struct_fields(&ret);
+            let numbers: Vec<String> = fields
+                .iter()
+                .enumerate()
+                .map(|(j, &f)| {
+                    let w = word(j * 8);
+                    if f == b'd' { format!("{}", f64::from_bits(w)) } else { format!("{}", w as i64) }
+                })
+                .collect();
+            format!("d{}", numbers.join(" "))
+        }
+        _ => format!("!{name} gives a value of a kind Kova cannot read ({})", String::from_utf8_lossy(&ret)),
+    }
+}
+
+/// `ios.raw`: kind 10 sends a message, 11 waits for a handler, 12 makes one, 13 gives the window's controller and
+/// 14 finds a class.
+fn ios_raw(kind: i64, title: &str, text: &str) -> Option<String> {
+    if kind == 11 {
+        loop {
+            let seen = RING.load(SeqCst);
+            if let Some((answer, _)) = HEARD.with(|q| q.next()) {
+                return Some(alloc::format!("i{answer}"));
+            }
+            super::wait(&RING, seen);
+        }
+    }
+    struct Job<'a> {
+        kind: i64,
+        title: &'a str,
+        text: &'a str,
+        out: String,
+    }
+    extern "C" fn run(job: *mut u8) {
+        let job = unsafe { &mut *(job as *mut Job) };
+        let screen = screen();
+        let kit = &screen.kit;
+        let pool = (kit.push)();
+        job.out = match job.kind {
+            10 => {
+                let (object, args) = job.text.split_once('\n').unwrap_or((job.text, ""));
+                match object.parse::<i64>() {
+                    Ok(o) => ios_send(kit, o as usize as Id, job.title, args.as_bytes()),
+                    Err(_) => "!the object is badly written".into(),
+                }
+            }
+            12 => {
+                let handler = kit.send(kit.send(*HANDLER_CLASS.get(), "alloc"), "init");
+                HANDLERS.get().push((handler, job.text.parse().unwrap_or(0)));
+                alloc::format!("o{}", handler as usize)
+            }
+            13 => alloc::format!("o{}", screen.controller as usize),
+            14 => {
+                let class = kit.class(job.title);
+                if class.is_null() { "n".into() } else { alloc::format!("o{}", class as usize) }
+            }
+            _ => "!no such request".into(),
+        };
+        (kit.pop)(pool);
+    }
+    if SCREEN.get().is_none() {
+        return None;
+    }
+    let system = library("/usr/lib/libSystem.B.dylib")?;
+    let sync: extern "C" fn(usize, *mut u8, extern "C" fn(*mut u8)) = unsafe { core::mem::transmute(symbol(system, "dispatch_sync_f")?) };
+    let mut job = Job { kind, title, text, out: String::new() };
+    sync(symbol(system, "_dispatch_main_q")?, &mut job as *mut Job as *mut u8, run);
+    Some(job.out)
+}
+
 /// Each view with a context menu now on screen, and its items (label, button number).
 static CONTEXTS: crate::Global<Vec<(Id, Vec<(String, usize)>)>> = crate::Global::new(Vec::new());
 /// The menu the next call of `provide` gives back.
@@ -202,6 +445,11 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
         add(class, kit.sel("dated:"), dated as usize, action);
+        // What `import ios` gives to controls: an object that tells the program it was called.
+        let handler = new_class(kit.class("NSObject"), c"KovaUiHandler".as_ptr() as *const u8, 0);
+        add(handler, kit.sel("invoke:"), handler_invoke as usize, action);
+        register(handler);
+        *HANDLER_CLASS.get() = handler;
         add(class, kit.sel("contextMenuInteraction:configurationForMenuAtLocation:"), context_for as usize, c"@@:@{CGPoint=dd}".as_ptr() as *const u8);
         add(class, kit.sel("documentPicker:didPickDocumentsAtURLs:"), picked_file as usize, c"v@:@@".as_ptr() as *const u8);
         add(class, kit.sel("documentPickerWasCancelled:"), picked_nothing as usize, action);
@@ -877,6 +1125,9 @@ extern "C" fn picked_nothing(_me: Id, _message: Id, _picker: Id) {
 }
 
 pub fn dialog(kind: i64, title: &str, text: &str) -> Option<String> {
+    if kind >= 10 {
+        return ios_raw(kind, title, text);
+    }
     if SCREEN.get().is_none() {
         return None;
     }
