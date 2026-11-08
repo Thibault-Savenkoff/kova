@@ -92,7 +92,8 @@ pub fn uninstall(name: &str, windowed: bool) -> Result<Vec<PathBuf>, String> {
     let mut removed = vec![];
     // Windows: the program's own folder; a Mac app: its bundle (in `others`).
     let exe_place = if cfg!(windows) { exe.parent().unwrap().to_path_buf() } else { exe };
-    for place in std::iter::once(exe_place).chain(others) {
+    // The shortcuts and the bundle first: a program still running cannot be deleted, and that error must not leave them behind.
+    for place in others.into_iter().chain(std::iter::once(exe_place)) {
         let gone = if place.is_dir() { std::fs::remove_dir_all(&place) } else { std::fs::remove_file(&place) };
         match gone {
             Ok(()) => removed.push(place),
