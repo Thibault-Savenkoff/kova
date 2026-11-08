@@ -922,6 +922,9 @@ pub enum UiNode {
     /// `ui.spinner` on iOS: an activity indicator.
     #[cfg(ios)]
     Spinner,
+    /// `ui.search` on iOS: a search field, its text and its number among the fields.
+    #[cfg(ios)]
+    Search(String, usize),
 }
 
 /// `ui.list` (no headers, one column) and `ui.table`.
@@ -1706,6 +1709,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         UiNode::Stepper(_, min, max, _) => format!("U{min}:{max}"),
         #[cfg(ios)]
         UiNode::Spinner => "Z".into(),
+        #[cfg(ios)]
+        UiNode::Search(..) => "Q".into(),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
         // Not its drawing, which changes at every frame.
@@ -1801,7 +1806,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
 }
 
 fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], style: UiStyle) -> UiNode {
-    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V' | 'U' | 'Z') {
+    let align = if matches!(kind, 'T' | 'B' | 'I' | 'P' | 'D' | 'X' | 'W' | 'O' | 'G' | 'N' | 'V' | 'U' | 'Z' | 'Q') {
         UiAlign::Start
     } else {
         match chars.next() {
@@ -1868,16 +1873,20 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                 UiNode::Text(format!("{bar} {}%", value as i64 * 100 / most as i64))
             }
         }
-        'T' | 'B' | 'I' | 'P' => {
+        'T' | 'B' | 'I' | 'P' | 'Q' => {
             let label: String = chars.by_ref().take(n).collect();
             match kind {
                 'T' => return UiNode::Text(label),
                 'P' => return UiNode::Image(label, 0),
                 _ => {}
             }
-            let count = &mut counts[(kind == 'I') as usize];
+            let count = &mut counts[matches!(kind, 'I' | 'Q') as usize];
             *count += 1;
-            if kind == 'I' { UiNode::Input(label, *count - 1) } else { UiNode::Button(label, *count - 1) }
+            #[cfg(ios)]
+            if kind == 'Q' {
+                return UiNode::Search(label, *count - 1);
+            }
+            if matches!(kind, 'I' | 'Q') { UiNode::Input(label, *count - 1) } else { UiNode::Button(label, *count - 1) }
         }
         _ => {
             let parts: Vec<UiNode> = (0..n).map(|_| ui_node(chars, counts, style)).collect();
@@ -1932,6 +1941,8 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Stepper(v, min, max, _) => out.push_str(&format!("slider {v} of {min} to {max}")),
             #[cfg(ios)]
             UiNode::Spinner => out.push_str("text \"…\""),
+            #[cfg(ios)]
+            UiNode::Search(t, _) => out.push_str(&format!("input {t:?}")),
             UiNode::Image(path, 0) => out.push_str(&format!("image {path:?}")),
             UiNode::Image(path, width) => out.push_str(&format!("image {path:?} size({width})")),
             UiNode::Styled(style, leaf) => {

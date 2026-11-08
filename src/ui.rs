@@ -12,9 +12,9 @@ use crate::locale::t;
 
 /// The module's own names: a `view` or `update` function cannot take one (inside the module,
 /// `text` is the module's).
-const OWN: [&str; 55] = [
+const OWN: [&str; 56] = [
     "menu", "item", "separator", "open_file", "save_file", "open_folder", "message", "confirm",
-    "checkbox", "slider", "date", "progress", "stepper", "spinner", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
+    "checkbox", "slider", "date", "progress", "stepper", "spinner", "search", "choice", "list", "table", "tabs", "image", "text", "button", "input", "column", "row", "run", "group", "View", "Color", "rgb", "red", "green", "blue", "orange", "yellow", "purple", "gray", "black", "white", "canvas", "Draw", "Mouse", "Key", "gesture", "number", "close", "minimize", "full_screen", "place", "window", "screen", "Area", "maximize", "drag", "fill", "animate",
 ];
 
 const SOURCE: &str = r#"import ui
@@ -332,6 +332,12 @@ fn text(s: String) -> View {
 
 fn button(label: String, event: EVENT) -> View {
     return View { text := "B{label.length}:{label}", events := [event.clone], typed := [] }
+}
+
+// A search field: a text field with a magnifying glass where the system has one.
+fn search(value: String, changed: {String -> EVENT}) -> View {
+    let typed: EVENT? := changed(ui.typed)
+    return View { text := "Q{value.length}:{value}", events := [], typed := [typed] }
 }
 
 fn input(value: String, changed: {String -> EVENT}) -> View {

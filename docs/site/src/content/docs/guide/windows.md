@@ -245,6 +245,9 @@ a percentage.
 `ui.stepper(app.count, 0, 5, .Count)` is plus and minus buttons around a value (a slider where the system
 has none), and `ui.spinner` a turning wheel for something that takes a while (`…` where the system has none).
 
+`ui.search(app.query) { s: String => Event.Query(s.clone) }` is a search field, written like `ui.input`:
+on an iPhone it has its magnifying glass and its clear button, elsewhere it is a plain text field.
+
 `ui.tabs` is only the row of tabs. Which page shows under it is yours to write, and that is one `if`
 in `view`:
 

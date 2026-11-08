@@ -452,8 +452,8 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             hears(kit, target, b, *n, "tapped:", 64);
             b
         }
-        UiNode::Input(s, n) => {
-            let field = made(kit, "UITextField");
+        UiNode::Input(s, n) | UiNode::Search(s, n) => {
+            let field = made(kit, if matches!(node, UiNode::Search(..)) { "UISearchTextField" } else { "UITextField" });
             (kit.send_two)(field, kit.sel("setText:"), kit.text(s));
             (kit.send_id)(field, kit.sel("setBorderStyle:"), 3);
             (kit.send_two)(field, kit.sel("setDelegate:"), target);
@@ -654,7 +654,7 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
                 (kit.send_two)(v, kit.sel("setText:"), kit.text(s));
             }
         }
-        UiNode::Input(s, _) => {
+        UiNode::Input(s, _) | UiNode::Search(s, _) => {
             if text_of(kit, kit.send(v, "text")) != *s {
                 (kit.send_two)(v, kit.sel("setText:"), kit.text(s));
             }

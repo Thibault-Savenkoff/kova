@@ -1,0 +1,32 @@
+// `ui.search(value) { s: String => event }` is a search field (a text field where the system has no such field).
+import ui
+
+enum Event {
+    Query(text: String)
+}
+
+struct App {
+    query: String
+}
+
+fn view(app: App) -> ui.View {
+    return ui.column([
+        ui.search(app.query) { s: String => Event.Query(s.clone) },
+        ui.text("Looking for {app.query}"),
+    ])
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Query(text) => app.query := text.clone
+    }
+}
+
+fn main {
+    ui.run("Search", App { query := "" }, view, update)
+}
+// stdin: 0=ka
+// stdin: 0=kova
+// expect: [Search] column(input "", text "Looking for ")
+// expect: [Search] column(input "ka", text "Looking for ka")
+// expect: [Search] column(input "kova", text "Looking for kova")

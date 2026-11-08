@@ -251,6 +251,10 @@ de blocs et un pourcentage.
 là où le système n'en a pas), et `ui.spinner` une roue qui tourne pour ce qui prend du temps (`…` là où le
 système n'en a pas).
 
+`ui.search(app.query) { s: String => Event.Query(s.clone) }` est un champ de recherche, écrit comme
+`ui.input` : sur un iPhone il a sa loupe et son bouton d'effacement, ailleurs c'est un champ de texte
+ordinaire.
+
 `ui.tabs` n'est que la rangée d'onglets. La page montrée dessous, c'est à toi de l'écrire, et cela
 tient en un `if` dans `view` :
 
