@@ -1046,6 +1046,8 @@ const MACHO_PAGE: u64 = 0x4000;
 const COMMANDS: u64 = 72 * 4 + 80 + 48 + 24 + 80 + 32 + 24 + 56 + 24 + 16 + 24;
 /// Its name and the 0 after it: a multiple of 8, as a load command's size must be.
 const NETWORK: &str = "/System/Library/Frameworks/Network.framework/Versions/A/Network";
+/// iOS frameworks are flat: no `Versions/A` (the macOS path is not found there, and the program dies at launch).
+const NETWORK_IOS: &str = "/System/Library/Frameworks/Network.framework/Network";
 
 fn macho_got(flags: RelocationFlags) -> bool {
     use object::macho::*;
@@ -1083,7 +1085,8 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
     // HTTPS (src/network_framework.rs): a second library, Network.framework, number 2 for `dyld`.
     let from_network = |f: &str| f.trim_start_matches('_').starts_with("nw_");
     let network = r.imports.iter().any(|f| from_network(f));
-    let commands = COMMANDS + if network { NETWORK.len() as u64 + 1 + 24 } else { 0 };
+    let network_path = if ios != 0 { NETWORK_IOS } else { NETWORK };
+    let commands = COMMANDS + if network { network_path.len() as u64 + 1 + 24 } else { 0 };
     let split = |part| r.kept.iter().position(|p| parts[p] >= part).unwrap_or(r.kept.len());
     let (constants, data) = (split(Part::Constants), split(Part::Data));
 
@@ -1287,10 +1290,10 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
     }
     named(&mut h, "/usr/lib/libSystem.B.dylib", 32);
     if network {
-        for v in [0xC, NETWORK.len() as u64 + 1 + 24, 24, 2, 0x1_0000, 0x1_0000] {
+        for v in [0xC, network_path.len() as u64 + 1 + 24, 24, 2, 0x1_0000, 0x1_0000] {
             le32(&mut h, v); // LC_LOAD_DYLIB
         }
-        named(&mut h, NETWORK, NETWORK.len() + 1);
+        named(&mut h, network_path, network_path.len() + 1);
     }
     // LC_UUID: the system of 2025 refuses a program without one (an iOS 26 SDK's dyld). The same
     // program gets the same number.
