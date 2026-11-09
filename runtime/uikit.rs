@@ -268,6 +268,9 @@ fn ios_send(kit: &Kit, object: Id, name: &str, args: &[u8]) -> String {
             let o = word(0) as usize as Id;
             if o.is_null() {
                 "n".into()
+            } else if (kit.send_two)(o, kit.sel("isKindOfClass:"), kit.class("NSString")) as usize & 0xff != 0 {
+                // A text comes back as a text, not as an object.
+                format!("s{}", text_of(kit, o))
             } else {
                 // Kept alive: the pool this runs in is emptied when the call is over.
                 kit.send(o, "retain");
