@@ -60,6 +60,8 @@ static SCREEN: crate::Global<Option<Screen>> = crate::Global::new(None);
 static CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
 /// The next text is built without its width cap (`.no_wrap`).
 static WIDE: crate::Global<bool> = crate::Global::new(false);
+/// The next text is Markdown: a text view, so that its links open.
+static MARKED: crate::Global<bool> = crate::Global::new(false);
 /// The scroll view, whose size a `ui.fill` canvas follows.
 static SCROLL: crate::Global<Id> = crate::Global::new(core::ptr::null_mut());
 /// The window of the app, kept for the delegate.
@@ -969,9 +971,19 @@ fn hears(kit: &Kit, target: Id, view: Id, number: usize, action: &str, events: i
 fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -> Id {
     let leaf = match node {
         UiNode::Text(s) => {
-            let label = made(kit, "UILabel");
+            let marked = core::mem::take(MARKED.get());
+            let label = made(kit, if marked { "UITextView" } else { "UILabel" });
             (kit.send_two)(label, kit.sel("setText:"), kit.text(s));
-            (kit.send_id)(label, kit.sel("setNumberOfLines:"), 0);
+            if marked {
+                // Not editable, not scrolling, no padding: it looks like a label, and a tap on a link opens it.
+                (kit.send_id)(label, kit.sel("setScrollEnabled:"), 0);
+                (kit.send_id)(label, kit.sel("setEditable:"), 0);
+                (kit.send_two)(label, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "clearColor"));
+                (kit.send_insets)(label, kit.sel("setTextContainerInset:"), Insets { top: 0.0, left: 0.0, bottom: 0.0, right: 0.0 });
+                (kit.send_float)(kit.send(label, "textContainer"), kit.sel("setLineFragmentPadding:"), 0.0);
+            } else {
+                (kit.send_id)(label, kit.sel("setNumberOfLines:"), 0);
+            }
             // The text stays within the screen: a long word (a path) breaks where it must, not at the edge.
             // `.no_wrap` leaves it alone.
             if !core::mem::take(WIDE.get()) {
@@ -1183,6 +1195,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
         }
         UiNode::Styled(style, inner) => {
             *WIDE.get() = style.wide && matches!(**inner, UiNode::Text(_));
+            *MARKED.get() = style.marks && matches!(**inner, UiNode::Text(_));
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
@@ -1353,7 +1366,7 @@ fn rich_text(kit: &Kit, label: Id, text: &str, size: f64, style: UiStyle) {
     };
     add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), ui_font(if style.bold { "boldSystemFontOfSize:" } else { "systemFontOfSize:" }), Range { location: 0, length: width });
     add(all, kit.sel("addAttribute:value:range:"), kit.text("NSColor"), color, Range { location: 0, length: width });
-    for (start, length, kind) in runs {
+    for (start, length, kind, address) in runs {
         let range = Range { location: start as u64, length: length as u64 };
         match kind {
             1 => add(all, kit.sel("addAttribute:value:range:"), kit.text("NSFont"), ui_font("boldSystemFontOfSize:"), range),
@@ -1364,6 +1377,11 @@ fn rich_text(kit: &Kit, label: Id, text: &str, size: f64, style: UiStyle) {
             }
             _ => {
                 add(all, kit.sel("addAttribute:value:range:"), kit.text("NSColor"), kit.send(kit.class("UIColor"), "systemBlueColor"), range);
+                // A text view opens it when tapped.
+                let url = (kit.send_two)(kit.class("NSURL"), kit.sel("URLWithString:"), kit.text(&address));
+                if !url.is_null() {
+                    add(all, kit.sel("addAttribute:value:range:"), kit.text("NSLink"), url, range);
+                }
             }
         }
     }

@@ -1828,7 +1828,7 @@ fn ui_number(chars: &mut core::str::Chars) -> usize {
 /// The inline marks of a line of Markdown: the text without them, and the runs they covered as (start, length, kind) in
 /// UTF-16 units: 1 bold, 2 stressed, 3 code, 4 link (the address after the label's end is dropped too).
 #[allow(dead_code)]
-pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8)>) {
+pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8, String)>) {
     let chars: Vec<char> = text.chars().collect();
     let (mut plain, mut runs) = (String::new(), Vec::new());
     let mut width = 0usize;
@@ -1839,7 +1839,7 @@ pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8)>) {
         let next = chars.get(i + 1).copied();
         if c == '`' {
             match code.take() {
-                Some(from) => runs.push((from, width - from, 3)),
+                Some(from) => runs.push((from, width - from, 3, String::new())),
                 None => code = Some(width),
             }
             i += 1;
@@ -1849,13 +1849,13 @@ pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8)>) {
             i += 1;
         } else if c == '*' && next == Some('*') {
             match bold.take() {
-                Some(from) => runs.push((from, width - from, 1)),
+                Some(from) => runs.push((from, width - from, 1, String::new())),
                 None => bold = Some(width),
             }
             i += 2;
         } else if c == '*' {
             match stressed.take() {
-                Some(from) => runs.push((from, width - from, 2)),
+                Some(from) => runs.push((from, width - from, 2, String::new())),
                 None => stressed = Some(width),
             }
             i += 1;
@@ -1866,7 +1866,7 @@ pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8)>) {
                 Some((m, e)) => {
                     let label = &rest[..m];
                     let len: usize = label.chars().map(char::len_utf16).sum();
-                    runs.push((width, len, 4));
+                    runs.push((width, len, 4, String::from(&rest[m + 2..m + 2 + e])));
                     plain.push_str(label);
                     width += len;
                     i += 1 + label.chars().count() + 2 + rest[m + 2..m + 2 + e].chars().count() + 1;

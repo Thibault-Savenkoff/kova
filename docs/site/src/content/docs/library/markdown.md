@@ -56,6 +56,7 @@ bullet: `milk` & eggs
 | `.Quote(text)` | `> said` |
 | `.Code(text)` | the lines between two lines of three backticks, as they are written |
 | `.Rule` | `---`, `***` or `___` |
+| `.Image(alt, address)` | a line that is only `![alt](address)` |
 
 A `Block` shows as a line of text (`heading 1: Shopping`), so `print(block)` is enough to look at one.
 

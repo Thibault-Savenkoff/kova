@@ -56,6 +56,7 @@ bullet: `lait` & œufs
 | `.Quote(text)` | `> dit` |
 | `.Code(text)` | les lignes entre deux lignes de trois accents graves, telles qu'elles sont écrites |
 | `.Rule` | `---`, `***` ou `___` |
+| `.Image(alt, address)` | une ligne qui est seulement `![alt](address)` |
 
 Un `Block` s'affiche comme une ligne de texte (`heading 1: Courses`) : `print(block)` suffit pour en regarder un.
 

@@ -16,6 +16,7 @@ for the week, with a [recipe](https://example.com/soup).
 
 > Keep it simple
 ---
+![a pear](pear.png)
 ```
 let x = 1 < 2
 ```
@@ -34,6 +35,7 @@ let x = 1 < 2
 // expect: number 2: second
 // expect: quote: Keep it simple
 // expect: rule
+// expect: image pear.png: a pear
 // expect: code: let x = 1 < 2
 // expect: bold, stressed, code, snake_case, word and a link
 // expect: <h1>Shopping <em>list</em></h1>
@@ -48,4 +50,5 @@ let x = 1 < 2
 // expect: </ol>
 // expect: <blockquote>Keep it simple</blockquote>
 // expect: <hr>
+// expect: <img src="pear.png" alt="a pear">
 // expect: <pre><code>let x = 1 &lt; 2</code></pre>

@@ -19,6 +19,8 @@ enum Block : Display {
     Code(text: String)
     // A line of `---`, `***` or `___`.
     Rule
+    // A line that is only `![alt](address)`.
+    Image(alt: String, address: String)
 
     fn to_string(self) -> String {
         return match self {
@@ -29,6 +31,7 @@ enum Block : Display {
             .Quote(text) => "quote: {text}"
             .Code(text) => "code: {text}"
             .Rule => "rule"
+            .Image(alt, address) => "image {address}: {alt}"
         }
     }
 }
@@ -64,6 +67,16 @@ fn blocks(source: String) -> List<Block> {
             flush(var out, var paragraph)
             out.add(Block.Rule)
             continue
+        }
+        if line.starts_with("![") {
+            if w := link_length(line, 1) {
+                if 1 + w = line.length {
+                    let alt: Int := label_length(line, 1)
+                    flush(var out, var paragraph)
+                    out.add(Block.Image(line[2..(2 + alt)], line[(alt + 4)..(line.length - 1)]))
+                    continue
+                }
+            }
         }
         let level: Int := hashes(line)
         if level > 0 {
@@ -202,6 +215,7 @@ fn html(source: String) -> String {
             .Quote(text) => out.add("<blockquote>{inline_html(text)}</blockquote>")
             .Code(text) => out.add("<pre><code>{escaped(text)}</code></pre>")
             .Rule => out.add("<hr>")
+            .Image(alt, address) => out.add("<img src=\"{escaped(address)}\" alt=\"{escaped(alt)}\">")
         }
     }
     if open != "" {
