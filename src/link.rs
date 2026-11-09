@@ -1086,7 +1086,9 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
     let from_network = |f: &str| f.trim_start_matches('_').starts_with("nw_");
     let network = r.imports.iter().any(|f| from_network(f));
     let network_path = if ios != 0 { NETWORK_IOS } else { NETWORK };
-    let commands = COMMANDS + if network { network_path.len() as u64 + 1 + 24 } else { 0 };
+    // The command's length stays a multiple of 8.
+    let network_room = (network_path.len() as u64 + 1 + 7) / 8 * 8;
+    let commands = COMMANDS + if network { network_room + 24 } else { 0 };
     let split = |part| r.kept.iter().position(|p| parts[p] >= part).unwrap_or(r.kept.len());
     let (constants, data) = (split(Part::Constants), split(Part::Data));
 
@@ -1290,10 +1292,10 @@ pub fn macho(main: &[u8], runtime: &[u8], name: &str, arm: bool, ios: u32) -> Re
     }
     named(&mut h, "/usr/lib/libSystem.B.dylib", 32);
     if network {
-        for v in [0xC, network_path.len() as u64 + 1 + 24, 24, 2, 0x1_0000, 0x1_0000] {
+        for v in [0xC, network_room + 24, 24, 2, 0x1_0000, 0x1_0000] {
             le32(&mut h, v); // LC_LOAD_DYLIB
         }
-        named(&mut h, network_path, network_path.len() + 1);
+        named(&mut h, network_path, network_room as usize);
     }
     // LC_UUID: the system of 2025 refuses a program without one (an iOS 26 SDK's dyld). The same
     // program gets the same number.
