@@ -171,3 +171,5 @@ Réglages.
 Sans `width` ni `height`, la fenêtre s'ouvre à la taille de son contenu, avec au moins 320 pixels de large. Elle n'est jamais plus petite que son contenu, quelle que soit la taille demandée, et qui s'en sert peut la redimensionner : un clic ne remet jamais la première taille, il fait seulement grandir la fenêtre quand le contenu a besoin de plus de place.
 
 Un programme `ui` tourne en code natif, même sous `kova run`.
+| `view.searchable(value, { s: String => E })` | un champ de recherche pour cette page : dans la barre de navigation, là où le système le met. Ailleurs il s'affiche au-dessus de la page. |
+| `ui.list(lines, selected, { i: Int => E }) delete { i: Int => E }` | la même liste ; un glissement vers la gauche sur une ligne montre un `Delete` rouge, et `delete` donne l'événement de cette ligne. Les autres systèmes ignorent le glissement : donne aussi un bouton. |

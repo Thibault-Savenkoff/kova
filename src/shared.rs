@@ -907,6 +907,9 @@ pub enum UiNode {
     /// Buttons in the navigation bar of the page this view is (their label and event number), last one first.
     #[cfg(ios)]
     Barred(alloc::boxed::Box<UiNode>, Vec<(String, usize)>),
+    /// A search field in the navigation bar: the page, what the field holds, its number.
+    #[cfg(ios)]
+    Searched(alloc::boxed::Box<UiNode>, String, usize),
     /// A drawing area.
     Canvas(UiCanvas),
     /// A view and a clock: every so many milliseconds, the button number's event.
@@ -955,6 +958,9 @@ pub struct UiTable {
     /// Its number among the fields.
     #[allow(dead_code)]
     pub number: usize,
+    /// A swipe on a row asks to delete it (iOS only).
+    #[allow(dead_code)]
+    pub deletable: bool,
 }
 
 /// A menu of the window: its title, and its items with the number of their event (`None` a line
@@ -1622,7 +1628,7 @@ pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_clocks(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_clocks(inner),
         #[cfg(ios)]
         UiNode::Pushed(main, page, _) => ui_clocks(main).into_iter().chain(ui_clocks(page)).collect(),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
@@ -1684,7 +1690,7 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_fills(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_fills(inner),
         #[cfg(ios)]
         UiNode::Pushed(main, _, _) => ui_fills(main),
         UiNode::Context(inner, _) => ui_fills(inner),
@@ -1700,7 +1706,7 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_fills_down(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_fills_down(inner),
         #[cfg(ios)]
         UiNode::Pushed(main, _, _) => ui_fills_down(main),
         UiNode::Context(inner, _) => ui_fills_down(inner),
@@ -1765,6 +1771,8 @@ pub fn ui_shape(node: &UiNode) -> String {
         #[cfg(ios)]
         UiNode::Titled(_, inner) => ui_shape(inner),
         #[cfg(ios)]
+        UiNode::Searched(inner, ..) => format!("K({})", ui_shape(inner)),
+        #[cfg(ios)]
         UiNode::Barred(inner, buttons) => format!("E{buttons:?}({})", ui_shape(inner)),
         #[cfg(ios)]
         UiNode::Pushed(main, page, _) => format!("A({})({})", ui_shape(main), ui_shape(page)),
@@ -1782,7 +1790,7 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
         #[cfg(ios)]
-        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => ui_leaves(inner),
+        UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_leaves(inner),
         #[cfg(ios)]
         UiNode::Pushed(main, page, _) => ui_leaves(main).into_iter().chain(ui_leaves(page)).collect(),
         UiNode::Context(inner, _) => ui_leaves(inner),
@@ -1891,7 +1899,7 @@ pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8, String)>) {
 pub fn ui_bar_buttons(node: &UiNode) -> Vec<(String, usize)> {
     match node {
         UiNode::Barred(_, buttons) => buttons.iter().rev().cloned().collect(),
-        UiNode::Titled(_, inner) | UiNode::Boxed(_, _, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_bar_buttons(inner),
+        UiNode::Titled(_, inner) | UiNode::Boxed(_, _, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) | UiNode::Searched(inner, ..) => ui_bar_buttons(inner),
         _ => Vec::new(),
     }
 }
@@ -1902,8 +1910,20 @@ pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
     match node {
         UiNode::Boxed(c, _, inner) if *c > 0xff_ffff => Some(*c).or_else(|| ui_backdrop(inner)),
         UiNode::Pushed(main, _, _) => ui_backdrop(main),
-        UiNode::Barred(inner, _) => ui_backdrop(inner),
+        UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_backdrop(inner),
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_backdrop(inner),
+        _ => None,
+    }
+}
+
+/// The search field a view gives its page's navigation bar: what it holds and its number.
+#[cfg(ios)]
+pub fn ui_search(node: &UiNode) -> Option<(String, usize)> {
+    match node {
+        UiNode::Searched(_, text, n) => Some((text.clone(), *n)),
+        UiNode::Pushed(main, _, _) => ui_search(main),
+        UiNode::Barred(inner, _) | UiNode::Titled(_, inner) | UiNode::Boxed(_, _, inner) | UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_search(inner),
+        UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().find_map(ui_search),
         _ => None,
     }
 }
@@ -1914,7 +1934,7 @@ pub fn ui_title(node: &UiNode) -> Option<String> {
     match node {
         UiNode::Titled(t, _) => Some(t.clone()),
         UiNode::Pushed(main, _, _) => ui_title(main),
-        UiNode::Barred(inner, _) => ui_title(inner),
+        UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_title(inner),
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().find_map(ui_title),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) | UiNode::Boxed(_, _, inner) => ui_title(inner),
         _ => None,
@@ -2044,7 +2064,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                     let cells: Vec<String> = if rest.is_empty() { Vec::new() } else { lines };
                     let mut rows: Vec<Vec<String>> = cells.chunks(columns).map(|c| c.to_vec()).collect();
                     let headers = if headed && !rows.is_empty() { rows.remove(0) } else { Vec::new() };
-                    UiNode::Table(UiTable { headers, rows, selected: at(0), number })
+                    UiNode::Table(UiTable { headers, rows, selected: at(0), number, deletable: at(3) == 1 })
                 }
             }
         }
@@ -2133,6 +2153,15 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                     };
                 }
                 return inner;
+            }
+            // A search field for the navigation bar: [the field, the page].
+            #[cfg(ios)]
+            if kind == 'K' && parts.len() == 2 {
+                let mut parts = parts.into_iter();
+                if let (Some(UiNode::Search(text, n)), Some(main)) = (parts.next(), parts.next()) {
+                    return UiNode::Searched(main.into(), text, n);
+                }
+                return UiNode::Column(alloc::vec![], align);
             }
             if kind == 'J' {
                 let mut parts = parts.into_iter();
@@ -2234,6 +2263,11 @@ pub fn ui_describe(text: &str) -> String {
                 for (label, _) in buttons.iter().rev() {
                     out.push_str(&format!(" nav_button({label})"));
                 }
+            }
+            #[cfg(ios)]
+            UiNode::Searched(inner, ..) => {
+                write(inner, out);
+                out.push_str(" searchable");
             }
             #[cfg(ios)]
             UiNode::Titled(t, inner) => {

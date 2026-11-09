@@ -92,6 +92,12 @@ public:
         return group("A", [self.clone, detail.clone, button("", closed)], Align.Left)
     }
 
+    // A search field that goes with this page: in the navigation bar on an iPhone (under the title, as the system's
+    // `searchable`), above the page elsewhere.
+    fn searchable(self, value: String, changed: {String -> EVENT}) -> View {
+        return group("K", [search(value, changed), self.clone], Align.Left)
+    }
+
     // `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` in a text show as what they mean (iPhone for now:
     // elsewhere the marks show as written).
     fn markdown(self) -> View {
@@ -490,6 +496,25 @@ fn list(items: List<String>, selected: Int, changed: {Int -> EVENT}) -> View {
     // A line break inside an item stays one (a tab): an iPhone shows the lines as a title, a subtitle and a detail.
     let body: String := "{selected} 1 0\n{items.map { s: String => s.replace("\n") with("\t") }.join("\n")}"
     return leaf("G", body, picked(items.length, changed))
+}
+
+// The same, and on an iPhone a swipe to the left on a row shows a red `Delete`: `removed` gives the event for that row.
+// Other systems show the list and ignore the swipe.
+fn list(items: List<String>, selected: Int, changed: {Int -> EVENT}) delete(removed: {Int -> EVENT}) -> View {
+    let body: String := "{selected} 1 0 1\n{items.map { s: String => s.replace("\n") with("\t") }.join("\n")}"
+    let answer: String := ui.typed
+    let event: EVENT? := if answer.starts_with("d") {
+        match answer[1..answer.length].to_int {
+            none => none
+            i => if i >= 0 && i < items.length { removed(i) } else { none }
+        }
+    } else {
+        match answer.to_int {
+            none => none
+            i => if i >= 0 && i < items.length { changed(i) } else { none }
+        }
+    }
+    return leaf("G", body, event)
 }
 
 // `lines`: each line's cells, as many as there are headers.

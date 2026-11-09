@@ -45,6 +45,8 @@ struct Screen {
     /// The pushed page: its controller, its scroll view, its content (all null when there is none), and the event its back button sends.
     pushed: Id,
     page_scroll: Id,
+    /// The search controller in the navigation bar, null while the view has none.
+    search: Id,
     page_content: Id,
     back: usize,
     shape: String,
@@ -471,6 +473,9 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("chosen:"), chosen as usize, action);
         add(class, kit.sel("tick:"), tick as usize, action);
         add(class, kit.sel("rowed:"), rowed as usize, action);
+        add(class, kit.sel("updateSearchResultsForSearchController:"), searched as usize, action);
+        add(class, kit.sel("deleted:"), deleted as usize, action);
+        add(class, kit.sel("swiped:"), swiped as usize, action);
         add(class, kit.sel("dated:"), dated as usize, action);
         // What `import ios` gives to controls: an object that tells the program it was called.
         let handler = new_class(kit.class("NSObject"), c"KovaUiHandler".as_ptr() as *const u8, 0);
@@ -535,7 +540,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         }
         kit.send(w, "makeKeyAndVisible");
         *WINDOW.get() = w;
-        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, bar: core::ptr::null_mut(), controller, content: core::ptr::null_mut(), pushed: core::ptr::null_mut(), page_scroll: core::ptr::null_mut(), page_content: core::ptr::null_mut(), back: 0, shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
+        *SCREEN.get() = Some(Screen { menus: Vec::new(), kit, target, root, scroll, bar: core::ptr::null_mut(), controller, content: core::ptr::null_mut(), pushed: core::ptr::null_mut(), page_scroll: core::ptr::null_mut(), search: core::ptr::null_mut(), page_content: core::ptr::null_mut(), back: 0, shape: String::new(), made: Vec::new(), clocks: Vec::new(), timers: Vec::new() });
     }
     // The program: a thread of its own, which never comes back here.
     extern "C" fn program(_: i64) {
@@ -610,6 +615,15 @@ fn text_of(kit: &Kit, text: Id) -> String {
     String::from_utf8_lossy(unsafe { crate::c_text(bytes) }).into_owned()
 }
 
+/// The number of the search field in the navigation bar, among the view's fields.
+static SEARCHING: crate::Global<usize> = crate::Global::new(0);
+
+extern "C" fn searched(_me: Id, _message: Id, controller: Id) {
+    let kit = &screen().kit;
+    let text = text_of(kit, kit.send(kit.send(controller, "searchBar"), "text"));
+    hear(crate::shared::ui_changed(*SEARCHING.get()), text);
+}
+
 extern "C" fn edited(_me: Id, _message: Id, field: Id) {
     let kit = &screen().kit;
     hear(crate::shared::ui_changed(tag_of(field)), text_of(kit, kit.send(field, "text")));
@@ -636,6 +650,41 @@ extern "C" fn chosen(_me: Id, _message: Id, sender: Id) {
 extern "C" fn rowed(_me: Id, _message: Id, sender: Id) {
     let tag = tag_of(sender);
     hear(crate::shared::ui_changed(tag / 100000), alloc::format!("{}", tag % 100000));
+}
+
+/// The red `Delete` of a row was tapped: the program hears `d<row>` from the list.
+extern "C" fn deleted(_me: Id, _message: Id, sender: Id) {
+    let tag = tag_of(sender);
+    hear(crate::shared::ui_changed(tag / 100000), alloc::format!("d{}", tag % 100000));
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Affine {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    tx: f64,
+    ty: f64,
+}
+
+/// The row being slid and how far: read by the animation's block.
+static SLIDING: crate::Global<(Id, f64)> = crate::Global::new((core::ptr::null_mut(), 0.0));
+
+extern "C" fn slide_block(_block: Id) {
+    let kit = &screen().kit;
+    let (row, by) = *SLIDING.get();
+    msg!(kit, extern "C" fn(Id, Id, Affine))(row, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: by, ty: 0.0 });
+}
+
+/// A swipe on a row: to the left it shows `Delete` (88 points wide) behind it, to the right it covers it again.
+extern "C" fn swiped(_me: Id, _message: Id, swipe: Id) {
+    let kit = &screen().kit;
+    let row = kit.send(swipe, "view");
+    let left = (kit.send_int)(swipe, kit.sel("direction")) == 2;
+    *SLIDING.get() = (row, if left { -88.0 } else { 0.0 });
+    msg!(kit, extern "C" fn(Id, Id, f64, Id))(kit.class("UIView"), kit.sel("animateWithDuration:animations:"), 0.25, global_block(slide_block as usize));
 }
 
 extern "C" fn tick(_me: Id, _message: Id, timer: Id) {
@@ -729,6 +778,28 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         let own = crate::shared::ui_bar_buttons(view);
         (kit.send_two)(item, kit.sel("setRightBarButtonItems:"), if own.is_empty() { array } else { nav_items(kit, screen.target, &own) });
         place(kit, screen.scroll, content, crate::shared::ui_fills(view));
+        // A search field for the navigation bar (`.searchable`), made once: rebuilding it would drop the keyboard.
+        match crate::shared::ui_search(view) {
+            Some((text, n)) => {
+                *SEARCHING.get() = n;
+                if screen.search.is_null() {
+                    let controller = (kit.send_two)(kit.send(kit.class("UISearchController"), "alloc"), kit.sel("initWithSearchResultsController:"), core::ptr::null_mut());
+                    screen.search = controller;
+                    (kit.send_two)(controller, kit.sel("setSearchResultsUpdater:"), screen.target);
+                    (kit.send_id)(controller, kit.sel("setObscuresBackgroundDuringPresentation:"), 0);
+                    (kit.send_two)(kit.send(controller, "searchBar"), kit.sel("setPlaceholder:"), kit.text("Search"));
+                    (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setSearchController:"), controller);
+                    (kit.send_id)(kit.send(screen.controller, "navigationItem"), kit.sel("setHidesSearchBarWhenScrolling:"), 0);
+                    let _ = text;
+                }
+            }
+            None => {
+                if !screen.search.is_null() {
+                    (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setSearchController:"), core::ptr::null_mut());
+                    screen.search = core::ptr::null_mut();
+                }
+            }
+        }
         // A tab bar goes to the bottom of the screen, under the scrolled content.
         let tab_bar = screen.made.iter().map(|&(v, _)| v).find(|&v| kit.class("UITabBar") == kit.send(v, "class"));
         if let Some(bar) = tab_bar {
@@ -887,6 +958,28 @@ fn ui_color(kit: &Kit, c: u32) -> Id {
     msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64) -> Id)(kit.class("UIColor"), kit.sel("colorWithRed:green:blue:alpha:"), channel(16), channel(8), channel(0), 1.0)
 }
 
+/// A row of two views in a card (a label and its control) puts the first at the left and the second at the right, as
+/// a form does: the label is the one that stretches.
+fn spread_rows(kit: &Kit, view: Id) {
+    if kit.class("UIStackView") != kit.send(view, "class") {
+        return;
+    }
+    let kids = kit.send(view, "arrangedSubviews");
+    let count = (kit.send_int)(kids, kit.sel("count")) as usize;
+    let horizontal = (kit.send_int)(view, kit.sel("axis")) == 0;
+    if horizontal && count == 2 {
+        (kit.send_id)(view, kit.sel("setAlignment:"), 3); // centered
+    }
+    for i in 0..count {
+        let kid = (kit.send_id)(kids, kit.sel("objectAtIndex:"), i as i64);
+        if horizontal && count == 2 {
+            // `setContentHuggingPriority:forAxis:` (a float, then the axis: horizontal 0).
+            msg!(kit, extern "C" fn(Id, Id, f32, i64))(kid, kit.sel("setContentHuggingPriority:forAxis:"), if i == 0 { 1.0 } else { 999.0 }, 0);
+        }
+        spread_rows(kit, kid);
+    }
+}
+
 /// A list: its rows in a rounded white card as the Settings app has them, a chevron on each; a line break in a
 /// row (a tab) gives a title, a subtitle and a detail. Each row is a button laid over its labels.
 fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_views: &mut Vec<(Id, Id)>) -> Id {
@@ -949,7 +1042,38 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
         for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
             (kit.send_id)(by(kit.send(b, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(line, edge), 0.0), kit.sel("setActive:"), 1);
         }
-        (kit.send_two)(card, kit.sel("addArrangedSubview:"), line);
+        if table.deletable {
+            // The row lies over a red `Delete`; a swipe to the left slides it off, a swipe to the right back.
+            (kit.send_two)(line, kit.sel("setBackgroundColor:"), ui_color(kit, 0x100_0003));
+            (kit.send_id)(line, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            let cell = made(kit, "UIView");
+            (kit.send_id)(cell, kit.sel("setClipsToBounds:"), 1);
+            let red = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
+            (kit.send_id)(red, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            (kit.send_two)(red, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "systemRedColor"));
+            msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(red, kit.sel("setTitle:forState:"), kit.text("Delete"), 0);
+            msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(red, kit.sel("setTitleColor:forState:"), kit.send(kit.class("UIColor"), "whiteColor"), 0);
+            (kit.send_id)(red, kit.sel("setTag:"), (table.number * 100000 + k) as i64);
+            msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(red, kit.sel("addTarget:action:forControlEvents:"), target, kit.sel("deleted:"), 64);
+            (kit.send_two)(cell, kit.sel("addSubview:"), red);
+            (kit.send_two)(cell, kit.sel("addSubview:"), line);
+            for edge in ["topAnchor", "bottomAnchor", "trailingAnchor"] {
+                (kit.send_id)(by(kit.send(red, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
+            }
+            (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 88.0), kit.sel("setActive:"), 1);
+            for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
+                (kit.send_id)(by(kit.send(line, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
+            }
+            for direction in [2i64, 1] {
+                let swipe = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UISwipeGestureRecognizer"), "alloc"), kit.sel("initWithTarget:action:"), target, kit.sel("swiped:"));
+                let swipe = kit.send(swipe, "autorelease");
+                (kit.send_id)(swipe, kit.sel("setDirection:"), direction);
+                (kit.send_two)(line, kit.sel("addGestureRecognizer:"), swipe);
+            }
+            (kit.send_two)(card, kit.sel("addArrangedSubview:"), cell);
+        } else {
+            (kit.send_two)(card, kit.sel("addArrangedSubview:"), line);
+        }
     }
     // The rows are not leaves: the list as a whole is one, nothing to refresh in place.
     made_views.push((card, core::ptr::null_mut()));
@@ -1199,7 +1323,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
-        UiNode::Titled(_, inner) | UiNode::Barred(inner, _) => return build(kit, target, inner, made_views),
+        UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => return build(kit, target, inner, made_views),
         // Only at the top of a view does a page get its screen (`draw_view`).
         UiNode::Pushed(main, _, _) => return build(kit, target, main, made_views),
         UiNode::Context(inner, items) => {
@@ -1224,6 +1348,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
                 }
                 level = (kit.send_id)(kids, kit.sel("objectAtIndex:"), 0);
             }
+            spread_rows(kit, built);
             let stack = wrapped(kit, built);
             (kit.send_id)(stack, kit.sel("setAlignment:"), 0);
             let color = ui_color(kit, *c);

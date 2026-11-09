@@ -155,6 +155,8 @@ controls, so it has the system's large titles, tab bar, navigation bar and, in d
 | `ui.list(lines, selected)` | its rows in a white card, a chevron at the end of each. A line break inside a row gives it a title, a subtitle and a detail line. |
 | `view.pushing(page, closed: E)` | `page` as a new screen over this one, with a back button; `closed` is the event the back button and the swipe back send, and the program stops giving a page when it comes. Give it before `menus`. |
 | `view.nav_button(label, event)` | a button in the navigation bar of this page. |
+| `view.searchable(value, { s: String => E })` | a search field for this page: in the navigation bar, where the system puts it. Elsewhere it shows above the page. |
+| `ui.list(lines, selected, { i: Int => E }) delete { i: Int => E }` | the same list; a swipe to the left on a row shows a red `Delete`, and `delete` gives the event for that row. Other systems ignore the swipe: give a button too. |
 | `view.markdown` | on a text: `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` show as what they mean. |
 
 A column inside a card spreads across it, so a switch ends at the card's right edge as in the Settings app.
