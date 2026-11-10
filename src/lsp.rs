@@ -409,10 +409,13 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
 /// The light bulb on a `let` without its type: writes the value's type after the name.
 fn type_fixes(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
     let (from, to) = (offset(src, range.start), offset(src, range.end));
-    let Some((_, info, _)) = info(&file_path(uri), src) else { return vec![] };
+    // The `let`s of functions come from the checker, the constants from the parser.
+    let mut untyped = tree(src).untyped;
+    untyped.extend(info(&file_path(uri), src).map(|(_, i, _)| i.untyped).unwrap_or_default());
     // Anywhere on the `let`'s line, not only on the name.
     let line_of = |at: usize| src[..at.min(src.len())].matches('\n').count();
-    (info.untyped.iter())
+    untyped
+        .iter()
         .filter(|(s, _)| s.end <= src.len() && line_of(s.start) >= line_of(from) && line_of(s.start) <= line_of(to))
         .map(|(s, ty)| {
             let at = position(src, s.end);
@@ -2040,6 +2043,11 @@ mod tests {
         assert_eq!(type_fixes(&uri, src, Range::new(end, end)).len(), 1);
         let other = Position::new(2, 4);
         assert!(type_fixes(&uri, src, Range::new(other, other)).is_empty());
+        // A constant outside any function too.
+        let constant = "let LIMIT := 5\nfn main {\n    print(LIMIT)\n}\n";
+        let actions = type_fixes(&uri, constant, Range::new(Position::new(0, 6), Position::new(0, 6)));
+        let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
+        assert_eq!(a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0].new_text, ": Int");
     }
 
     #[test]

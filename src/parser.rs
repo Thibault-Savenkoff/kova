@@ -69,6 +69,7 @@ fn prelude() -> Vec<Interface> {
         symbol: None,
         copies: vec![],
         ui_runs: vec![],
+        untyped: vec![],
         aliases: HashMap::new(),
         public: false,
         private: vec![],
@@ -182,6 +183,7 @@ pub fn parse_in(tokens: Vec<Token>, source: &str, first_id: usize, module: Optio
         symbol: None,
         copies: vec![],
         ui_runs: vec![],
+        untyped: vec![],
         aliases: HashMap::new(),
         public: false,
         private: vec![],
@@ -232,6 +234,8 @@ struct Parser<'a> {
     copies: Vec<usize>,
     /// See `File::ui_runs`.
     ui_runs: Vec<UiRun>,
+    /// See `File::untyped`.
+    untyped: Vec<(Span, String)>,
     /// Under `public:` at file level (otherwise private, the default); see `File::private`.
     public: bool,
     private: Vec<(String, Span)>,
@@ -727,7 +731,8 @@ impl Parser<'_> {
         }
         let private = std::mem::take(&mut self.private);
         let ui_runs = std::mem::take(&mut self.ui_runs);
-        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![], externs, ui_runs, ui_from: None }
+        let untyped = std::mem::take(&mut self.untyped);
+        File { header, imports, functions, structs, interfaces, tests, langs, private, modules: vec![], externs, ui_runs, untyped, ui_from: None }
     }
 
     /// `import geometry` or `import geometry as geo`.
@@ -841,20 +846,26 @@ impl Parser<'_> {
             let msg = t!("type_required", name = shown);
             // A written value tells its type: `let LIMIT := 5` → `let LIMIT: Int := …`.
             self.advance();
-            let guess = self.expression().ok().and_then(|v| match v.kind {
+            let value = self.expression()?;
+            let guess = match value.kind {
                 ExprKind::Int(_) => Some("Int"),
                 ExprKind::Float(_) => Some("Float"),
                 ExprKind::Str(_) => Some("String"),
                 ExprKind::Bool(_) => Some("Bool"),
                 ExprKind::Char(_) => Some("Char"),
                 _ => None,
-            });
+            };
             let help = match guess {
                 Some(ty) => t!("type_required_found", keyword = "let", name = shown, type = ty),
                 None => t!("type_required_help", name = shown),
             };
             self.diags.push(Diag::new(t.span, msg).help(help));
-            return Err(());
+            let Some(ty) = guess else { return Err(()) };
+            self.untyped.push((t.span, ty.to_string()));
+            let span = value.span;
+            let ty = TypeAst::Name(Name { text: ty.to_string(), span });
+            let body = Block { open, stmts: vec![Stmt::Return { value: Some(value), span }], close: span };
+            return Ok(Function { name, generics: vec![], receiver: None, params: vec![], breaks: vec![], ret: Some(ty), contracts: vec![], only: None, body });
         }
         self.expect(":")?;
         let ty = self.type_()?;

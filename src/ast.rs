@@ -27,6 +27,8 @@ pub struct File {
     /// `ui.run(title, state, view, update)`: the call keeps the title and the state; the two
     /// functions are written into the `ui` module made for the program (`src/ui.rs`).
     pub ui_runs: Vec<UiRun>,
+    /// Constants written without their type, with the type their value shows (the editor's fix).
+    pub untyped: Vec<(Span, String)>,
     /// Where that module's text starts, the last file of the program: it sees every name.
     pub ui_from: Option<usize>,
 }
