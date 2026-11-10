@@ -896,19 +896,19 @@ pub enum UiNode {
     /// Empty pixels around a view.
     Spaced(i32, alloc::boxed::Box<UiNode>),
     /// A color behind a view and its room, with rounded corners (iPhone only for now; a color past 0xFFFFFF is the system's panel).
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Boxed(u32, i32, alloc::boxed::Box<UiNode>),
     /// The title of the page this view is (`.title("Stats")`): the navigation bar shows it (iPhone only for now).
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Titled(String, alloc::boxed::Box<UiNode>),
     /// A page shown over a view, as a new screen with a back button, and the number of the event the back button sends.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Pushed(alloc::boxed::Box<UiNode>, alloc::boxed::Box<UiNode>, usize),
     /// Buttons in the navigation bar of the page this view is (their label and event number), last one first.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Barred(alloc::boxed::Box<UiNode>, Vec<(String, usize)>),
     /// A search field in the navigation bar: the page, what the field holds, its number.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Searched(alloc::boxed::Box<UiNode>, String, usize),
     /// A drawing area.
     Canvas(UiCanvas),
@@ -923,23 +923,23 @@ pub enum UiNode {
     /// A list of lines to pick from.
     Table(UiTable),
     /// `ui.tabs` on iOS: a native tab bar. The tab in use is a text, each other a button.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     /// The tabs and the SF Symbol name of each (empty for none).
     Tabs(Vec<UiNode>, Vec<String>),
     /// `ui.date` on iOS: a date picker (`2026-11-08`) and its number among the fields.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Date(String, usize),
     /// `ui.progress` on iOS: a bar, the value and the total.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Progress(i32, i32),
     /// `ui.stepper` on iOS: the value, its limits, its number among the fields.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Stepper(i32, i32, i32, usize),
     /// `ui.spinner` on iOS: an activity indicator.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Spinner,
     /// `ui.search` on iOS: a search field, its text and its number among the fields.
-    #[cfg(ios)]
+    #[cfg(mobile)]
     Search(String, usize),
     /// `ui.native` on iOS: the address of a view the program made, its width and its height.
     #[cfg(ios)]
@@ -1623,13 +1623,13 @@ pub const UI_RESIZED: i64 = 1 << 40;
 pub fn ui_clocks(node: &UiNode) -> Vec<(i32, usize)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_clocks).collect(),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Tabs(..) => Vec::new(),
         UiNode::Context(inner, _) => ui_clocks(inner),
         UiNode::Spaced(_, inner) | UiNode::Styled(_, inner) => ui_clocks(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_clocks(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Pushed(main, page, _) => ui_clocks(main).into_iter().chain(ui_clocks(page)).collect(),
         UiNode::Every(ms, n, inner) => [alloc::vec![(*ms, *n)], ui_clocks(inner)].concat(),
         _ => Vec::new(),
@@ -1689,9 +1689,9 @@ pub fn ui_fills(node: &UiNode) -> bool {
         UiNode::Column(parts, a) => *a != UiAlign::Start || parts.iter().any(ui_fills),
         UiNode::Row(parts, _) => parts.iter().any(ui_fills),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_fills(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Pushed(main, _, _) => ui_fills(main),
         UiNode::Context(inner, _) => ui_fills(inner),
         UiNode::Canvas(c) => c.width == 0,
@@ -1705,9 +1705,9 @@ pub fn ui_fills_down(node: &UiNode) -> bool {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().any(ui_fills_down),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_fills_down(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_fills_down(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Pushed(main, _, _) => ui_fills_down(main),
         UiNode::Context(inner, _) => ui_fills_down(inner),
         UiNode::Canvas(c) => c.height == 0,
@@ -1749,32 +1749,32 @@ pub fn ui_shape(node: &UiNode) -> String {
         }
         UiNode::Image(path, width) => format!("P{width}:{path}"),
         // The names and the tab in use: a tab bar is made again when they change.
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Tabs(parts, icons) => format!("H{icons:?}{:?}", parts.iter().map(|p| match p { UiNode::Text(t) => format!("*{t}"), UiNode::Button(t, n) => format!("{n}{t}"), _ => String::new() }).collect::<Vec<_>>()),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Date(..) => "N".into(),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Progress(_, most) => format!("V{most}"),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Stepper(_, min, max, _) => format!("U{min}:{max}"),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Spinner => "Z".into(),
         #[cfg(ios)]
         UiNode::Native(id, w, h) => format!("F{id}:{w}:{h}"),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Search(..) => "Q".into(),
         UiNode::Context(inner, items) => format!("J{items:?}({})", ui_shape(inner)),
         UiNode::Styled(_, inner) => ui_shape(inner),
         UiNode::Spaced(m, inner) => format!("M{m}({})", ui_shape(inner)),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Boxed(c, r, inner) => format!("X{c}:{r}({})", ui_shape(inner)),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Titled(_, inner) => ui_shape(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Searched(inner, ..) => format!("K({})", ui_shape(inner)),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Barred(inner, buttons) => format!("E{buttons:?}({})", ui_shape(inner)),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Pushed(main, page, _) => format!("A({})({})", ui_shape(main), ui_shape(page)),
         // Not its drawing, which changes at every frame.
         UiNode::Canvas(c) => format!("D{}x{}:{:?}{:?}{}", c.width, c.height, c.mouse, c.key, c.gpu()),
@@ -1789,9 +1789,9 @@ pub fn ui_leaves(node: &UiNode) -> Vec<(&UiNode, UiStyle)> {
     match node {
         UiNode::Column(parts, _) | UiNode::Row(parts, _) => parts.iter().flat_map(ui_leaves).collect(),
         UiNode::Spaced(_, inner) | UiNode::Every(_, _, inner) => ui_leaves(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Boxed(_, _, inner) | UiNode::Titled(_, inner) | UiNode::Barred(inner, _) | UiNode::Searched(inner, ..) => ui_leaves(inner),
-        #[cfg(ios)]
+        #[cfg(mobile)]
         UiNode::Pushed(main, page, _) => ui_leaves(main).into_iter().chain(ui_leaves(page)).collect(),
         UiNode::Context(inner, _) => ui_leaves(inner),
         UiNode::Styled(style, leaf) => alloc::vec![(&**leaf, *style)],
@@ -1895,7 +1895,7 @@ pub fn ui_marks(text: &str) -> (String, Vec<(usize, usize, u8, String)>) {
 }
 
 /// The buttons a view gives its page's navigation bar, in the order they were written.
-#[cfg(ios)]
+#[cfg(mobile)]
 pub fn ui_bar_buttons(node: &UiNode) -> Vec<(String, usize)> {
     match node {
         UiNode::Barred(_, buttons) => buttons.iter().rev().cloned().collect(),
@@ -1905,7 +1905,7 @@ pub fn ui_bar_buttons(node: &UiNode) -> Vec<(String, usize)> {
 }
 
 /// The color a view gives the whole window (`.background(ui.page)` on the view `view` returns), if it does.
-#[cfg(ios)]
+#[cfg(mobile)]
 pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
     match node {
         UiNode::Boxed(c, _, inner) if *c > 0xff_ffff => Some(*c).or_else(|| ui_backdrop(inner)),
@@ -1917,7 +1917,7 @@ pub fn ui_backdrop(node: &UiNode) -> Option<u32> {
 }
 
 /// The search field a view gives its page's navigation bar: what it holds and its number.
-#[cfg(ios)]
+#[cfg(mobile)]
 pub fn ui_search(node: &UiNode) -> Option<(String, usize)> {
     match node {
         UiNode::Searched(_, text, n) => Some((text.clone(), *n)),
@@ -1929,7 +1929,7 @@ pub fn ui_search(node: &UiNode) -> Option<(String, usize)> {
 }
 
 /// The title a view gives its page (`.title("…")`), if it does.
-#[cfg(ios)]
+#[cfg(mobile)]
 pub fn ui_title(node: &UiNode) -> Option<String> {
     match node {
         UiNode::Titled(t, _) => Some(t.clone()),
@@ -1993,7 +1993,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
         },
         // A button keeps the system's text color unless it was given its own.
         // (On an iPhone only: the other systems' buttons keep theirs.)
-        'B' if style.size > 0 || style.bold || (cfg!(ios) && own.color.is_some()) => UiNode::Styled(UiStyle { color: if cfg!(ios) { own.color } else { None }, ..style }, node.into()),
+        'B' if style.size > 0 || style.bold || (cfg!(mobile) && own.color.is_some()) => UiNode::Styled(UiStyle { color: if cfg!(mobile) { own.color } else { None }, ..style }, node.into()),
         'T' | 'I' if style != UiStyle::default() => UiNode::Styled(style, node.into()),
         _ => node,
     };
@@ -2001,22 +2001,22 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
         Some(m) => UiNode::Spaced(m, node.into()),
         None => node,
     };
-    #[cfg(ios)]
+    #[cfg(mobile)]
     let node = match back {
         Some(c) => UiNode::Boxed(c, round, node.into()),
         None => node,
     };
-    #[cfg(ios)]
+    #[cfg(mobile)]
     let node = match (node, icons) {
         (UiNode::Tabs(parts, _), Some(names)) => UiNode::Tabs(parts, names.split(',').map(|n| n.trim().into()).collect()),
         (node, _) => node,
     };
-    #[cfg(ios)]
+    #[cfg(mobile)]
     let node = match title {
         Some(t) => UiNode::Titled(t, node.into()),
         None => node,
     };
-    #[cfg(not(ios))]
+    #[cfg(not(mobile))]
     let _ = (&icons, &title);
     let _ = (back, round);
     clocks.into_iter().fold(node, |inner, (ms, n)| UiNode::Every(ms, n, inner.into()))
@@ -2051,10 +2051,10 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             let lines: Vec<String> = rest.split('\n').map(String::from).collect();
             match kind {
                 'X' => UiNode::Check(rest.into(), at(0) == 1, number),
-                #[cfg(ios)]
+                #[cfg(mobile)]
                 'N' => UiNode::Date(body, number),
                 'N' => UiNode::Input(body, number),
-                #[cfg(ios)]
+                #[cfg(mobile)]
                 'U' => UiNode::Stepper(at(0), at(1), at(2), number),
                 'W' | 'U' => UiNode::Slider(at(0), at(1), at(2), number),
                 'O' => UiNode::Choice(if rest.is_empty() { Vec::new() } else { lines }, at(0), number),
@@ -2086,19 +2086,19 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
         }
         'Z' => {
             let _: String = chars.by_ref().take(n).collect();
-            #[cfg(ios)]
+            #[cfg(mobile)]
             return UiNode::Spinner;
-            #[cfg(not(ios))]
+            #[cfg(not(mobile))]
             UiNode::Text("…".into())
         }
         'V' => {
             let body: String = chars.by_ref().take(n).collect();
             let mut numbers = body.split(' ').map(|w| w.parse::<i32>().unwrap_or(0));
             let (value, most) = (numbers.next().unwrap_or(0), numbers.next().unwrap_or(1).max(1));
-            #[cfg(ios)]
+            #[cfg(mobile)]
             return UiNode::Progress(value, most);
             // No such bar: a line of blocks, as wide as the total up to 20.
-            #[cfg(not(ios))]
+            #[cfg(not(mobile))]
             {
                 let cells = most.min(20);
                 let full = (value as i64 * cells as i64 / most as i64) as usize;
@@ -2115,7 +2115,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             }
             let count = &mut counts[matches!(kind, 'I' | 'Q') as usize];
             *count += 1;
-            #[cfg(ios)]
+            #[cfg(mobile)]
             if kind == 'Q' {
                 return UiNode::Search(label, *count - 1);
             }
@@ -2123,7 +2123,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
         }
         _ => {
             let parts: Vec<UiNode> = (0..n).map(|_| ui_node(chars, counts, style)).collect();
-            #[cfg(ios)]
+            #[cfg(mobile)]
             if kind == 'H' {
                 return UiNode::Tabs(parts.into_iter().map(|p| match p { UiNode::Styled(_, inner) => *inner, other => other }).collect(), Vec::new());
             }
@@ -2131,7 +2131,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             if kind == 'A' && parts.len() == 3 {
                 let mut parts = parts.into_iter();
                 let (main, page) = (parts.next().unwrap(), parts.next().unwrap());
-                #[cfg(ios)]
+                #[cfg(mobile)]
                 if let Some(UiNode::Button(_, back)) = parts.next() {
                     return UiNode::Pushed(main.into(), page.into(), back);
                 }
@@ -2142,7 +2142,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
             if kind == 'E' && parts.len() == 2 {
                 let mut parts = parts.into_iter();
                 let inner = parts.next().unwrap();
-                #[cfg(ios)]
+                #[cfg(mobile)]
                 if let Some(UiNode::Button(label, n)) = parts.next() {
                     return match inner {
                         UiNode::Barred(more, mut buttons) => {
@@ -2155,7 +2155,7 @@ fn ui_part(kind: char, chars: &mut core::str::Chars, counts: &mut [usize; 3], st
                 return inner;
             }
             // A search field for the navigation bar: [the field, the page].
-            #[cfg(ios)]
+            #[cfg(mobile)]
             if kind == 'K' && parts.len() == 2 {
                 let mut parts = parts.into_iter();
                 if let (Some(UiNode::Search(text, n)), Some(main)) = (parts.next(), parts.next()) {
@@ -2206,24 +2206,24 @@ pub fn ui_describe(text: &str) -> String {
             UiNode::Row(parts, UiAlign::Start) => group("row", parts, out),
             UiNode::Row(parts, UiAlign::Center) => group("row center", parts, out),
             UiNode::Row(parts, UiAlign::End) => group("row bottom", parts, out),
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Tabs(parts, icons) => {
                 group("row center", parts, out);
                 if !icons.is_empty() {
                     out.push_str(&format!(" icons({})", icons.join(", ")));
                 }
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Date(t, _) => out.push_str(&format!("input {t:?}")),
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Progress(v, most) => out.push_str(&format!("progress {v} of {most}")),
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Stepper(v, min, max, _) => out.push_str(&format!("slider {v} of {min} to {max}")),
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Spinner => out.push_str("text \"…\""),
             #[cfg(ios)]
             UiNode::Native(id, w, h) => out.push_str(&format!("native {id} {w}x{h}")),
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Search(t, _) => out.push_str(&format!("input {t:?}")),
             UiNode::Context(inner, items) => {
                 write(inner, out);
@@ -2250,31 +2250,31 @@ pub fn ui_describe(text: &str) -> String {
                 write(inner, out);
                 out.push_str(&format!(" margin({m})"));
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Pushed(main, page, _) => {
                 write(main, out);
                 out.push_str(" pushing(");
                 write(page, out);
                 out.push(')');
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Barred(inner, buttons) => {
                 write(inner, out);
                 for (label, _) in buttons.iter().rev() {
                     out.push_str(&format!(" nav_button({label})"));
                 }
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Searched(inner, ..) => {
                 write(inner, out);
                 out.push_str(" searchable");
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Titled(t, inner) => {
                 write(inner, out);
                 out.push_str(&format!(" title({t})"));
             }
-            #[cfg(ios)]
+            #[cfg(mobile)]
             UiNode::Boxed(c, r, inner) => {
                 write(inner, out);
                 out.push_str(&format!(" background({c}) rounded({r})"));

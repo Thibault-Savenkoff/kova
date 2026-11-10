@@ -148,9 +148,20 @@ pub fn node(o: &mut String, n: &UiNode) {
             o.push_str(&format!(",{width}"));
         }
         UiNode::Styled(style, inner) => {
+            // On Android, `.markdown` is a wrapper of its own: the other systems read `S` alone.
+            #[cfg(android)]
+            let marked = style.marks;
+            #[cfg(not(android))]
+            let marked = false;
+            if marked {
+                o.push_str("[\"m\",");
+            }
             let color = style.color.map_or("null".into(), |c| format!("{c}"));
             o.push_str(&format!("[\"S\",{color},{},{},", style.size, style.bold));
             node(o, inner);
+            if marked {
+                o.push(']');
+            }
         }
         // A right click on a page, a long press on Android.
         UiNode::Context(inner, items) => {
@@ -191,8 +202,69 @@ pub fn node(o: &mut String, n: &UiNode) {
             texts(o, &t.headers);
             o.push(',');
             list(o, &t.rows, |o, r| texts(o, r));
-            o.push_str(&format!(",{},{}", t.selected, t.number));
+            o.push_str(&format!(",{},{},{}", t.selected, t.number, t.deletable));
         }
+        // The phone's own screens (iPhone and Android): a color behind a view, a title, a page
+        // over a view, buttons in the top bar, a search field, tabs, and a few small controls.
+        #[cfg(mobile)]
+        UiNode::Boxed(color, round, inner) => {
+            o.push_str(&format!("[\"b\",{color},{round},"));
+            node(o, inner);
+        }
+        #[cfg(mobile)]
+        UiNode::Titled(title, inner) => {
+            o.push_str("[\"t\",");
+            quoted(o, title);
+            o.push(',');
+            node(o, inner);
+        }
+        #[cfg(mobile)]
+        UiNode::Pushed(main, page, back) => {
+            o.push_str(&format!("[\"u\",{back},"));
+            node(o, main);
+            o.push(',');
+            node(o, page);
+        }
+        #[cfg(mobile)]
+        UiNode::Barred(inner, buttons) => {
+            o.push_str("[\"r\",");
+            list(o, buttons, |o, (label, k)| {
+                o.push('[');
+                quoted(o, label);
+                o.push_str(&format!(",{k}]"));
+            });
+            o.push(',');
+            node(o, inner);
+        }
+        #[cfg(mobile)]
+        UiNode::Searched(inner, text, k) => {
+            o.push_str("[\"s\",");
+            quoted(o, text);
+            o.push_str(&format!(",{k},"));
+            node(o, inner);
+        }
+        #[cfg(mobile)]
+        UiNode::Tabs(parts, icons) => {
+            o.push_str("[\"H\",");
+            texts(o, icons);
+            o.push(',');
+            list(o, parts, node);
+        }
+        #[cfg(mobile)]
+        UiNode::Date(text, k) | UiNode::Search(text, k) => {
+            o.push_str(if matches!(n, UiNode::Date(..)) { "[\"d\"," } else { "[\"q\"," });
+            quoted(o, text);
+            o.push_str(&format!(",{k}"));
+        }
+        #[cfg(mobile)]
+        UiNode::Progress(value, total) => o.push_str(&format!("[\"p\",{value},{total}")),
+        #[cfg(mobile)]
+        UiNode::Stepper(value, min, max, k) => o.push_str(&format!("[\"e\",{value},{min},{max},{k}")),
+        #[cfg(mobile)]
+        UiNode::Spinner => o.push_str("[\"z\""),
+        // Only an iPhone has UIKit views to put in a window.
+        #[cfg(ios)]
+        UiNode::Native(..) => o.push_str("[\"T\",\"\""),
     }
     o.push(']');
 }

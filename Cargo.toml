@@ -39,4 +39,4 @@ lewton = { path = "vendor/lewton" }
 object = { version = "0.40", default-features = false, features = ["read_core", "archive", "elf", "coff", "macho", "std"] }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ios)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ios)", "cfg(mobile)"] }

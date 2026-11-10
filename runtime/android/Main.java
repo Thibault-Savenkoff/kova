@@ -10,8 +10,10 @@ package dev.kova;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -20,6 +22,9 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.opengl.GLES30;
@@ -52,6 +57,7 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
@@ -111,6 +117,12 @@ public class Main extends Activity {
     float density;
 
     boolean showing, ended;
+    // The Material 3 colors of the program's window (the phone's own when it has them).
+    int cPrimary, cOnPrimary, cBackground, cOnSurface, cOnVariant, cCard, cPanel, cTonal, cOnTonal, cOutline;
+    // The tab bar the view asks for (pinned at the bottom), the event of a back button, the buttons of the top bar.
+    LinearLayout tabBar;
+    long backEvent = -1;
+    JSONArray barButtons = new JSONArray();
     String shape;
     View root;
     JSONObject waiting;
@@ -123,10 +135,20 @@ public class Main extends Activity {
     static class Style {
         Integer color;
         double size;
-        boolean bold;
+        boolean bold, marks;
+
+        Style marked() {
+            Style s = new Style();
+            s.color = color;
+            s.size = size;
+            s.bold = bold;
+            s.marks = true;
+            return s;
+        }
 
         Style over(JSONArray n) throws JSONException {
             Style s = new Style();
+            s.marks = marks;
             s.color = n.isNull(1) ? color : Integer.valueOf(n.getInt(1));
             s.size = n.getDouble(2) != 0 ? n.getDouble(2) : size;
             s.bold = n.getBoolean(3) || bold;
@@ -140,7 +162,10 @@ public class Main extends Activity {
         setTheme(night ? android.R.style.Theme_DeviceDefault : android.R.style.Theme_DeviceDefault_Light);
         super.onCreate(saved);
         density = getResources().getDisplayMetrics().density;
+        palette(night);
         window = new FrameLayout(this);
+        window.setBackgroundColor(cBackground);
+        if (getActionBar() != null) getActionBar().setBackgroundDrawable(new ColorDrawable(cBackground));
         // Android 15 draws apps under its bars: the system says how much room they take.
         window.setOnApplyWindowInsetsListener((v, insets) -> {
             int left, top, right, bottom;
@@ -212,6 +237,194 @@ public class Main extends Activity {
 
     int dp(double n) {
         return (int) Math.round(n * density);
+    }
+
+    // ---- Material 3 ----
+
+    /** Material 3's baseline colors; from Android 12 on, the ones the user's wallpaper gives. */
+    void palette(boolean night) {
+        if (night) {
+            cPrimary = 0xFFD0BCFF; cOnPrimary = 0xFF381E72; cBackground = 0xFF141218; cOnSurface = 0xFFE6E0E9;
+            cOnVariant = 0xFFCAC4D0; cCard = 0xFF211F26; cPanel = 0xFF1D1B20; cTonal = 0xFF4A4458;
+            cOnTonal = 0xFFE8DEF8; cOutline = 0xFF938F99;
+        } else {
+            cPrimary = 0xFF6750A4; cOnPrimary = 0xFFFFFFFF; cBackground = 0xFFFEF7FF; cOnSurface = 0xFF1D1B20;
+            cOnVariant = 0xFF49454F; cCard = 0xFFF3EDF7; cPanel = 0xFFF7F2FA; cTonal = 0xFFE8DEF8;
+            cOnTonal = 0xFF1D192B; cOutline = 0xFF79747E;
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                cPrimary = getColor(night ? android.R.color.system_accent1_200 : android.R.color.system_accent1_600);
+                cOnPrimary = getColor(night ? android.R.color.system_accent1_800 : android.R.color.system_accent1_0);
+                cTonal = getColor(night ? android.R.color.system_accent2_700 : android.R.color.system_accent2_100);
+                cOnTonal = getColor(night ? android.R.color.system_accent2_100 : android.R.color.system_accent2_900);
+                cBackground = getColor(night ? android.R.color.system_neutral1_900 : android.R.color.system_neutral1_10);
+                cPanel = getColor(night ? android.R.color.system_neutral2_900 : android.R.color.system_neutral2_10);
+                cCard = getColor(night ? android.R.color.system_neutral2_800 : android.R.color.system_neutral2_50);
+                cOnSurface = getColor(night ? android.R.color.system_neutral1_100 : android.R.color.system_neutral1_900);
+                cOnVariant = getColor(night ? android.R.color.system_neutral2_200 : android.R.color.system_neutral2_700);
+                cOutline = getColor(night ? android.R.color.system_neutral2_400 : android.R.color.system_neutral2_500);
+            } catch (RuntimeException e) {
+                // keep the baseline
+            }
+        }
+    }
+
+    /** A Kova color: 0xRRGGBB, or (past that) one of the system's: 1 panel, 2 page, 3 card. */
+    int paint(long c) {
+        if ((c >> 24) == 1) {
+            switch ((int) (c & 255)) {
+                case 1:
+                    return cPanel;
+                case 2:
+                    return cBackground;
+                default:
+                    return cCard;
+            }
+        }
+        return 0xFF000000 | (int) c;
+    }
+
+    GradientDrawable box(int fill, double radius, int stroke) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(fill);
+        g.setCornerRadius(dp(radius));
+        if (stroke != 0) g.setStroke(dp(1), stroke);
+        return g;
+    }
+
+    /** `fill` with a touch ripple, in the shape of its corners. */
+    RippleDrawable ripple(int fill, double radius, int stroke) {
+        int touch = (cOnSurface & 0x00FFFFFF) | 0x22000000;
+        return new RippleDrawable(ColorStateList.valueOf(touch), box(fill, radius, stroke), box(Color.WHITE, radius, 0));
+    }
+
+    ColorStateList checkedTint() {
+        return new ColorStateList(new int[][] {{android.R.attr.state_checked}, {}}, new int[] {cPrimary, cOutline});
+    }
+
+    /** A filled pill; a button with a color of its own is a text button. */
+    void button(Button b, Style s) {
+        b.setAllCaps(false);
+        b.setStateListAnimator(null);
+        b.setMinHeight(0);
+        b.setMinimumHeight(0);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setPadding(dp(24), dp(10), dp(24), dp(10));
+        b.setTextSize(TypedValue.COMPLEX_UNIT_DIP, s.size != 0 ? (float) s.size : 14);
+        b.setTypeface(null, Typeface.BOLD);
+        boolean text = s.color != null;
+        b.setTextColor(text ? paint(s.color) : cOnPrimary);
+        b.setBackground(ripple(text ? Color.TRANSPARENT : cPrimary, 100, 0));
+    }
+
+    /** An outlined text field. */
+    void field(EditText e) {
+        e.setBackground(box(Color.TRANSPARENT, 12, cOutline));
+        e.setPadding(dp(16), dp(12), dp(16), dp(12));
+        e.setHintTextColor(cOnVariant);
+    }
+
+    /** The rows of a list: a card, a line for each row (title, subtitle, detail), a thin line between. */
+    void rows(LinearLayout card, JSONArray n) throws JSONException {
+        card.removeAllViews();
+        JSONArray rows = n.getJSONArray(2);
+        for (int i = 0; i < rows.length(); i++) {
+            String[] parts = String.join(" ", strings(rows.getJSONArray(i))).split("\t");
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(16), dp(12), dp(16), dp(12));
+            boolean chosen = i == n.getInt(3);
+            row.setBackground(ripple(chosen ? cTonal : Color.TRANSPARENT, 0, 0));
+            LinearLayout words = new LinearLayout(this);
+            words.setOrientation(LinearLayout.VERTICAL);
+            TextView title = new TextView(this);
+            title.setText(parts[0]);
+            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            title.setTextColor(cOnSurface);
+            words.addView(title);
+            if (parts.length > 1 && !parts[1].isEmpty()) {
+                TextView sub = new TextView(this);
+                sub.setText(parts[1]);
+                sub.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                sub.setTextColor(cOnVariant);
+                words.addView(sub);
+            }
+            row.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+            if (parts.length > 2 && !parts[2].isEmpty()) {
+                TextView more = new TextView(this);
+                more.setText(parts[2]);
+                more.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                more.setTextColor(cOnVariant);
+                row.addView(more);
+            }
+            int number = i;
+            long field = n.getLong(4);
+            row.setOnClickListener(x -> hear(changed(field), String.valueOf(number)));
+            if (n.length() > 6 && n.getBoolean(6)) {
+                // A quick swipe to the left on a row asks to delete it.
+                android.view.GestureDetector swipe = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onDown(MotionEvent e) {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
+                        if (vx < -800 && Math.abs(vx) > Math.abs(vy)) {
+                            hear(changed(field), "d" + number);
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+                row.setOnTouchListener((x, e) -> {
+                    swipe.onTouchEvent(e);
+                    return false;
+                });
+            }
+            card.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            if (i + 1 < rows.length()) {
+                View line = new View(this);
+                line.setBackgroundColor((cOutline & 0x00FFFFFF) | 0x33000000);
+                LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, Math.max(1, dp(0.5)));
+                p.leftMargin = dp(16);
+                card.addView(line, p);
+            }
+        }
+    }
+
+    /** A view a column gives its whole width to. */
+    boolean wide(JSONArray n) throws JSONException {
+        switch (n.getString(0)) {
+            case "b":
+            case "q":
+            case "p":
+            case "s":
+            case "d":
+            case "G":
+            case "C":
+                return true;
+            case "M":
+                return wide(n.getJSONArray(2));
+            case "t":
+            case "r":
+                return wide(n.getJSONArray(2));
+            case "m":
+                return wide(n.getJSONArray(1));
+            case "u":
+                return wide(n.getJSONArray(3));
+            case "S":
+                return wide(n.getJSONArray(4));
+            case "E":
+                return wide(n.getJSONArray(3));
+            case "J":
+                return wide(n.getJSONArray(2));
+            default:
+                return false;
+        }
     }
 
     // ---- What the program asks ----
@@ -359,24 +572,36 @@ public class Main extends Activity {
         JSONArray view = o.getJSONArray("view");
         Style s = new Style();
         String seen = o.getString("shape");
+        backEvent = -1;
+        JSONArray before = barButtons;
+        barButtons = new JSONArray();
         if (seen.equals(shape)) {
             update(root, view, s);
         } else {
             shape = seen;
+            tabBar = null;
             root = build(view, s);
             window.removeAllViews();
-            FrameLayout.LayoutParams all = new FrameLayout.LayoutParams(-1, -1);
             int gap = dp(8);
+            LinearLayout screen = new LinearLayout(this);
+            screen.setOrientation(LinearLayout.VERTICAL);
             if (fills(view, 1)) {
                 root.setPadding(gap, gap, gap, gap);
-                window.addView(root, all);
+                screen.addView(root, new LinearLayout.LayoutParams(-1, 0, 1));
             } else {
                 ScrollView scroll = new ScrollView(this);
                 scroll.setPadding(gap, gap, gap, gap);
-                scroll.addView(root);
-                window.addView(scroll, all);
+                scroll.setClipToPadding(false);
+                scroll.addView(root, new ViewGroup.LayoutParams(-1, -2));
+                screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
             }
+            if (tabBar != null) screen.addView(tabBar, new LinearLayout.LayoutParams(-1, -2));
+            window.addView(screen, new FrameLayout.LayoutParams(-1, -1));
             showing = true;
+        }
+        if (!before.toString().equals(barButtons.toString()) || (backEvent >= 0) != (getActionBar() != null && (getActionBar().getDisplayOptions() & android.app.ActionBar.DISPLAY_HOME_AS_UP) != 0)) {
+            if (getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(backEvent >= 0);
+            invalidateOptionsMenu();
         }
         Set<String> ticking = new HashSet<>();
         clocksOf(view, ticking);
@@ -413,7 +638,19 @@ public class Main extends Activity {
                 break;
             case "M":
             case "J":
+            case "t":
+            case "r":
                 clocksOf(n.getJSONArray(2), found);
+                break;
+            case "m":
+                clocksOf(n.getJSONArray(1), found);
+                break;
+            case "b":
+            case "s":
+                clocksOf(n.getJSONArray(3), found);
+                break;
+            case "u":
+                clocksOf(n.getJSONArray(3), found);
                 break;
             case "S":
                 clocksOf(n.getJSONArray(4), found);
@@ -434,7 +671,15 @@ public class Main extends Activity {
                 return fills(n.getJSONArray(4), side);
             case "M":
             case "J":
+            case "t":
+            case "r":
                 return fills(n.getJSONArray(2), side);
+            case "m":
+                return fills(n.getJSONArray(1), side);
+            case "b":
+            case "s":
+            case "u":
+                return fills(n.getJSONArray(3), side);
             case "C":
             case "R": {
                 JSONArray parts = n.getJSONArray(2);
@@ -449,13 +694,7 @@ public class Main extends Activity {
     }
 
     void text(TextView v, Style s) {
-        if (s.color != null) {
-            v.setTextColor(0xFF000000 | s.color);
-        } else {
-            android.content.res.TypedArray main = obtainStyledAttributes(new int[] {android.R.attr.textColorPrimary});
-            v.setTextColor(main.getColor(0, Color.BLACK));
-            main.recycle();
-        }
+        v.setTextColor(s.color != null ? paint(s.color) : cOnSurface);
         if (s.size != 0) v.setTextSize(TypedValue.COMPLEX_UNIT_DIP, (float) s.size);
         v.setTypeface(null, s.bold ? Typeface.BOLD : Typeface.NORMAL);
     }
@@ -468,7 +707,7 @@ public class Main extends Activity {
                 break;
             case "B": {
                 Button b = new Button(this);
-                b.setAllCaps(false);
+                button(b, s);
                 b.setOnClickListener(x -> hear((long) x.getTag(), ""));
                 v = b;
                 break;
@@ -477,6 +716,7 @@ public class Main extends Activity {
                 EditText e = new EditText(this);
                 e.setSingleLine(true);
                 e.setInputType(InputType.TYPE_CLASS_TEXT);
+                field(e);
                 e.addTextChangedListener(new TextWatcher() {
                     @Override
                     public void beforeTextChanged(CharSequence t, int a, int b, int c) {}
@@ -494,6 +734,8 @@ public class Main extends Activity {
             }
             case "X": {
                 CheckBox c = new CheckBox(this);
+                c.setButtonTintList(checkedTint());
+                c.setTextColor(cOnSurface);
                 c.setOnCheckedChangeListener((x, on) -> {
                     if (x.getTag(R_APPLYING) == null) hear(changed((long) x.getTag()), on ? "on" : "off");
                 });
@@ -503,6 +745,9 @@ public class Main extends Activity {
             case "W": {
                 SeekBar bar = new SeekBar(this);
                 bar.setMinimumWidth(dp(200));
+                bar.setProgressTintList(ColorStateList.valueOf(cPrimary));
+                bar.setThumbTintList(ColorStateList.valueOf(cPrimary));
+                bar.setProgressBackgroundTintList(ColorStateList.valueOf(cTonal));
                 bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                     @Override
                     public void onProgressChanged(SeekBar b, int value, boolean byUser) {
@@ -549,13 +794,13 @@ public class Main extends Activity {
                 JSONArray parts = n.getJSONArray(2);
                 for (int i = 0; i < parts.length(); i++) {
                     JSONArray part = parts.getJSONArray(i);
-                    boolean w = fills(part, 0), h = fills(part, 1);
+                    boolean w = fills(part, 0) || (!row && wide(part)), h = fills(part, 1);
                     LinearLayout.LayoutParams p = row
                         ? new LinearLayout.LayoutParams(w ? 0 : -2, h ? -1 : -2, w ? 1 : 0)
                         : new LinearLayout.LayoutParams(w ? -1 : -2, h ? 0 : -2, h ? 1 : 0);
                     if (i > 0) {
                         if (row) p.leftMargin = dp(8);
-                        else p.topMargin = dp(8);
+                        else p.topMargin = dp(parts.getJSONArray(i - 1).getString(0).equals("b") ? 16 : 8);
                     }
                     l.addView(build(part, s), p);
                 }
@@ -565,10 +810,12 @@ public class Main extends Activity {
             case "M": {
                 FrameLayout box = new FrameLayout(this);
                 JSONArray inner = n.getJSONArray(2);
-                box.addView(build(inner, s), new FrameLayout.LayoutParams(fills(inner, 0) ? -1 : -2, fills(inner, 1) ? -1 : -2));
+                box.addView(build(inner, s), new FrameLayout.LayoutParams(fills(inner, 0) || wide(inner) ? -1 : -2, fills(inner, 1) ? -1 : -2));
                 v = box;
                 break;
             }
+            case "m":
+                return build(n.getJSONArray(1), s.marked());
             case "S":
                 return build(n.getJSONArray(4), s.over(n));
             case "E":
@@ -577,6 +824,101 @@ public class Main extends Activity {
                 v = build(n.getJSONArray(2), s);
                 context(v, n.getJSONArray(1));
                 return v;
+            case "b": {
+                FrameLayout card = new FrameLayout(this);
+                JSONArray inner = n.getJSONArray(3);
+                card.addView(build(inner, s), new FrameLayout.LayoutParams(fills(inner, 0) || wide(inner) ? -1 : -2, fills(inner, 1) ? -1 : -2));
+                v = card;
+                break;
+            }
+            case "t":
+                setTitle(n.getString(1));
+                return build(n.getJSONArray(2), s);
+            case "u":
+                backEvent = n.getLong(1);
+                return build(n.getJSONArray(3), s);
+            case "r":
+                barButtons = n.getJSONArray(1);
+                return build(n.getJSONArray(2), s);
+            case "s": {
+                LinearLayout l = new LinearLayout(this);
+                l.setOrientation(LinearLayout.VERTICAL);
+                l.addView(searchField(n.getLong(2)), new LinearLayout.LayoutParams(-1, -2));
+                JSONArray inner = n.getJSONArray(3);
+                LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(wide(inner) ? -1 : -2, fills(inner, 1) ? 0 : -2, fills(inner, 1) ? 1 : 0);
+                p.topMargin = dp(8);
+                l.addView(build(inner, s), p);
+                v = l;
+                break;
+            }
+            case "q":
+                v = searchField(n.getLong(2));
+                break;
+            case "H": {
+                tabBar = new LinearLayout(this);
+                tabBar.setOrientation(LinearLayout.HORIZONTAL);
+                tabBar.setBackgroundColor(cCard);
+                tabBar.setPadding(dp(8), dp(12), dp(8), dp(12));
+                updateTabs(n);
+                View hole = new View(this);
+                hole.setVisibility(View.GONE);
+                return hole;
+            }
+            case "d": {
+                EditText e = new EditText(this);
+                e.setFocusable(false);
+                e.setSingleLine(true);
+                field(e);
+                e.setOnClickListener(x -> {
+                    java.util.Calendar c = java.util.Calendar.getInstance();
+                    String[] d = e.getText().toString().split("-");
+                    try {
+                        c.set(Integer.parseInt(d[0]), Integer.parseInt(d[1]) - 1, Integer.parseInt(d[2]));
+                    } catch (RuntimeException ignored) {
+                        // today
+                    }
+                    new DatePickerDialog(this, (picker, y, m, day) -> hear(changed((long) e.getTag()), String.format(Locale.ROOT, "%04d-%02d-%02d", y, m + 1, day)), c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH), c.get(java.util.Calendar.DAY_OF_MONTH)).show();
+                });
+                v = e;
+                break;
+            }
+            case "p": {
+                ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                bar.setProgressTintList(ColorStateList.valueOf(cPrimary));
+                bar.setProgressBackgroundTintList(ColorStateList.valueOf(cTonal));
+                v = bar;
+                break;
+            }
+            case "e": {
+                LinearLayout l = new LinearLayout(this);
+                l.setOrientation(LinearLayout.HORIZONTAL);
+                l.setGravity(Gravity.CENTER_VERTICAL);
+                for (int k = 0; k < 3; k++) {
+                    TextView t = new TextView(this);
+                    t.setGravity(Gravity.CENTER);
+                    t.setTextSize(TypedValue.COMPLEX_UNIT_DIP, k == 1 ? 18 : 22);
+                    t.setTextColor(k == 1 ? cOnSurface : cOnTonal);
+                    if (k != 1) t.setBackground(ripple(cTonal, 100, 0));
+                    t.setText(k == 0 ? "\u2212" : k == 2 ? "+" : "");
+                    int step = k == 0 ? -1 : 1;
+                    if (k != 1) {
+                        t.setOnClickListener(x -> {
+                            long[] now = (long[]) l.getTag(R_APPLYING);
+                            long next = Math.max(now[1], Math.min(now[2], now[0] + step));
+                            hear(changed(now[3]), String.valueOf(next));
+                        });
+                    }
+                    l.addView(t, new LinearLayout.LayoutParams(k == 1 ? dp(48) : dp(40), dp(40)));
+                }
+                v = l;
+                break;
+            }
+            case "z": {
+                ProgressBar spin = new ProgressBar(this);
+                spin.setIndeterminateTintList(ColorStateList.valueOf(cPrimary));
+                v = spin;
+                break;
+            }
             case "D": {
                 JSONArray ops = n.getJSONArray(6);
                 boolean gpu = ops.length() > 0 && ops.getJSONArray(0).getString(0).equals("g");
@@ -600,6 +942,14 @@ public class Main extends Activity {
     }
 
     View table(JSONArray n) throws JSONException {
+        if (n.getJSONArray(1).length() == 0) {
+            // A list: one card, a row for each item.
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setBackground(box(cCard, 16, 0));
+            card.setClipToOutline(true);
+            return card;
+        }
         TableLayout t = new TableLayout(this);
         t.setPadding(0, 0, 0, 0);
         JSONArray headers = n.getJSONArray(1), rows = n.getJSONArray(2);
@@ -636,7 +986,12 @@ public class Main extends Activity {
         switch (n.getString(0)) {
             case "T": {
                 TextView t = (TextView) v;
-                if (!t.getText().toString().equals(n.getString(1))) t.setText(n.getString(1));
+                if (s.marks) {
+                    t.setText(marked(n.getString(1)));
+                    t.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+                } else if (!t.getText().toString().equals(n.getString(1))) {
+                    t.setText(n.getString(1));
+                }
                 text(t, s);
                 break;
             }
@@ -683,6 +1038,11 @@ public class Main extends Activity {
                 break;
             }
             case "G": {
+                if (v instanceof LinearLayout) {
+                    ((LinearLayout) v).setTag(n.getLong(4));
+                    rows((LinearLayout) v, n);
+                    break;
+                }
                 TableLayout t = (TableLayout) ((HorizontalScrollView) v).getChildAt(0);
                 t.setTag(n.getLong(4));
                 int first = n.getJSONArray(1).length() > 0 ? 1 : 0;
@@ -716,11 +1076,65 @@ public class Main extends Activity {
                 update(((FrameLayout) v).getChildAt(0), n.getJSONArray(2), s);
                 break;
             }
+            case "m":
+                update(v, n.getJSONArray(1), s.marked());
+                break;
             case "S":
                 update(v, n.getJSONArray(4), s.over(n));
                 break;
             case "E":
                 update(v, n.getJSONArray(3), s);
+                break;
+            case "b": {
+                v.setBackground(box(paint(n.getLong(1)), n.getInt(2) * 0.6, 0));
+                ((FrameLayout) v).setClipToOutline(true);
+                update(((FrameLayout) v).getChildAt(0), n.getJSONArray(3), s);
+                break;
+            }
+            case "t":
+                setTitle(n.getString(1));
+                update(v, n.getJSONArray(2), s);
+                break;
+            case "u":
+                backEvent = n.getLong(1);
+                update(v, n.getJSONArray(3), s);
+                break;
+            case "r":
+                barButtons = n.getJSONArray(1);
+                update(v, n.getJSONArray(2), s);
+                break;
+            case "s": {
+                LinearLayout l = (LinearLayout) v;
+                searching((EditText) l.getChildAt(0), n.getString(1), n.getLong(2));
+                update(l.getChildAt(1), n.getJSONArray(3), s);
+                break;
+            }
+            case "q":
+                searching((EditText) v, n.getString(1), n.getLong(2));
+                break;
+            case "H":
+                updateTabs(n);
+                break;
+            case "d": {
+                EditText e = (EditText) v;
+                e.setTag(n.getLong(2));
+                if (!e.getText().toString().equals(n.getString(1))) e.setText(n.getString(1));
+                text(e, s);
+                break;
+            }
+            case "p": {
+                ProgressBar bar = (ProgressBar) v;
+                bar.setMax(Math.max(1, n.getInt(2)));
+                bar.setProgress(Math.max(0, Math.min(n.getInt(2), n.getInt(1))));
+                break;
+            }
+            case "e": {
+                LinearLayout l = (LinearLayout) v;
+                l.setTag(R_APPLYING, new long[] {n.getLong(1), n.getLong(2), n.getLong(3), n.getLong(4)});
+                ((TextView) l.getChildAt(1)).setText(String.valueOf(n.getLong(1)));
+                break;
+            }
+            case "z":
                 break;
             case "J":
                 update(v, n.getJSONArray(2), s);
@@ -743,6 +1157,144 @@ public class Main extends Activity {
             }
             default:
                 break;
+        }
+    }
+
+    /** `**bold**`, `*stressed*`, `code` and `[label](address)` in a text, as what they mean. */
+    CharSequence marked(String text) {
+        android.text.SpannableStringBuilder out = new android.text.SpannableStringBuilder();
+        int bold = -1, stress = -1, code = -1, flag = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE;
+        for (int i = 0; i < text.length();) {
+            char c = text.charAt(i);
+            char next = i + 1 < text.length() ? text.charAt(i + 1) : 0;
+            if (c == '`') {
+                if (code >= 0 && out.length() > code) {
+                    out.setSpan(new android.text.style.TypefaceSpan("monospace"), code, out.length(), flag);
+                    out.setSpan(new android.text.style.BackgroundColorSpan(cTonal), code, out.length(), flag);
+                    code = -1;
+                } else {
+                    code = out.length();
+                }
+                i++;
+            } else if (code >= 0) {
+                out.append(c);
+                i++;
+            } else if (c == '*' && next == '*') {
+                if (bold >= 0) {
+                    out.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), bold, out.length(), flag);
+                    bold = -1;
+                } else {
+                    bold = out.length();
+                }
+                i += 2;
+            } else if (c == '*') {
+                if (stress >= 0) {
+                    out.setSpan(new android.text.style.StyleSpan(Typeface.ITALIC), stress, out.length(), flag);
+                    stress = -1;
+                } else {
+                    stress = out.length();
+                }
+                i++;
+            } else if (c == '[') {
+                int m = text.indexOf("](", i + 1);
+                int e = m < 0 ? -1 : text.indexOf(')', m + 2);
+                if (m >= 0 && e >= 0) {
+                    String address = text.substring(m + 2, e);
+                    int from = out.length();
+                    out.append(text.substring(i + 1, m));
+                    out.setSpan(new android.text.style.ClickableSpan() {
+                        @Override
+                        public void onClick(View v) {
+                            try {
+                                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)));
+                            } catch (RuntimeException ignored) {
+                                // no program for it
+                            }
+                        }
+
+                        @Override
+                        public void updateDrawState(android.text.TextPaint p) {
+                            p.setColor(cPrimary);
+                            p.setUnderlineText(true);
+                        }
+                    }, from, out.length(), flag);
+                    i = e + 1;
+                } else {
+                    out.append(c);
+                    i++;
+                }
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out;
+    }
+
+    /** A rounded search field with a magnifying glass; each keystroke is an event, like a text field. */
+    EditText searchField(long field) {
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setInputType(InputType.TYPE_CLASS_TEXT);
+        e.setHint("Search");
+        android.graphics.drawable.Drawable glass = getDrawable(android.R.drawable.ic_menu_search).mutate();
+        glass.setTint(cOnVariant);
+        glass.setBounds(0, 0, dp(20), dp(20));
+        e.setCompoundDrawablesRelative(glass, null, null, null);
+        e.setCompoundDrawablePadding(dp(12));
+        e.setBackground(box(cCard, 100, 0));
+        e.setPadding(dp(16), dp(10), dp(16), dp(10));
+        e.setHintTextColor(cOnVariant);
+        e.setTextColor(cOnSurface);
+        e.setTag(field);
+        e.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence t, int a, int b, int c) {}
+
+            @Override
+            public void onTextChanged(CharSequence t, int a, int b, int c) {}
+
+            @Override
+            public void afterTextChanged(Editable t) {
+                if (e.getTag(R_APPLYING) == null) hear(changed((long) e.getTag()), t.toString());
+            }
+        });
+        return e;
+    }
+
+    void searching(EditText e, String value, long field) {
+        e.setTag(field);
+        if (!e.getText().toString().equals(value)) {
+            e.setTag(R_APPLYING, true);
+            e.setText(value);
+            e.setSelection(e.length());
+            e.setTag(R_APPLYING, null);
+        }
+    }
+
+    /** The bottom bar: a label for each tab, a pill behind the one shown. A tab shown is a text, the others buttons. */
+    void updateTabs(JSONArray n) throws JSONException {
+        tabBar.removeAllViews();
+        JSONArray parts = n.getJSONArray(2);
+        for (int i = 0; i < parts.length(); i++) {
+            JSONArray part = parts.getJSONArray(i);
+            boolean shown = part.getString(0).equals("T");
+            TextView t = new TextView(this);
+            t.setText(part.getString(1));
+            t.setGravity(Gravity.CENTER);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+            t.setTypeface(null, shown ? Typeface.BOLD : Typeface.NORMAL);
+            t.setTextColor(shown ? cOnTonal : cOnVariant);
+            t.setPadding(dp(12), dp(8), dp(12), dp(8));
+            t.setBackground(ripple(shown ? cTonal : Color.TRANSPARENT, 100, 0));
+            if (!shown) {
+                long event = part.getLong(2);
+                t.setOnClickListener(x -> hear(event, ""));
+            }
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1);
+            p.leftMargin = dp(4);
+            p.rightMargin = dp(4);
+            tabBar.addView(t, p);
         }
     }
 
@@ -783,6 +1335,13 @@ public class Main extends Activity {
         menuAnswers.clear();
         try {
             int id = 1;
+            // The buttons the view asks for sit in the bar itself.
+            for (int i = 0; i < barButtons.length(); i++) {
+                JSONArray b = barButtons.getJSONArray(i);
+                MenuItem item = menu.add(0, id, 0, b.getString(0));
+                item.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+                menuAnswers.put(id++, b.getLong(1));
+            }
             for (int i = 0; i < menuBar.length(); i++) {
                 JSONObject m = menuBar.getJSONObject(i);
                 SubMenu sub = menu.addSubMenu(m.getString("title"));
@@ -801,7 +1360,17 @@ public class Main extends Activity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (showing && backEvent >= 0) hear(backEvent, "");
+        else super.onBackPressed();
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home && backEvent >= 0) {
+            hear(backEvent, "");
+            return true;
+        }
         Long answer = menuAnswers.get(item.getItemId());
         if (answer == null) return false;
         hear(answer, "");

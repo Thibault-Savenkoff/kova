@@ -116,8 +116,8 @@ fn registry_dir() -> PathBuf {
 fn compile(rustc: &str, triple: &str, lib: &Path, libm: &Path, out: &Path, variant: &str) {
     // Linux executables are static, not "position independent"; Android's libraries are.
     let model: &[&str] = match (variant, triple.contains("linux")) {
-        ("android", _) => &["-C", "relocation-model=pic", "--cfg", "android"],
-        ("ios", _) => &["--cfg", "ios"],
+        ("android", _) => &["-C", "relocation-model=pic", "--cfg", "android", "--cfg", "mobile"],
+        ("ios", _) => &["--cfg", "ios", "--cfg", "mobile"],
         (_, true) => &["-C", "relocation-model=static"],
         _ => &[],
     };

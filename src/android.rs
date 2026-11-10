@@ -25,7 +25,12 @@ pub fn abi(arm: bool) -> &'static str {
 pub fn apk(title: &str, libraries: &[(&str, Vec<u8>)], icon: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let manifest = manifest(&format!("dev.kova.app.{}", package_word(title)), title, icon.is_some());
     let table = resources();
-    let code = include_bytes!("../runtime/android/classes.dex");
+    // KOVA_ANDROID_DEX: a classes.dex to try instead of the built-in one (work on Main.java without rebuilding Kova).
+    let own = std::env::var("KOVA_ANDROID_DEX").ok().and_then(|p| std::fs::read(p).ok());
+    let code: &[u8] = match &own {
+        Some(bytes) => bytes,
+        None => include_bytes!("../runtime/android/classes.dex"),
+    };
     let mut files: Vec<(String, &[u8])> = vec![("AndroidManifest.xml".to_string(), &manifest), ("classes.dex".to_string(), code)];
     for (abi, library) in libraries {
         files.push((format!("lib/{abi}/libkova.so"), library));

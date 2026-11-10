@@ -2388,6 +2388,9 @@ fn gtk_make(g: &Gtk, node: &crate::shared::UiNode, made: &mut Vec<(P, u64, usize
             g.margins.iter().for_each(|margin| margin(widget, *m));
             return widget;
         }
+        // The phone's screens: an Android app draws them in Java, never through GTK.
+        #[cfg(mobile)]
+        _ => (g.label)(c_string("").as_ptr()),
     };
     if !matches!(node, Column(..) | Row(..)) {
         made.push((inner.unwrap_or(widget), handler, 0));
