@@ -157,6 +157,7 @@ controls, so it has the system's large titles, tab bar, navigation bar and, in d
 | `view.nav_button(label, event)` | a button in the navigation bar of this page. |
 | `view.searchable(value, { s: String => E })` | a search field for this page: in the navigation bar, where the system puts it. Elsewhere it shows above the page. |
 | `ui.list(lines, selected, { i: Int => E }) delete { i: Int => E }` | the same list; a swipe to the left on a row shows a red `Delete`, and `delete` gives the event for that row. Other systems ignore the swipe: give a button too. |
+| `view.lines(n)` | on a `ui.input`: a text field of `n` lines, where Return starts a new line (Android for now: elsewhere it stays one line). |
 | `view.markdown` | on a text: `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` show as what they mean. |
 
 A column inside a card spreads across it, so a switch ends at the card's right edge as in the Settings app.

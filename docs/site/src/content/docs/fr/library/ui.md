@@ -156,6 +156,7 @@ du système et, en mode sombre, ses couleurs.
 | `ui.list(lignes, selected)` | ses lignes dans une carte blanche, un chevron au bout de chacune. Un saut de ligne dans une ligne lui donne un titre, un sous-titre et un détail. |
 | `vue.pushing(page, closed: E)` | `page` comme un nouvel écran par-dessus celui-ci, avec un bouton retour ; `closed` est l'événement qu'envoient le bouton retour et le glissement arrière, et le programme cesse de donner une page quand il arrive. À donner avant `menus`. |
 | `vue.nav_button(libellé, événement)` | un bouton dans la barre de navigation de cette page. |
+| `vue.lines(n)` | sur un `ui.input` : un champ de `n` lignes, où Entrée passe à la ligne (Android pour l'instant : ailleurs il reste sur une ligne). |
 | `vue.markdown` | sur un texte : `**gras**`, `*accent*`, `` `code` `` et `[libellé](adresse)` s'affichent pour ce qu'ils veulent dire. |
 
 Une colonne dans une carte s'étale sur toute sa largeur : un interrupteur finit au bord droit de la carte, comme dans

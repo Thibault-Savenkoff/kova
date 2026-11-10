@@ -149,17 +149,22 @@ pub fn node(o: &mut String, n: &UiNode) {
         }
         UiNode::Styled(style, inner) => {
             // On Android, `.markdown` is a wrapper of its own: the other systems read `S` alone.
+            let mut wrappers = 0;
             #[cfg(android)]
-            let marked = style.marks;
-            #[cfg(not(android))]
-            let marked = false;
-            if marked {
-                o.push_str("[\"m\",");
+            {
+                if style.marks {
+                    o.push_str("[\"m\",");
+                    wrappers += 1;
+                }
+                if style.lines > 0 {
+                    o.push_str(&format!("[\"n\",{},", style.lines));
+                    wrappers += 1;
+                }
             }
             let color = style.color.map_or("null".into(), |c| format!("{c}"));
             o.push_str(&format!("[\"S\",{color},{},{},", style.size, style.bold));
             node(o, inner);
-            if marked {
+            for _ in 0..wrappers {
                 o.push(']');
             }
         }

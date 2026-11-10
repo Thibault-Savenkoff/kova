@@ -1646,6 +1646,8 @@ pub struct UiStyle {
     pub wide: bool,
     /// `.markdown`: `**bold**`, `*stressed*`, `` `code` `` and `[label](address)` in the text show as what they mean (iPhone only for now).
     pub marks: bool,
+    /// `.lines(n)`: a text field of `n` lines (Android only).
+    pub lines: i32,
 }
 
 impl UiStyle {
@@ -1657,6 +1659,7 @@ impl UiStyle {
             bold: self.bold || around.bold,
             wide: self.wide || around.wide,
             marks: self.marks || around.marks,
+            lines: if self.lines > 0 { self.lines } else { around.lines },
         }
     }
 }
@@ -1959,6 +1962,7 @@ fn ui_node(chars: &mut core::str::Chars, counts: &mut [usize; 3], around: UiStyl
             Some('b') => own.bold = true,
             Some('w') => own.wide = true,
             Some('k') => own.marks = true,
+            Some('l') => own.lines = n as i32,
             Some('m') => margin = margin.or(Some(n as i32)),
             Some('g') => back = back.or(Some(n as u32)),
             Some('r') => round = n as i32,
@@ -2244,6 +2248,9 @@ pub fn ui_describe(text: &str) -> String {
                 }
                 if style.wide {
                     out.push_str(" no_wrap");
+                }
+                if style.lines > 0 {
+                    out.push_str(&format!(" lines({})", style.lines));
                 }
             }
             UiNode::Spaced(m, inner) => {

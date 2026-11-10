@@ -136,6 +136,7 @@ public class Main extends Activity {
         Integer color;
         double size;
         boolean bold, marks;
+        int lines;
 
         Style marked() {
             Style s = new Style();
@@ -143,12 +144,21 @@ public class Main extends Activity {
             s.size = size;
             s.bold = bold;
             s.marks = true;
+            s.lines = lines;
+            return s;
+        }
+
+        Style withLines(int n) {
+            Style s = marked();
+            s.marks = marks;
+            s.lines = n;
             return s;
         }
 
         Style over(JSONArray n) throws JSONException {
             Style s = new Style();
             s.marks = marks;
+            s.lines = lines;
             s.color = n.isNull(1) ? color : Integer.valueOf(n.getInt(1));
             s.size = n.getDouble(2) != 0 ? n.getDouble(2) : size;
             s.bold = n.getBoolean(3) || bold;
@@ -165,6 +175,7 @@ public class Main extends Activity {
         palette(night);
         window = new FrameLayout(this);
         window.setBackgroundColor(cBackground);
+        getWindow().setBackgroundDrawable(new ColorDrawable(cBackground));
         if (getActionBar() != null) getActionBar().setBackgroundDrawable(new ColorDrawable(cBackground));
         // Android 15 draws apps under its bars: the system says how much room they take.
         window.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -406,6 +417,7 @@ public class Main extends Activity {
             case "d":
             case "G":
             case "C":
+            case "I":
                 return true;
             case "M":
                 return wide(n.getJSONArray(2));
@@ -414,6 +426,8 @@ public class Main extends Activity {
                 return wide(n.getJSONArray(2));
             case "m":
                 return wide(n.getJSONArray(1));
+            case "n":
+                return wide(n.getJSONArray(2));
             case "u":
                 return wide(n.getJSONArray(3));
             case "S":
@@ -585,6 +599,8 @@ public class Main extends Activity {
             int gap = dp(8);
             LinearLayout screen = new LinearLayout(this);
             screen.setOrientation(LinearLayout.VERTICAL);
+            screen.setBackgroundColor(cBackground);
+            screen.setDefaultFocusHighlightEnabled(false);
             if (fills(view, 1)) {
                 root.setPadding(gap, gap, gap, gap);
                 screen.addView(root, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -592,6 +608,8 @@ public class Main extends Activity {
                 ScrollView scroll = new ScrollView(this);
                 scroll.setPadding(gap, gap, gap, gap);
                 scroll.setClipToPadding(false);
+                // A scroll view taking the focus would be covered by the system's gray focus highlight.
+                scroll.setDefaultFocusHighlightEnabled(false);
                 scroll.addView(root, new ViewGroup.LayoutParams(-1, -2));
                 screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
             }
@@ -645,6 +663,9 @@ public class Main extends Activity {
             case "m":
                 clocksOf(n.getJSONArray(1), found);
                 break;
+            case "n":
+                clocksOf(n.getJSONArray(2), found);
+                break;
             case "b":
             case "s":
                 clocksOf(n.getJSONArray(3), found);
@@ -676,6 +697,8 @@ public class Main extends Activity {
                 return fills(n.getJSONArray(2), side);
             case "m":
                 return fills(n.getJSONArray(1), side);
+            case "n":
+                return fills(n.getJSONArray(2), side);
             case "b":
             case "s":
             case "u":
@@ -816,6 +839,8 @@ public class Main extends Activity {
             }
             case "m":
                 return build(n.getJSONArray(1), s.marked());
+            case "n":
+                return build(n.getJSONArray(2), s.withLines(n.getInt(1)));
             case "S":
                 return build(n.getJSONArray(4), s.over(n));
             case "E":
@@ -934,6 +959,7 @@ public class Main extends Activity {
 
     /** A tag of Kova's own, unlike the number each view keeps in the plain tag. */
     static final int R_APPLYING = 0x7F010001;
+    static final int R_MANY = 0x7F010002;
 
     static List<String> strings(JSONArray a) throws JSONException {
         List<String> out = new ArrayList<>();
@@ -1010,6 +1036,14 @@ public class Main extends Activity {
                     e.setSelection(e.length());
                     e.setTag(R_APPLYING, null);
                 }
+                boolean many = s.lines > 1;
+                if (many != (e.getTag(R_MANY) != null)) {
+                    e.setTag(R_MANY, many ? true : null);
+                    e.setSingleLine(!many);
+                    e.setInputType(many ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES : InputType.TYPE_CLASS_TEXT);
+                    e.setGravity(many ? Gravity.TOP | Gravity.START : Gravity.CENTER_VERTICAL | Gravity.START);
+                }
+                if (many) e.setMinLines(s.lines);
                 text(e, s);
                 break;
             }
@@ -1078,6 +1112,9 @@ public class Main extends Activity {
             }
             case "m":
                 update(v, n.getJSONArray(1), s.marked());
+                break;
+            case "n":
+                update(v, n.getJSONArray(2), s.withLines(n.getInt(1)));
                 break;
             case "S":
                 update(v, n.getJSONArray(4), s.over(n));

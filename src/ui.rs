@@ -109,6 +109,13 @@ public:
         return self.styled("w", 1)
     }
 
+    // A text field of `n` lines, where a Return starts a new one (Android for now: elsewhere it stays a line).
+    fn lines(self, n: Int) -> View
+        require n >= 1 else "a field has at least one line"
+    {
+        return self.styled("l", n)
+    }
+
     fn margin(self, pixels: Int) -> View
         require pixels >= 0 else "a margin cannot be negative"
     {
