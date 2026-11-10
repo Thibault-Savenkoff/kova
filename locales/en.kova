@@ -306,6 +306,8 @@ lang en {
     returns_nothing_help := "add `-> Type` after the parameters to return a value"
     outside_loop := "`{word}` outside of a loop"
     does_nothing := "this expression does nothing"
+    else_must_leave := "this block after `else` must end by leaving"
+    else_must_leave_help := "end it with `return`, `break`, `continue` or `system.exit(1)`; to give a value instead, write it without braces: `x else 0`"
     eq_vs_assign := "`=` compares; to give a value, write `:=`"
     int_too_big := "number too big for an `Int` (maximum 9223372036854775807)"
     result_in_unit := "`result` does not exist: this function returns nothing"

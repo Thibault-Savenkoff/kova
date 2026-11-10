@@ -280,6 +280,54 @@ fn main {
 cannot save
 ```
 
+### Sortir au lieu de donner une valeur
+
+Quand il n'y a pas de bonne valeur de secours, `else` peut quitter la fonction (ou la boucle) :
+`else return valeur`, `else break`, `else continue`, ou `else system.exit(1)`. Pour plus d'une ligne,
+écris un bloc qui finit en sortant :
+
+```kova
+fn double(word: String) -> Int {
+    let n: Int := word.to_int else {
+        print("not a number: {word}")
+        return 0
+    }
+    return n * 2
+}
+
+fn main {
+    print(double("21"))
+    print(double("x"))
+}
+```
+
+```text
+42
+not a number: x
+0
+```
+
+Après la ligne, `n` est un simple `Int` : le cas d'échec est déjà parti. Un bloc qui ne finit pas en
+sortant est refusé, car `n` n'aurait pas de valeur à cet endroit :
+
+```kova
+fn main {
+    let n: Int := "x".to_int else {
+        print("not a number")
+    }
+    print(n)
+}
+```
+
+```txt
+erreur: ce bloc après `else` doit finir en sortant
+ --> main.kova:4:5
+  |
+4 |     }
+  |     ^
+  = aide : finis-le par `return`, `break`, `continue` ou `system.exit(1)` ; pour donner une valeur, écris-la sans accolades : `x else 0`
+```
+
 ### Tes propres erreurs
 
 Un programme a en général sa propre enum d'erreurs. Quand un de ses cas contient l'erreur

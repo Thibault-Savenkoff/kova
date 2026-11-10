@@ -1,0 +1,7 @@
+fn main {
+    let n: Int := "x".to_int else {
+        print("not a number")
+    }
+    print(n)
+}
+// error: this block after `else` must end by leaving

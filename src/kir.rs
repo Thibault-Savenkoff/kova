@@ -6337,6 +6337,8 @@ impl<'a> Translator<'a> {
             // On `none` (or `err`), leaves the function with `none` (or the same `err`);
             // otherwise the value, owned by the expression.
             // `x else y`: the value inside is copied, `x` is only read, as `if x != none` would.
+            // Run by the `Else` before it; never a value of its own.
+            ExprKind::Leave(_) => unreachable!("`else` runs its leaving block itself"),
             ExprKind::Else(x, fallback) => {
                 let ty = self.ty(e);
                 let out = self.new_slots(&ty);
@@ -6347,8 +6349,13 @@ impl<'a> Translator<'a> {
                 let copy = self.clone_value(&v[1 + skip..], &ty);
                 self.copy(&out, &copy);
                 self.go(End::Jump(done), empty);
-                let other = self.owned(fallback);
-                self.copy(&out, &other);
+                if let ExprKind::Leave(b) = &fallback.kind {
+                    // The block ends by leaving: nothing reaches `done` this way.
+                    self.block(b);
+                } else {
+                    let other = self.owned(fallback);
+                    self.copy(&out, &other);
+                }
                 self.go(End::Jump(done), done);
                 self.track(&out, &ty);
                 out
@@ -7191,6 +7198,8 @@ pub fn names_in(e: &Expr, names: &mut Vec<String>) {
             names_in(x, names);
             names_in(y, names);
         }
+        // Only after an `else`, which reads nothing of it (a contract does not hold statements).
+        ExprKind::Leave(_) => {}
         ExprKind::Method { receiver, args, .. } => {
             names_in(receiver, names);
             args.iter().for_each(|a| names_in(a, names));

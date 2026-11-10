@@ -1,0 +1,68 @@
+// expect: none
+// expect: 42
+// expect: not a number: x
+// expect: -1
+// expect: 3
+// expect: 3
+// expect: 1
+// expect: hello from a long text and the number 5
+// expect: no number in "abc"
+// `else` that leaves: `return`, `break`, `continue`, a block ending by leaving. `KOVA_LEAKS` checks
+// that the Strings alive at the exit are freed.
+import files
+
+fn first_line(path: String) -> String {
+    let text: String := files.read(path) else return "none"
+    return text
+}
+
+fn number(word: String) -> Int {
+    let n: Int := word.to_int else {
+        print("not a number: {word}")
+        return -1
+    }
+    return n * 2
+}
+
+fn sum(words: List<String>) -> Int {
+    var total: Int := 0
+    for w in words {
+        let n: Int := w.to_int else continue
+        if n > 100 {
+            break
+        }
+        total += n
+    }
+    return total
+}
+
+fn stop_at(words: List<String>) -> Int {
+    var total: Int := 0
+    for w in words {
+        let n: Int := w.to_int else break
+        total += n
+    }
+    return total
+}
+
+fn save(path: String) -> Int {
+    files.write(path, "x") else return 1
+    return 0
+}
+
+fn describe(word: String) -> String {
+    let label: String := "hello from a long text and the number "
+    let n: Int := word.to_int else return "no number in \"{word}\""
+    return "{label}{n}"
+}
+
+fn main {
+    print(first_line("tests/data/missing/zzz"))
+    print(number("21"))
+    print(number("x"))
+    print(sum(["1", "a", "2", "300", "5"]))
+    print(stop_at(["1", "2", "a", "5"]))
+    print(save("tests/data/missing/x.txt"))
+    print(describe("5"))
+    print(describe("abc"))
+}

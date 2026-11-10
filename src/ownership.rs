@@ -957,10 +957,19 @@ impl Owner<'_> {
             ExprKind::Variant { args, .. } => args.iter().for_each(|x| self.give(x)),
             ExprKind::Outcome { value, .. } => self.give(value),
             ExprKind::Is(x, _) => self.borrow(x),
+            // Handled by the `Else` before it.
+            ExprKind::Leave(_) => {}
             // The value inside is copied (`Translator::value`).
             ExprKind::Else(x, fallback) => {
                 self.borrow(x);
-                self.give(fallback);
+                if let ExprKind::Leave(b) = &fallback.kind {
+                    // The block leaves: what it moves does not count for the code after the `else`.
+                    let kept = self.state.clone();
+                    self.block(b);
+                    self.state = kept;
+                } else {
+                    self.give(fallback);
+                }
             }
             // `x?` takes its value; on `none` it leaves the function, like a `return`.
             ExprKind::Try(x) => {

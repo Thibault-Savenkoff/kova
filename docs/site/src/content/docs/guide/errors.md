@@ -279,6 +279,54 @@ fn main {
 cannot save
 ```
 
+### Leaving instead of a value
+
+When there is no good value to fall back on, `else` can leave the function (or the loop) instead:
+`else return value`, `else break`, `else continue`, or `else system.exit(1)`. For more than one line,
+write a block that ends by leaving:
+
+```kova
+fn double(word: String) -> Int {
+    let n: Int := word.to_int else {
+        print("not a number: {word}")
+        return 0
+    }
+    return n * 2
+}
+
+fn main {
+    print(double("21"))
+    print(double("x"))
+}
+```
+
+```text
+42
+not a number: x
+0
+```
+
+After the line, `n` is a plain `Int`: the failure case has already left. A block that does not end by
+leaving is refused, since `n` would have no value there:
+
+```kova
+fn main {
+    let n: Int := "x".to_int else {
+        print("not a number")
+    }
+    print(n)
+}
+```
+
+```txt
+error: this block after `else` must end by leaving
+ --> main.kova:4:5
+  |
+4 |     }
+  |     ^
+  = help: end it with `return`, `break`, `continue` or `system.exit(1)`; to give a value instead, write it without braces: `x else 0`
+```
+
 ### Errors of your own
 
 A program usually has its own error enum. When one of its cases holds the error met, `?` puts it

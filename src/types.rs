@@ -2310,6 +2310,7 @@ pub fn changes_in(e: &Expr, name: &str) -> bool {
         ExprKind::Call { args, .. } | ExprKind::Static { args, .. } | ExprKind::Variant { args, .. } => any(args),
         ExprKind::Method { receiver, args, .. } => changes_in(receiver, name) || any(args),
         ExprKind::Else(a, b) => changes_in(a, name) || changes_in(b, name),
+        ExprKind::Leave(b) => block(b),
         ExprKind::Unary(_, a) | ExprKind::Try(a) | ExprKind::Is(a, _) | ExprKind::Outcome { value: a, .. } | ExprKind::Field(a, _) => {
             changes_in(a, name)
         }
@@ -5508,8 +5509,20 @@ impl Checker<'_> {
                 if inner == Type::Error {
                     return self.expr(fallback);
                 }
+                // `else return v`, `else { …; return }` and `else system.exit(1)` leave: no value to match.
+                if matches!(&fallback.kind, ExprKind::Leave(_)) || matches!(&fallback.kind, ExprKind::Call { name, .. } if name.text == "system.exit") {
+                    self.expr(fallback);
+                    return inner;
+                }
                 self.expect(fallback, &inner);
                 inner
+            }
+            ExprKind::Leave(b) => {
+                self.block(b, vec![]);
+                if !leaves(b) {
+                    self.diags.push(Diag::new(b.close, t!("else_must_leave")).help(t!("else_must_leave_help")));
+                }
+                Type::Error
             }
             ExprKind::Match(m) => self.match_(m, None, true),
             ExprKind::Block { params, body } => self.block_literal(params, body, None, None),

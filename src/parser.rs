@@ -2362,6 +2362,20 @@ impl Parser<'_> {
             return Ok(e);
         }
         self.advance();
+        // `else return v`, `else break`, `else continue`, `else { …; return }`: the right side leaves.
+        let leaving = matches!(self.kind(), Kind::Keyword("return" | "break" | "continue"));
+        if leaving || self.is_sym("{") {
+            let block = if leaving {
+                let at = self.token().span;
+                let stmt = self.stmt()?;
+                Block { open: at, stmts: vec![stmt], close: at }
+            } else {
+                self.block()?
+            };
+            let span = block.open.to(block.close);
+            let fallback = self.expr(span, ExprKind::Leave(block));
+            return Ok(self.expr(e.span.to(span), ExprKind::Else(Box::new(e), Box::new(fallback))));
+        }
         let fallback = self.expression()?;
         Ok(self.expr(e.span.to(fallback.span), ExprKind::Else(Box::new(e), Box::new(fallback))))
     }

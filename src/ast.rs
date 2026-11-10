@@ -600,6 +600,9 @@ pub enum ExprKind {
     StructLit { ty: Name, types: Vec<TypeAst>, fields: Vec<(Name, Expr)>, base: Option<Box<Expr>> },
     /// `ages["Rex"] else 0`: the value of an optional or a result, or else the value on the right.
     Else(Box<Expr>, Box<Expr>),
+    /// What stands after `else` when it leaves: `x else return v`, `else break`, `else { …; return }`.
+    /// Only the right side of an `Else`; the block always ends by leaving.
+    Leave(Block),
     /// `if c { 1 } else { 2 }` giving a value: the last line of the chosen branch.
     If { cond: Box<Expr>, then: Block, otherwise: Block },
     /// `match` giving a value: the last line of the chosen arm.
