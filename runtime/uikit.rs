@@ -1115,9 +1115,24 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             // As Notes: a small pill with the icon, its name under it (gray, centered on the pill).
             let name = made(kit, "UILabel");
             (kit.send_id)(name, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
-            // The system's own word, in the phone's language (UIKit's strings: "Supprimer", "Löschen"…).
-            let bundle = (kit.send_two)(kit.class("NSBundle"), kit.sel("bundleForClass:"), kit.class("UIButton"));
-            let word = msg!(kit, extern "C" fn(Id, Id, Id, Id, Id) -> Id)(bundle, kit.sel("localizedStringForKey:value:table:"), kit.text("Delete"), kit.text("Delete"), core::ptr::null_mut());
+            // The word in the phone's first language (UIKit's own strings are not reachable from an app).
+            let first = kit.send(kit.send(kit.class("NSLocale"), "preferredLanguages"), "firstObject");
+            let language = if first.is_null() { String::new() } else { text_of(kit, first) };
+            let word = kit.text(match language.get(..2).unwrap_or("") {
+                "fr" => "Supprimer",
+                "es" => "Eliminar",
+                "de" => "Löschen",
+                "it" => "Elimina",
+                "pt" => "Excluir",
+                "nl" => "Verwijder",
+                "sv" => "Radera",
+                "pl" => "Usuń",
+                "ru" => "Удалить",
+                "ja" => "削除",
+                "ko" => "삭제",
+                "zh" => "删除",
+                _ => "Delete",
+            });
             (kit.send_two)(name, kit.sel("setText:"), word);
             (kit.send_two)(name, kit.sel("setFont:"), (kit.send_float)(kit.class("UIFont"), kit.sel("systemFontOfSize:"), 12.0));
             (kit.send_two)(name, kit.sel("setTextColor:"), kit.send(kit.class("UIColor"), "secondaryLabelColor"));
