@@ -684,6 +684,17 @@ extern "C" fn slide_block(_block: Id) {
     let kit = &screen().kit;
     let (row, by) = *SLIDING.get();
     msg!(kit, extern "C" fn(Id, Id, Affine))(row, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: by, ty: 0.0 });
+    // As in Notes: the row turns gray while open, the pill and its name come in from the right, fading in.
+    let open = by < 0.0;
+    let subviews = kit.send(kit.send(row, "superview"), "subviews");
+    let at = |n: i64| (kit.send_id)(subviews, kit.sel("objectAtIndex:"), n);
+    for k in [0, 1] {
+        let v = at(k);
+        (kit.send_float)(v, kit.sel("setAlpha:"), if open { 1.0 } else { 0.0 });
+        msg!(kit, extern "C" fn(Id, Id, Affine))(v, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: if open { 0.0 } else { 40.0 }, ty: 0.0 });
+    }
+    let color = if open { kit.send(kit.class("UIColor"), "systemGray5Color") } else { ui_color(kit, 0x100_0003) };
+    (kit.send_two)(row, kit.sel("setBackgroundColor:"), color);
 }
 
 /// A swipe on a row: to the left it shows `Delete` (88 points wide) behind it, to the right it covers it again.
@@ -1086,7 +1097,12 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             (kit.send_two)(name, kit.sel("setTextColor:"), kit.send(kit.class("UIColor"), "secondaryLabelColor"));
             (kit.send_two)(cell, kit.sel("addSubview:"), name);
             (kit.send_two)(cell, kit.sel("sendSubviewToBack:"), name); // behind the row
-            for (edge, gap) in [("topAnchor", 10.0), ("trailingAnchor", -14.0)] {
+            (kit.send_two)(cell, kit.sel("sendSubviewToBack:"), red);
+            for v in [red, name] {
+                (kit.send_float)(v, kit.sel("setAlpha:"), 0.0);
+                msg!(kit, extern "C" fn(Id, Id, Affine))(v, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 40.0, ty: 0.0 });
+            }
+            for (edge, gap) in [("topAnchor", 18.0), ("trailingAnchor", -14.0)] {
                 (kit.send_id)(by(kit.send(red, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), gap), kit.sel("setActive:"), 1);
             }
             (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 60.0), kit.sel("setActive:"), 1);
