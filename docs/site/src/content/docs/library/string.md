@@ -101,6 +101,7 @@ A `String` never changes in place: these methods give a new text and leave `s` a
 | `s.lines -> List<String>` | the lines of `s`, without their line breaks (`\n` or `\r\n`). |
 | `s.padded(width: Int) -> String` | `s` with spaces after it, up to `width` characters: columns in a table. A longer text stays as it is. |
 | `s.padded_left(width: Int) -> String` | the same with the spaces before it: for numbers. |
+| `s.padded(width) with(fill: String)`, `s.padded_left(width) with(fill: String)` | the same, filled with the first character of `fill` instead of spaces: `"7".padded_left(2) with("0")` is `07`, for times, dates and numbers. A `fill` with no character gives spaces. |
 | `s.reversed -> String` | the characters of `s`, last one first. |
 | `s.to_upper -> String` | `s` in capitals, accented letters too (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` in small letters. |

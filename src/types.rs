@@ -825,7 +825,7 @@ pub const LIST_METHODS: &[&str] = &["length", "add", "remove", "each", "filter",
 pub const MAP_METHODS: &[&str] = &["length", "is_empty", "contains", "remove", "keys", "values", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const SET_METHODS: &[&str] = &["length", "is_empty", "add", "contains", "remove", "clone", "each", "filter", "map", "any", "all", "fold"];
 pub const STRING_METHODS: &[&str] =
-    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace(…) with(…)", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "padded", "padded_left", "wrapped", "matches", "all_matches", "replace_matches(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
+    &["is_empty", "lines", "trim", "contains", "starts_with", "ends_with", "replace(…) with(…)", "split", "words", "chars", "to_upper", "to_lower", "reversed", "find", "repeat", "padded", "padded_left", "padded(…) with(…)", "padded_left(…) with(…)", "wrapped", "matches", "all_matches", "replace_matches(…) with(…)", "groups", "sha256", "hmac_sha256", "to_base64", "to_base64url", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "bold", "underline"];
 /// The String methods whose first argument is a pattern (`src/regex.rs`).
 pub const PATTERN_METHODS: &[&str] = &["matches", "all_matches", "replace_matches(…) with(…)", "groups"];
 
@@ -884,6 +884,7 @@ pub fn string_method(name: &str) -> Option<(Vec<Type>, Type)> {
         "to_upper" | "to_lower" | "reversed" => (vec![], s()),
         "find" => (vec![s()], Type::Optional(Box::new(Type::Int))),
         "repeat" | "padded" | "padded_left" => (vec![Type::Int], s()),
+        "padded(…) with(…)" | "padded_left(…) with(…)" => (vec![Type::Int, s()], s()),
         "wrapped" => (vec![Type::Int], s()),
         "matches" => (vec![s()], Type::Bool),
         "all_matches" => (vec![s()], list(s())),

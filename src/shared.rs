@@ -2707,8 +2707,10 @@ pub fn exit_code(status: i32) -> i64 {
     }
 }
 
-/// `s.padded(width)`: spaces after `s` (before it if `left`) up to `width` characters.
-pub fn padded(s: &str, width: i64, left: bool) -> String {
-    let spaces = " ".repeat((width.max(0) as usize).saturating_sub(s.chars().count()));
-    if left { spaces + s } else { String::from(s) + &spaces }
+/// `s.padded(width)`: `fill` (its first character, a space if it is empty) after `s` (before it if
+/// `left`) up to `width` characters.
+pub fn padded(s: &str, width: i64, left: bool, fill: &str) -> String {
+    let c = fill.chars().next().unwrap_or(' ');
+    let filling: String = core::iter::repeat_n(c, (width.max(0) as usize).saturating_sub(s.chars().count())).collect();
+    if left { filling + s } else { String::from(s) + &filling }
 }

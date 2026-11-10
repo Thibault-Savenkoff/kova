@@ -103,6 +103,7 @@ quel.
 | `s.lines -> List<String>` | les lignes de `s`, sans leurs sauts de ligne (`\n` ou `\r\n`). |
 | `s.padded(width: Int) -> String` | `s` suivi d'espaces, jusqu'à `width` caractères : les colonnes d'un tableau. Un texte plus long reste tel quel. |
 | `s.padded_left(width: Int) -> String` | pareil avec les espaces avant : pour les nombres. |
+| `s.padded(width) with(fill: String)`, `s.padded_left(width) with(fill: String)` | pareil, rempli avec le premier caractère de `fill` au lieu d'espaces : `"7".padded_left(2) with("0")` donne `07`, pour les heures, les dates et les nombres. Un `fill` sans caractère donne des espaces. |
 | `s.reversed -> String` | les caractères de `s`, le dernier en premier. |
 | `s.to_upper -> String` | `s` en majuscules, lettres accentuées comprises (`"été"` → `"ÉTÉ"`). |
 | `s.to_lower -> String` | `s` en minuscules. |

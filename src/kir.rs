@@ -450,7 +450,7 @@ pub enum StrOp {
     ToUpper,
     /// `s.to_bigint`: a new BigInt, or 0 if it is not a whole number.
     ToBigInt,
-    /// `s.padded(width)`, `s.padded_left(width)`: spaces after or before it, up to `width` characters.
+    /// `s.padded(width)`, `s.padded_left(width)`, `s.padded(width) with(fill)`: `fill` (a space) after or before it, up to `width` characters.
     Padded,
     PaddedLeft,
     /// `s.reversed`: by character.
@@ -666,8 +666,8 @@ pub fn string_op(name: &str) -> Option<StrOp> {
         "to_upper" => StrOp::ToUpper,
         "to_lower" => StrOp::ToLower,
         "repeat" => StrOp::Repeat,
-        "padded" => StrOp::Padded,
-        "padded_left" => StrOp::PaddedLeft,
+        "padded" | "padded(…) with(…)" => StrOp::Padded,
+        "padded_left" | "padded_left(…) with(…)" => StrOp::PaddedLeft,
         "wrapped" => StrOp::Wrap,
         "matches" => StrOp::Matches,
         "all_matches" => StrOp::AllMatches,
@@ -7022,6 +7022,13 @@ impl<'a> Translator<'a> {
                     vals.extend(args.iter().map(|a| self.expr1(a)));
                     if let Some((_, code)) = crate::shared::PAINTS.iter().find(|(p, _)| *p == name.text) {
                         vals.push(self.constant(*code));
+                    }
+                    // `s.padded(4)` fills with spaces: the third word of the operation.
+                    if matches!(op, StrOp::Padded | StrOp::PaddedLeft) && vals.len() == 2 {
+                        let space = self.int_local();
+                        self.emit(Inst::Text(space, " ".into()));
+                        self.temps.push((space, Type::String));
+                        vals.push(space);
                     }
                     if matches!(op, StrOp::Split | StrOp::Replace) {
                         let (n, zero, empty) = (self.int_local(), self.constant(0), self.int_local());

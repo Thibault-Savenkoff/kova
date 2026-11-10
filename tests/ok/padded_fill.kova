@@ -1,0 +1,13 @@
+// expect: 07:05
+// expect: ab...|
+// expect: ééé|
+// expect: ab  |  ab|
+// expect: abc|x  |
+// `s.padded(n) with(fill)`: the first character of `fill` instead of spaces; a longer text stays.
+fn main {
+    print("{"7".padded_left(2) with("0")}:{"5".padded_left(2) with("0")}")
+    print("{"ab".padded(5) with(".")}|")
+    print("{"é".padded_left(3) with("é")}|")
+    print("{"ab".padded(4)}|{"ab".padded_left(4)}|")
+    print("{"abc".padded(2) with("0")}|{"x".padded(3) with("")}|")
+}
