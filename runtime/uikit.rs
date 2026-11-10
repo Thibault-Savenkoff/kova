@@ -483,7 +483,8 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         add(class, kit.sel("rowed:"), rowed as usize, action);
         add(class, kit.sel("updateSearchResultsForSearchController:"), searched as usize, action);
         add(class, kit.sel("deleted:"), deleted as usize, action);
-        add(class, kit.sel("swiped:"), swiped as usize, action);
+        add(class, kit.sel("panned:"), panned as usize, action);
+        add(class, kit.sel("gestureRecognizerShouldBegin:"), pan_begins as usize, c"c@:@".as_ptr() as *const u8);
         add(class, kit.sel("dated:"), dated as usize, action);
         // What `import ios` gives to controls: an object that tells the program it was called.
         let handler = new_class(kit.class("NSObject"), c"KovaUiHandler".as_ptr() as *const u8, 0);
@@ -680,35 +681,57 @@ struct Affine {
 /// The row being slid and how far: read by the animation's block.
 static SLIDING: crate::Global<(Id, f64)> = crate::Global::new((core::ptr::null_mut(), 0.0));
 
-extern "C" fn slide_block(_block: Id) {
+/// Puts a row `by` points to the left (0 to -88) with what goes with it, as in Notes: the row turns gray,
+/// the pill and its name come in from the right, fading in as the row opens.
+fn slide_to(row: Id, by: f64) {
     let kit = &screen().kit;
-    let (row, by) = *SLIDING.get();
-    msg!(kit, extern "C" fn(Id, Id, Affine))(row, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: by, ty: 0.0 });
-    // As in Notes: the row turns gray while open, the pill and its name come in from the right, fading in.
-    let open = by < 0.0;
+    let shift = |tx: f64| Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx, ty: 0.0 };
+    msg!(kit, extern "C" fn(Id, Id, Affine))(row, kit.sel("setTransform:"), shift(by));
+    let shown = (-by / 88.0).clamp(0.0, 1.0);
     let subviews = kit.send(kit.send(row, "superview"), "subviews");
-    let at = |n: i64| (kit.send_id)(subviews, kit.sel("objectAtIndex:"), n);
     for k in [0, 1] {
-        let v = at(k);
-        (kit.send_float)(v, kit.sel("setAlpha:"), if open { 1.0 } else { 0.0 });
-        msg!(kit, extern "C" fn(Id, Id, Affine))(v, kit.sel("setTransform:"), Affine { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: if open { 0.0 } else { 40.0 }, ty: 0.0 });
+        let v = (kit.send_id)(subviews, kit.sel("objectAtIndex:"), k);
+        (kit.send_float)(v, kit.sel("setAlpha:"), shown);
+        msg!(kit, extern "C" fn(Id, Id, Affine))(v, kit.sel("setTransform:"), shift(40.0 * (1.0 - shown)));
     }
-    let color = if open { kit.send(kit.class("UIColor"), "systemGray5Color") } else { ui_color(kit, 0x100_0003) };
+    let color = if by < 0.0 { kit.send(kit.class("UIColor"), "systemGray5Color") } else { ui_color(kit, 0x100_0003) };
     (kit.send_two)(row, kit.sel("setBackgroundColor:"), color);
 }
 
-/// A swipe on a row: to the left it shows `Delete` (88 points wide) behind it, to the right it covers it again.
-extern "C" fn swiped(_me: Id, _message: Id, swipe: Id) {
+extern "C" fn slide_block(_block: Id) {
+    let (row, by) = *SLIDING.get();
+    slide_to(row, by);
+}
+
+/// A finger on a row: it follows the finger (0 to -88 points); lifted, it settles open or closed with a spring.
+extern "C" fn panned(_me: Id, _message: Id, pan: Id) {
     let kit = &screen().kit;
-    let row = kit.send(swipe, "view");
-    let left = (kit.send_int)(swipe, kit.sel("direction")) == 2;
-    *SLIDING.get() = (row, if left { -88.0 } else { 0.0 });
-    // A spring, as the system's swipe actions settle.
+    let row = kit.send(pan, "view");
+    let state = (kit.send_int)(pan, kit.sel("state"));
+    let (open_row, open_by) = *SLIDING.get();
+    let base = if open_row == row { open_by } else { 0.0 };
+    let cell = kit.send(row, "superview");
+    let moved = msg!(kit, extern "C" fn(Id, Id, Id) -> Size)(pan, kit.sel("translationInView:"), cell).width;
+    let by = (base + moved).clamp(-88.0, 0.0);
+    if state == 1 || state == 2 {
+        slide_to(row, by);
+        return;
+    }
+    let speed = msg!(kit, extern "C" fn(Id, Id, Id) -> Size)(pan, kit.sel("velocityInView:"), cell).width;
+    let open = if speed < -300.0 { true } else if speed > 300.0 { false } else { by < -44.0 };
+    *SLIDING.get() = (row, if open && state == 3 { -88.0 } else { 0.0 });
     msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64, i64, Id, Id))(
         kit.class("UIView"),
         kit.sel("animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:"),
         0.45, 0.0, 0.8, 0.0, 0, global_block(slide_block as usize), core::ptr::null_mut(),
     );
+}
+
+/// Only a mostly horizontal drag is the row's: a vertical one scrolls the page.
+extern "C" fn pan_begins(_me: Id, _message: Id, pan: Id) -> i8 {
+    let kit = &screen().kit;
+    let speed = msg!(kit, extern "C" fn(Id, Id, Id) -> Size)(pan, kit.sel("velocityInView:"), kit.send(pan, "view"));
+    (speed.width.abs() > speed.height.abs()) as i8
 }
 
 extern "C" fn tick(_me: Id, _message: Id, timer: Id) {
@@ -1092,7 +1115,10 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             // As Notes: a small pill with the icon, its name under it (gray, centered on the pill).
             let name = made(kit, "UILabel");
             (kit.send_id)(name, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
-            (kit.send_two)(name, kit.sel("setText:"), kit.text("Delete"));
+            // The system's own word, in the phone's language (UIKit's strings: "Supprimer", "Löschen"…).
+            let bundle = (kit.send_two)(kit.class("NSBundle"), kit.sel("bundleForClass:"), kit.class("UIButton"));
+            let word = msg!(kit, extern "C" fn(Id, Id, Id, Id, Id) -> Id)(bundle, kit.sel("localizedStringForKey:value:table:"), kit.text("Delete"), kit.text("Delete"), core::ptr::null_mut());
+            (kit.send_two)(name, kit.sel("setText:"), word);
             (kit.send_two)(name, kit.sel("setFont:"), (kit.send_float)(kit.class("UIFont"), kit.sel("systemFontOfSize:"), 12.0));
             (kit.send_two)(name, kit.sel("setTextColor:"), kit.send(kit.class("UIColor"), "secondaryLabelColor"));
             (kit.send_two)(cell, kit.sel("addSubview:"), name);
@@ -1112,12 +1138,10 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
                 (kit.send_id)(by(kit.send(line, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
             }
-            for direction in [2i64, 1] {
-                let swipe = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UISwipeGestureRecognizer"), "alloc"), kit.sel("initWithTarget:action:"), target, kit.sel("swiped:"));
-                let swipe = kit.send(swipe, "autorelease");
-                (kit.send_id)(swipe, kit.sel("setDirection:"), direction);
-                (kit.send_two)(line, kit.sel("addGestureRecognizer:"), swipe);
-            }
+            let pan = msg!(kit, extern "C" fn(Id, Id, Id, Id) -> Id)(kit.send(kit.class("UIPanGestureRecognizer"), "alloc"), kit.sel("initWithTarget:action:"), target, kit.sel("panned:"));
+            let pan = kit.send(pan, "autorelease");
+            (kit.send_two)(pan, kit.sel("setDelegate:"), target);
+            (kit.send_two)(line, kit.sel("addGestureRecognizer:"), pan);
             (kit.send_two)(card, kit.sel("addArrangedSubview:"), cell);
         } else {
             (kit.send_two)(card, kit.sel("addArrangedSubview:"), line);
