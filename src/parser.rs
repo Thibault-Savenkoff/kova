@@ -839,7 +839,20 @@ impl Parser<'_> {
         if self.is_sym(":=") {
             let shown = self.text(t.span).to_string();
             let msg = t!("type_required", name = shown);
-            let help = t!("type_required_help", name = shown);
+            // A written value tells its type: `let LIMIT := 5` → `let LIMIT: Int := …`.
+            self.advance();
+            let guess = self.expression().ok().and_then(|v| match v.kind {
+                ExprKind::Int(_) => Some("Int"),
+                ExprKind::Float(_) => Some("Float"),
+                ExprKind::Str(_) => Some("String"),
+                ExprKind::Bool(_) => Some("Bool"),
+                ExprKind::Char(_) => Some("Char"),
+                _ => None,
+            });
+            let help = match guess {
+                Some(ty) => t!("type_required_found", keyword = "let", name = shown, type = ty),
+                None => t!("type_required_help", name = shown),
+            };
             self.diags.push(Diag::new(t.span, msg).help(help));
             return Err(());
         }

@@ -4,4 +4,4 @@ fn main {
     print(LIMIT)
 }
 // error: the type of `LIMIT` must be written
-// error: for example `LIMIT: Int`
+// error: write `let LIMIT: Int := …`
