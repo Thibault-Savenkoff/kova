@@ -62,6 +62,8 @@ static SCREEN: crate::Global<Option<Screen>> = crate::Global::new(None);
 static CANVASES: crate::Global<Vec<(Id, crate::shared::UiCanvas)>> = crate::Global::new(Vec::new());
 /// The next text is built without its width cap (`.no_wrap`).
 static WIDE: crate::Global<bool> = crate::Global::new(false);
+/// The next field has several lines (`.lines(n)`): a text view.
+static LINES: crate::Global<i64> = crate::Global::new(0);
 /// The next text is Markdown: a text view, so that its links open.
 static MARKED: crate::Global<bool> = crate::Global::new(false);
 /// The scroll view, whose size a `ui.fill` canvas follows.
@@ -476,6 +478,7 @@ extern "C" fn finished(_me: Id, _message: Id, _app: Id, _options: Id) -> bool {
         let class = new_class(kit.class("NSObject"), c"KovaUiTarget".as_ptr() as *const u8, 0);
         add(class, kit.sel("tapped:"), tapped as usize, action);
         add(class, kit.sel("edited:"), edited as usize, action);
+        add(class, kit.sel("textViewDidChange:"), edited as usize, action);
         add(class, kit.sel("switched:"), switched as usize, action);
         add(class, kit.sel("slid:"), slid as usize, action);
         add(class, kit.sel("chosen:"), chosen as usize, action);
@@ -1212,6 +1215,22 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
             (kit.send_id)(b, kit.sel("setContentHorizontalAlignment:"), 1);
             b
         }
+        UiNode::Input(s, n) if *LINES.get() > 1 => {
+            // Several lines: a text view, whose Return starts a new line. It is not a control, so it
+            // tells the program through its delegate (`textViewDidChange:`).
+            let lines = core::mem::take(LINES.get());
+            let view = made(kit, "UITextView");
+            (kit.send_two)(view, kit.sel("setText:"), kit.text(s));
+            (kit.send_two)(view, kit.sel("setDelegate:"), target);
+            (kit.send_id)(view, kit.sel("setTag:"), *n as i64);
+            (kit.send_two)(view, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "secondarySystemBackgroundColor"));
+            (kit.send_float)(kit.send(view, "layer"), kit.sel("setCornerRadius:"), 8.0);
+            let tall = (kit.send_float)(kit.send(view, "heightAnchor"), kit.sel("constraintEqualToConstant:"), lines as f64 * 22.0 + 16.0);
+            (kit.send_id)(tall, kit.sel("setActive:"), 1);
+            let width = msg!(kit, extern "C" fn(Id, Id) -> Rect)(kit.send(kit.class("UIScreen"), "mainScreen"), kit.sel("bounds")).width;
+            at_least(kit, view, width - 64.0);
+            view
+        }
         UiNode::Input(s, n) | UiNode::Search(s, n) => {
             let field = made(kit, if matches!(node, UiNode::Search(..)) { "UISearchTextField" } else { "UITextField" });
             (kit.send_two)(field, kit.sel("setText:"), kit.text(s));
@@ -1407,6 +1426,7 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
         UiNode::Styled(style, inner) => {
             *WIDE.get() = style.wide && matches!(**inner, UiNode::Text(_));
             *MARKED.get() = style.marks && matches!(**inner, UiNode::Text(_));
+            *LINES.get() = if matches!(**inner, UiNode::Input(..)) { style.lines as i64 } else { 0 };
             return build(kit, target, inner, made_views);
         }
         UiNode::Every(_, _, inner) => return build(kit, target, inner, made_views),
