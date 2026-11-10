@@ -692,7 +692,12 @@ extern "C" fn swiped(_me: Id, _message: Id, swipe: Id) {
     let row = kit.send(swipe, "view");
     let left = (kit.send_int)(swipe, kit.sel("direction")) == 2;
     *SLIDING.get() = (row, if left { -88.0 } else { 0.0 });
-    msg!(kit, extern "C" fn(Id, Id, f64, Id))(kit.class("UIView"), kit.sel("animateWithDuration:animations:"), 0.25, global_block(slide_block as usize));
+    // A spring, as the system's swipe actions settle.
+    msg!(kit, extern "C" fn(Id, Id, f64, f64, f64, f64, i64, Id, Id))(
+        kit.class("UIView"),
+        kit.sel("animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:"),
+        0.45, 0.0, 0.8, 0.0, 0, global_block(slide_block as usize), core::ptr::null_mut(),
+    );
 }
 
 extern "C" fn tick(_me: Id, _message: Id, timer: Id) {
@@ -1068,15 +1073,26 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             msg!(kit, extern "C" fn(Id, Id, Id, i64))(red, kit.sel("setImage:forState:"), trash, 0);
             (kit.send_two)(red, kit.sel("setTintColor:"), kit.send(kit.class("UIColor"), "whiteColor"));
             let rounding = kit.send(red, "layer");
-            (kit.send_float)(rounding, kit.sel("setCornerRadius:"), 22.0);
+            (kit.send_float)(rounding, kit.sel("setCornerRadius:"), 15.0);
             (kit.send_id)(red, kit.sel("setTag:"), (table.number * 100000 + k) as i64);
             msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(red, kit.sel("addTarget:action:forControlEvents:"), target, kit.sel("deleted:"), 64);
             (kit.send_two)(cell, kit.sel("addSubview:"), red);
             (kit.send_two)(cell, kit.sel("addSubview:"), line);
-            for (edge, gap) in [("topAnchor", 6.0), ("bottomAnchor", -6.0), ("trailingAnchor", -8.0)] {
+            // As Notes: a small pill with the icon, its name under it (gray, centered on the pill).
+            let name = made(kit, "UILabel");
+            (kit.send_id)(name, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
+            (kit.send_two)(name, kit.sel("setText:"), kit.text("Delete"));
+            (kit.send_two)(name, kit.sel("setFont:"), (kit.send_float)(kit.class("UIFont"), kit.sel("systemFontOfSize:"), 12.0));
+            (kit.send_two)(name, kit.sel("setTextColor:"), kit.send(kit.class("UIColor"), "secondaryLabelColor"));
+            (kit.send_two)(cell, kit.sel("addSubview:"), name);
+            (kit.send_two)(cell, kit.sel("sendSubviewToBack:"), name); // behind the row
+            for (edge, gap) in [("topAnchor", 10.0), ("trailingAnchor", -14.0)] {
                 (kit.send_id)(by(kit.send(red, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), gap), kit.sel("setActive:"), 1);
             }
-            (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 74.0), kit.sel("setActive:"), 1);
+            (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 60.0), kit.sel("setActive:"), 1);
+            (kit.send_id)((kit.send_float)(kit.send(red, "heightAnchor"), kit.sel("constraintEqualToConstant:"), 30.0), kit.sel("setActive:"), 1);
+            (kit.send_id)(by(kit.send(name, "topAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(red, "bottomAnchor"), 4.0), kit.sel("setActive:"), 1);
+            (kit.send_id)(by(kit.send(name, "centerXAnchor"), kit.sel("constraintEqualToAnchor:constant:"), kit.send(red, "centerXAnchor"), 0.0), kit.sel("setActive:"), 1);
             for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
                 (kit.send_id)(by(kit.send(line, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
             }
