@@ -836,6 +836,13 @@ impl Parser<'_> {
             return self.error(t.span, msg);
         }
         let name = Name { text: self.qualified(self.text(t.span)), span: t.span };
+        if self.is_sym(":=") {
+            let shown = self.text(t.span).to_string();
+            let msg = t!("type_required", name = shown);
+            let help = t!("type_required_help", name = shown);
+            self.diags.push(Diag::new(t.span, msg).help(help));
+            return Err(());
+        }
         self.expect(":")?;
         let ty = self.type_()?;
         self.expect(":=")?;
