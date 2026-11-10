@@ -714,6 +714,7 @@ lang en {
     action_add_cases := "Add the missing cases"
     action_underscore := "Replace `{name}` with `_`"
     action_let := "Declare `{name}` with `let`"
+    action_type := "Write the type `{type}` of `{name}`"
     action_remove_import := "Remove this `import`"
     rename_self := "`self` cannot be renamed"
     rename_invalid := "`{name}` cannot be this name: letters, digits and `_`, starting with a capital only for a type"

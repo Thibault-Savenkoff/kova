@@ -714,6 +714,7 @@ lang fr {
     action_add_cases := "Ajouter les cas manquants"
     action_underscore := "Remplacer `{name}` par `_`"
     action_let := "Déclarer `{name}` avec `let`"
+    action_type := "Écrire le type `{type}` de `{name}`"
     action_remove_import := "Supprimer cet `import`"
     rename_self := "`self` ne se renomme pas"
     rename_invalid := "`{name}` ne peut pas être ce nom : lettres, chiffres et `_`, une majuscule au début seulement pour un type"

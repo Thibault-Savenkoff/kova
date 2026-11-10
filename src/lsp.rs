@@ -80,7 +80,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
                     "textDocument/codeAction" => {
                         let p: CodeActionParams = serde_json::from_value(req.params)?;
                         let uri = &p.text_document.uri;
-                        let actions = docs.get(uri).map(|src| [add_cases(uri, src, p.range), warning_fixes(uri, src, p.range)].concat());
+                        let actions = docs.get(uri).map(|src| [add_cases(uri, src, p.range), warning_fixes(uri, src, p.range), type_fixes(uri, src, p.range)].concat());
                         Response::new_ok(req.id, actions)
                     }
                     "textDocument/rename" => {
@@ -404,6 +404,28 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
         is_preferred: Some(true),
         ..Default::default()
     })]
+}
+
+/// The light bulb on a `let` without its type: writes the value's type after the name.
+fn type_fixes(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
+    let (from, to) = (offset(src, range.start), offset(src, range.end));
+    let Some((_, info, _)) = info(&file_path(uri), src) else { return vec![] };
+    (info.untyped.iter())
+        .filter(|(s, _)| s.end <= src.len() && s.start <= to && from <= s.end)
+        .map(|(s, ty)| {
+            let at = position(src, s.end);
+            CodeActionOrCommand::CodeAction(CodeAction {
+                title: t!("action_type", name = &src[s.start..s.end], type = ty),
+                kind: Some(CodeActionKind::QUICKFIX),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(HashMap::from([(uri.clone(), vec![TextEdit::new(Range::new(at, at), format!(": {ty}"))])])),
+                    ..Default::default()
+                }),
+                is_preferred: Some(true),
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 /// The light bulb on a warning (PLAN Part 4 "Unused names"): `_` for a name never used, `let`
@@ -1999,6 +2021,18 @@ mod tests {
         // In the body of a case: not a case.
         let src = SHAPES.replace("D => {}", "D => {\n        \n        }");
         assert!(match_cases("/none/main.kova", &src, src.find("{\n        \n").unwrap() + 10).is_none());
+    }
+
+    #[test]
+    fn type_quick_fix() {
+        let uri = file_uri("/none/main.kova").unwrap();
+        let src = "fn main {\n    let n := 5\n    print(n)\n}\n";
+        let at = Position::new(1, 9);
+        let actions = type_fixes(&uri, src, Range::new(at, at));
+        let [CodeActionOrCommand::CodeAction(a)] = actions.as_slice() else { panic!("{actions:?}") };
+        let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
+        assert_eq!(edit.new_text, ": Int");
+        assert_eq!(edit.range.start, Position::new(1, 9));
     }
 
     #[test]

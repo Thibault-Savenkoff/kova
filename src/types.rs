@@ -970,6 +970,8 @@ pub struct Info {
     pub idle: Vec<(Span, String)>,
     /// The `var`s that never change (shown as warnings: `let` says more).
     pub fixed: Vec<(Span, String)>,
+    /// The `let`s that forgot their type, with the value's type: the editor's "Write the type" fix.
+    pub untyped: Vec<(Span, String)>,
     /// For the editor: the variables declared without their type written anywhere
     /// (`for score in scores`, `Circle(r) =>`), shown in grey after their name.
     pub hints: Vec<(Span, Type)>,
@@ -1294,6 +1296,8 @@ struct Checker<'a> {
     vars: Vec<(Span, String)>,
     changed: std::collections::HashSet<usize>,
     hints: Vec<(Span, Type)>,
+    /// `let`s with no type written, with the value's type (`Info::untyped`).
+    untyped: Vec<(Span, String)>,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
     /// `x := x + 1` on a guarded `var` (`statements`): the value still sees `x` as its value.
@@ -1385,6 +1389,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         vars: vec![],
         changed: Default::default(),
         hints: vec![],
+        untyped: vec![],
         matches: vec![],
         guards: HashMap::new(),
         reread: HashMap::new(),
@@ -1948,6 +1953,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         idle,
         fixed,
         hints,
+        untyped: c.untyped,
         matches,
         guards: c.guards,
         converts: c.converts,
@@ -5010,6 +5016,9 @@ impl Checker<'_> {
                     Type::Error | Type::Unit => t!("type_required_help", name = name),
                     t => t!("type_required_found", keyword = if *mutable { "var" } else { "let" }, name = name, type = t.text()),
                 };
+                if self.diags.len() == mark && !matches!(found, Type::Error | Type::Unit) && matches!(pattern, Pattern::Name(..)) {
+                    self.untyped.push((span, found.text()));
+                }
                 self.diags.push(Diag::new(span, t!("type_required", name = name)).help(help));
                 self.bind(pattern, &found, if *mutable { VarKind::Var } else { VarKind::Let });
             }
