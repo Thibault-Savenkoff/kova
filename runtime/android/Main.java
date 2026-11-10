@@ -1272,29 +1272,189 @@ public class Main extends Activity {
         }
     }
 
+    // ---- Icons: Material's outlines, from the name of an iPhone symbol ----
+
+    static String iconPath(String name) {
+        if (name.contains("note") || name.contains("doc")) return "M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z";
+        if (name.contains("chart")) return "M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z";
+        if (name.contains("info")) return "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z";
+        if (name.contains("gear") || name.contains("setting")) return "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
+        if (name.contains("house") || name.contains("home")) return "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z";
+        if (name.contains("person") || name.contains("user")) return "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z";
+        if (name.contains("star")) return "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+        if (name.contains("heart")) return "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
+        if (name.contains("magnif") || name.contains("search")) return "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z";
+        if (name.contains("plus")) return "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z";
+        if (name.contains("list")) return "M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z";
+        if (name.contains("calendar")) return "M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z";
+        if (name.contains("folder")) return "M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z";
+        if (name.contains("bell")) return "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z";
+        return "M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z";
+    }
+
+    /** A path in SVG's notation (M L H V C S Z, upper and lower case), on a 24 by 24 grid. */
+    static android.graphics.Path svg(String d) {
+        android.graphics.Path p = new android.graphics.Path();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("([a-zA-Z])|(-?\\d*\\.?\\d+(?:e-?\\d+)?)").matcher(d);
+        List<String> t = new ArrayList<>();
+        while (m.find()) t.add(m.group());
+        float x = 0, y = 0, sx = 0, sy = 0, cx = 0, cy = 0;
+        char cmd = 'M';
+        int i = 0;
+        while (i < t.size()) {
+            if (Character.isLetter(t.get(i).charAt(0))) cmd = t.get(i++).charAt(0);
+            boolean rel = Character.isLowerCase(cmd);
+            float ox = rel ? x : 0, oy = rel ? y : 0;
+            switch (Character.toUpperCase(cmd)) {
+                case 'M':
+                    x = ox + Float.parseFloat(t.get(i++));
+                    y = oy + Float.parseFloat(t.get(i++));
+                    p.moveTo(x, y);
+                    sx = x;
+                    sy = y;
+                    cmd = rel ? 'l' : 'L';
+                    cx = x;
+                    cy = y;
+                    break;
+                case 'L':
+                    x = ox + Float.parseFloat(t.get(i++));
+                    y = oy + Float.parseFloat(t.get(i++));
+                    p.lineTo(x, y);
+                    cx = x;
+                    cy = y;
+                    break;
+                case 'H':
+                    x = ox + Float.parseFloat(t.get(i++));
+                    p.lineTo(x, y);
+                    cx = x;
+                    cy = y;
+                    break;
+                case 'V':
+                    y = oy + Float.parseFloat(t.get(i++));
+                    p.lineTo(x, y);
+                    cx = x;
+                    cy = y;
+                    break;
+                case 'C': {
+                    float x1 = ox + Float.parseFloat(t.get(i++)), y1 = oy + Float.parseFloat(t.get(i++));
+                    float x2 = ox + Float.parseFloat(t.get(i++)), y2 = oy + Float.parseFloat(t.get(i++));
+                    x = ox + Float.parseFloat(t.get(i++));
+                    y = oy + Float.parseFloat(t.get(i++));
+                    p.cubicTo(x1, y1, x2, y2, x, y);
+                    cx = x2;
+                    cy = y2;
+                    break;
+                }
+                case 'S': {
+                    float x1 = 2 * x - cx, y1 = 2 * y - cy;
+                    float x2 = ox + Float.parseFloat(t.get(i++)), y2 = oy + Float.parseFloat(t.get(i++));
+                    x = ox + Float.parseFloat(t.get(i++));
+                    y = oy + Float.parseFloat(t.get(i++));
+                    p.cubicTo(x1, y1, x2, y2, x, y);
+                    cx = x2;
+                    cy = y2;
+                    break;
+                }
+                case 'A': {
+                    // An arc: only the circles of the plain icon, drawn by their ends.
+                    float r = Float.parseFloat(t.get(i++));
+                    i += 4;
+                    float ex = ox + Float.parseFloat(t.get(i++)), ey = oy + Float.parseFloat(t.get(i++));
+                    p.addCircle((x + ex) / 2, (y + ey) / 2, r, android.graphics.Path.Direction.CW);
+                    x = ex;
+                    y = ey;
+                    break;
+                }
+                case 'Z':
+                    p.close();
+                    x = sx;
+                    y = sy;
+                    break;
+                default:
+                    return p;
+            }
+        }
+        return p;
+    }
+
+    /** The icon a symbol name stands for, `size` dp wide, in `color`. */
+    android.graphics.drawable.Drawable icon(String name, int color, int size) {
+        android.graphics.Path path = svg(iconPath(name));
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(color);
+        android.graphics.drawable.Drawable d = new android.graphics.drawable.Drawable() {
+            @Override
+            public void draw(Canvas g) {
+                android.graphics.Rect b = getBounds();
+                g.save();
+                g.translate(b.left, b.top);
+                g.scale(b.width() / 24f, b.height() / 24f);
+                g.drawPath(path, paint);
+                g.restore();
+            }
+
+            @Override
+            public int getIntrinsicWidth() {
+                return dp(size);
+            }
+
+            @Override
+            public int getIntrinsicHeight() {
+                return dp(size);
+            }
+
+            @Override
+            public void setAlpha(int a) {}
+
+            @Override
+            public void setColorFilter(android.graphics.ColorFilter f) {}
+
+            @Override
+            public int getOpacity() {
+                return android.graphics.PixelFormat.TRANSLUCENT;
+            }
+        };
+        d.setBounds(0, 0, dp(size), dp(size));
+        return d;
+    }
+
     /** The bottom bar: a label for each tab, a pill behind the one shown. A tab shown is a text, the others buttons. */
     void updateTabs(JSONArray n) throws JSONException {
         tabBar.removeAllViews();
-        JSONArray parts = n.getJSONArray(2);
+        JSONArray parts = n.getJSONArray(2), icons = n.getJSONArray(1);
         for (int i = 0; i < parts.length(); i++) {
             JSONArray part = parts.getJSONArray(i);
             boolean shown = part.getString(0).equals("T");
+            String symbol = i < icons.length() ? icons.getString(i) : "";
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.VERTICAL);
+            tab.setGravity(Gravity.CENTER_HORIZONTAL);
             TextView t = new TextView(this);
             t.setText(part.getString(1));
             t.setGravity(Gravity.CENTER);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
             t.setTypeface(null, shown ? Typeface.BOLD : Typeface.NORMAL);
-            t.setTextColor(shown ? cOnTonal : cOnVariant);
-            t.setPadding(dp(12), dp(8), dp(12), dp(8));
-            t.setBackground(ripple(shown ? cTonal : Color.TRANSPARENT, 100, 0));
+            t.setTextColor(shown ? cOnSurface : cOnVariant);
+            if (symbol.isEmpty()) {
+                t.setPadding(dp(12), dp(8), dp(12), dp(8));
+                t.setBackground(ripple(shown ? cTonal : Color.TRANSPARENT, 100, 0));
+                tab.addView(t);
+            } else {
+                // A pill behind the icon, the name under it.
+                ImageView pill = new ImageView(this);
+                pill.setImageDrawable(icon(symbol, shown ? cOnTonal : cOnVariant, 24));
+                pill.setScaleType(ImageView.ScaleType.CENTER);
+                pill.setBackground(ripple(shown ? cTonal : Color.TRANSPARENT, 100, 0));
+                tab.addView(pill, new LinearLayout.LayoutParams(dp(64), dp(32)));
+                t.setPadding(0, dp(4), 0, 0);
+                tab.addView(t);
+            }
             if (!shown) {
                 long event = part.getLong(2);
-                t.setOnClickListener(x -> hear(event, ""));
+                tab.setOnClickListener(x -> hear(event, ""));
             }
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1);
-            p.leftMargin = dp(4);
-            p.rightMargin = dp(4);
-            tabBar.addView(t, p);
+            tabBar.addView(tab, p);
         }
     }
 
