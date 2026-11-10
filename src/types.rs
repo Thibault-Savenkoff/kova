@@ -1294,6 +1294,8 @@ struct Checker<'a> {
     vars: Vec<(Span, String)>,
     changed: std::collections::HashSet<usize>,
     hints: Vec<(Span, Type)>,
+    /// A `let` whose type is the value's: its names get an editor hint with it.
+    inferring: bool,
     matches: Vec<(Span, Vec<String>)>,
     guards: HashMap<usize, Vec<String>>,
     /// `x := x + 1` on a guarded `var` (`statements`): the value still sees `x` as its value.
@@ -1385,6 +1387,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
         vars: vec![],
         changed: Default::default(),
         hints: vec![],
+        inferring: false,
         matches: vec![],
         guards: HashMap::new(),
         reread: HashMap::new(),
@@ -3398,7 +3401,7 @@ impl Checker<'_> {
                 self.vars.push((name.span, name.text.clone()));
             }
         }
-        if matches!(kind, VarKind::Element | VarKind::Matched) {
+        if matches!(kind, VarKind::Element | VarKind::Matched) || self.inferring {
             self.hints.push((name.span, ty.clone()));
         }
         let v = Variable { ty, kind, span: name.span };
@@ -4298,6 +4301,12 @@ impl Checker<'_> {
     /// its type, `{Int -> Bool}`. Its parameters are borrowed, like a function's.
     fn block_literal(&mut self, params: &[Param], body: &Block, wanted: Option<&[Type]>, result: Option<&Type>) -> Type {
         let free = std::mem::take(&mut self.value_free);
+        // `{ x => … }` takes its types from the call: with nothing around to say them, they must be written.
+        if wanted.is_none() {
+            for p in params.iter().filter(|p| matches!(p.ty, TypeAst::Inferred)) {
+                self.diags.push(Diag::new(p.name.span, t!("block_param_untyped", name = p.name.text)).help(t!("block_param_untyped_help", name = p.name.text)));
+            }
+        }
         let written: Vec<Type> = (params.iter().enumerate())
             .map(|(i, p)| match (&p.ty, wanted.and_then(|ps| ps.get(i))) {
                 (TypeAst::Inferred, w) => w.cloned().unwrap_or(Type::Error),
@@ -4991,21 +5000,26 @@ impl Checker<'_> {
                 let ty = self.expr(value);
                 self.bind(pattern, &ty, if *mutable { VarKind::Var } else { VarKind::Let });
             }
+            // `let x := 5`, `var words := "a b".words`: the type is the value's (the editor shows it in grey). What
+            // is written at the edges (parameters, results, fields) stays the program's own; a value that does not
+            // say its type (`[]`, `none`) must still be given one.
             Stmt::Declare { mutable, pattern, ty: None, value } => {
                 let span = pattern.span();
                 let name = self.src[span.start..span.end].to_string();
-                // The value's type is known: the help writes it (`let before: Date := …`), and
-                // the rest of the program is checked with it. Kova still never writes it for you.
                 let mark = self.diags.len();
                 let found = self.expr(value);
-                let help = match &found {
-                    // `let l := []`: the value has its own error, its type may be wrong.
-                    _ if self.diags.len() > mark => t!("type_required_help", name = name),
-                    Type::Error | Type::Unit => t!("type_required_help", name = name),
-                    t => t!("type_required_found", keyword = if *mutable { "var" } else { "let" }, name = name, type = t.text()),
-                };
-                self.diags.push(Diag::new(span, t!("type_required", name = name)).help(help));
-                self.bind(pattern, &found, if *mutable { VarKind::Var } else { VarKind::Let });
+                let kind = if *mutable { VarKind::Var } else { VarKind::Let };
+                if self.diags.len() > mark {
+                    // The value has its own error: no second one.
+                    self.bind(pattern, &found, kind);
+                } else if matches!(found, Type::Error | Type::Unit) {
+                    self.diags.push(Diag::new(span, t!("nothing_to_keep", name = name)).help(t!("nothing_to_keep_help")));
+                    self.bind(pattern, &found, kind);
+                } else {
+                    self.inferring = true;
+                    self.bind(pattern, &found, kind);
+                    self.inferring = false;
+                }
             }
             // `for (a, b) in l`: the element's type is known, as for `for x in l`.
             Stmt::Declare { mutable, pattern, ty: Some(TypeAst::Inferred), value } => {
@@ -6531,6 +6545,11 @@ impl Checker<'_> {
         };
         self.statements(before);
         let ty = match last {
+            // `err(_) => system.exit(1)`: the program stops here, so this branch needs no value either.
+            Some(s @ Stmt::Expr(Expr { kind: ExprKind::Call { name, .. }, .. })) if name.text == "system.exit" => {
+                self.stmt(s);
+                expected.cloned().unwrap_or(Type::Error)
+            }
             Some(Stmt::Expr(e)) => match expected {
                 Some(t) => {
                     self.expect(e, t);

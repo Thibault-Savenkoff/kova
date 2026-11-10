@@ -1,0 +1,6 @@
+// `else` written where a value starts, as `m.get(k, else 0)` in other languages: the message says where it goes.
+fn main {
+    let m: Map<String, Int> := ["a" := 1]
+    print(m.get("a", else 0))
+}
+// error: `else` follows a value: `m[k] else 0` reads a Map with a default, `m[k, else 0]` also adds the key

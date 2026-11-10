@@ -1,0 +1,6 @@
+// A block with nothing around it to say what it receives: its parameter's type must be written.
+fn main {
+    let f := { x => x }
+}
+// error: the type of `x` must be written: nothing here says what the block receives
+// error: write the type after the name (`n: Int`), or give the block where a call takes one

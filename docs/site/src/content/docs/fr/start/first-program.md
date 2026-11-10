@@ -105,6 +105,8 @@ jamais un type en un autre sans qu'on le lui demande. Ici, écris `"Hello, {name
 
 Dans l'éditeur, le même message apparaît sous le code pendant la frappe.
 
+Les messages sont en anglais ou en français : Kova suit la langue de ton système (`LANG`). Pour choisir, mets `KOVA_LANG=en` ou `KOVA_LANG=fr` devant la commande, ou écris `header { lang := fr }` dans le programme : [variables d'environnement](/fr/tools/environment/).
+
 Un programme peut aussi s'arrêter pendant qu'il tourne : une position après la fin d'une liste, un
 nombre trop grand pour un `Int`, un [contrat](/fr/guide/contracts-and-tests/) non respecté. Il dit
 alors ce qui s'est passé et où, et se termine avec le code de sortie 101.

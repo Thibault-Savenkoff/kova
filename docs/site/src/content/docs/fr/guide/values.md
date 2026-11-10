@@ -1,6 +1,6 @@
 ---
 title: Valeurs et types
-description: Les variables, les types de base, les nombres, et pourquoi les types sont écrits.
+description: Les variables, les types de base, les nombres, et le type écrit une seule fois.
 sidebar:
   order: 1
 ---
@@ -85,33 +85,46 @@ fn main {
 
 Sous `public:`, un autre fichier la lit avec `settings.limit`.
 
-## Les types sont écrits
+## Les types sont écrits une fois
 
-Chaque nom est introduit avec son type : `name: String`, `age: Int`. Le compilateur vérifie chaque
-usage, et ne devine presque rien :
+Un type s'écrit là où un nom rencontre l'extérieur : un paramètre (`name: String`), un résultat (`-> Int`),
+un champ (`age: Int`), une constante. À l'intérieur d'une fonction, un `let` prend le type de la valeur écrite
+à droite :
 
 ```kova
 fn main {
     let x := 5
+    var words := "a b".words
+    let half := x / 2
+    print("{x} {words.length} {half}")
+}
+```
+
+```text
+5 2 2
+```
+
+`x` est un `Int`, `words` une `List<String>` : le compilateur vérifie chaque usage avec ce type, comme s'il était
+écrit. L'éditeur l'affiche en gris après le nom, si bien qu'un lecteur n'a jamais à deviner.
+
+Une valeur qui ne dit pas son type doit en recevoir un, car il n'y a rien à trouver :
+
+```kova
+fn main {
+    let nothing := print("x")
 }
 ```
 
 ```txt
-erreur: il faut écrire le type de `x`
+erreur: `nothing` ne contiendrait rien : cet appel ne donne aucune valeur
  --> main.kova:2:9
   |
-2 |     let x := 5
-  |         ^
-  = aide : écris `let x: Int := …`
+2 |     let nothing := print("x")
+  |         ^^^^^^^
+  = aide : appelle-le sur une ligne seule, sans `let`
 ```
 
-Pourquoi écrire ce que le compilateur pourrait trouver ? Parce que le code est bien plus souvent
-lu qu'écrit, et qu'un type est ce qu'il y a de plus utile à savoir sur un nom. Écrit à la
-déclaration, il est là pour le lecteur, dans une relecture, un diff, un livre, sans éditeur à qui
-demander.
-
-Le type peut être omis seulement quand son nom est déjà écrit à droite, pour que rien ne soit
-caché : `let rex := Dog { name := "Rex" }`, `let today := Date.today`.
+Une liste vide (`let l: List<Int> := []`) et `none` (`let n: Int? := none`) s'écrivent de la même façon.
 
 Un nom ne peut pas être redéclaré tant qu'il est encore visible, même dans un bloc intérieur :
 deux `total` différents dans la même fonction sont une source classique de confusion, alors Kova
@@ -119,7 +132,7 @@ demande un autre nom.
 
 ## Nommer un type long
 
-Comme les types sont écrits, un type long peut prendre un nom plus court avec `type`. Il reste le même
+Comme les types sont écrits aux bords d'une fonction, un type long peut prendre un nom plus court avec `type`. Il reste le même
 type : un `Grid` et une `List<List<Int>>` sont une seule chose, et le nom est connu dans son fichier.
 
 ```kova

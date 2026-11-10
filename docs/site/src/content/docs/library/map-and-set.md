@@ -21,6 +21,7 @@ tuples of them, and types that follow [`Equal`](/guide/interfaces-and-generics/#
 | `m[k] -> V?` | a copy of the value of `k`, `none` if there is none. To read a large value without copying it, use `if v := m[k] { … }` or `match m[k] { … }`: `v` is then lent, and `m` cannot change meanwhile. |
 | `m[k] := v` | gives `k` the value `v`, adding the key if needed (`m` must be a `var`). |
 | `m[k, else v]` | the value of `k` itself, added with the value `v` if it is missing; `v` is computed only then. It can be changed in place: `groups[k, else []].add(x)`, `counts[w, else 0] += 1` (`m` must be a `var`). |
+| `m[k] else v` | the value of `k`, or `v` if there is none, without changing `m` (it works on a `let` too): `ages[name] else 0`. Not to be confused with `m[k, else v]`, which also *adds* the key. |
 | `if var v := m[k] { … }` | changes the value of `k` where it is, if there is one; `m` is lent meanwhile. |
 | `m.contains(k: K) -> Bool` | whether `k` has a value. |
 | `m.remove(k: K) -> V?` | takes the entry of `k` out and gives its value, `none` if there was none. |
@@ -81,6 +82,32 @@ fn main {
 ```text
 ['b' := 1, 'a' := 3, 'n' := 2]
 ```
+
+### Counting
+
+A word count is the usual use of a Map. `counts[w, else 0] += 1` adds the word with `0` the first time, then adds
+one; sorting the keys by their count gives the most frequent first:
+
+```kova
+fn main {
+    var counts: Map<String, Int> := []
+    for w in "the cat and the dog and the bird".words {
+        counts[w, else 0] += 1
+    }
+    let ranked := counts.keys.sorted { a, b => counts[a, else 0] > counts[b, else 0] }
+    for w in ranked[0..3] {
+        print("{w}: {counts[w] else 0}")
+    }
+}
+```
+
+```text
+the: 3
+and: 2
+cat: 1
+```
+
+The block's parameters `a` and `b` are keys: the call says so, so their type is not written again.
 
 A `Map<String, T>` is also read from and written to JSON objects:
 [JSON and CSV](/library/json-and-csv/).

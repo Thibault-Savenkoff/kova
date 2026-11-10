@@ -1,0 +1,24 @@
+// A `let` takes the type of its value; a block takes its parameters' types from the call.
+struct Book {
+    title: String
+    year: Int
+}
+
+fn main {
+    let n := 5
+    var total := 0
+    let names := ["a", "bc"]
+    let (low, high) := (1, 2.5)
+    for s in names {
+        total += s.length
+    }
+    let doubled := [3, 1, 2].map { x => x * 2 }
+    let books := [Book { title := "A", year := 2001 }, Book { title := "B", year := 1999 }]
+    let recent := books.filter { b => b.year > 2000 }
+    print("{n} {total} {low} {high} {doubled.length} {recent.length}")
+    print([3, 1, 2].sorted { a, b => a > b })
+    print([1, 2, 3].fold(0) { acc, x => acc + x })
+}
+// expect: 5 3 1 2.5 3 1
+// expect: [3, 2, 1]
+// expect: 6

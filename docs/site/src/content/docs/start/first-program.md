@@ -103,6 +103,8 @@ another without being asked. Here, write `"Hello, {name.length}"`, or `name.leng
 
 In the editor, the same message appears under the code while you type.
 
+Messages are written in English or in French: Kova follows your system's language (`LANG`). To choose, set `KOVA_LANG=en` or `KOVA_LANG=fr` before the command, or write `header { lang := en }` in the program: [environment variables](/tools/environment/).
+
 A program can also stop while it runs: an index past the end of a list, a number too large for an
 `Int`, a [contract](/guide/contracts-and-tests/) that fails. It then says what happened and where,
 and ends with the exit code 101.

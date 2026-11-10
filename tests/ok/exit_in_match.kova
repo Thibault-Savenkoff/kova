@@ -1,0 +1,16 @@
+// A branch that stops the program needs no value: `system.exit` in a `match` that gives one.
+import files
+import system
+
+fn main {
+    let text: String := match files.read("no_such_file.txt") {
+        ok(t) => t
+        err(_) => {
+            print("missing")
+            system.exit(1)
+        }
+    }
+    print(text)
+}
+// expect: missing
+// code: 1

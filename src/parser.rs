@@ -2649,9 +2649,24 @@ impl Parser<'_> {
     fn block_literal(&mut self) -> R<Expr> {
         let open = self.advance().span; // {
         let mut params = vec![];
-        if self.kind() == Kind::Ident && matches!(self.t[self.pos + 1].kind, Kind::Sym(":")) {
+        // `{ x: Int => … }`, or, where the call says what the block receives, `{ x => … }` and `{ a, b => … }`.
+        let typed = self.kind() == Kind::Ident && matches!(self.t[self.pos + 1].kind, Kind::Sym(":"));
+        let mut ahead = self.pos;
+        while self.t.get(ahead).is_some_and(|t| t.kind == Kind::Ident) && self.t.get(ahead + 1).is_some_and(|t| t.kind == Kind::Sym(",")) {
+            ahead += 2;
+        }
+        let bare = self.t.get(ahead).is_some_and(|t| t.kind == Kind::Ident) && self.t.get(ahead + 1).is_some_and(|t| t.kind == Kind::Sym("=>"));
+        if typed || bare {
             loop {
                 let name = self.value_name("what_parameter")?;
+                if !self.is_sym(":") {
+                    params.push(Param { name, mode: Mode::Read, ty: TypeAst::Inferred, default: None });
+                    if !self.is_sym(",") {
+                        break;
+                    }
+                    self.advance();
+                    continue;
+                }
                 self.expect(":")?;
                 // `s.change { n: var Int => n += 1 }`.
                 let mode = if self.kind() == Kind::Keyword("var") {
@@ -2809,6 +2824,11 @@ impl Parser<'_> {
             }
             // A block is only given to a function: written anywhere else, it would outlive its call.
             Kind::Sym("{") => return self.error(t.span, t!("block_not_argument")),
+            // `m.get(k, else 0)`, from another language: Kova writes the default after the value.
+            Kind::Keyword("else") => {
+                let msg = t!("else_not_value");
+                return self.error(t.span, msg);
+            }
             _ => {
                 let msg = t!("expression_expected", found = self.describe());
                 return self.error(t.span, msg);
