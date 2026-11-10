@@ -123,6 +123,7 @@ lang en {
     name_lowercase := "a {what} name starts with a lowercase letter"
     name_lowercase_help := "write `{name}` (capitals are reserved for types)"
     reserved_word := "`{word}` is a Kova reserved word: it cannot be used as a name"
+    mode_after_colon := "write the mode after the colon: `store: {mode} Type`"
     name_expected := "{what} name expected, found {found}"
     type_uppercase := "a type name starts with a capital letter"
     type_expected := "type expected, found {found}"

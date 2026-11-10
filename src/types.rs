@@ -5170,8 +5170,11 @@ impl Checker<'_> {
             }
             Stmt::Expr(e) => {
                 self.expr(e);
-                // `save(text)?`: the call is what counts.
-                let called = if let ExprKind::Try(x) = &e.kind { x } else { e };
+                // `save(text)?` and `save(text) else print("failed")`: the call is what counts.
+                let called = match &e.kind {
+                    ExprKind::Try(x) | ExprKind::Else(x, _) => x,
+                    _ => e,
+                };
                 let call = match &called.kind {
                     ExprKind::Call { .. } | ExprKind::Static { .. } => true,
                     ExprKind::Var(_) => self.invoked.contains(&called.id),

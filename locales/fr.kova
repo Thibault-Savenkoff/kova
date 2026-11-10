@@ -123,6 +123,7 @@ lang fr {
     name_lowercase := "un nom de {what} commence par une minuscule"
     name_lowercase_help := "écris `{name}` (la majuscule est réservée aux types)"
     reserved_word := "`{word}` est un mot réservé de Kova : il ne peut pas servir de nom"
+    mode_after_colon := "écris le mode après les deux-points : `store: {mode} Type`"
     name_expected := "nom de {what} attendu, trouvé {found}"
     type_uppercase := "un nom de type commence par une majuscule"
     type_expected := "type attendu, trouvé {found}"

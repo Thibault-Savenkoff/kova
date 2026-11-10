@@ -360,8 +360,13 @@ impl Parser<'_> {
                 Err(())
             }
             Kind::Keyword(k) => {
-                let msg = t!("reserved_word", word = k);
-                self.error(t.span, msg)
+                let mut d = Diag::new(t.span, t!("reserved_word", word = k));
+                // `fn add(var store: Store)`: the mode goes after the colon.
+                if key == "what_parameter" && matches!(k, "var" | "move") {
+                    d = d.help(t!("mode_after_colon", mode = k));
+                }
+                self.diags.push(d);
+                Err(())
             }
             _ => {
                 let msg = t!("name_expected", what = what, found = self.describe());

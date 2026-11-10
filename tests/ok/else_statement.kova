@@ -1,0 +1,9 @@
+// expect: cannot save
+// expect: after
+// A call that may fail, alone on its line, takes `else` like a value does.
+import files
+
+fn main {
+    files.write("tests/data/missing/x.txt", "x") else print("cannot save")
+    print("after")
+}

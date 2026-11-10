@@ -264,6 +264,21 @@ fn main {
 The right side is only computed when it is needed. `x` stays usable afterwards: `else` reads it
 and copies the value out.
 
+A call that returns nothing but may fail, such as `files.write`, takes `else` on its own line too:
+the right side runs only on failure.
+
+```kova
+import files
+
+fn main {
+    files.write("no/such/folder/a.txt", "hi") else print("cannot save")
+}
+```
+
+```text
+cannot save
+```
+
 ### Errors of your own
 
 A program usually has its own error enum. When one of its cases holds the error met, `?` puts it

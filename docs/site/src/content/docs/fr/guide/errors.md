@@ -265,6 +265,21 @@ fn main {
 Le côté droit n'est calculé que s'il sert. `x` reste utilisable ensuite : `else` le lit et copie la
 valeur.
 
+Un appel qui ne rend rien mais peut échouer, comme `files.write`, accepte aussi `else` seul sur sa ligne :
+le côté droit ne s'exécute qu'en cas d'échec.
+
+```kova
+import files
+
+fn main {
+    files.write("no/such/folder/a.txt", "hi") else print("cannot save")
+}
+```
+
+```text
+cannot save
+```
+
 ### Tes propres erreurs
 
 Un programme a en général sa propre enum d'erreurs. Quand un de ses cas contient l'erreur

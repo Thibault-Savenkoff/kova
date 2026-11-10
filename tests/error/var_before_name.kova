@@ -1,0 +1,9 @@
+fn add(var n: Int) {
+    n += 1
+}
+
+fn main {
+    print(1)
+}
+// error: `var` is a Kova reserved word: it cannot be used as a name
+// error: write the mode after the colon: `store: var Type`
