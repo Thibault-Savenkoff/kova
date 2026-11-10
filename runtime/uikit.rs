@@ -442,7 +442,15 @@ extern "C" fn uncaught(exception: Id) {
     if let Some(kit) = objc_kit() {
         let name = text_of(&kit, kit.send(exception, "name"));
         let reason = text_of(&kit, kit.send(exception, "reason"));
-        super::write(2, alloc::format!("error: {name}: {reason}\n").as_bytes());
+        let message = alloc::format!("error: {name}: {reason}\n");
+        super::write(2, message.as_bytes());
+        // Also where a phone's log shows it (`idevicesyslog -p name`): the message is the format, so `%` is doubled.
+        if let Some(foundation) = library("/System/Library/Frameworks/Foundation.framework/Foundation") {
+            if let Some(log) = symbol(foundation, "NSLog") {
+                let log: extern "C" fn(Id) = unsafe { core::mem::transmute(log) };
+                log(kit.text(&message.replace('%', "%%")));
+            }
+        }
     }
     super::exit(101);
 }
@@ -750,6 +758,8 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
         None => kit.send(kit.class("UIColor"), "systemBackgroundColor"),
     };
     (kit.send_two)(screen.root, kit.sel("setBackgroundColor:"), window_color);
+    // The controller's own view too: it shows when a search is active.
+    (kit.send_two)(kit.send(screen.controller, "view"), kit.sel("setBackgroundColor:"), window_color);
     if shape == screen.shape && menus == screen.menus.as_slice() {
         for ((leaf, _), &(v, label)) in whole.iter().zip(screen.made.iter()) {
             refresh(kit, leaf, v, label);
@@ -787,7 +797,9 @@ fn draw_view(title: &str, view: &UiNode, menus: &[crate::shared::UiMenu]) {
                     screen.search = controller;
                     (kit.send_two)(controller, kit.sel("setSearchResultsUpdater:"), screen.target);
                     (kit.send_id)(controller, kit.sel("setObscuresBackgroundDuringPresentation:"), 0);
+                    (kit.send_id)(controller, kit.sel("setHidesNavigationBarDuringPresentation:"), 0);
                     (kit.send_two)(kit.send(controller, "searchBar"), kit.sel("setPlaceholder:"), kit.text("Search"));
+                    (kit.send_id)(screen.controller, kit.sel("setDefinesPresentationContext:"), 1);
                     (kit.send_two)(kit.send(screen.controller, "navigationItem"), kit.sel("setSearchController:"), controller);
                     (kit.send_id)(kit.send(screen.controller, "navigationItem"), kit.sel("setHidesSearchBarWhenScrolling:"), 0);
                     let _ = text;
@@ -1051,16 +1063,20 @@ fn grouped_rows(kit: &Kit, target: Id, table: &crate::shared::UiTable, made_view
             let red = (kit.send_id)(kit.class("UIButton"), kit.sel("buttonWithType:"), 1);
             (kit.send_id)(red, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
             (kit.send_two)(red, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "systemRedColor"));
-            msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(red, kit.sel("setTitle:forState:"), kit.text("Delete"), 0);
-            msg!(kit, extern "C" fn(Id, Id, Id, i64) -> Id)(red, kit.sel("setTitleColor:forState:"), kit.send(kit.class("UIColor"), "whiteColor"), 0);
+            // A trash can on a rounded red button, inset from the row's edges, as the system's swipe actions look.
+            let trash = (kit.send_two)(kit.class("UIImage"), kit.sel("systemImageNamed:"), kit.text("trash"));
+            msg!(kit, extern "C" fn(Id, Id, Id, i64))(red, kit.sel("setImage:forState:"), trash, 0);
+            (kit.send_two)(red, kit.sel("setTintColor:"), kit.send(kit.class("UIColor"), "whiteColor"));
+            let rounding = kit.send(red, "layer");
+            (kit.send_float)(rounding, kit.sel("setCornerRadius:"), 22.0);
             (kit.send_id)(red, kit.sel("setTag:"), (table.number * 100000 + k) as i64);
             msg!(kit, extern "C" fn(Id, Id, Id, Id, i64) -> Id)(red, kit.sel("addTarget:action:forControlEvents:"), target, kit.sel("deleted:"), 64);
             (kit.send_two)(cell, kit.sel("addSubview:"), red);
             (kit.send_two)(cell, kit.sel("addSubview:"), line);
-            for edge in ["topAnchor", "bottomAnchor", "trailingAnchor"] {
-                (kit.send_id)(by(kit.send(red, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
+            for (edge, gap) in [("topAnchor", 6.0), ("bottomAnchor", -6.0), ("trailingAnchor", -8.0)] {
+                (kit.send_id)(by(kit.send(red, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), gap), kit.sel("setActive:"), 1);
             }
-            (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 88.0), kit.sel("setActive:"), 1);
+            (kit.send_id)((kit.send_float)(kit.send(red, "widthAnchor"), kit.sel("constraintEqualToConstant:"), 74.0), kit.sel("setActive:"), 1);
             for edge in ["topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"] {
                 (kit.send_id)(by(kit.send(line, edge), kit.sel("constraintEqualToAnchor:constant:"), kit.send(cell, edge), 0.0), kit.sel("setActive:"), 1);
             }
@@ -1379,7 +1395,8 @@ fn build(kit: &Kit, target: Id, node: &UiNode, made_views: &mut Vec<(Id, Id)>) -
                 (kit.send_float)(view, kit.sel("setContentScaleFactor:"), scale);
             }
             (kit.send_id)(view, kit.sel("setTranslatesAutoresizingMaskIntoConstraints:"), 0);
-            (kit.send_two)(view, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "whiteColor"));
+            // Transparent, as SwiftUI's `Canvas`: what shows behind follows light and dark; `d.clear` paints it.
+            (kit.send_two)(view, kit.sel("setBackgroundColor:"), kit.send(kit.class("UIColor"), "clearColor"));
             let (scroll, by) = (*SCROLL.get(), msg!(kit, extern "C" fn(Id, Id, Id, f64) -> Id));
             let frame = kit.send(scroll, "frameLayoutGuide");
             // A size of 0 (`ui.fill`): the room of the screen, less the margins.
@@ -1453,6 +1470,9 @@ fn refresh(kit: &Kit, leaf: &UiNode, v: Id, label: Id) {
             }
             kit.send(v, "setNeedsDisplay");
         }
+        // A list without headers is a card of rows (`grouped_rows`), whose rows are rebuilt when they change and which
+        // shows no selection: nothing to set in place. Only a table's rows are buttons.
+        UiNode::Table(table) if table.headers.is_empty() => {}
         UiNode::Table(table) => {
             let rows = kit.send(v, "arrangedSubviews");
             // The headers, when there are some, are the first line: a label, not a row.
