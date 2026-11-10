@@ -1773,8 +1773,7 @@ extern "C" fn draw_canvas(me: Id, _message: Id, _dirty: Rect) {
             Rect { x: x as f64 + inset, y: y as f64 + inset, width: w as f64 - 2.0 * inset, height: h as f64 - 2.0 * inset }
         };
         let whole = Rect { x: 0.0, y: 0.0, width: bounds.width, height: bounds.height };
-        fill(0xffffff);
-        fill_rect(context, whole);
+        // No white start: the view is transparent, so a canvas follows light and dark until `d.clear` paints it.
         if canvas.gpu() {
             // The graphics card's drawing is OpenGL's: not on iOS yet.
             return;
