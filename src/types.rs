@@ -471,6 +471,7 @@ pub fn bundled(module: &str) -> Option<&'static str> {
         "ios" => include_str!("library/ios.kova"),
         "markdown" => include_str!("library/markdown.kova"),
         "files" => include_str!("library/files.kova"),
+        "web" => include_str!("library/web.kova"),
         _ => return None,
     })
 }

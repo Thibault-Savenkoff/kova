@@ -50,6 +50,7 @@ the error output:
 | --- | --- |
 | `q.method -> String` | `GET`, `POST`… |
 | `q.path -> String` | the path, decoded, without the `?…` part: `/search` |
+| `q.segments -> List<String>` | the path cut at each `/`, empty parts left out: `/links/3` gives `["links", "3"]`, `/` gives `[]`. For a router: `match q.segments.length { … }` |
 | `q.query(name) -> String?` | a value of the `?…` part: `q.query("author")` for `/search?author=Herbert` |
 | `q.header(name) -> String?` | a header, whatever its capitals |
 | `q.headers -> Map<String, String>` | every header, names in small letters |

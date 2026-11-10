@@ -1260,6 +1260,8 @@ fn server() {
         (get("/search?author=Frank+Herbert%21"), head("200 OK", plain, 22) + "author: Frank Herbert!"),
         (get("/search"), head("400 Bad Request", plain, 15) + "400 Bad Request"),
         (get("/html"), head("200 OK", "text/html", 9) + "<p>hi</p>"),
+        // `q.segments`: the path cut at "/", with no empty part.
+        (get("/parts//a/b/"), head("200 OK", plain, 9) + "parts|a|b"),
         (b"POST /echo HTTP/1.1\r\nX-Kova: yes\r\nContent-Length: 8\r\n\r\nhi there".to_vec(), head("200 OK", plain, 17) + "POST hi there yes"),
         (get("/style.css"), head("200 OK", "text/css; charset=utf-8", 20) + "body { color: red }\n"),
         (get("/docs/dot.png"), head("200 OK", "image/png", 11) + &String::from_utf8_lossy(b"\x89PNG\n\x1a\n\x00\x01\xff")),

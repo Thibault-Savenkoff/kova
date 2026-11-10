@@ -6635,7 +6635,9 @@ impl<'a> Translator<'a> {
                 self.track(&v, &ty);
                 v
             }
-            ExprKind::Method { receiver, name, args } if self.ty(receiver) == crate::types::request() => {
+            ExprKind::Method { receiver, name, args }
+                if self.ty(receiver) == crate::types::request() && crate::types::request_methods().iter().any(|(n, _)| *n == name.text) =>
+            {
                 let ty = crate::types::request();
                 let r = self.expr(receiver);
                 let v = self.clone_value(&r, &ty);

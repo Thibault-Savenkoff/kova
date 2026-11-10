@@ -1,0 +1,11 @@
+// The part of `import web` written in Kova.
+import web
+
+public:
+
+extend web.Request {
+    /// `"/links/3"` gives `["links", "3"]`, `"/"` gives `[]`: the parts of the path, for a router.
+    fn segments(self) -> List<String> {
+        return self.path.split("/").filter { s: String => s.length > 0 }
+    }
+}

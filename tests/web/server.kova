@@ -35,6 +35,7 @@ fn main {
                 author => web.Answer.text("author: {author}")
             }
             "/html" => web.Answer.text("<p>hi</p>").header("Content-Type") is("text/html")
+            "/parts//a/b/" => web.Answer.text(q.segments.join("|"))
             "/count" => web.Answer.text("{count}")
             "/stop" => {
                 system.exit(0)

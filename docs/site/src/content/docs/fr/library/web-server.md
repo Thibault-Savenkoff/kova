@@ -51,6 +51,7 @@ répond, sur la sortie d'erreur :
 | --- | --- |
 | `q.method -> String` | `GET`, `POST`… |
 | `q.path -> String` | le chemin, décodé, sans la partie `?…` : `/search` |
+| `q.segments -> List<String>` | le chemin coupé à chaque `/`, sans les parties vides : `/links/3` donne `["links", "3"]`, `/` donne `[]`. Pour un routeur : `match q.segments.length { … }` |
 | `q.query(name) -> String?` | une valeur de la partie `?…` : `q.query("author")` pour `/search?author=Herbert` |
 | `q.header(name) -> String?` | un en-tête, quelles que soient ses majuscules |
 | `q.headers -> Map<String, String>` | chaque en-tête, noms en minuscules |
