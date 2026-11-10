@@ -1,6 +1,6 @@
 ---
 title: Values and types
-description: Variables, the basic types, numbers, and a type written once.
+description: Variables, the basic types, numbers, and why types are written.
 sidebar:
   order: 1
 ---
@@ -84,52 +84,39 @@ fn main {
 
 Under `public:`, another file reads it as `settings.limit`.
 
-## Types are written once
+## Types are written
 
-A type is written where a name meets the outside: a parameter (`name: String`), a result (`-> Int`), a field
-(`age: Int`), a constant. Inside a function, a `let` takes the type of the value written on the right:
+Every name is introduced with its type: `name: String`, `age: Int`. The compiler checks every use
+against it, and guesses almost nothing:
 
 ```kova
 fn main {
     let x := 5
-    var words := "a b".words
-    let half := x / 2
-    print("{x} {words.length} {half}")
-}
-```
-
-```text
-5 2 2
-```
-
-`x` is an `Int`, `words` a `List<String>`: the compiler checks every use against that, as if it was written.
-The editor shows it in grey after the name, so a reader never has to guess.
-
-A value that does not say its type must be given one, because there is nothing to find:
-
-```kova
-fn main {
-    let nothing := print("x")
 }
 ```
 
 ```txt
-error: `nothing` would hold nothing: this gives no value
+error: the type of `x` must be written
  --> main.kova:2:9
   |
-2 |     let nothing := print("x")
-  |         ^^^^^^^
-  = help: call it on a line of its own, without `let`
+2 |     let x := 5
+  |         ^
+  = help: write `let x: Int := …`
 ```
 
-An empty list (`let l: List<Int> := []`) and `none` (`let n: Int? := none`) are written the same way.
+Why write what the compiler could find? Because code is read far more often than it is written,
+and a type is the most useful thing to know about a name. Written at the declaration, it is there
+for the reader, in a code review, in a diff, in a book, without an editor to ask.
+
+The type may be left out only when its name is already written on the right, so nothing is
+hidden: `let rex := Dog { name := "Rex" }`, `let today := Date.today`.
 
 A name cannot be declared again while it is still visible, even in an inner block: two different
 `total`s in the same function are a classic source of confusion, so Kova asks for another name.
 
 ## Naming a long type
 
-Since types are written at the edges of a function, a long one can take a shorter name with `type`. It stays the same type: a
+Since types are written, a long one can take a shorter name with `type`. It stays the same type: a
 `Grid` and a `List<List<Int>>` are one thing, and the name is known in its file.
 
 ```kova

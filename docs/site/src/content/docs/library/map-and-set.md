@@ -94,7 +94,7 @@ fn main {
     for w in "the cat and the dog and the bird".words {
         counts[w, else 0] += 1
     }
-    let ranked := counts.keys.sorted { a, b => counts[a, else 0] > counts[b, else 0] }
+    let ranked: List<String> := counts.keys.sorted { a, b => counts[a, else 0] > counts[b, else 0] }
     for w in ranked[0..3] {
         print("{w}: {counts[w] else 0}")
     }
