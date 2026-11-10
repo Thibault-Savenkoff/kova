@@ -410,8 +410,10 @@ fn add_cases(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
 fn type_fixes(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
     let (from, to) = (offset(src, range.start), offset(src, range.end));
     let Some((_, info, _)) = info(&file_path(uri), src) else { return vec![] };
+    // Anywhere on the `let`'s line, not only on the name.
+    let line_of = |at: usize| src[..at.min(src.len())].matches('\n').count();
     (info.untyped.iter())
-        .filter(|(s, _)| s.end <= src.len() && s.start <= to && from <= s.end)
+        .filter(|(s, _)| s.end <= src.len() && line_of(s.start) >= line_of(from) && line_of(s.start) <= line_of(to))
         .map(|(s, ty)| {
             let at = position(src, s.end);
             CodeActionOrCommand::CodeAction(CodeAction {
@@ -2033,6 +2035,11 @@ mod tests {
         let edit = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri][0];
         assert_eq!(edit.new_text, ": Int");
         assert_eq!(edit.range.start, Position::new(1, 9));
+        // The cursor at the end of the line, on the value, still offers it; another line does not.
+        let end = Position::new(1, 13);
+        assert_eq!(type_fixes(&uri, src, Range::new(end, end)).len(), 1);
+        let other = Position::new(2, 4);
+        assert!(type_fixes(&uri, src, Range::new(other, other)).is_empty());
     }
 
     #[test]
