@@ -48,4 +48,6 @@ written `--port=8080`.
 | --- | --- |
 | `a.flag(name) -> Bool` | whether this flag was written. |
 | `a.option(name) -> String?` | the value of this option, `none` if it was not written. |
+| `a.int(name) -> Int?` | the same as a whole number: `a.int("port") else 80`. `none` if the option is absent or not a whole number. |
+| `a.float(name) -> Float?` | the same as a `Float`. |
 | `a.words -> List<String>` | the other words, in order. |

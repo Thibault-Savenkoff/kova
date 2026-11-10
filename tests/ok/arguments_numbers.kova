@@ -1,0 +1,18 @@
+// expect: 8080
+// expect: 80
+// expect: 80
+// expect: 0.5
+// expect: none
+// `a.int(name)` and `a.float(name)`: an option read as a number, `none` when absent or not a number.
+import arguments
+
+fn main {
+    let a: arguments.Arguments := arguments.read([
+        "--port", "8080", "--ratio=0.5", "--bad=x"
+    ]) options(["port"])
+    print(a.int("port") else 80)
+    print(a.int("missing") else 80)
+    print(a.int("bad") else 80)
+    print(a.float("ratio") else 1.0)
+    print(a.float("bad"))
+}

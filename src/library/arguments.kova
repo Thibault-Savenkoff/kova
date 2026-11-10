@@ -16,6 +16,17 @@ public:
     fn option(self, name: String) -> String? {
         return self.options[name]
     }
+
+    // `--port 8080`: `none` if the option is absent or not a whole number.
+    fn int(self, name: String) -> Int? {
+        let text: String := self.options[name] else return none
+        return text.to_int
+    }
+
+    fn float(self, name: String) -> Float? {
+        let text: String := self.options[name] else return none
+        return text.to_float
+    }
 }
 
 // `--port 80`, `--port=80`, `-p 80`: the value of an option named in `options`. Any other `--name`

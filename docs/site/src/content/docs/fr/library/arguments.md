@@ -48,4 +48,6 @@ valeur peut toujours s'écrire `--port=8080`.
 | --- | --- |
 | `a.flag(name) -> Bool` | si ce drapeau a été écrit. |
 | `a.option(name) -> String?` | la valeur de cette option, `none` si elle n'a pas été écrite. |
+| `a.int(name) -> Int?` | pareil en nombre entier : `a.int("port") else 80`. `none` si l'option est absente ou n'est pas un nombre entier. |
+| `a.float(name) -> Float?` | pareil en `Float`. |
 | `a.words -> List<String>` | les autres mots, dans l'ordre. |
