@@ -55,6 +55,7 @@ import system
 
 | Function | Gives |
 | --- | --- |
+| `system.os -> String` | the system the program is made for: `"linux"`, `"windows"`, `"mac"`, `"android"`, `"ios"` or `"web"`. Known when the program is made, so one file can pick what suits each system. |
 | `system.cores -> Int` | how many processors this program may use: a good number for `workers(…)`. |
 | `system.env(name: String) -> String?` | the value of an environment variable, `none` if it is not set. |
 | `system.args -> List<String>` | the words given after the program's name: `kova run app.kova a b`, `./app a b`. |

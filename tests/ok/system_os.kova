@@ -1,0 +1,10 @@
+// `system.os` names the system the program is made for; here, one of those the tests run on.
+import system
+
+fn main {
+    let os: String := system.os
+    print(os = "linux" || os = "mac" || os = "windows" || os = "web")
+    print(os.length > 0)
+}
+// expect: true
+// expect: true

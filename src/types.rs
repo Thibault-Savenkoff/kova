@@ -574,6 +574,7 @@ pub const LIBRARY: &[(&str, &str)] =
         ("system.run(…) args(…)", "fn system.run(program: String) args(words: List<String>) -> system.Finished or system.RunError"),
         ("system.clock", "fn system.clock -> Float"),
         ("system.cores", "fn system.cores -> Int"),
+        ("system.os", "fn system.os -> String"),
         ("threads.id", "fn threads.id -> Int"),
         ("system.sleep", "fn system.sleep(seconds: Float)"),
         ("random", "fn random(from..to) -> Int"),
@@ -1543,6 +1544,7 @@ pub fn check(f: &File, nb_exprs: usize, src: &str) -> (Info, Vec<Diag>) {
     c.functions.insert("web.send".into(), Signature::new(None, vec![(Mode::Read, request())], web()));
     c.functions.insert("system.clock".into(), Signature::new(None, vec![], Type::Float));
     c.functions.insert("system.cores".into(), Signature::new(None, vec![], Type::Int));
+    c.functions.insert("system.os".into(), Signature::new(None, vec![], string()));
     c.functions.insert("threads.id".into(), Signature::new(None, vec![], Type::Int));
     // What src/library/net.kova is written with.
     let read = |ts: Vec<Type>| ts.into_iter().map(|t| (Mode::Read, t)).collect::<Vec<_>>();

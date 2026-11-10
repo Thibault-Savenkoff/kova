@@ -157,6 +157,9 @@ fn kova() {
     // The `header`'s language, written into an executable.
     let lang = || types::setting(&tree, &source, "lang").and_then(|(code, _)| locale::recognize(code));
     let contracts = !matches!(command, Command::Build { boost: true, .. });
+    if let Command::Build { target: Some(target), .. } = &command {
+        *kir::SYSTEM.lock().unwrap() = target.system();
+    }
     let mut program = kir::translate(&tree, &info, &sources.text, contracts, matches!(command, Command::Test { .. }), matches!(command, Command::Build { .. } | Command::Install), false);
 
     program.icon = icon(file, &tree).and_then(Result::ok);

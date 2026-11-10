@@ -31,6 +31,19 @@
 //   - `check`: where it is written.
 
 use std::cell::RefCell;
+
+/// The system the program is made for (`system.os`); empty: the one `kova` runs on. Set by `kova build --target`.
+pub static SYSTEM: std::sync::Mutex<&'static str> = std::sync::Mutex::new("");
+
+fn system_name() -> &'static str {
+    match SYSTEM.lock().map_or("", |s| *s) {
+        "" => match std::env::consts::OS {
+            "macos" => "mac",
+            other => other,
+        },
+        named => named,
+    }
+}
 use std::collections::HashMap;
 
 use crate::ast::{self, BinOp, Block, Case, Contract, ContractKind, Expr, ExprKind, Match, OnlyIn, Otherwise, Part, Pattern, Mode, Step, Stmt, Target, UnOp};
@@ -5959,6 +5972,13 @@ impl<'a> Translator<'a> {
                     let out = self.int_local();
                     self.emit(Inst::Str(out, StrOp::Sound, vals));
                     return vec![out];
+                }
+                if name.text == "system.os" {
+                    // Known when the program is made: the system it is made for.
+                    let l = self.int_local();
+                    self.emit(Inst::Text(l, system_name().to_string()));
+                    self.temps.push((l, Type::String));
+                    return vec![l];
                 }
                 if name.text == "system.cores" {
                     let n = self.int_local();
