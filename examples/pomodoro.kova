@@ -1,0 +1,154 @@
+// A Pomodoro timer: 25 minutes of work, 5 of rest. One file for every system.
+// The time left is read from the clock, not counted in ticks: it stays right when the
+// app was in the background, and a beep (a WAV made here, in memory) tells a phase is over.
+header {
+    name := "Pomodoro"
+}
+
+import ui
+import sound
+import threads
+import system
+
+enum Event {
+    Tick
+    Toggle
+    Reset
+    Skip
+}
+
+enum Phase {
+    Work
+    Rest
+}
+
+struct App {
+    phase: Phase
+    left: Int
+    ends: Float
+    running: Bool
+    done: Int
+}
+
+let WORK_SECONDS: Int := 1500
+let REST_SECONDS: Int := 300
+
+fn length(phase: Phase) -> Int {
+    return match phase {
+        .Work => WORK_SECONDS
+        .Rest => REST_SECONDS
+    }
+}
+
+fn clock(seconds: Int) -> String {
+    let minutes: Int := seconds / 60
+    let rest: Int := seconds % 60
+    return "{minutes.to_string.padded_left(2) with("0")}:{rest.to_string.padded_left(2) with("0")}"
+}
+
+// `value` written on `bytes` bytes, least significant first (a WAV's numbers).
+fn little(value: Int, bytes: Int) -> List<Int> {
+    var out: List<Int> := []
+    var rest: Int := value
+    for i in 0..bytes {
+        out.add(rest % 256)
+        rest := rest / 256
+    }
+    return out
+}
+
+// A short beep: 8-bit mono, 8000 samples a second.
+fn beep -> List<Int> {
+    let rate: Int := 8000
+    let count: Int := rate * 4 / 10
+    var wav: List<Int> := [82, 73, 70, 70]
+    wav += little(36 + count, 4)
+    wav += [87, 65, 86, 69, 102, 109, 116, 32]
+    wav += little(16, 4)
+    wav += little(1, 2)
+    wav += little(1, 2)
+    wav += little(rate, 4)
+    wav += little(rate, 4)
+    wav += little(1, 2)
+    wav += little(8, 2)
+    wav += [100, 97, 116, 97]
+    wav += little(count, 4)
+    for i in 0..count {
+        let t: Float := i.to_float / rate.to_float
+        let wave: Float := (2.0 * Float.pi * 880.0 * t).sin
+        wav.add(128 + (wave * 90.0).to_int)
+    }
+    return wav
+}
+
+fn ring {
+    let tone: List<Int> := beep
+    // Playing waits for the end: a thread of its own keeps the window alive.
+    let playing: threads.Task<Nothing> := threads.spawn {
+        sound.play_bytes(tone) else print("no sound")
+    }
+}
+
+fn view(app: App) -> ui.View {
+    let title: String := match app.phase {
+        .Work => "Focus"
+        .Rest => "Rest"
+    }
+    let total: Int := length(app.phase)
+    let screen: ui.View := ui.column([
+        ui.text(title).size(20),
+        ui.text(clock(app.left)).size(64).bold,
+        ui.progress(total - app.left, total),
+        ui.row([
+            ui.button(if app.running { "Pause" } else { "Start" }, Event.Toggle),
+            ui.button("Reset", Event.Reset),
+            ui.button("Skip", Event.Skip),
+        ]),
+        ui.text("{app.done} sessions done"),
+    ]) align(center)
+    return if app.running { screen.every(250, Event.Tick) } else { screen }
+}
+
+fn switch(app: var App) {
+    app.phase := match app.phase {
+        .Work => Phase.Rest
+        .Rest => Phase.Work
+    }
+    app.left := length(app.phase)
+    app.running := false
+}
+
+fn update(app: var App, e: Event) {
+    match e {
+        .Tick => {
+            app.left := (app.ends - system.clock).ceil
+            if app.left <= 0 {
+                if app.phase = Phase.Work {
+                    app.done := app.done + 1
+                }
+                switch(var app)
+                ring
+            }
+        }
+        .Toggle => {
+            app.running := !app.running
+            app.ends := system.clock + app.left.to_float
+        }
+        .Reset => {
+            app.running := false
+            app.left := length(app.phase)
+        }
+        .Skip => switch(var app)
+    }
+}
+
+fn main {
+    let start: App := App {
+        phase := Phase.Work,
+        left := WORK_SECONDS,
+        ends := 0.0,
+        running := false,
+        done := 0
+    }
+    ui.run("Pomodoro", start, view, update) width(360) height(420)
+}
