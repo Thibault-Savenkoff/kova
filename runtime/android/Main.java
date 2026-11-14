@@ -373,26 +373,30 @@ public class Main extends Activity {
             }
             int number = i;
             long field = n.getLong(4);
-            row.setOnClickListener(x -> hear(changed(field), String.valueOf(number)));
-            if (n.length() > 6 && n.getBoolean(6)) {
-                // A quick swipe to the left on a row asks to delete it.
-                android.view.GestureDetector swipe = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
-                    @Override
-                    public boolean onDown(MotionEvent e) {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
-                        if (vx < -800 && Math.abs(vx) > Math.abs(vy)) {
-                            hear(changed(field), "d" + number);
-                            return true;
-                        }
-                        return false;
-                    }
-                });
+            boolean[] swiped = {false};
+            row.setOnClickListener(x -> {
+                // A swipe that deleted the row must not also open it.
+                if (swiped[0]) {
+                    swiped[0] = false;
+                    return;
+                }
+                hear(changed(field), String.valueOf(number));
+            });
+            if (n.length() > 5 && n.getBoolean(5)) {
+                // A swipe to the left (further than 96 dp, mostly sideways) asks to delete the row.
+                float[] from = new float[2];
                 row.setOnTouchListener((x, e) -> {
-                    swipe.onTouchEvent(e);
+                    if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        from[0] = e.getRawX();
+                        from[1] = e.getRawY();
+                        swiped[0] = false;
+                    } else if (e.getActionMasked() == MotionEvent.ACTION_UP) {
+                        float dx = e.getRawX() - from[0], dy = e.getRawY() - from[1];
+                        if (dx < -dp(96) && Math.abs(dx) > 2 * Math.abs(dy)) {
+                            swiped[0] = true;
+                            hear(changed(field), "d" + number);
+                        }
+                    }
                     return false;
                 });
             }
