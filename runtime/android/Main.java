@@ -124,6 +124,9 @@ public class Main extends Activity {
     long backEvent = -1;
     JSONArray barButtons = new JSONArray();
     String shape;
+    /** The view last drawn, to draw it again when the phone changes its theme. */
+    JSONObject shown;
+    boolean dark;
     View root;
     JSONObject waiting;
     String menusStamp = "";
@@ -169,11 +172,13 @@ public class Main extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         boolean night = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        setTheme(night ? android.R.style.Theme_DeviceDefault : android.R.style.Theme_DeviceDefault_Light);
+        dark = night;
+        setTheme(Build.VERSION.SDK_INT >= 29 ? android.R.style.Theme_DeviceDefault_DayNight : night ? android.R.style.Theme_DeviceDefault : android.R.style.Theme_DeviceDefault_Light);
         super.onCreate(saved);
         density = getResources().getDisplayMetrics().density;
         palette(night);
         window = new FrameLayout(this);
+        window.post(() -> barIcons(night));
         window.setBackgroundColor(cBackground);
         getWindow().setBackgroundDrawable(new ColorDrawable(cBackground));
         if (getActionBar() != null) getActionBar().setBackgroundDrawable(new ColorDrawable(cBackground));
@@ -235,6 +240,38 @@ public class Main extends Activity {
         Thread reader = new Thread(this::listen, "kova-reader");
         reader.setDaemon(true);
         reader.start();
+    }
+
+    /** The clock and icons of the system's bars: dark on a light page, light on a dark one. */
+    void barIcons(boolean night) {
+        if (Build.VERSION.SDK_INT < 30) return;
+        int both = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+        window.getWindowInsetsController().setSystemBarsAppearance(night ? 0 : both, both);
+    }
+
+    /** The phone switched between light and dark (or changed its colors): follow it, live. */
+    @Override
+    public void onConfigurationChanged(Configuration c) {
+        super.onConfigurationChanged(c);
+        boolean night = (c.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        if (night == dark) return;
+        dark = night;
+        palette(night);
+        window.setBackgroundColor(cBackground);
+        getWindow().setBackgroundDrawable(new ColorDrawable(cBackground));
+        if (getActionBar() != null) getActionBar().setBackgroundDrawable(new ColorDrawable(cBackground));
+        barIcons(night);
+        invalidateOptionsMenu();
+        if (shown == null) return;
+        try {
+            // Drawn again from scratch; the one-time acts (hide the bar, close…) must not run twice.
+            JSONObject again = new JSONObject(shown.toString());
+            again.put("acts", new JSONArray());
+            shape = null;
+            render(again);
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
@@ -566,7 +603,11 @@ public class Main extends Activity {
 
     void render(JSONObject o) throws JSONException {
         if (ended) return;
-        setTitle(o.getString("title"));
+        shown = o;
+        android.text.SpannableString title = new android.text.SpannableString(o.getString("title"));
+        title.setSpan(new android.text.style.ForegroundColorSpan(cOnSurface), 0, title.length(), 0);
+        setTitle(title);
+        if (getActionBar() != null) getActionBar().setTitle(title);
         JSONArray acts = o.getJSONArray("acts");
         for (int i = 0; i < acts.length(); i++) {
             int act = acts.getInt(i);
