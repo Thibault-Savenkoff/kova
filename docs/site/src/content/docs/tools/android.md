@@ -21,6 +21,8 @@ $ kova build counter.kova --target android
 | `android-arm` | arm64 only: smaller, every recent phone |
 | `android-intel` | x86-64 only: emulators, some Chromebooks |
 
+A program with `import ui` keeps one file for the phone and the computer: see [One program, every system](/guide/one-program-every-system/).
+
 ## Putting it on a phone
 
 Android only installs apps from outside its store if you allow it:

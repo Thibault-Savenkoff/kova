@@ -25,6 +25,8 @@ $ xcrun simctl launch --console-pty booted dev.kova.compteur
 Le dernier mot est le nom de l'app en minuscules, après `dev.kova.`. `--console-pty` montre ce que
 le programme affiche.
 
+Un programme avec `import ui` garde un seul fichier pour le téléphone et l'ordinateur : voir [Un programme, tous les systèmes](/fr/guide/one-program-every-system/).
+
 ## Ce qu'un programme trouve sur un iPhone
 
 | Dans le programme | Sur l'iPhone |

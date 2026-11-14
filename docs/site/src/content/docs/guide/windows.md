@@ -655,5 +655,7 @@ so drive a window program through every case, on any machine, even without a scr
 
 ## What comes next
 
+The same program also builds for phones: [One program, every system](/guide/one-program-every-system/).
+
 For a widget `import ui` does not have yet, a program can call the system's own library through
 [`extern`](/guide/calling-c/).

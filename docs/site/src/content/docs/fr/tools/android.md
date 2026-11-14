@@ -21,6 +21,8 @@ Chromebooks (x86-64), et il est signé. Il fonctionne à partir d'Android 8.0.
 | `android-arm` | arm64 seul : plus petit, tous les téléphones récents |
 | `android-intel` | x86-64 seul : émulateurs, certains Chromebooks |
 
+Un programme avec `import ui` garde un seul fichier pour le téléphone et l'ordinateur : voir [Un programme, tous les systèmes](/fr/guide/one-program-every-system/).
+
 ## Le mettre sur un téléphone
 
 Android n'installe les apps venues d'ailleurs que de son store si tu l'autorises :

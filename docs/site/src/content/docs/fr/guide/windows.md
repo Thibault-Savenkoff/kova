@@ -676,5 +676,7 @@ même sans écran.
 
 ## La suite
 
+Le même programme se construit aussi pour les téléphones : [Un programme, tous les systèmes](/fr/guide/one-program-every-system/).
+
 Pour un élément que `import ui` n'a pas encore, un programme peut appeler la
 bibliothèque du système elle-même avec [`extern`](/fr/guide/calling-c/).
